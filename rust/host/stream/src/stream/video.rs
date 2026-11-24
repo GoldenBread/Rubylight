@@ -41,8 +41,14 @@ pub(super) fn observe_foreground_game(h: &Shared, client: &str, program: &str, p
     true
 }
 
-/// How often completed encoder output is collected while a frame is in flight.
+/// How often completed encoder output is collected while a frame is in flight
+/// for polling-only encoders (those without an `output_event()`).
 pub(super) const OUTPUT_POLL: Duration = Duration::from_micros(100);
+/// Stall-watchdog bound for an encoder with an `output_event()` when waiting
+/// for queue capacity: the event wakes the wait immediately on completion, and
+/// this bound still lets `poll_full` detect a stalled encoder well within its
+/// 250 ms limit without waking every 100 µs.
+pub(super) const OUTPUT_EVENT_WATCHDOG: Duration = Duration::from_millis(5);
 
 /// The next output poll while frames are in flight: one output poll from
 /// now, or later when the encoder knows its oldest frame cannot be done
@@ -52,6 +58,35 @@ pub(super) fn next_output_poll(encoder: Option<&impl EncoderOutput>, now: Instan
     encoder
         .and_then(|encoder| encoder.output_due())
         .map_or(poll, |due| due.max(poll))
+}
+
+/// The wait deadline and wake event for a pending encoder before `deadline`:
+/// an encoder with an `output_event()` waits directly until `deadline` (waking
+/// as soon as the event signals); a polling-only encoder bounds the wait to
+/// [`next_output_poll`]. Calls `output_event()` at most once (NVENC and
+/// PyroWave arm the event there).
+pub(super) fn output_wait<E: EncoderOutput>(
+    encoder: Option<&E>,
+    now: Instant,
+    deadline: Instant,
+) -> (Instant, Option<&butterpollo_win_graphics::timing::Signal>) {
+    if let Some(event) = encoder.and_then(EncoderOutput::output_event) {
+        (deadline, Some(event))
+    } else {
+        (next_output_poll(encoder, now).min(deadline), None)
+    }
+}
+
+/// Return a finished streamed frame's unit buffers to the frame pool and keep
+/// the emptied outer vector for the next frame (`VideoPacketizer::streamed_in`).
+pub(super) fn recycle_streamed_pieces(
+    streamed: butterpollo_media_policy::packet::StreamedFrame,
+) -> Vec<Vec<u8>> {
+    let mut pieces = streamed.take_pieces();
+    for buf in pieces.drain(..) {
+        butterpollo_win_graphics::frame_pool::give(buf);
+    }
+    pieces
 }
 
 /// Whether an output poll before `deadline` cannot overshoot it: only a poll
@@ -67,12 +102,13 @@ pub(super) fn poll_fits(
 
 /// After a poll that returned nothing while the encoder is full: an encoder
 /// that predicts its output sleeps until then, one with an output event
-/// (NVENC's D3D12 fence) until it, at most one output poll. One whose poll
-/// waits in the driver (AMF's QueryOutput) polls again at once; one whose
-/// poll returns at once (NVENC without the fence) sleeps one output poll, as
-/// the waits with room in the encoder do, where polling again at once spun a
-/// core at the stream thread's priority for as long as the encoder stayed
-/// full. Nothing waits once no frame is pending, such as after a device loss.
+/// (AMF's output thread, NVENC's D3D12 fence, PyroWave) until it with a 5 ms
+/// stall-watchdog bound. One whose poll waits in the driver (AMF's QueryOutput)
+/// polls again at once; one whose poll returns at once (NVENC without the fence)
+/// sleeps one output poll, as the waits with room in the encoder do, where
+/// polling again at once spun a core at the stream thread's priority for as
+/// long as the encoder stayed full. Nothing waits once no frame is pending,
+/// such as after a device loss.
 pub(super) fn wait_for_output(
     timer: &butterpollo_win_graphics::timing::Timer,
     recovery: &EncoderRecovery,
@@ -84,7 +120,7 @@ pub(super) fn wait_for_output(
     if let Some(due) = encoder.output_due().filter(|due| *due > Instant::now()) {
         timer.until(due);
     } else if let Some(event) = encoder.output_event() {
-        timer.until_or_event(Instant::now() + OUTPUT_POLL, Some(event))?;
+        timer.until_or_event(Instant::now() + OUTPUT_EVENT_WATCHDOG, Some(event))?;
     } else if !encoder.poll_blocks() {
         timer.until(Instant::now() + OUTPUT_POLL);
     }
@@ -739,3 +775,6 @@ fn panic_text(panic: &(dyn std::any::Any + Send)) -> String {
         .or_else(|| panic.downcast_ref::<String>().cloned())
         .unwrap_or_else(|| "unknown panic".into())
 }
+
+#[cfg(test)]
+mod wait_tests;

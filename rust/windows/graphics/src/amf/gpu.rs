@@ -205,8 +205,39 @@ const CONTEXT2: AMFGuid = AMFGuid {
     data47: 0x98,
     data48: 0x4d,
 };
+/// Tracks which `(texture, fence)` pairs already have AMF's `FENCE` private
+/// data interface attached, avoiding a redundant `SetPrivateDataInterface`
+/// COM call every frame for the compute converter's reused target pool.
+struct FenceBindings<T> {
+    bound: Vec<(std::sync::Weak<T>, usize)>,
+}
+impl<T> Default for FenceBindings<T> {
+    fn default() -> Self {
+        Self { bound: Vec::new() }
+    }
+}
+impl<T> FenceBindings<T> {
+    fn is_bound(&self, texture: &Arc<T>, fence_id: usize) -> bool {
+        let ptr = Arc::as_ptr(texture);
+        self.bound
+            .iter()
+            .any(|(kept, id)| *id == fence_id && kept.as_ptr() == ptr && kept.strong_count() > 0)
+    }
+    fn record(&mut self, texture: &Arc<T>, fence_id: usize) {
+        let ptr = Arc::as_ptr(texture);
+        self.bound.retain(|(kept, _)| kept.strong_count() > 0);
+        if let Some((_, id)) = self.bound.iter_mut().find(|(kept, _)| kept.as_ptr() == ptr) {
+            *id = fence_id;
+        } else {
+            self.bound.push((Arc::downgrade(texture), fence_id));
+        }
+    }
+}
 /// The context's D3D12 interface.
-pub(crate) struct D3d12Context(*mut Context2);
+pub(crate) struct D3d12Context {
+    raw: *mut Context2,
+    fences: FenceBindings<windows::Win32::Graphics::Direct3D12::ID3D12Resource>,
+}
 impl D3d12Context {
     pub fn new(context: *mut AMFContext) -> Result<Self> {
         // SAFETY: `context` is a live AMF context, and QueryInterface writes an added reference to
@@ -222,15 +253,18 @@ impl D3d12Context {
             if interface.is_null() {
                 anyhow::bail!("AMF returned no D3D12 context");
             }
-            Ok(Self(interface.cast()))
+            Ok(Self {
+                raw: interface.cast(),
+                fences: FenceBindings::default(),
+            })
         }
     }
     pub fn init(&self, device: &windows::Win32::Graphics::Direct3D12::ID3D12Device) -> Result<()> {
-        // SAFETY: `self.0` is the live AMFContext2 from `new`, whose table has InitDX12 right after
+        // SAFETY: `self.raw` is the live AMFContext2 from `new`, whose table has InitDX12 right after
         // AMFContext1's 65 entries, and `device` is a live D3D12 device.
         unsafe {
-            check(((*(*self.0).vtable).init_dx12)(
-                self.0.cast(),
+            check(((*(*self.raw).vtable).init_dx12)(
+                self.raw.cast(),
                 device.as_raw(),
                 120,
             ))
@@ -243,12 +277,12 @@ impl D3d12Context {
         texture: &Arc<windows::Win32::Graphics::Direct3D12::ID3D12Resource>,
         ownership: &mut Ownership,
     ) -> Result<Surface> {
-        // SAFETY: `self.0` is the live AMFContext2, `ownership` is boxed so the observer address
+        // SAFETY: `self.raw` is the live AMFContext2, `ownership` is boxed so the observer address
         // stays valid, and `texture` is held in it until AMF releases the surface.
         unsafe {
             let mut surface = ptr::null_mut();
-            check(((*(*self.0).vtable).surface_from_dx12)(
-                self.0.cast(),
+            check(((*(*self.raw).vtable).surface_from_dx12)(
+                self.raw.cast(),
                 texture.as_raw(),
                 &mut surface,
                 ownership.raw(),
@@ -266,15 +300,42 @@ impl D3d12Context {
             Ok(Surface(surface))
         }
     }
+    /// Tell AMF to wait for `fence` to reach `value` before reading `texture`
+    /// (in the COMMON state). AMF signals the fence again when it has read the
+    /// texture and records the new value on the fence, so the fence must be the
+    /// texture's alone. Binds `FENCE` private data once per live
+    /// `(texture, fence)` pair.
+    pub fn synchronize(
+        &mut self,
+        texture: &Arc<windows::Win32::Graphics::Direct3D12::ID3D12Resource>,
+        fence: &windows::Win32::Graphics::Direct3D12::ID3D12Fence,
+        value: u64,
+    ) -> Result<()> {
+        set_resource_state(
+            texture,
+            windows::Win32::Graphics::Direct3D12::D3D12_RESOURCE_STATE_COMMON,
+        )?;
+        let fence_id = fence.as_raw() as usize;
+        // SAFETY: `texture` and `fence` are live D3D12 objects, and each data pointer refers to a
+        // local of exactly the size passed.
+        unsafe {
+            if !self.fences.is_bound(texture, fence_id) {
+                texture.SetPrivateDataInterface(&FENCE, fence)?;
+                self.fences.record(texture, fence_id);
+            }
+            fence.SetPrivateData(&FENCE_VALUE, 8, Some((&value as *const u64).cast()))?;
+        }
+        Ok(())
+    }
 }
 impl Drop for D3d12Context {
     fn drop(&mut self) {
-        // SAFETY: `self.0` holds the one reference QueryInterface added in `new`, and entry 1 of
+        // SAFETY: `self.raw` holds the one reference QueryInterface added in `new`, and entry 1 of
         // AMFContext1's table is Release.
         unsafe {
             let release: unsafe extern "C" fn(*mut std::ffi::c_void) -> amf_long =
-                std::mem::transmute((*(*self.0).vtable)._context1[1]);
-            release(self.0.cast());
+                std::mem::transmute((*(*self.raw).vtable)._context1[1]);
+            release(self.raw.cast());
         }
     }
 }
@@ -329,27 +390,6 @@ pub(crate) fn set_resource_state(
     // supplied four bytes from this local before returning.
     unsafe { texture.SetPrivateData(&RESOURCE_STATE, 4, Some((&state as *const u32).cast())) }
         .context("recording the AMF input resource state")
-}
-/// Tell AMF to wait for `fence` to reach `value` before reading `texture`
-/// (in the COMMON state). AMF signals the fence again when it has read the
-/// texture and records the new value on the fence, so the fence must be the
-/// texture's alone.
-pub(crate) fn synchronize(
-    texture: &windows::Win32::Graphics::Direct3D12::ID3D12Resource,
-    fence: &windows::Win32::Graphics::Direct3D12::ID3D12Fence,
-    value: u64,
-) -> Result<()> {
-    set_resource_state(
-        texture,
-        windows::Win32::Graphics::Direct3D12::D3D12_RESOURCE_STATE_COMMON,
-    )?;
-    // SAFETY: `texture` and `fence` are live D3D12 objects, and each data pointer refers to a local
-    // of exactly the size passed.
-    unsafe {
-        texture.SetPrivateDataInterface(&FENCE, fence)?;
-        fence.SetPrivateData(&FENCE_VALUE, 8, Some((&value as *const u64).cast()))?;
-    }
-    Ok(())
 }
 /// The value last recorded on `fence` for AMF, by us or by AMF.
 pub(crate) fn fence_value(
@@ -435,5 +475,32 @@ mod tests {
             released(observer, third);
         }
         assert_eq!(ownership.retained(), 0);
+    }
+
+    #[test]
+    fn fence_bindings_track_live_texture_fence_pairs_and_prune_dropped_textures() {
+        let mut bindings = FenceBindings::<u32>::default();
+        let a = Arc::new(1);
+        let b = Arc::new(2);
+        assert!(!bindings.is_bound(&a, 100));
+        bindings.record(&a, 100);
+        assert!(bindings.is_bound(&a, 100));
+        assert!(!bindings.is_bound(&a, 200), "different fence rebinds");
+        assert!(!bindings.is_bound(&b, 100), "different texture binds");
+        bindings.record(&b, 200);
+        assert!(bindings.is_bound(&a, 100));
+        assert!(bindings.is_bound(&b, 200));
+        // Rebinding `a` to a new fence replaces its entry without growing.
+        bindings.record(&a, 300);
+        assert!(!bindings.is_bound(&a, 100));
+        assert!(bindings.is_bound(&a, 300));
+        assert_eq!(bindings.bound.len(), 2);
+        // Dropping `a` allows the next record to prune its dead Weak entry.
+        drop(a);
+        let c = Arc::new(3);
+        bindings.record(&c, 400);
+        assert_eq!(bindings.bound.len(), 2);
+        assert!(bindings.is_bound(&b, 200));
+        assert!(bindings.is_bound(&c, 400));
     }
 }

@@ -256,6 +256,11 @@ pub struct Encoder {
     /// AMF's video converter in front of the encoder (`amd_vpe`), on the
     /// D3D11 context; frames it refuses take the D3D11 shader conversion.
     vpe: Option<Box<vpe::Vpe>>,
+    /// The newest VPE output surface kept while its frame can still trigger
+    /// `reencodes_cut`, avoiding a per-frame D3D11 copy on non-cut frames.
+    vpe_kept: Option<(i64, gpu::Surface)>,
+    /// Reusable 2-texture single-slice D3D11 pool for VPE scene-cut IDR re-encodes.
+    reencode_pool: submit::ReencodePool,
     last_query: Option<AMF_RESULT>,
     last_submit: Option<AMF_RESULT>,
     /// When AMF last accepted an input, for the stream's stage timings.
@@ -318,6 +323,12 @@ impl Encoder {
     #[cfg(test)]
     pub(crate) fn conversion_reuses(&self) -> u64 {
         self.converted_reuses
+    }
+    /// Release any kept VPE output surface for `pts` back to AMF's pool.
+    pub(super) fn release_vpe_kept(&mut self, pts: i64) {
+        if self.vpe_kept.as_ref().is_some_and(|(kept, _)| *kept == pts) {
+            self.vpe_kept = None;
+        }
     }
     /// AMF's video converter refused a long run of frames for a lasting reason
     /// (`plan::GIVE_WAY_AFTER`): an encoder without it, converting on the compute queue,
@@ -531,6 +542,9 @@ impl Drop for Encoder {
     fn drop(&mut self) {
         // Its last query returns before the component terminates.
         self.output_thread.take();
+        // Release any kept VPE output surface while VPE and the AMF context
+        // are still live.
+        self.vpe_kept = None;
         let in_flight = self.in_flight.len();
         let lost = self.device_removed();
         if !self.component.is_null() {
@@ -556,6 +570,7 @@ impl Drop for Encoder {
         self.last_converted.take();
         // Destroy the converter before its context and dynamically loaded runtime.
         self.gpu_convert.take();
+        self.reencode_pool.clear();
         self.graphics_stats.take();
         // SAFETY: Self owns each non-null interface reference. Terminating the component
         // releases its inputs before compute/context cleanup; the device, runtime and

@@ -14,13 +14,13 @@ use std::borrow::Cow;
 /// names its references by slot with an explicit order hint: none.
 pub enum RepairHeaders {
     H264(FrameNumbers),
-    Hevc(PictureOrder),
+    Hevc(Box<PictureOrder>),
 }
 impl RepairHeaders {
     pub fn for_codec(codec: u8) -> Option<Self> {
         match codec {
             0 => Some(Self::H264(FrameNumbers::default())),
-            1 => Some(Self::Hevc(PictureOrder::default())),
+            1 => Some(Self::Hevc(Box::default())),
             _ => None,
         }
     }

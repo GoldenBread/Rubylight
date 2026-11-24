@@ -455,55 +455,40 @@ impl CaptureSamples {
     /// Unless silent or null, `data` holds `count` interleaved frames in this
     /// capture's validated sample format and remains readable throughout.
     unsafe fn push_packet(&mut self, data: *const u8, count: usize, flags: u32) {
-        let step = (self.bits / 8) as usize;
-        let silent = flags & AUDCLNT_BUFFERFLAGS_SILENT.0 as u32 != 0;
+        if count == 0 {
+            return;
+        }
         // DATA_DISCONTINUITY marks a stream-position discontinuity, not invalid
         // earlier samples. Clearing them here also erased whole packets drained
         // earlier in this read, or a partial Opus packet from the previous read.
         // Keep those samples and the fractional resampling phase; read() still
         // bounds the entire backlog.
-        for frame in 0..count {
-            for (source, sample) in self.input.iter_mut().enumerate() {
-                let value = if silent || data.is_null() {
-                    0.
-                } else {
-                    // SAFETY: The caller supplies count complete frames in this
-                    // format; each unaligned access stays within its sample.
-                    unsafe {
-                        let p = data.add((frame * self.channels + source) * step);
-                        if self.float {
-                            std::ptr::read_unaligned(p as *const f32)
-                        } else {
-                            match self.bits {
-                                16 => std::ptr::read_unaligned(p as *const i16) as f32 / 32768.,
-                                24 => {
-                                    let v = ((*p as i32)
-                                        | ((*p.add(1) as i32) << 8)
-                                        | ((*p.add(2) as i32) << 16))
-                                        << 8;
-                                    v as f32 / 2147483648.
-                                }
-                                _ => std::ptr::read_unaligned(p as *const i32) as f32 / 2147483648.,
-                            }
-                        }
-                    }
-                };
-                *sample = if value.is_finite() {
-                    value.clamp(-1., 1.)
-                } else {
-                    0.
-                };
-            }
-            if self.identity {
-                // The converted samples are the mix's result, clamped already:
-                // queue them without copying them through the matrix.
-                self.trimmed += self.resampler.push_clamped(&self.input) as u64;
-            } else {
-                for (dest, row) in self.output.iter_mut().zip(&self.matrix) {
-                    *dest = self.input.iter().zip(row).map(|(v, gain)| v * gain).sum();
+        let silent = flags & AUDCLNT_BUFFERFLAGS_SILENT.0 as u32 != 0;
+        if silent || data.is_null() {
+            self.trimmed += self.resampler.push_silence(count) as u64;
+            return;
+        }
+        let total = count * self.channels;
+        self.input.resize(total, 0.);
+        // SAFETY: `data` holds `total` samples in `(self.float, self.bits)`.
+        unsafe { convert_samples(data, self.float, self.bits, &mut self.input) };
+        if self.identity {
+            // Converted samples are already clamped and match output channels 1:1.
+            self.trimmed += self.resampler.push_slice_clamped(&self.input) as u64;
+        } else {
+            let out_channels = self.matrix.len();
+            self.output.resize(count * out_channels, 0.);
+            for (src, dst) in self
+                .input
+                .chunks_exact(self.channels)
+                .zip(self.output.chunks_exact_mut(out_channels))
+            {
+                for (dest, row) in dst.iter_mut().zip(&self.matrix) {
+                    let mixed: f32 = src.iter().zip(row).map(|(v, gain)| v * gain).sum();
+                    *dest = clamp_sample(mixed);
                 }
-                self.trimmed += self.resampler.push(&self.output) as u64;
             }
+            self.trimmed += self.resampler.push_slice_clamped(&self.output) as u64;
         }
     }
     #[cfg(test)]
@@ -524,6 +509,50 @@ impl CaptureSamples {
         self.resampler.read_into(frames, out)
     }
 }
+#[inline]
+fn clamp_sample(v: f32) -> f32 {
+    if v.is_finite() { v.clamp(-1., 1.) } else { 0. }
+}
+
+/// Converts `out.len()` interleaved WASAPI samples in format `(float, bits)`
+/// into clamped `f32` values with the format branch hoisted outside the loop.
+///
+/// # Safety
+/// `data` must point to at least `out.len() * (bits / 8)` readable bytes.
+unsafe fn convert_samples(data: *const u8, float: bool, bits: u16, out: &mut [f32]) {
+    // SAFETY: each unaligned read stays within the caller's `out.len()` samples.
+    unsafe {
+        match (float, bits) {
+            (true, _) => {
+                let src = data.cast::<f32>();
+                for (i, d) in out.iter_mut().enumerate() {
+                    *d = clamp_sample(std::ptr::read_unaligned(src.add(i)));
+                }
+            }
+            (false, 16) => {
+                let src = data.cast::<i16>();
+                for (i, d) in out.iter_mut().enumerate() {
+                    *d = (std::ptr::read_unaligned(src.add(i)) as f32 / 32768.).clamp(-1., 1.);
+                }
+            }
+            (false, 24) => {
+                for (i, d) in out.iter_mut().enumerate() {
+                    let p = data.add(i * 3);
+                    let v =
+                        ((*p as i32) | ((*p.add(1) as i32) << 8) | ((*p.add(2) as i32) << 16)) << 8;
+                    *d = (v as f32 / 2147483648.).clamp(-1., 1.);
+                }
+            }
+            (false, _) => {
+                let src = data.cast::<i32>();
+                for (i, d) in out.iter_mut().enumerate() {
+                    *d = (std::ptr::read_unaligned(src.add(i)) as f32 / 2147483648.).clamp(-1., 1.);
+                }
+            }
+        }
+    }
+}
+
 impl Drop for Loopback {
     fn drop(&mut self) {
         // SAFETY: `self.client` is live. The owned event closes after capture stops.

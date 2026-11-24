@@ -123,6 +123,33 @@ impl Resampler {
         self.queue.extend(frame.iter().copied());
         self.cap()
     }
+    /// Queues `frames` frames of silence, capping the queue once at the end.
+    pub fn push_silence(&mut self, frames: usize) -> usize {
+        if frames == 0 {
+            return 0;
+        }
+        let count = frames * self.channels;
+        let limit = (self.rate as usize / 10).max(2) * self.channels;
+        if count >= limit {
+            let dropped = (self.queue.len() + count - limit) / self.channels;
+            self.queue.clear();
+            self.queue.resize(limit, 0.);
+            self.phase = 0.;
+            return dropped;
+        }
+        self.queue.resize(self.queue.len() + count, 0.);
+        self.cap()
+    }
+    /// Queues whole interleaved frames already clamped to [-1, 1], running the
+    /// 100 ms queue cap once for the whole batch.
+    pub fn push_slice_clamped(&mut self, samples: &[f32]) -> usize {
+        debug_assert!(samples.len().is_multiple_of(self.channels));
+        if samples.is_empty() {
+            return 0;
+        }
+        self.queue.extend(samples.iter().copied());
+        self.cap()
+    }
     /// What both queueing paths do with a frame already on the queue.
     fn cap(&mut self) -> usize {
         let limit = (self.rate as usize / 10).max(2) * self.channels;
@@ -165,13 +192,21 @@ impl Resampler {
         if frames == 0 {
             return true;
         }
-        // 48 kHz with no fractional phase needs no interpolation.
+        // 48 kHz with no fractional phase needs no interpolation: bulk-copy
+        // the ring's contiguous slices instead of draining element by element.
         if self.rate == 48_000 && self.phase == 0.0 {
             let needed = frames * self.channels;
             if self.queue.len() < needed {
                 return false;
             }
-            out.extend(self.queue.drain(..needed));
+            let (first, second) = self.queue.as_slices();
+            let head = first.len().min(needed);
+            out.reserve(needed);
+            out.extend_from_slice(&first[..head]);
+            if head < needed {
+                out.extend_from_slice(&second[..needed - head]);
+            }
+            self.queue.drain(..needed);
             return true;
         }
         let ratio = f64::from(self.rate) / 48000.;

@@ -34,7 +34,9 @@ use windows::{
 };
 #[cfg(test)]
 mod decode_tests;
+mod repeat;
 mod slot;
+use repeat::{RepeatCache, RepeatKey};
 #[cfg(test)]
 use slot::WARMUP_MIN_BUDGET;
 use slot::{Slot, finish_warmup, source_rebuilds_slots, warmup_budget};
@@ -300,14 +302,18 @@ struct Flight<L> {
     submitted: Instant,
     captured: Instant,
     plan: Plan,
+    seq_offset: u8,
+    cache_repeat: Option<RepeatKey>,
 }
 /// A frame Vulkan confirmed complete, its lease returned.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 struct Completed {
     slot: usize,
     begin: Instant,
     captured: Instant,
     plan: Plan,
+    seq_offset: u8,
+    cache_repeat: Option<RepeatKey>,
 }
 /// Frames on the GPU, oldest first. Only the oldest completes, so frames
 /// leave in the order they were submitted.
@@ -364,6 +370,8 @@ impl<L> Flights<L> {
             begin: flight.begin,
             captured: flight.captured,
             plan: flight.plan,
+            seq_offset: flight.seq_offset,
+            cache_repeat: flight.cache_repeat,
         };
         drop(flight.lease);
         Ok(Some(completed))
@@ -410,11 +418,11 @@ pub struct Encoder {
     lost: Option<crate::device_loss::DeviceLost>,
     adapter: [u8; 8],
     d3d: Device,
-    /// Whether to convert on the compute queue (AMD, `gpu_compute_conversion`).
-    use_compute: bool,
     source: Option<(u32, u32, Pixel)>,
     /// One conversion target per frame in flight, made when first needed.
     slots: Vec<Slot>,
+    /// Single shared D3D12 compute converter driving every slot's target.
+    compute: Option<crate::compute::Converter>,
     config: Negotiated,
     critical_fec: bool,
     /// Parity for each frame's critical block, as a percentage; 0 without.
@@ -422,6 +430,7 @@ pub struct Encoder {
     interval: pyrowave::Interval,
     /// The next picture repeats the last one encoded.
     pub(crate) repeat: bool,
+    repeat_cache: RepeatCache,
     pub(crate) luminance: [f32; 2],
     /// The couch menu's panel, drawn by the conversion while set.
     pub(crate) overlay: Option<crate::overlay::Overlay>,
@@ -510,6 +519,24 @@ impl Encoder {
             1
         };
         tracing::info!(frames_in_flight = depth, "PyroWave encode overlap");
+        let compute = if crate::compute::enabled(tuning) {
+            match crate::compute::Compute::for_device(&d3d.device).and_then(|compute| {
+                crate::compute::Converter::new_planar(
+                    compute,
+                    config.width,
+                    config.height,
+                    config.ten_bit(),
+                )
+            }) {
+                Ok(converter) => Some(converter),
+                Err(error) => {
+                    warnings.set("pyrowave_conversion", &format!("PyroWave compute conversion unavailable ({error:#}); converting on the graphics queue. Game rendering may delay frames; update the AMD driver or lower GPU load."));
+                    None
+                }
+            }
+        } else {
+            None
+        };
         let mut s = Self {
             warnings,
             api,
@@ -521,15 +548,16 @@ impl Encoder {
             depth,
             lost: None,
             adapter: luid.luid,
-            use_compute: crate::compute::enabled(tuning),
             d3d,
             source,
             slots: Vec::with_capacity(depth),
+            compute,
             config: config.clone(),
             critical_fec,
             critical_fec_percentage,
             interval: interval(config),
             repeat: false,
+            repeat_cache: RepeatCache::default(),
             luminance: [100., 1.],
             overlay: None,
             packets: vec![],
@@ -598,6 +626,7 @@ impl Encoder {
         // Build slots and compile conversion + Vulkan encode pipelines now,
         // before the session enters `encode_gpu` on frame 1 (issue #147).
         let slot_started = Instant::now();
+        let compute_device = s.compute.as_ref().map(|c| c.compute().clone());
         for _ in 0..s.depth {
             s.slots.push(Slot::new(
                 &s.api,
@@ -605,7 +634,7 @@ impl Encoder {
                 s.device,
                 &s.config,
                 source,
-                s.use_compute,
+                compute_device.as_ref(),
                 &s.warnings,
             )?);
         }
@@ -623,93 +652,44 @@ impl Encoder {
         );
         Ok(s)
     }
-    /// Runs one discarded Vulkan encode on slot 0's zero-initialized planes so
-    /// Granite synchronously compiles its compute pipelines and allocates the
-    /// frame context's staging buffers during encoder creation rather than on
-    /// frame 1.
+    /// Runs one discarded Vulkan encode on every frame context `0..self.depth`
+    /// so Granite compiles its compute pipelines and allocates every frame
+    /// context's staging/readback buffers during creation rather than on frames 1–2.
     fn warm_up(&mut self) -> Result<()> {
         let budget = warmup_budget(
             &self.config,
             self.critical_fec,
             self.critical_fec_percentage,
         );
-        let release_value = {
-            let slot = &mut self.slots[0];
-            let images: [p::pyrowave_gpu_external_reference; 3] =
-                std::array::from_fn(|plane| p::pyrowave_gpu_external_reference {
-                    image: slot.planes[plane].image,
-                    queue_family_index: 0xfffffffe,
-                });
-            let views = [
-                slot.planes[0].view,
-                slot.planes[1].view,
-                slot.planes[2].view,
-            ];
-            slot.sync.counter = slot
-                .sync
-                .counter
-                .checked_add(1)
-                .context("PyroWave fence exhausted")?;
-            let release_value = slot.sync.counter;
-            let semaphore = slot.semaphore();
-            let acquire = p::pyrowave_gpu_sync_operation {
-                images: images.as_ptr(),
-                num_images: 3,
-                sync: p::pyrowave_sync_point {
-                    semaphore: ptr::null_mut(),
-                    value: 0,
-                },
-            };
-            let release = p::pyrowave_gpu_sync_operation {
-                sync: p::pyrowave_sync_point {
-                    semaphore,
-                    value: release_value,
-                },
-                ..acquire
-            };
-            let buffers = p::pyrowave_gpu_buffers { planes: views };
-            // SAFETY: `images`, `acquire`, `release` and `buffers` are live locals naming slot
-            // 0's images and views on `self.device`; `acquire` uses `VK_NULL_HANDLE` ("no sync",
-            // pyrowave.h) because freshly allocated D3D11 planes have no pending GPU writes.
-            unsafe {
-                if self.depth > 1 {
-                    let set = self
-                        .api
-                        .set_frame_context
-                        .context("PyroWave frame contexts unavailable")?;
-                    check(set(self.encoder, 0))?;
-                }
-                check((self.api.encoder_encode_gpu)(
-                    self.encoder,
-                    &acquire,
-                    &release,
-                    &buffers,
-                    &p::pyrowave_rate_control {
-                        maximum_bitstream_size: budget,
-                    },
-                ))?;
-            }
-            release_value
-        };
-        let submitted = Instant::now();
-        let completion = self
-            .completion
-            .as_ref()
-            .context("PyroWave completion wait")?;
-        let semaphore = self.slots[0].semaphore();
-        let waited = settle(
-            |timeout| completion.reached(semaphore, release_value, timeout),
-            submitted,
-            Instant::now(),
-            true,
-        );
-        let removed = self.device_removed();
-        finish_warmup(
-            waited,
-            removed,
-            &mut self.flights.unconfirmed,
-            &mut self.lost,
-        )
+        for slot_index in 0..self.depth {
+            let release_value = self.slots[slot_index].warm_up_submit(
+                &self.api,
+                self.encoder,
+                self.depth,
+                slot_index,
+                budget,
+            )?;
+            let submitted = Instant::now();
+            let completion = self
+                .completion
+                .as_ref()
+                .context("PyroWave completion wait")?;
+            let semaphore = self.slots[slot_index].semaphore();
+            let waited = settle(
+                |timeout| completion.reached(semaphore, release_value, timeout),
+                submitted,
+                Instant::now(),
+                true,
+            );
+            let removed = self.device_removed();
+            finish_warmup(
+                waited,
+                removed,
+                &mut self.flights.unconfirmed,
+                &mut self.lost,
+            )?;
+        }
+        Ok(())
     }
     pub fn accepts_gpu_device(&self, image: &GpuImage) -> bool {
         self.d3d.device.as_raw() == image.gpu.device.as_raw()
@@ -721,8 +701,7 @@ impl Encoder {
     }
     /// The D3D12 device that converts on the compute queue, when it is lost.
     fn compute_device_removed(&self) -> Option<crate::device_loss::DeviceLost> {
-        let compute = self.slots.first()?.compute.as_ref()?.converter.compute();
-        crate::device_loss::DeviceLost::d3d12(&compute.device)
+        crate::device_loss::DeviceLost::d3d12(&self.compute.as_ref()?.compute().device)
     }
     /// A D3D device is lost: its queued work is dead, so the capture leases
     /// are free and the adapter is not quarantined; the host rebuilds the
@@ -848,8 +827,8 @@ impl Encoder {
     }
     fn quarantine(&self) {
         quarantined_adapters().block(self.adapter);
-        for compute in self.slots.iter().filter_map(|slot| slot.compute.as_ref()) {
-            compute.converter.compute().retire();
+        if let Some(compute) = &self.compute {
+            compute.compute().retire();
         }
         self.warnings.set("pyrowave_gpu_quarantine", "PyroWave stopped after GPU work could not be confirmed complete. Its resources are retained to protect capture; restart Rubylight before using PyroWave on this adapter again, or use HEVC/AV1.");
     }
@@ -933,14 +912,19 @@ impl Encoder {
         let mut frames = Vec::new();
         let source = (image.width, image.height, image.pixel);
         if source_rebuilds_slots(self.source, source) {
-            // The frames in flight still read the planes about to go.
-            frames.extend(self.collect(true)?);
-            self.slots.clear();
-            self.armed.set(None);
-            self.warnings.clear("pyrowave_conversion");
+            // Only the D3D11 fallback converter depends on source format/size;
+            // keep Vulkan PlaneImages and D3D12 ComputeTargets intact.
+            if self.slots.iter().any(|slot| slot.converter.is_some()) {
+                frames.extend(self.collect(true)?);
+                for slot in &mut self.slots {
+                    slot.converter = None;
+                }
+            }
+            self.repeat_cache.clear();
         }
         self.source = Some(source);
-        let interval = self.interval.next(begin, std::mem::take(&mut self.repeat));
+        let repeat = std::mem::take(&mut self.repeat);
+        let interval = self.interval.next(begin, repeat);
         let budget = pyrowave::budget_with_minimum(
             kbps,
             interval,
@@ -953,6 +937,56 @@ impl Encoder {
             frames.extend(self.collect(false)?);
             return Ok(frames);
         }
+        let limit = pyrowave::max_frame_bytes(self.config.packet_size, self.critical_fec);
+        let cache_repeat = if !repeat {
+            self.repeat_cache.clear();
+            None
+        } else if self.config.pyrowave_records {
+            let pending_match = self.flights.queue.iter().any(|flight| {
+                flight.cache_repeat.as_ref().is_some_and(|key| {
+                    key.matches(image, self.luminance, self.overlay.as_ref(), kbps)
+                })
+            });
+            if !self.flights.is_empty()
+                && (pending_match
+                    || self.repeat_cache.matches(
+                        image,
+                        self.luminance,
+                        self.overlay.as_ref(),
+                        kbps,
+                        limit,
+                    ))
+            {
+                frames.extend(self.collect(true)?);
+            }
+            if let Some(bytes) =
+                self.repeat_cache
+                    .try_hit(image, self.luminance, self.overlay.as_ref(), kbps, limit)
+            {
+                self.submitted = Some(Instant::now());
+                frames.push(Encoded {
+                    bytes,
+                    framing: None,
+                    unit: crate::encoder::Unit::Whole,
+                    idr: true,
+                    after_invalidation: false,
+                    frame_cap_bytes: None,
+                    reencoded: false,
+                    frame_cap_target: None,
+                    latency: Some(begin.elapsed()),
+                    presentation: Some(image.captured),
+                });
+                return Ok(frames);
+            }
+            Some(RepeatKey::new(
+                image,
+                self.luminance,
+                self.overlay.as_ref(),
+                kbps,
+            ))
+        } else {
+            None
+        };
         // A caller past the backlog waits for the oldest frame here.
         while self.flights.len() >= self.depth {
             match self.complete(true)? {
@@ -965,6 +999,7 @@ impl Encoder {
             .free_slot(self.depth)
             .context("no free PyroWave frame slot")?;
         if slot == self.slots.len() {
+            let compute_device = self.compute.as_ref().map(|c| c.compute().clone());
             self.slots.push(timed("PyroWave slot create", || {
                 Slot::new(
                     &self.api,
@@ -972,7 +1007,7 @@ impl Encoder {
                     self.device,
                     &self.config,
                     Some(source),
-                    self.use_compute,
+                    compute_device.as_ref(),
                     &self.warnings,
                 )
             })?);
@@ -1003,6 +1038,8 @@ impl Encoder {
                 kbps,
                 interval,
             },
+            seq_offset: self.repeat_cache.seq_offset(),
+            cache_repeat,
         });
         // One frame in flight waits for it here, as the encode always did.
         frames.extend(self.collect(self.depth == 1)?);
@@ -1033,13 +1070,22 @@ impl Encoder {
             .counter
             .checked_add(1)
             .context("PyroWave fence exhausted")?;
-        let compute = compute
-            .as_mut()
-            .filter(|_| crate::compute::shareable(&image.texture));
-        let converted = if let Some(compute) = compute {
-            compute.converter.set_overlay(self.overlay.as_ref());
+        let compute = self.compute.as_mut().zip(
+            compute
+                .as_mut()
+                .filter(|_| crate::compute::shareable(&image.texture)),
+        );
+        let converted = if let Some((converter, target)) = compute {
+            converter.set_overlay(self.overlay.as_ref());
             timed("PyroWave compute conversion", || {
-                compute.convert(image, &self.config, self.luminance, after, sync.counter)
+                target.convert(
+                    converter,
+                    image,
+                    &self.config,
+                    self.luminance,
+                    after,
+                    sync.counter,
+                )
             })
         } else {
             (|| -> Result<()> {
@@ -1198,6 +1244,9 @@ impl Encoder {
                 bytes.copy_within(offset..end, 0);
             }
             bytes.truncate(size);
+            if frame.seq_offset != 0 {
+                repeat::shift_sequence(&mut bytes, frame.seq_offset)?;
+            }
             let payload = pyrowave::aligned_payload(self.config.packet_size);
             let framing =
                 pyrowave::Framing::records(&bytes, payload, limit, self.config.pyrowave_row_order)?;
@@ -1280,6 +1329,14 @@ impl Encoder {
             // Its buffer goes back to the pool as it drops.
             return Ok(None);
         }
+        if let Some(key) = frame.cache_repeat
+            && let Ok(payload) = encoded.payload()
+            && let Err(error) = self
+                .repeat_cache
+                .store(key, payload.to_vec(), frame.seq_offset)
+        {
+            tracing::debug!(%error, "PyroWave repeat cache skipped");
+        }
         Ok(Some(encoded))
     }
     /// Encodes `image` and waits for it, for tests that check each frame.
@@ -1296,14 +1353,16 @@ impl Encoder {
     }
     /// Whether the first slot converts on the compute queue.
     pub(crate) fn converts_on_compute(&self) -> bool {
-        self.slots
-            .first()
-            .is_some_and(|slot| slot.compute.is_some())
+        self.compute.is_some()
+            && self
+                .slots
+                .first()
+                .is_some_and(|slot| slot.compute.is_some())
     }
-    /// The compute converter of the first slot.
+    /// The compute converter of the encoder.
     #[cfg(test)]
     pub(crate) fn compute(&self) -> Option<&Arc<crate::compute::Compute>> {
-        Some(self.slots.first()?.compute.as_ref()?.converter.compute())
+        Some(self.compute.as_ref()?.compute())
     }
     /// The Vulkan images of the first slot's planes.
     #[cfg(test)]
@@ -1354,6 +1413,7 @@ impl Drop for Encoder {
             self.flights.retain();
             retain_pending(&mut self.completion);
             std::mem::forget(std::mem::take(&mut self.slots));
+            retain_pending(&mut self.compute);
             std::mem::forget(self.api.clone());
             std::mem::forget(self.d3d.clone());
             return;

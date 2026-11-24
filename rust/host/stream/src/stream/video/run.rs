@@ -526,7 +526,7 @@ impl SessionThread<'_> {
                         if st.sent.packets > 0 {
                             s.keyframe_abandoned_as(st.wire_frame, false);
                         }
-                        slice_spare = st.frame.into_buffer();
+                        slice_spare = recycle_streamed_pieces(st.frame);
                         continue 'frames;
                     }
                     // The last unit is out: account for the frame as for a whole one.
@@ -575,7 +575,7 @@ impl SessionThread<'_> {
                             s.record_sent(wire_frame, timestamp, &stamps, start);
                         }
                     }
-                    slice_spare = streamed.into_buffer();
+                    slice_spare = recycle_streamed_pieces(streamed);
                     continue 'frames;
                 }
                 let frame_started = Instant::now();
@@ -1219,11 +1219,8 @@ impl SessionThread<'_> {
                             let poll_tick = Instant::now();
                             send_frames(recovery.collect(&mut encoder, &s.launch.warnings, Instant::now)?, peer, Duration::ZERO, latest, poll_tick)?;
                             if encoder.as_ref().is_some_and(|e| recovery.pending(e)) {
-                                timer.until_or_event(
-                                    next_output_poll(encoder.as_ref(), Instant::now())
-                                        .min(due),
-                                    encoder.as_ref().and_then(Encoder::output_event),
-                                )?;
+                                let (until, output) = output_wait(encoder.as_ref(), Instant::now(), due);
+                                timer.until_or_event(until, output)?;
                             }
                         } else {
                             timer.until(due);
@@ -1339,19 +1336,19 @@ impl SessionThread<'_> {
                         send_frames(recovery.collect(&mut encoder, &s.launch.warnings, Instant::now)?, peer, Duration::ZERO, latest, capture_tick)?;
                     }
                     let now = Instant::now();
-                    let until = if encoder.as_ref().is_some_and(|e| recovery.pending(e))
+                    let (until, output) = if encoder.as_ref().is_some_and(|e| recovery.pending(e))
                         && poll_fits(encoder.as_ref(), now, deadline)
                     {
-                        deadline.min(next_output_poll(encoder.as_ref(), now))
+                        output_wait(encoder.as_ref(), now, deadline)
                     } else {
-                        deadline
+                        (deadline, None)
                     };
                     // The claim itself is met precisely; a poll for the
                     // encoder's output is not worth spinning for.
-                    if until == deadline {
+                    if until == deadline && output.is_none() {
                         latest.wait_if_current_precise(&timer, &capture_wake, &raw_image, until)?;
                     } else {
-                        latest.wait_if_current_or(&timer, &capture_wake, &raw_image, until, encoder.as_ref().and_then(Encoder::output_event))?;
+                        latest.wait_if_current_or(&timer, &capture_wake, &raw_image, until, output)?;
                     }
                     Ok(())
                     })?;
@@ -1387,10 +1384,10 @@ impl SessionThread<'_> {
                 {
                     AdmissionTrace::measure(&mut admission_trace, AdmissionWait::Repeat, || -> Result<()> {
                     if encoder.as_ref().is_some_and(|e| recovery.pending(e)) { send_frames(recovery.collect(&mut encoder, &s.launch.warnings, Instant::now)?, peer, Duration::ZERO, latest, capture_tick)?; }
-                    let pending = encoder.as_ref().is_some_and(|e| recovery.pending(e));
-                    let wait = if pending { next_output_poll(encoder.as_ref(), Instant::now()).saturating_duration_since(Instant::now()) } else { period };
-                    let output = encoder.as_ref().filter(|_| pending).and_then(Encoder::output_event);
-                    latest.wait_if_current_or(&timer, &capture_wake, &raw_image, Instant::now() + wait.min(reencode_at.saturating_duration_since(Instant::now())), output)?;
+                    let now = Instant::now();
+                    let cap = reencode_at.min(now + period);
+                    let (until, output) = if encoder.as_ref().is_some_and(|e| recovery.pending(e)) { output_wait(encoder.as_ref(), now, cap) } else { (cap, None) };
+                    latest.wait_if_current_or(&timer, &capture_wake, &raw_image, until, output)?;
                     Ok(())
                     })?;
                     continue;

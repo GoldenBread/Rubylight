@@ -1029,19 +1029,19 @@ pub fn counts_toward_rate(fresh: bool, recovery: bool) -> bool {
 /// its next complete frame and a round trip; the host knows at once.
 pub struct SendLoss {
     /// Data and parity shards of each FEC block, in send order.
-    blocks: Vec<(usize, usize)>,
+    blocks: crate::packet::InlineBlocks<(usize, usize)>,
     /// Upper bound of lost packets in each block.
-    lost: Vec<usize>,
+    lost: crate::packet::InlineBlocks<usize>,
     /// Packets handed to the socket so far, and how many it refused.
     offered: usize,
     refused: usize,
 }
 impl SendLoss {
-    pub fn new(blocks: Vec<(usize, usize)>) -> Self {
-        let lost = vec![0; blocks.len()];
+    pub fn new(blocks: impl IntoIterator<Item = (usize, usize)>) -> Self {
+        let blocks: crate::packet::InlineBlocks<_> = blocks.into_iter().collect();
         Self {
+            lost: crate::packet::InlineBlocks::zeros(blocks.len()),
             blocks,
-            lost,
             offered: 0,
             refused: 0,
         }
@@ -1051,7 +1051,7 @@ impl SendLoss {
     /// before its packets are recorded; the result then matches `new` with
     /// the whole layout.
     pub fn streamed() -> Self {
-        Self::new(Vec::new())
+        Self::new([])
     }
     /// The next block of a streamed frame: its data and parity shards.
     pub fn push_block(&mut self, data: usize, parity: usize) {
@@ -1084,7 +1084,7 @@ impl SendLoss {
     pub fn unrecoverable(&self) -> bool {
         self.blocks
             .iter()
-            .zip(&self.lost)
+            .zip(self.lost.iter())
             .any(|((_, parity), lost)| lost > parity)
     }
 }

@@ -310,6 +310,7 @@ impl Media {
         let mut feedback_at = Instant::now();
         let mut controller_cleanup = Instant::now();
         let mut unattended_sweep = UnattendedSweep::new(Instant::now());
+        let mut scratch: ReceiveScratch = Default::default();
         while !h.stop.load(Ordering::Acquire) {
             while self.control_wake_receiver.recv(&mut [0]).is_ok() {}
             // The host stops before `h.stop` is set (Ctrl+C): every client hears it, as it
@@ -342,7 +343,6 @@ impl Media {
                 fixture.reset_peer(&mut host, &peers);
             }
             let mut disconnected = Vec::new();
-            let mut clock_syncs: Vec<(PeerID, u16, Instant, Vec<u8>)> = Vec::new();
             // Acknowledgements and anything else ENet sends wait until this
             // pass's input is applied.
             host.socket_mut().hold();
@@ -551,7 +551,7 @@ impl Media {
                                 p,
                                 &s,
                                 &buffered,
-                                &mut clock_syncs,
+                                &mut scratch,
                             );
                         }
                         if !s.stopping() {
@@ -563,7 +563,7 @@ impl Media {
                                 p,
                                 &s,
                                 packet.data(),
-                                &mut clock_syncs,
+                                &mut scratch,
                             );
                         }
                     }
@@ -636,7 +636,7 @@ impl Media {
                                 p,
                                 &s,
                                 &buffered,
-                                &mut clock_syncs,
+                                &mut scratch,
                             );
                         }
                     }
@@ -1133,8 +1133,8 @@ impl Media {
                 }
             }
             host.socket_mut().release()?;
-            if !clock_syncs.is_empty() {
-                send_clock_syncs(&mut host, &mut peers, &mut clock_syncs);
+            if !scratch.0.is_empty() {
+                send_clock_syncs(&mut host, &mut peers, &mut scratch.0);
                 host.flush();
             }
             // Release held input now; gamepad workers unplug their pads asynchronously.
@@ -1299,6 +1299,9 @@ impl Media {
     }
 }
 
+/// Reusable per-loop buffers: clock syncs, control packet, legacy input.
+type ReceiveScratch = (Vec<(PeerID, u16, Instant, Vec<u8>)>, Vec<u8>, Vec<u8>);
+
 #[allow(clippy::too_many_arguments)]
 fn handle_control_packet(
     h: &Shared,
@@ -1308,7 +1311,7 @@ fn handle_control_packet(
     p: &mut ControlPeer,
     s: &Arc<Session>,
     b: &[u8],
-    clock_syncs: &mut Vec<(PeerID, u16, Instant, Vec<u8>)>,
+    scratch: &mut ReceiveScratch,
 ) {
     if b.len() < 2 || b.len() > 65536 {
         return;
@@ -1317,21 +1320,17 @@ fn handle_control_packet(
     if s.config.encryption & 1 != 0 && !encrypted {
         return;
     }
-    let parsed = if encrypted {
+    let (kind, payload) = match if encrypted {
         p.ciphers
             .get(&s.launch.key, s.config.encryption & 1 != 0)
-            .open(b)
+            .open_into(b, &mut scratch.1)
             .and_then(|(seq, kind, payload)| {
-                if !p.received.accept(seq) {
-                    anyhow::bail!("replayed control message");
-                }
+                anyhow::ensure!(p.received.accept(seq), "replayed control message");
                 Ok((kind, payload))
             })
     } else {
         butterpollo_media_policy::packet::control_header(b)
-            .map(|(kind, payload)| (kind, payload.to_vec()))
-    };
-    let (kind, payload) = match parsed {
+    } {
         Ok(v) => v,
         Err(e) => {
             tracing::debug!(error=%e,"invalid control packet");
@@ -1341,7 +1340,7 @@ fn handle_control_packet(
     p.seen = Instant::now();
     p.input_released = false;
     match kind {
-        0x0200 => s.record_control_ping(Instant::now(), &payload),
+        0x0200 => s.record_control_ping(Instant::now(), payload),
         controller_audio::CONTROL | controller_audio::MICROPHONE
             if encrypted && haptics_negotiated(&s.config, peer.channel_count()) =>
         {
@@ -1349,7 +1348,7 @@ fn handle_control_packet(
                 return;
             }
             if kind == controller_audio::CONTROL {
-                if let Some((id, flags)) = controller_audio::status(&payload) {
+                if let Some((id, flags)) = controller_audio::status(payload) {
                     let Ok(config) = p.config(h, s) else {
                         return;
                     };
@@ -1365,7 +1364,7 @@ fn handle_control_packet(
                     {
                         s.launch.warnings.set("audio_controller_scope", "Game-only audio suppresses dedicated USB controller speaker sound because that endpoint cannot identify its source process. The normal captured game stream still routes to a connected controller headset; haptics and microphone settings remain independent.");
                     }
-                    let mut state = payload.clone();
+                    let mut state = payload.to_vec();
                     state[4] = policy.device_flags;
                     if let Some(i) = &p.injector {
                         i.controller_audio(id, kind, &state);
@@ -1387,19 +1386,19 @@ fn handle_control_packet(
                         );
                     }
                 }
-            } else if let Some((id, _, _)) = controller_audio::pcm(&payload)
+            } else if let Some((id, _, _)) = controller_audio::pcm(payload)
                 && p.controller_audio[id as usize]
                     & (controller_audio::CAPTURE | controller_audio::MUTED)
                     == controller_audio::CAPTURE
                 && let Some(i) = &p.injector
             {
                 p.controller_pcm.observe(id, kind, Instant::now());
-                i.controller_audio(id, kind, &payload);
+                i.controller_audio(id, kind, payload);
             }
         }
         0x3000 => {
             if let Some(run) =
-                server_command(h, &s.launch.client, &payload, encrypted, &mut p.command_at)
+                server_command(h, &s.launch.client, payload, encrypted, &mut p.command_at)
                 && let Err(e) = commands.try_send((s.clone(), run))
             {
                 tracing::warn!(error=%e, "configured server command failed");
@@ -1420,15 +1419,15 @@ fn handle_control_packet(
         0x0302 => s.request_client_keyframe(),
         // This dispatch receives only client-to-host packets;
         // 0x5502 in the other direction is controller feedback.
-        0x5502 => s.record_fec_status(&payload),
+        0x5502 => s.record_fec_status(payload),
         // Per-packet arrival feedback, unreliable and dropped when invalid.
         butterpollo_media_policy::congestion::TRANSPORT_FEEDBACK_MESSAGE_TYPE => {
-            if !s.record_transport_feedback(&payload) {
+            if !s.record_transport_feedback(payload) {
                 tracing::trace!(bytes = payload.len(), "transport feedback ignored");
             }
         }
         butterpollo_media_policy::statistical_fec::FEC_REPORT_MESSAGE_TYPE => {
-            match s.record_fec_report(&payload) {
+            match s.record_fec_report(payload) {
                 Ok((report, used)) => tracing::debug!(
                     seq = report.seq,
                     data = report.data_shards,
@@ -1449,7 +1448,7 @@ fn handle_control_packet(
                 .phase_sync
                 .lock()
                 .unwrap()
-                .on_payload(Instant::now(), &payload)
+                .on_payload(Instant::now(), payload)
             {
                 Some(report) => tracing::debug!(
                     lead_ns = report.lead_ns,
@@ -1463,10 +1462,10 @@ fn handle_control_packet(
         }
         // Deferred until the socket is unheld so `host_send_us` matches actual send time.
         butterpollo_media_policy::clock_sync::CLOCK_SYNC_MESSAGE_TYPE => {
-            clock_syncs.push((peer.id(), kind, p.seen, payload));
+            scratch.0.push((peer.id(), kind, p.seen, payload.to_vec()));
         }
         butterpollo_media_policy::host_timing::HOST_TIMING_MESSAGE_TYPE => {
-            match s.host_timings.on_request(&payload) {
+            match s.host_timings.on_request(payload) {
                 Some(enabled) => tracing::info!(
                     client = %s.launch.client.name,
                     enabled,
@@ -1476,7 +1475,7 @@ fn handle_control_packet(
             }
         }
         butterpollo_media_policy::link_notice::LINK_NOTICE_MESSAGE_TYPE => {
-            match s.link_notices.on_request(&payload) {
+            match s.link_notices.on_request(payload) {
                 Some(enabled) => tracing::info!(
                     client = %s.launch.client.name,
                     enabled,
@@ -1487,10 +1486,7 @@ fn handle_control_packet(
         }
         butterpollo_media_policy::pipeline_rates::PIPELINE_RATES_MESSAGE_TYPE => {
             let counts = s.pipeline_counts();
-            match s
-                .pipeline_rates
-                .on_request(Instant::now(), &payload, counts)
-            {
+            match s.pipeline_rates.on_request(Instant::now(), payload, counts) {
                 Some(enabled) => tracing::info!(
                     client = %s.launch.client.name,
                     enabled,
@@ -1508,7 +1504,7 @@ fn handle_control_packet(
             let offered = crate::extensions::offered(h, &config).text_input
                 && s.launch.client.allows(input::KEYBOARD_PERMISSION);
             let surrounding = encrypted && config.text_input_surrounding_text();
-            let watch = s.text_input.on_request(&payload, offered, surrounding);
+            let watch = s.text_input.on_request(payload, offered, surrounding);
             match watch {
                 Some(watch) => {
                     tracing::info!(
@@ -1543,7 +1539,7 @@ fn handle_control_packet(
             } else {
                 clipboard_sync::Allowed::default()
             };
-            p.clipboard_sync.receive(s, &payload, allowed, control_wake);
+            p.clipboard_sync.receive(s, payload, allowed, control_wake);
         }
         // The latest report wins; the injector maps keys with it.
         butterpollo_input_policy::keyboard_layout::KEYBOARD_LAYOUT_MESSAGE_TYPE => {
@@ -1559,7 +1555,7 @@ fn handle_control_packet(
                 tracing::debug!("keyboard layout report without the keyboard permission");
                 return;
             }
-            match butterpollo_input_policy::keyboard_layout::KeyboardLayout::decode(&payload) {
+            match butterpollo_input_policy::keyboard_layout::KeyboardLayout::decode(payload) {
                 Some(layout) => {
                     // Resolved once here; the layout is read on this
                     // loop, never with input.
@@ -1588,10 +1584,7 @@ fn handle_control_packet(
                 return;
             };
             let offered = crate::extensions::offered(h, &config).cursor_shape;
-            match s
-                .client_cursor
-                .on_request(&payload, offered, p.cursor_owner)
-            {
+            match s.client_cursor.on_request(payload, offered, p.cursor_owner) {
                 Some(enabled) => {
                     tracing::info!(
                         client = %s.launch.client.name,
@@ -1623,7 +1616,7 @@ fn handle_control_packet(
             s.frame_warp.set_wake(Arc::new(move || {
                 let _ = wake.send(&[1]);
             }));
-            match s.frame_warp.on_request(&payload) {
+            match s.frame_warp.on_request(payload) {
                 Some(enabled) => {
                     if enabled != was {
                         tracing::info!(
@@ -1640,7 +1633,7 @@ fn handle_control_packet(
         // The registry checks the setting and the device's permission and
         // queues the answer, which the pass below sends.
         rubylight_protocol::usb::USB_MESSAGE_TYPE if encrypted => {
-            match rubylight_protocol::usb::UsbMessage::decode(&payload) {
+            match rubylight_protocol::usb::UsbMessage::decode(payload) {
                 Some(message) => {
                     let (enabled, limit) = {
                         let config = h.config.read().unwrap();
@@ -1659,7 +1652,7 @@ fn handle_control_packet(
             }
         }
         butterpollo_media_policy::display_caps::DISPLAY_CAPS_MESSAGE_TYPE => {
-            match s.record_display_caps(&payload) {
+            match s.record_display_caps(payload) {
                 Some(update) if update.changed => {
                     tracing::info!(
                         client = %s.launch.client.name,
@@ -1679,7 +1672,7 @@ fn handle_control_packet(
         butterpollo_media_policy::reconfigure::RECONFIGURE_MESSAGE_TYPE => {
             let outcome = {
                 let mut reconfigure = s.reconfigure.lock().unwrap();
-                let outcome = reconfigure.on_payload(Instant::now(), &payload);
+                let outcome = reconfigure.on_payload(Instant::now(), payload);
                 s.rate_changes.on_reconfigure(outcome);
                 outcome
             };
@@ -1693,7 +1686,7 @@ fn handle_control_packet(
                 tracing::debug!("rate change not offered");
                 return;
             }
-            let Some(request) = rate_change::RateChangeRequest::decode(&payload) else {
+            let Some(request) = rate_change::RateChangeRequest::decode(payload) else {
                 tracing::warn!(len = payload.len(), "invalid rate change request");
                 return;
             };
@@ -1782,12 +1775,13 @@ fn handle_control_packet(
             }
         }
         0x0206 => {
-            let raw = if encrypted {
-                Ok(payload)
+            let event = if encrypted {
+                input::decode(payload)
             } else {
-                p.legacy.open(&s.launch.key, &payload)
+                p.legacy
+                    .open_into(&s.launch.key, payload, &mut scratch.2)
+                    .and_then(input::decode)
             };
-            let event = raw.and_then(|raw| input::decode(&raw));
             match event {
                 // Say once per kind that the device may not
                 // send it: dropped silently, a phone's

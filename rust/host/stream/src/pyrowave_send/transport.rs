@@ -83,11 +83,11 @@ pub(super) fn run(
             .store(u64::from(frame.wire_frame) + 1, Ordering::Release);
         let mut handed = std::mem::take(&mut frame.blocks).into_iter();
         let mut stalled = false;
-        while let Some(packets) = handed
+        while let Some(block) = handed
             .next()
             .or_else(|| frame.streamed.then(|| next_block(shared)).flatten())
         {
-            let mut remaining = packets.as_slice();
+            let mut remaining = &block.packets[..block.count];
             while !remaining.is_empty() {
                 if shared.stop.load(Ordering::Acquire)
                     || current.stopping()
@@ -136,7 +136,7 @@ pub(super) fn run(
                     break;
                 }
             }
-            shared.pool.give(packets);
+            shared.pool.give(block.packets);
             if stalled {
                 break;
             }
@@ -212,7 +212,7 @@ pub(super) fn run(
 
 /// The next block of the streamed frame being sent, waiting while the
 /// packetizer builds it; none once the frame is complete or abandoned.
-pub(super) fn next_block(shared: &Slot) -> Option<PacketBlock> {
+pub(super) fn next_block(shared: &Slot) -> Option<SentBlock> {
     let mut ready = shared.ready.lock().unwrap();
     loop {
         if let Some(block) = ready.blocks.pop_front() {
@@ -234,17 +234,13 @@ pub(super) fn next_block(shared: &Slot) -> Option<PacketBlock> {
 /// block, every later block the packetizer still builds. Left queued they
 /// keep [`Ready::idle`] false for the rest of the session, so no later frame
 /// leaves block by block, and they never return to the pool.
-pub(super) fn discard_rest(
-    shared: &Slot,
-    handed: impl Iterator<Item = PacketBlock>,
-    streamed: bool,
-) {
+pub(super) fn discard_rest(shared: &Slot, handed: impl Iterator<Item = SentBlock>, streamed: bool) {
     for block in handed {
-        shared.pool.give(block);
+        shared.pool.give(block.packets);
     }
     if streamed {
         while let Some(block) = next_block(shared) {
-            shared.pool.give(block);
+            shared.pool.give(block.packets);
         }
     }
 }

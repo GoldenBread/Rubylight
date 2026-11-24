@@ -41,8 +41,23 @@ struct Frame {
     /// A new picture's claim, for the stage timings.
     claim: Option<Claim>,
 }
+/// One filled PyroWave FEC block from the packetizer's pool: `packets[..count]`
+/// holds this block's datagrams while any trailing shard buffers stay allocated
+/// so alternating critical and detail block sizes never reallocate them.
+#[derive(Debug, PartialEq, Eq)]
+struct SentBlock {
+    packets: PacketBlock,
+    count: usize,
+}
+impl SentBlock {
+    #[cfg(test)]
+    fn from_packets(packets: PacketBlock) -> Self {
+        let count = packets.len();
+        Self { packets, count }
+    }
+}
 struct Prepared {
-    blocks: Vec<PacketBlock>,
+    blocks: Vec<SentBlock>,
     peer: SocketAddr,
     claimed: Instant,
     processing: u64,
@@ -69,7 +84,7 @@ struct Prepared {
 struct Ready {
     frame: Option<Prepared>,
     /// Blocks after the first of the streamed frame, in order.
-    blocks: VecDeque<PacketBlock>,
+    blocks: VecDeque<SentBlock>,
     /// The packetizer still builds blocks of the streamed frame.
     open: bool,
     /// The paced sender has a frame in hand.
@@ -92,11 +107,11 @@ impl Ready {
         };
         if old.streamed {
             for block in self.blocks.drain(..) {
-                pool.give(block);
+                pool.give(block.packets);
             }
         }
         for block in old.blocks {
-            pool.give(block);
+            pool.give(block.packets);
         }
         true
     }
@@ -168,8 +183,8 @@ impl Slot {
     /// sender stops there. Returns whether the whole frame was handed over.
     fn hand_over(
         &self,
-        blocks: impl Iterator<Item = Option<PacketBlock>>,
-        first: impl FnOnce(PacketBlock) -> Prepared,
+        blocks: impl Iterator<Item = Option<SentBlock>>,
+        first: impl FnOnce(SentBlock) -> Prepared,
     ) -> bool {
         let mut first = Some(first);
         let mut complete = true;
@@ -179,14 +194,14 @@ impl Slot {
                 None => {
                     ready.open = false;
                     for block in ready.blocks.drain(..) {
-                        self.pool.give(block);
+                        self.pool.give(block.packets);
                     }
                     // The packetizer only streams to an idle sender: a streamed
                     // frame still queued is this one.
                     match ready.frame.take_if(|frame| frame.streamed) {
                         Some(frame) => {
                             for block in frame.blocks {
-                                self.pool.give(block);
+                                self.pool.give(block.packets);
                             }
                         }
                         None => ready.abandoned = ready.sending,
@@ -327,7 +342,7 @@ impl Sender {
                 let processing = micros(packetized.saturating_duration_since(processing_started));
                 // The framed picture is copied from the codec's output straight into the packets.
                 let prepared = match frame.payload() {
-                    Ok(payload) => packetizer.pyrowave_blocks_in(payload, timestamp, processing, PyrowaveFec {
+                    Ok(payload) => packetizer.pyrowave_blocks_pooled(payload, timestamp, processing, PyrowaveFec {
                         records: current.config.pyrowave_records, critical_percentage, detail_percentage,
                         wire_budget, ipv6: peer.ip().to_canonical().is_ipv6(),
                     }, Some(&shared.pool)),
@@ -335,6 +350,7 @@ impl Sender {
                 };
                 let wire_len = frame.wire_len();
                 let Some((packets, limited, blocks)) = dropped.prepared(prepared, wire_len, now, &current.launch.warnings) else { continue };
+                let blocks = blocks.map(|item| item.map(|(packets, count)| SentBlock { packets, count }));
                 if limited && fec_reported.is_none_or(|at| at.elapsed() >= Duration::from_secs(1)) {
                     fec_reported = Some(Instant::now());
                     current.launch.warnings.event("pyrowave_fec_frame", "PyroWave error correction was reduced or omitted because the frame and its parity cannot fit the supported wire blocks. Recovery protection is reduced; lower bitrate/resolution or use HEVC/AV1 on a lossy link.", butterpollo_session::session::EVENT_PERIOD);
@@ -351,10 +367,10 @@ impl Sender {
                     shared.hand_over(blocks, |block| details(vec![block], true));
                     continue;
                 }
-                let mut ready = Vec::new();
+                let mut ready: Vec<SentBlock> = Vec::new();
                 for block in blocks {
                     let Some(block) = dropped.prepared(block, wire_len, Instant::now(), &current.launch.warnings) else {
-                        for block in ready { shared.pool.give(block); }
+                        for block in ready { shared.pool.give(block.packets); }
                         continue 'frames
                     };
                     ready.push(block);

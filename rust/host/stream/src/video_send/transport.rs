@@ -267,7 +267,7 @@ impl Transport<'_> {
             lost: if frame.stream.is_some() {
                 SendLoss::streamed()
             } else {
-                SendLoss::new(frame.layout.clone())
+                SendLoss::new(frame.layout)
             },
             given_up: false,
             abandoned: 0,

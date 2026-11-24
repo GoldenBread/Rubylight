@@ -100,6 +100,11 @@ struct Driver {
     maps: Vec<Option<Vec<i8>>>,
     /// Each picture submission's parameters, as passed.
     pictures: Vec<NV_ENC_PIC_PARAMS>,
+    hold_event: bool,
+    reconfigure_count: usize,
+    lock_do_not_wait: Vec<u32>,
+    cuda_streams: Vec<(usize, usize)>,
+    reject_cuda_streams: bool,
 }
 /// The D3D12 output fence, whose value the fake driver keeps.
 struct FakeFence;
@@ -161,6 +166,7 @@ unsafe extern "C" fn create(table: *mut NV_ENCODE_API_FUNCTION_LIST) -> NVENCSTA
     table.nvEncUnlockBitstream = Some(unlock);
     table.nvEncReconfigureEncoder = Some(reconfigure);
     table.nvEncInvalidateRefFrames = Some(invalidate);
+    table.nvEncSetIOCudaStreams = Some(opt_tests::set_io_cuda_streams);
     table.nvEncDestroyEncoder = Some(destroy);
     SUCCESS
 }
@@ -579,10 +585,12 @@ unsafe extern "C" fn encode(raw: *mut c_void, parameters: *mut NV_ENC_PIC_PARAMS
         }
         if !p.completionEvent.is_null() {
             assert!(d.events.contains(&(p.completionEvent as usize)));
-            // SAFETY: `completionEvent` is the slot's live event, registered with this driver
-            // (asserted above).
-            unsafe {
-                SetEvent(HANDLE(p.completionEvent)).unwrap();
+            if !d.hold_event {
+                // SAFETY: `completionEvent` is the slot's live event, registered with this driver
+                // (asserted above).
+                unsafe {
+                    SetEvent(HANDLE(p.completionEvent)).unwrap();
+                }
             }
         }
         if d.need_more_input {
@@ -598,6 +606,7 @@ unsafe extern "C" fn lock(raw: *mut c_void, parameters: *mut NV_ENC_LOCK_BITSTRE
     // SAFETY: `raw` is a live handle that `open` boxed and `destroy` has not freed.
     assert_eq!(p.version, unsafe { handle(raw) }.lock());
     state(|d| {
+        d.lock_do_not_wait.push(p.doNotWait());
         if d.lock_busy > 0 {
             d.lock_busy -= 1;
             return _NVENCSTATUS_NV_ENC_ERR_LOCK_BUSY;
@@ -701,6 +710,7 @@ unsafe extern "C" fn reconfigure(
     // SAFETY: `encodeConfig` is the boxed config `Session::bitrate` keeps alive for this call.
     let config = unsafe { *p.reInitEncodeParams.encodeConfig };
     state(|d| {
+        d.reconfigure_count += 1;
         d.reconfigured = Some((p, config));
         if d.reject_reconfigure || (d.reject_in_place && p.resetEncoder() == 0) {
             _NVENCSTATUS_NV_ENC_ERR_INVALID_PARAM
@@ -2453,7 +2463,7 @@ fn open_events(encoder: &Session) -> usize {
     encoder
         .slots
         .iter()
-        .filter(|slot| !slot.event.is_invalid())
+        .filter(|slot| slot.event.is_some())
         .count()
 }
 #[test]
@@ -3443,3 +3453,4 @@ fn without_subframe_readback_slice_delivery_stays_off_and_events_stay() -> Resul
 
 mod d3d12_444;
 mod d3d12_teardown;
+mod opt_tests;

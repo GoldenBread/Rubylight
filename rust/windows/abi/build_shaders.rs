@@ -8,7 +8,7 @@ const SOURCE: &str = include_str!("src/shaders/color.hlsl");
 #[cfg(windows)]
 pub fn compile(out: &Path) {
     println!("cargo:rerun-if-changed=src/shaders/color.hlsl");
-    const ENTRIES: [(&str, &str); 39] = [
+    const ENTRIES: [(&str, &str); 41] = [
         ("vertex", "vs_5_0"),
         ("luma", "ps_5_0"),
         ("chroma", "ps_5_0"),
@@ -45,6 +45,8 @@ pub fn compile(out: &Path) {
         ("yuv444_ayuv_cs", "cs_5_0"),
         ("yuv444_ayuv_menu_cs", "cs_5_0"),
         ("yuv444_ayuv_focus_cs", "cs_5_0"),
+        ("yuv444_planes_cs", "cs_5_0"),
+        ("yuv444_planes_menu_cs", "cs_5_0"),
         // HDR dynamic metadata statistics (`compute_hdr_stats.rs`).
         ("hdr_stats_clear_cs", "cs_5_0"),
         ("hdr_stats_cs", "cs_5_0"),

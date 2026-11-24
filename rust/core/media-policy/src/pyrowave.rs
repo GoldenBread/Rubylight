@@ -1,13 +1,14 @@
 //! Vibepollo 2.0 PyroWave framing, partial recovery and transport budgets.
 use anyhow::{Context, Result, bail};
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::HashMap,
     hash::BuildHasherDefault,
     sync::{Arc, Mutex, PoisonError},
     time::{Duration, Instant},
 };
 mod framing;
-pub use framing::{Framed, Framing, Payload};
+mod pack;
+pub use framing::{Framed, Framing, Payload, PayloadCursor};
 pub const BITSTREAM_ID: &str = "186f0393";
 pub const PACKET_BOUNDARY: usize = 1024;
 const PADDING: u32 = u32::MAX;
@@ -397,66 +398,6 @@ fn padding(out: &mut Vec<u8>, bytes: usize) {
     out.extend_from_slice(&((bytes - 8) as u32 / 4).to_le_bytes());
     out.resize(out.len() + bytes - 8, 0);
 }
-// Earliest fitting record in O(log 4096), preserving encoder order for ties.
-struct Fits {
-    queues: Vec<VecDeque<usize>>,
-    tree: Vec<usize>,
-}
-impl Fits {
-    fn new(records: &[Record]) -> Self {
-        let size = (records.iter().map(|r| r.size / 4).max().unwrap_or(0) + 1).next_power_of_two();
-        let mut s = Self {
-            queues: vec![VecDeque::new(); size],
-            tree: vec![usize::MAX; size * 2],
-        };
-        for (i, r) in records.iter().enumerate() {
-            s.queues[r.size / 4].push_back(i);
-        }
-        for i in 0..size {
-            s.tree[size + i] = s.queues[i].front().copied().unwrap_or(usize::MAX);
-        }
-        for i in (1..size).rev() {
-            s.tree[i] = s.tree[2 * i].min(s.tree[2 * i + 1]);
-        }
-        s
-    }
-    fn fitting(&self, words: usize) -> usize {
-        let size = self.queues.len();
-        let (mut lo, mut hi, mut result) = (size, size + words.min(size - 1) + 1, usize::MAX);
-        while lo < hi {
-            if lo & 1 != 0 {
-                result = result.min(self.tree[lo]);
-                lo += 1;
-            }
-            if hi & 1 != 0 {
-                hi -= 1;
-                result = result.min(self.tree[hi]);
-            }
-            lo /= 2;
-            hi /= 2;
-        }
-        result
-    }
-    fn exact(&self, words: usize) -> usize {
-        self.tree
-            .get(self.queues.len() + words)
-            .copied()
-            .unwrap_or(usize::MAX)
-    }
-    fn remove(&mut self, words: usize) {
-        self.queues[words].pop_front();
-        let mut at = self.queues.len() + words;
-        self.tree[at] = self.queues[words].front().copied().unwrap_or(usize::MAX);
-        while at > 1 {
-            at /= 2;
-            let first = self.tree[2 * at].min(self.tree[2 * at + 1]);
-            if self.tree[at] == first {
-                break;
-            }
-            self.tree[at] = first;
-        }
-    }
-}
 /// One block of the picture's index space: its wavelet level (0 is the finest) and its row of
 /// 32x32 blocks inside its band. The index space runs level 4 to 0, per level the components,
 /// per component the bands, per band the blocks in rows; `coarse_count` is its level 4 part.
@@ -577,43 +518,27 @@ fn frame_into<S: Sink>(
     out.copy(bitstream, 0, 8);
     for required in [true, false] {
         if let Some(steps) = steps.as_ref().filter(|_| !required) {
-            let mut class = Records::spare();
-            class
-                .0
-                .extend(all.iter().filter(|r| r.index >= coarse).copied());
-            let step = |r: &Record| {
-                steps
-                    .get(r.index as usize)
-                    .copied()
-                    .context("PyroWave block index exceeds the picture")
-            };
-            for r in class.iter() {
-                step(r)?;
-            }
-            class.sort_by_key(|r| (steps[r.index as usize], r.index));
-            // A record over a packet goes out once every ordinary record ranked before it has; the
-            // ones ranked after it may still fill the packet it leaves open.
-            let (mut ordinary, mut bigs) = (Records::spare(), Vec::new());
-            for r in class.iter() {
-                let r = *r;
-                if r.size > payload - 8 {
-                    bigs.push((ordinary.len(), r));
-                } else {
-                    ordinary.0.push(r);
-                }
-            }
-            first_fit(out, bitstream, &ordinary, &bigs, payload);
+            let mut ordinary = Records::spare();
+            pack::pack_row_order(
+                out,
+                bitstream,
+                &all,
+                coarse,
+                steps,
+                &mut ordinary.0,
+                payload,
+            )?;
             continue;
         }
         let mut ordinary = Records::spare();
         for r in all.iter().filter(|r| (r.index < coarse) == required) {
             if r.size > payload - 8 {
-                big(out, bitstream, r, payload);
+                pack::big(out, bitstream, r, payload);
             } else {
                 ordinary.0.push(*r);
             }
         }
-        first_fit(out, bitstream, &ordinary, &[], payload);
+        pack::first_fit(out, bitstream, &ordinary, payload);
         if required {
             out.coarse_done(out.written());
         }
@@ -623,67 +548,6 @@ fn frame_into<S: Sink>(
         out.copy(bitstream, 0, bitstream.len());
     }
     Ok(all)
-}
-fn big(out: &mut impl Sink, bitstream: &[u8], r: &Record, payload: usize) {
-    let room = payload - (out.written() + 8) % payload;
-    if r.size % payload == room - 4 {
-        out.pad(8);
-    }
-    out.copy(bitstream, r.offset, r.size);
-}
-/// Packs `ordinary` first-fit. Each of `bigs` (with how many ordinary records are ranked before
-/// it) goes out as soon as those are all placed.
-fn first_fit(
-    out: &mut impl Sink,
-    bitstream: &[u8],
-    ordinary: &[Record],
-    bigs: &[(usize, Record)],
-    payload: usize,
-) {
-    let mut fits = Fits::new(ordinary);
-    // Only a frame with records over a packet in row order needs to know what is placed.
-    let mut placed = if bigs.is_empty() {
-        Vec::new()
-    } else {
-        vec![false; ordinary.len()]
-    };
-    let (mut front, mut next) = (0, 0);
-    for _ in 0..ordinary.len() {
-        if !bigs.is_empty() {
-            while front < placed.len() && placed[front] {
-                front += 1;
-            }
-            while next < bigs.len() && bigs[next].0 <= front {
-                big(out, bitstream, &bigs[next].1, payload);
-                next += 1;
-            }
-        }
-        loop {
-            let room = payload - (out.written() + 8) % payload;
-            let mut chosen = fits.fitting(room / 4);
-            if chosen != usize::MAX && room - ordinary[chosen].size == 4 {
-                chosen = fits.exact(room / 4).min(if room >= 16 {
-                    fits.fitting((room - 8) / 4)
-                } else {
-                    usize::MAX
-                });
-            }
-            if chosen == usize::MAX {
-                out.pad(room);
-                continue;
-            }
-            let r = ordinary[chosen];
-            fits.remove(r.size / 4);
-            if !placed.is_empty() {
-                placed[chosen] = true;
-            }
-            out.copy(bitstream, r.offset, r.size);
-            break;
-        }
-    }
-    for (_, r) in &bigs[next..] {
-        big(out, bitstream, r, payload);
-    }
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Layout {
@@ -737,7 +601,7 @@ pub fn layout<'a>(frame: impl Into<Payload<'a>>, payload: usize) -> Result<Layou
     }
     Ok(layout)
 }
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct FecBlock {
     pub data: usize,
     pub percentage: usize,
@@ -768,14 +632,14 @@ pub(crate) fn fec_parameters(data: usize, percentage: usize, minimum: usize) -> 
 pub fn minimum_parity(data: usize, minimum: usize) -> usize {
     minimum.min(data * 255 / 100)
 }
-fn split(blocks: &mut Vec<FecBlock>, data: usize, slots: usize) {
+fn split_into(push: &mut impl FnMut(FecBlock), data: usize, slots: usize) {
     if data == 0 {
         return;
     }
     let count = data.div_ceil(255).clamp(1, slots);
     let size = data.div_ceil(count);
     for i in 0..count {
-        blocks.push(FecBlock {
+        push(FecBlock {
             data: if i + 1 == count {
                 data - size * i
             } else {
@@ -785,6 +649,10 @@ fn split(blocks: &mut Vec<FecBlock>, data: usize, slots: usize) {
         });
     }
 }
+#[cfg(test)]
+fn split(blocks: &mut Vec<FecBlock>, data: usize, slots: usize) {
+    split_into(&mut |block| blocks.push(block), data, slots);
+}
 pub fn plan(
     total: usize,
     critical: usize,
@@ -793,13 +661,25 @@ pub fn plan(
     detail: usize,
     extra: usize,
 ) -> Result<Vec<FecBlock>> {
+    plan_inline(total, critical, rate, minimum, detail, extra).map(|blocks| blocks.to_vec())
+}
+/// [`plan`] into a stack-allocated [`crate::packet::InlineBlocks`], avoiding
+/// heap allocations in the inner candidate loop and return value.
+pub(crate) fn plan_inline(
+    total: usize,
+    critical: usize,
+    rate: usize,
+    minimum: usize,
+    detail: usize,
+    extra: usize,
+) -> Result<crate::packet::InlineBlocks<FecBlock>> {
     if total == 0 || total > 4000 || rate > 255 || minimum > 255 {
         bail!("invalid PyroWave FEC plan");
     }
     let critical = critical.min(total);
-    let mut out = vec![];
+    let mut out = crate::packet::InlineBlocks::new();
     if critical == 0 || rate == 0 || critical + parity(critical, rate, minimum) > 255 {
-        split(&mut out, total, 4);
+        split_into(&mut |b| out.push(b), total, 4);
     } else {
         out.push(FecBlock {
             data: critical,
@@ -823,25 +703,28 @@ pub fn plan(
             if count > 3 {
                 continue;
             }
-            let candidate: Vec<_> = (0..count)
-                .map(|i| FecBlock {
+            let mut candidate = [FecBlock::default(); 3];
+            for (i, slot) in candidate.iter_mut().take(count).enumerate() {
+                *slot = FecBlock {
                     data: fine / count + usize::from(i < fine % count),
                     percentage,
-                })
-                .collect();
+                };
+            }
             // Each candidate block's parity is computed once, for both its fit
             // and its sum.
             let mut parities = [0usize; 3];
-            for (slot, block) in parities.iter_mut().zip(&candidate) {
+            for (slot, block) in parities.iter_mut().zip(&candidate[..count]) {
                 *slot = parity(block.data, block.percentage, minimum);
             }
-            if candidate
+            if candidate[..count]
                 .iter()
                 .zip(parities)
                 .all(|(block, parity)| block.data + parity <= 255)
                 && parities[..count].iter().sum::<usize>() <= extra
             {
-                out.extend(candidate);
+                for &block in &candidate[..count] {
+                    out.push(block);
+                }
                 return Ok(out);
             }
         }
@@ -894,10 +777,10 @@ pub fn plan(
             }
             if remaining > 0 {
                 let slots = 4 - out.len();
-                split(&mut out, remaining, slots);
+                split_into(&mut |b| out.push(b), remaining, slots);
             }
         } else {
-            split(&mut out, fine, 3);
+            split_into(&mut |b| out.push(b), fine, 3);
         }
     }
     if out.len() > 4
@@ -988,7 +871,10 @@ impl DetailFec {
             .replace(now)
             .map(|p| now.saturating_duration_since(p).as_secs_f64())
             .unwrap_or(0.);
-        if elapsed <= self.nominal * 1.01 {
+        // Require >15% slowdown past nominal cadence so normal ~1-5% frame-time
+        // jitter at high refresh rates (e.g. 83 us at 120 Hz) never triggers a
+        // full-frame hash pass on moving gameplay.
+        if elapsed <= self.nominal * 1.15 {
             self.seen.clear();
             self.stable = 0.;
             self.interval = elapsed;

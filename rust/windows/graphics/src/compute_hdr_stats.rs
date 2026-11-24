@@ -50,37 +50,69 @@ pub struct HdrStatsReadout {
     pub min_pq: f32,
     pub max_pq: f32,
 }
+/// Validate `words` against `samples` in a single pass directly over the
+/// borrowed histogram slice, with no heap allocation.
+fn validate_words(samples: u64, words: &[u32]) -> Result<(f32, f32, &[u32])> {
+    anyhow::ensure!(
+        words.len() == WORDS,
+        "HDR statistics readout has {} words, not {WORDS}",
+        words.len()
+    );
+    let (min_pq, max_pq) = (f32::from_bits(words[0]), f32::from_bits(words[1]));
+    let bins = &words[2..];
+    let mut counted = 0u64;
+    let mut first = None;
+    let mut last = None;
+    for (index, &count) in bins.iter().enumerate() {
+        if count > 0 {
+            counted += u64::from(count);
+            if first.is_none() {
+                first = Some(index);
+            }
+            last = Some(index);
+        }
+    }
+    // The shader's own binning: scaling by 1024 is exact, `as` truncates like `uint()`.
+    let bin = |pq: f32| ((pq * HDR_STATS_BINS as f32) as usize).min(HDR_STATS_BINS - 1);
+    anyhow::ensure!(
+        counted == samples
+            && (0. ..=1.).contains(&min_pq)
+            && (min_pq..=1.).contains(&max_pq)
+            && first == Some(bin(min_pq))
+            && last == Some(bin(max_pq)),
+        "HDR statistics readout is inconsistent: {counted} of {samples} samples, \
+         PQ {min_pq}..={max_pq}, bins {first:?}..={last:?}"
+    );
+    Ok((min_pq, max_pq, bins))
+}
+
 impl HdrStatsReadout {
     /// The pass's `words` for `samples` cells. A readout that disagrees with
     /// itself is an error rather than a frame without statistics.
     pub(crate) fn parse(conversion: u64, samples: u64, words: &[u32]) -> Result<Self> {
-        anyhow::ensure!(
-            words.len() == WORDS,
-            "HDR statistics readout has {} words, not {WORDS}",
-            words.len()
-        );
-        let (min_pq, max_pq) = (f32::from_bits(words[0]), f32::from_bits(words[1]));
-        let histogram = words[2..].to_vec();
-        let counted: u64 = histogram.iter().map(|&count| u64::from(count)).sum();
-        // The shader's own binning: scaling by 1024 is exact, `as` truncates like `uint()`.
-        let bin = |pq: f32| ((pq * HDR_STATS_BINS as f32) as usize).min(HDR_STATS_BINS - 1);
-        let first = histogram.iter().position(|&count| count > 0);
-        let last = histogram.iter().rposition(|&count| count > 0);
-        anyhow::ensure!(
-            counted == samples
-                && (0. ..=1.).contains(&min_pq)
-                && (min_pq..=1.).contains(&max_pq)
-                && first == Some(bin(min_pq))
-                && last == Some(bin(max_pq)),
-            "HDR statistics readout is inconsistent: {counted} of {samples} samples, \
-             PQ {min_pq}..={max_pq}, bins {first:?}..={last:?}"
-        );
+        let (min_pq, max_pq, bins) = validate_words(samples, words)?;
         Ok(Self {
             conversion,
-            histogram,
+            histogram: bins.to_vec(),
             min_pq,
             max_pq,
         })
+    }
+    /// Validate `words` and compute [`FrameStats`] directly from the borrowed
+    /// slice without allocating a histogram `Vec`.
+    #[allow(dead_code)]
+    pub(crate) fn parse_frame_stats(
+        conversion: u64,
+        samples: u64,
+        words: &[u32],
+    ) -> Result<(u64, f32, f32, Option<FrameStats>)> {
+        let (min_pq, max_pq, bins) = validate_words(samples, words)?;
+        Ok((
+            conversion,
+            min_pq,
+            max_pq,
+            FrameStats::from_histogram(bins, min_pq, max_pq),
+        ))
     }
     /// The statistics the metadata writers take.
     pub fn frame_stats(&self) -> Option<FrameStats> {

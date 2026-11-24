@@ -414,6 +414,118 @@ impl<'a> Payload<'a> {
             index: 0,
         }
     }
+
+    /// Monotonic cursor for linear shard-by-shard copies across a whole frame.
+    pub fn cursor(self) -> PayloadCursor<'a> {
+        PayloadCursor::new(self)
+    }
+}
+
+/// Monotonic reader over a [`Payload`]: advances linearly across `Framed`
+/// pieces or `Pieces` units in O(P + M) instead of searching per shard,
+/// falling back cleanly if an offset ever moves backward.
+pub struct PayloadCursor<'a> {
+    payload: Payload<'a>,
+    len: usize,
+    index: usize,
+    piece_at: usize,
+}
+
+impl<'a> PayloadCursor<'a> {
+    pub fn new(payload: Payload<'a>) -> Self {
+        Self {
+            payload,
+            len: payload.len(),
+            index: 0,
+            piece_at: 0,
+        }
+    }
+
+    /// Cursor for `Payload::Pieces` with precomputed `len` and saved position
+    /// `(index, piece_at)` from an earlier block of the same streamed frame.
+    pub fn from_pieces_position(
+        pieces: &'a [Vec<u8>],
+        len: usize,
+        index: usize,
+        piece_at: usize,
+    ) -> Self {
+        Self {
+            payload: Payload::Pieces(pieces),
+            len,
+            index,
+            piece_at,
+        }
+    }
+
+    /// Current piece index and byte start offset, for resuming across blocks.
+    pub fn position(&self) -> (usize, usize) {
+        (self.index, self.piece_at)
+    }
+
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    /// Copy `out.len()` bytes starting at `at` into `out`; panics past the end.
+    pub fn copy_to(&mut self, at: usize, out: &mut [u8]) {
+        assert!(at + out.len() <= self.len, "payload read past its end");
+        if out.is_empty() {
+            return;
+        }
+        match self.payload {
+            Payload::Bytes(bytes) => out.copy_from_slice(&bytes[at..at + out.len()]),
+            Payload::Framed(framed) => {
+                let pieces = &framed.framing.pieces;
+                if pieces.get(self.index).is_none_or(|p| p.at > at) {
+                    self.index = pieces.partition_point(|p| p.at + p.len <= at);
+                } else {
+                    while pieces.get(self.index).is_some_and(|p| p.at + p.len <= at) {
+                        self.index += 1;
+                    }
+                }
+                let (mut pos, mut dst) = (at, out);
+                while !dst.is_empty() {
+                    let piece = pieces[self.index];
+                    let within = pos - piece.at;
+                    let n = (piece.len - within).min(dst.len());
+                    let (head, rest) = std::mem::take(&mut dst).split_at_mut(n);
+                    piece.fill(framed.raw, within, head);
+                    dst = rest;
+                    pos += n;
+                    if within + n == piece.len {
+                        self.index += 1;
+                    }
+                }
+            }
+            Payload::Pieces(pieces) => {
+                if at < self.piece_at {
+                    self.index = 0;
+                    self.piece_at = 0;
+                }
+                while self.index < pieces.len() && self.piece_at + pieces[self.index].len() <= at {
+                    self.piece_at += pieces[self.index].len();
+                    self.index += 1;
+                }
+                let (mut pos, mut dst) = (at, out);
+                while !dst.is_empty() {
+                    let piece = &pieces[self.index];
+                    let within = pos - self.piece_at;
+                    let n = (piece.len() - within).min(dst.len());
+                    dst[..n].copy_from_slice(&piece[within..within + n]);
+                    dst = &mut dst[n..];
+                    pos += n;
+                    if within + n == piece.len() {
+                        self.piece_at += piece.len();
+                        self.index += 1;
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// Words of a payload, read mostly in increasing order (the record walks): a

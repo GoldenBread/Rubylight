@@ -11,6 +11,7 @@
 //! same memory each time instead of mapping it again.
 
 use crate::{encoder::Unit, frame_pool};
+use std::borrow::Cow;
 
 /// What the first unit of a frame decides for all of it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -82,15 +83,93 @@ fn append(joined: &mut Vec<u8>, bytes: &[u8], hint: usize) {
     joined.extend_from_slice(bytes);
 }
 
+/// Own `bytes` without copying when it is already an owned buffer (such as a
+/// pooled header rewrite); copy borrowed bytes once with `headroom` for later
+/// metadata splicing.
+fn into_owned(bytes: Cow<'_, [u8]>, headroom: usize) -> Vec<u8> {
+    match bytes {
+        Cow::Owned(owned) => owned,
+        Cow::Borrowed(slice) => frame_pool::copy_with_headroom(slice, headroom),
+    }
+}
+
+/// Append `bytes` into `joined`, moving an owned buffer directly when `joined`
+/// is still empty and it already meets `hint`, or returning an owned buffer to
+/// the pool after copying its bytes into `joined`.
+fn append_cow(joined: &mut Vec<u8>, bytes: Cow<'_, [u8]>, hint: usize) {
+    match bytes {
+        Cow::Owned(owned) if joined.is_empty() && owned.capacity() >= hint => {
+            *joined = owned;
+        }
+        Cow::Owned(owned) => {
+            append(joined, &owned, hint);
+            give(owned);
+        }
+        Cow::Borrowed(slice) => append(joined, slice, hint),
+    }
+}
+
+/// Accepted byte inputs for [`Sequencer::push`] in unit tests, preserving
+/// ergonomic slice/array/`&Vec<u8>` calls alongside zero-copy `Cow::Owned`.
+#[cfg(test)]
+pub trait UnitBytes<'a> {
+    fn into_cow(self) -> Cow<'a, [u8]>;
+}
+#[cfg(test)]
+impl<'a> UnitBytes<'a> for Cow<'a, [u8]> {
+    fn into_cow(self) -> Cow<'a, [u8]> {
+        self
+    }
+}
+#[cfg(test)]
+impl<'a> UnitBytes<'a> for Vec<u8> {
+    fn into_cow(self) -> Cow<'a, [u8]> {
+        Cow::Owned(self)
+    }
+}
+#[cfg(test)]
+impl<'a> UnitBytes<'a> for &'a [u8] {
+    fn into_cow(self) -> Cow<'a, [u8]> {
+        Cow::Borrowed(self)
+    }
+}
+#[cfg(test)]
+impl<'a> UnitBytes<'a> for &'a Vec<u8> {
+    fn into_cow(self) -> Cow<'a, [u8]> {
+        Cow::Borrowed(self.as_slice())
+    }
+}
+#[cfg(test)]
+impl<'a, const N: usize> UnitBytes<'a> for &'a [u8; N] {
+    fn into_cow(self) -> Cow<'a, [u8]> {
+        Cow::Borrowed(self.as_slice())
+    }
+}
+
 impl Sequencer {
     /// Take the next buffer AMF returned. `kind` is its `OutputBufferType`
     /// (1 slice, 2 last slice; anything else is a whole frame). `first` runs
-    /// on a frame's first unit only.
-    pub fn push(
+    /// on a frame's first unit only. Owned buffers are moved without copying.
+    #[cfg(test)]
+    pub fn push<'a>(
         &mut self,
         pts: i64,
         kind: Option<i64>,
-        bytes: &[u8],
+        bytes: impl UnitBytes<'a>,
+        first: impl FnOnce() -> Meta,
+    ) -> Pushed {
+        self.push_with_headroom(pts, kind, bytes.into_cow(), 0, first)
+    }
+    /// Take the next buffer AMF returned (`kind`: 1 slice, 2 last slice, other
+    /// whole frame), moving owned buffers directly and reserving `headroom`
+    /// extra bytes whenever borrowed input is copied so a subsequent dynamic
+    /// HDR metadata splice does not reallocate.
+    pub fn push_with_headroom(
+        &mut self,
+        pts: i64,
+        kind: Option<i64>,
+        bytes: Cow<'_, [u8]>,
+        headroom: usize,
         first: impl FnOnce() -> Meta,
     ) -> Pushed {
         let abandoned = match &self.open {
@@ -101,7 +180,7 @@ impl Sequencer {
             let meta = first();
             self.open = None;
             return Pushed {
-                step: Step::Whole(frame_pool::copy(bytes)),
+                step: Step::Whole(into_owned(bytes, headroom)),
                 meta: Meta {
                     streamed: false,
                     ..meta
@@ -125,15 +204,17 @@ impl Sequencer {
             } else {
                 Unit::Slice { index }
             };
-            Step::Unit(unit, frame_pool::copy(bytes))
+            Step::Unit(unit, into_owned(bytes, headroom))
         } else if !last {
-            append(&mut open.joined, bytes, self.hint[usize::from(meta.idr)]);
+            let hint = self.hint[usize::from(meta.idr)].max(bytes.len() + headroom);
+            append_cow(&mut open.joined, bytes, hint);
             Step::Hold
         } else if index == 0 {
-            Step::Whole(frame_pool::copy(bytes))
+            Step::Whole(into_owned(bytes, headroom))
         } else {
             let mut joined = std::mem::take(&mut open.joined);
-            append(&mut joined, bytes, 0);
+            let needed = joined.len() + bytes.len() + headroom;
+            append_cow(&mut joined, bytes, needed);
             self.hint[usize::from(meta.idr)] = joined.len() + joined.len() / 4;
             Step::Whole(joined)
         };
@@ -236,7 +317,7 @@ mod tests {
             steps,
             [Step::Hold, Step::Hold, Step::Whole(b"aabbbc".to_vec())]
         );
-        let pushed = sequencer.push(8, Some(2), b"x", || JOINED);
+        let pushed = sequencer.push(8, Some(2), b"x".as_slice(), || JOINED);
         assert_eq!(pushed.step, Step::Whole(b"x".to_vec()));
         assert!(pushed.meta.idr && !pushed.meta.streamed);
         assert_eq!(pushed.abandoned, None);
@@ -245,8 +326,8 @@ mod tests {
     #[test]
     fn the_first_unit_meta_is_kept_for_the_whole_frame() {
         let mut sequencer = Sequencer::default();
-        sequencer.push(1, Some(1), &[1], || JOINED);
-        let pushed = sequencer.push(1, Some(2), &[2], || panic!("decided twice"));
+        sequencer.push(1, Some(1), [1u8].as_slice(), || JOINED);
+        let pushed = sequencer.push(1, Some(2), [2u8].as_slice(), || panic!("decided twice"));
         assert_eq!(pushed.meta, JOINED);
         assert_eq!(pushed.step, Step::Whole(vec![1, 2]));
     }
@@ -255,7 +336,7 @@ mod tests {
     fn a_frame_returned_whole_passes_through_in_either_mode() {
         let mut sequencer = Sequencer::default();
         for kind in [None, Some(0)] {
-            let pushed = sequencer.push(3, kind, b"frame", || STREAMED);
+            let pushed = sequencer.push(3, kind, b"frame".as_slice(), || STREAMED);
             assert_eq!(pushed.step, Step::Whole(b"frame".to_vec()));
             assert!(!pushed.meta.streamed);
         }
@@ -264,8 +345,8 @@ mod tests {
     #[test]
     fn a_frame_without_its_last_unit_is_reported_when_the_next_arrives() {
         let mut sequencer = Sequencer::default();
-        sequencer.push(1, Some(1), b"a", || STREAMED);
-        let pushed = sequencer.push(2, Some(1), b"b", || STREAMED);
+        sequencer.push(1, Some(1), b"a".as_slice(), || STREAMED);
+        let pushed = sequencer.push(2, Some(1), b"b".as_slice(), || STREAMED);
         assert_eq!(pushed.abandoned, Some(1));
         assert_eq!(
             pushed.step,
@@ -273,8 +354,8 @@ mod tests {
         );
         // A joined frame's leftovers never reach the next one.
         let mut sequencer = Sequencer::default();
-        sequencer.push(1, Some(1), b"stale", || JOINED);
-        let pushed = sequencer.push(2, Some(2), b"new", || JOINED);
+        sequencer.push(1, Some(1), b"stale".as_slice(), || JOINED);
+        let pushed = sequencer.push(2, Some(2), b"new".as_slice(), || JOINED);
         assert_eq!(pushed.abandoned, Some(1));
         assert_eq!(pushed.step, Step::Whole(b"new".to_vec()));
     }
@@ -282,11 +363,11 @@ mod tests {
     #[test]
     fn forgetting_a_frame_drops_its_units_only() {
         let mut sequencer = Sequencer::default();
-        sequencer.push(1, Some(1), b"a", || JOINED);
+        sequencer.push(1, Some(1), b"a".as_slice(), || JOINED);
         sequencer.forget(2);
         assert!(sequencer.open.is_some());
         sequencer.forget(1);
-        let pushed = sequencer.push(1, Some(2), b"b", || JOINED);
+        let pushed = sequencer.push(1, Some(2), b"b".as_slice(), || JOINED);
         assert_eq!(pushed.step, Step::Whole(b"b".to_vec()));
         assert_eq!(pushed.abandoned, None);
     }
@@ -324,7 +405,7 @@ mod tests {
         assert_eq!(second, vec![5; slice.len() * 4]);
         assert_eq!(given(), Vec::<usize>::new());
         // An inter frame keeps its own size and does not take a keyframe's buffer.
-        sequencer.push(3, Some(1), b"aa", || JOINED_INTER);
+        sequencer.push(3, Some(1), b"aa".as_slice(), || JOINED_INTER);
         assert!(sequencer.open.as_ref().unwrap().joined.capacity() < POOLED);
         sequencer.forget(3);
         frame_pool::give(second);
@@ -341,7 +422,9 @@ mod tests {
         sequencer.push(1, Some(1), &slice, || JOINED);
         let capacity = joined(&sequencer);
         assert_eq!(
-            sequencer.push(2, Some(1), b"x", || STREAMED).abandoned,
+            sequencer
+                .push(2, Some(1), b"x".as_slice(), || STREAMED)
+                .abandoned,
             Some(1)
         );
         assert_eq!(given(), [capacity]);
@@ -354,7 +437,8 @@ mod tests {
         // Replaced by a frame AMF returned whole.
         sequencer.push(4, Some(1), &slice, || JOINED);
         let capacity = joined(&sequencer);
-        let Step::Whole(whole) = sequencer.push(5, None, b"frame", || JOINED).step else {
+        let Step::Whole(whole) = sequencer.push(5, None, b"frame".as_slice(), || JOINED).step
+        else {
             panic!("a frame returned whole passes through");
         };
         assert_eq!(whole, b"frame");
@@ -364,5 +448,64 @@ mod tests {
         let capacity = joined(&sequencer);
         drop(sequencer);
         assert_eq!(given(), [capacity]);
+    }
+
+    #[test]
+    fn owned_rewritten_units_move_without_copying_and_return_to_pool_when_joined() {
+        let _alone = frame_pool::alone();
+        let mut sequencer = Sequencer::default();
+        given();
+        // Streamed unit moves the owned buffer directly without copying.
+        let owned = vec![0x11; 64];
+        let ptr = owned.as_ptr();
+        let Step::Unit(Unit::Slice { index: 0 }, moved) = sequencer
+            .push(10, Some(1), Cow::Owned(owned), || STREAMED)
+            .step
+        else {
+            panic!("expected streamed slice");
+        };
+        assert_eq!(moved.as_ptr(), ptr);
+        assert!(given().is_empty());
+        // Single-unit whole frame moves the owned buffer directly.
+        let owned = vec![0x22; 64];
+        let ptr = owned.as_ptr();
+        let Step::Whole(moved) = sequencer
+            .push(11, Some(0), Cow::Owned(owned), || STREAMED)
+            .step
+        else {
+            panic!("expected whole frame");
+        };
+        assert_eq!(moved.as_ptr(), ptr);
+        // Multi-unit joined frame returns a second owned buffer to the pool after copying.
+        let first = vec![0x33; POOLED];
+        let first_ptr = first.as_ptr();
+        let second = vec![0x44; POOLED];
+        let second_cap = second.capacity();
+        assert_eq!(
+            sequencer
+                .push(12, Some(1), Cow::Owned(first), || JOINED)
+                .step,
+            Step::Hold
+        );
+        assert_eq!(sequencer.open.as_ref().unwrap().joined.as_ptr(), first_ptr);
+        let Step::Whole(joined) = sequencer
+            .push(12, Some(2), Cow::Owned(second), || JOINED)
+            .step
+        else {
+            panic!("expected joined frame");
+        };
+        assert_eq!(joined.len(), POOLED * 2);
+        let returned = given();
+        assert!(returned.contains(&second_cap));
+        frame_pool::give(joined);
+        // Borrowed slice with headroom leaves spare capacity for metadata splicing.
+        let Step::Unit(Unit::Slice { index: 0 }, with_room) = sequencer
+            .push_with_headroom(13, Some(1), Cow::Borrowed(b"slice"), 256, || STREAMED)
+            .step
+        else {
+            panic!("expected streamed slice");
+        };
+        assert_eq!(with_room, b"slice");
+        assert!(with_room.capacity() >= 5 + 256);
     }
 }

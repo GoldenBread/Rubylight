@@ -53,15 +53,17 @@ pub(super) fn cleanup_slot(
             slot.output = ptr::null_mut();
         }
         if slot.event_registered {
-            let mut event = NV_ENC_EVENT_PARAMS {
-                version: api.event(),
-                completionEvent: slot.event.0,
-                ..Default::default()
-            };
-            check(
-                (functions.nvEncUnregisterAsyncEvent.unwrap())(raw, &mut event),
-                "unregister completion event",
-            )?;
+            if let Some(signal) = slot.event.as_ref() {
+                let mut event = NV_ENC_EVENT_PARAMS {
+                    version: api.event(),
+                    completionEvent: signal.raw().0,
+                    ..Default::default()
+                };
+                check(
+                    (functions.nvEncUnregisterAsyncEvent.unwrap())(raw, &mut event),
+                    "unregister completion event",
+                )?;
+            }
             slot.event_registered = false;
         }
         if !slot.output.is_null() {
@@ -261,11 +263,12 @@ impl Encoder {
     /// closing the NVENC session, and retain `output_event` if the D3D12 output
     /// fence had to be retained so a late signal cannot touch a closed handle.
     pub(super) fn close_session(&mut self) {
+        self.last_converted = None;
         if let Some(converter) = &self.compute {
             converter.wait_idle();
         }
         if !self.session.close()
-            && let Some(event) = self.output_event.take()
+            && let Some(event) = self.output_event.take_d3d12()
         {
             std::mem::forget(event);
         }

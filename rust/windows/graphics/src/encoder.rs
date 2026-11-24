@@ -272,13 +272,13 @@ impl Encoder {
         }
     }
     /// The next picture repeats the one last encoded. PyroWave sizes a new
-    /// picture from the previous new one, so a repeat just before it does not
-    /// shrink it to the few milliseconds since that repeat. AMF reuses the
-    /// last converted GPU surface when the source and conversion inputs match.
+    /// picture from the previous new one and caches static repeat bitstreams;
+    /// AMF and NVENC reuse the last converted GPU surface when the source and
+    /// conversion inputs match.
     pub fn set_repeat(&mut self, repeat: bool) {
         match self {
             Self::Amf(e) => e.set_repeat(repeat),
-            Self::Nvenc(_) => {}
+            Self::Nvenc(e) => e.set_repeat(repeat),
             Self::Pyrowave(e) => e.repeat = repeat,
         }
     }

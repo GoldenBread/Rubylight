@@ -80,6 +80,16 @@ impl Streams {
         }
     }
 
+    /// Hand a completed/abandoned frame's moved unit buffers back to `frame_pool`
+    /// while keeping the outer `Vec<Vec<u8>>` allocation for the next frame.
+    fn recycle_pieces(&mut self, frame: StreamedFrame) {
+        let mut pieces = frame.take_pieces();
+        for piece in pieces.drain(..) {
+            butterpollo_win_graphics::frame_pool::give(piece);
+        }
+        self.spare = pieces;
+    }
+
     /// A new frame began while one was open: its last unit never came. The
     /// index it owes is consumed, so the client sees the gap, and a recovery
     /// frame is asked for.
@@ -88,7 +98,7 @@ impl Streams {
             return;
         };
         open.frame.abandon(packetizer);
-        self.spare = open.frame.into_buffer();
+        self.recycle_pieces(open.frame);
         // A frame that failed has asked for its recovery frame already.
         if !open.failed {
             s.launch.warnings.event(
@@ -165,24 +175,20 @@ impl Streams {
             // The blocks built before this unit are the ones that left before the last.
             let early_blocks = open.frame.blocks_built();
             let mut fatal = None;
-            let pushed = open.frame.push(
+            let pushed = open.frame.push_blocks(
                 packetizer,
                 bytes,
                 last,
                 &mut self.shards,
-                |packets, block| {
-                    // The shard buffers change hands; the ones that come back are
-                    // refilled by the next block.
-                    let mut parts = vec![shared.state.lock().unwrap().take_block()];
-                    let out = &mut parts[0];
-                    out.resize_with(packets.len(), Vec::new);
-                    for (to, from) in out.iter_mut().zip(packets.iter_mut()) {
-                        std::mem::swap(to, from);
-                    }
+                |shards, filled, block| {
+                    // Swap the whole PacketBlock with a recycled one in O(1)
+                    // instead of swapping every shard individually.
+                    let recycled = shared.state.lock().unwrap().take_block();
+                    let out = std::mem::replace(shards, recycled);
                     let prepared = Prepared {
-                        blocks: parts,
-                        counts: vec![packets.len()],
-                        layout: vec![(block.data, block.parity)],
+                        blocks: InlineBlocks::one(out),
+                        counts: InlineBlocks::one(filled),
+                        layout: InlineBlocks::one((block.data, block.parity)),
                         packetizer: wire.clone(),
                         wire_frame,
                         idr: false,
@@ -246,7 +252,7 @@ impl Streams {
                 s.launch.warnings.event("network_fec", "FEC was reduced or omitted for large video frames because they exceed Moonlight's four-block limit. Packet loss in those frames is harder to recover; lower bitrate or resolution to keep full FEC protection.", butterpollo_session::session::EVENT_PERIOD);
             }
         }
-        self.spare = open.frame.into_buffer();
+        self.recycle_pieces(open.frame);
         Ok(())
     }
 }

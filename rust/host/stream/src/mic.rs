@@ -6,6 +6,7 @@
 use crate::state::{Session, Shared};
 use anyhow::{Context, Result, bail};
 use butterpollo_config::config::Config;
+use butterpollo_media_policy::packet::{CbcKey, mic_open_into};
 use butterpollo_session::mic::{self, Arrival, Playout, Sequencer};
 use butterpollo_win_graphics::capture::{ComGuard, Priority};
 use butterpollo_win_io::{audio::OpusDecoder, audio_route, mic::Render};
@@ -100,8 +101,8 @@ struct Speaker {
 struct Cached {
     /// Weak, so an ended session is dropped rather than held alive here.
     session: Weak<Session>,
-    /// The session's key and key id, as its packets are opened with.
-    key: [u8; 16],
+    /// The session's pre-expanded AES-128-CBC key and key id.
+    cbc: CbcKey,
     key_id: u32,
 }
 struct Receiver {
@@ -111,13 +112,14 @@ struct Receiver {
     native: bool,
     directory: PathBuf,
     speaker: Option<Speaker>,
-    /// The session the last packet resolved to, and its key.
+    /// The session the last packet resolved to, and its pre-expanded key.
     cached: Option<Cached>,
     /// Shared with the render thread, which conceals dry spells with it.
     /// Lock order: the decoder before the playout, on both threads.
     decoder: Arc<Mutex<Option<OpusDecoder>>>,
     playout: Arc<Mutex<Playout>>,
     output: Output,
+    opus: Vec<u8>,
     pcm: Vec<f32>,
 }
 impl Receiver {
@@ -136,6 +138,7 @@ impl Receiver {
             decoder: Default::default(),
             playout: Default::default(),
             output: Output::default(),
+            opus: Vec::new(),
             pcm: Vec::new(),
         }
     }
@@ -186,15 +189,15 @@ impl Receiver {
         &mut self,
         packet: &mic::Packet<'_>,
         peer: std::net::IpAddr,
-    ) -> Option<(Arc<Session>, Vec<u8>)> {
+    ) -> Option<Arc<Session>> {
         if let Some(cached) = self.cached.as_ref()
             && let Some(session) = cached.session.upgrade()
             && session.config.mic
             && !session.stopping()
             && session.client_ip() == peer
-            && let Ok(opus) = mic::open(&cached.key, cached.key_id, packet)
+            && mic_open_into(&cached.cbc, cached.key_id, packet, &mut self.opus).is_ok()
         {
-            return Some((session, opus));
+            return Some(session);
         }
         let candidates: Vec<_> = self
             .h
@@ -206,23 +209,24 @@ impl Receiver {
             .filter(|s| s.config.mic && s.client_ip() == peer && !s.stopping())
             .cloned()
             .collect();
-        let found = candidates.into_iter().find_map(|s| {
-            let opus = mic::open(&s.launch.key, s.launch.key_id, packet).ok()?;
-            Some((s, opus))
+        let (session, cbc) = candidates.into_iter().find_map(|s| {
+            let cbc = CbcKey::new(&s.launch.key);
+            mic_open_into(&cbc, s.launch.key_id, packet, &mut self.opus).ok()?;
+            Some((s, cbc))
         })?;
         self.cached = Some(Cached {
-            session: Arc::downgrade(&found.0),
-            key: found.0.launch.key,
-            key_id: found.0.launch.key_id,
+            session: Arc::downgrade(&session),
+            cbc,
+            key_id: session.launch.key_id,
         });
-        Some(found)
+        Some(session)
     }
 
     fn receive(&mut self, datagram: &[u8], peer: std::net::IpAddr) {
         let Some(packet) = mic::parse(datagram) else {
             return;
         };
-        let Some((session, opus)) = self.resolve(&packet, peer) else {
+        let Some(session) = self.resolve(&packet, peer) else {
             self.counters.refused.fetch_add(1, Ordering::Relaxed);
             return;
         };
@@ -306,7 +310,7 @@ impl Receiver {
         let packet_frames = decode_packet(
             decoder.as_mut().unwrap(),
             arrival,
-            &opus,
+            &self.opus,
             &mut self.pcm,
             &mut speaker.stats,
         );

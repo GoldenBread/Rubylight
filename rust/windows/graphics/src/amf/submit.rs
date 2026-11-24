@@ -32,82 +32,145 @@ const ARRAY_INDEX: windows::core::GUID = windows::core::GUID::from_values(
     [0x99, 0xd3, 0x4f, 0x2a, 0xe6, 0xb4, 0x7f, 0xaf],
 );
 
-/// Copy `subresource` of `texture` into an exclusive single-slice D3D11 texture
-/// suitable for wrapping as an AMF input surface.
-fn copy_d3d11_texture(
-    gpu: &Device,
-    texture: &windows::Win32::Graphics::Direct3D11::ID3D11Texture2D,
-    subresource: u32,
-) -> Result<std::sync::Arc<windows::Win32::Graphics::Direct3D11::ID3D11Texture2D>> {
-    use windows::Win32::Graphics::Direct3D11::{
-        D3D11_BIND_RENDER_TARGET, D3D11_BIND_SHADER_RESOURCE, D3D11_TEXTURE2D_DESC,
-        D3D11_USAGE_DEFAULT, ID3D11Multithread, ID3D11Texture2D,
-    };
-    // SAFETY: `texture` and `gpu.device` are live on the same D3D11 device;
-    // `desc` is filled by `GetDesc`, and the copy runs under the context's
-    // multithread lock.
-    unsafe {
-        let mut desc = D3D11_TEXTURE2D_DESC::default();
-        texture.GetDesc(&mut desc);
-        let copy_desc = D3D11_TEXTURE2D_DESC {
-            Width: desc.Width,
-            Height: desc.Height,
-            MipLevels: 1,
-            ArraySize: 1,
-            Format: desc.Format,
-            SampleDesc: desc.SampleDesc,
-            Usage: D3D11_USAGE_DEFAULT,
-            BindFlags: (D3D11_BIND_RENDER_TARGET.0 | D3D11_BIND_SHADER_RESOURCE.0) as u32,
-            CPUAccessFlags: 0,
-            MiscFlags: 0,
-        };
-        let mut copy: Option<ID3D11Texture2D> = None;
-        gpu.device
-            .CreateTexture2D(&copy_desc, None, Some(&mut copy))
-            .context("allocate D3D11 texture copy for AMF re-encode")?;
-        let copy = copy.context("D3D11 returned no texture copy")?;
-        let lock: ID3D11Multithread = gpu.context.cast()?;
-        lock.Enter();
-        gpu.context
-            .CopySubresourceRegion(&copy, 0, 0, 0, 0, texture, subresource, None);
-        lock.Leave();
-        Ok(std::sync::Arc::new(copy))
+/// Small reusable slot pool keyed by `(width, height, format)`: up to 2 idle
+/// entries (`Arc::strong_count == 1`) are kept so scene-cut re-encodes avoid
+/// per-frame `CreateTexture2D` allocations.
+struct TextureSlots<K, T> {
+    key: Option<K>,
+    slots: Vec<std::sync::Arc<T>>,
+}
+impl<K, T> Default for TextureSlots<K, T> {
+    fn default() -> Self {
+        Self {
+            key: None,
+            slots: Vec::new(),
+        }
+    }
+}
+impl<K: PartialEq, T> TextureSlots<K, T> {
+    const CAP: usize = 2;
+
+    fn clear(&mut self) {
+        self.key = None;
+        self.slots.clear();
+    }
+    fn acquire<E>(
+        &mut self,
+        key: K,
+        create: impl FnOnce() -> std::result::Result<T, E>,
+    ) -> std::result::Result<std::sync::Arc<T>, E> {
+        if self.key.as_ref() != Some(&key) {
+            self.slots.clear();
+            self.key = Some(key);
+        }
+        if let Some(reused) = self
+            .slots
+            .iter()
+            .find(|slot| std::sync::Arc::strong_count(slot) == 1)
+        {
+            return Ok(reused.clone());
+        }
+        let created = std::sync::Arc::new(create()?);
+        if self.slots.len() < Self::CAP {
+            self.slots.push(created.clone());
+        }
+        Ok(created)
     }
 }
 
-/// Extract the VPE-converted NV12 or P010 D3D11 texture from `surface` so an
-/// oversize scene cut can be re-encoded as an IDR. Array-backed AMF surfaces
-/// are copied to a single-slice texture because `gpu::wrap` wraps slice 0.
-fn vpe_kept_texture(
-    gpu: &Device,
+/// Cached 2-texture single-slice D3D11 pool for VPE scene-cut IDR re-encodes.
+#[derive(Default)]
+pub(super) struct ReencodePool {
+    slots: TextureSlots<
+        (
+            u32,
+            u32,
+            windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT,
+        ),
+        windows::Win32::Graphics::Direct3D11::ID3D11Texture2D,
+    >,
+}
+impl ReencodePool {
+    pub(super) fn clear(&mut self) {
+        self.slots.clear();
+    }
+    /// Copy `subresource` of `texture` into a reused exclusive single-slice
+    /// D3D11 texture suitable for wrapping as an AMF input surface.
+    fn copy(
+        &mut self,
+        gpu: &Device,
+        texture: &windows::Win32::Graphics::Direct3D11::ID3D11Texture2D,
+        subresource: u32,
+    ) -> Result<std::sync::Arc<windows::Win32::Graphics::Direct3D11::ID3D11Texture2D>> {
+        use windows::Win32::Graphics::Direct3D11::{
+            D3D11_BIND_RENDER_TARGET, D3D11_BIND_SHADER_RESOURCE, D3D11_TEXTURE2D_DESC,
+            D3D11_USAGE_DEFAULT, ID3D11Multithread, ID3D11Texture2D,
+        };
+        // SAFETY: `texture` and `gpu.device` are live on the same D3D11 device;
+        // `desc` is filled by `GetDesc`, and the copy runs under the context's
+        // multithread lock.
+        unsafe {
+            let mut desc = D3D11_TEXTURE2D_DESC::default();
+            texture.GetDesc(&mut desc);
+            let key = (desc.Width, desc.Height, desc.Format);
+            let copy = self.slots.acquire(key, || {
+                let copy_desc = D3D11_TEXTURE2D_DESC {
+                    Width: desc.Width,
+                    Height: desc.Height,
+                    MipLevels: 1,
+                    ArraySize: 1,
+                    Format: desc.Format,
+                    SampleDesc: desc.SampleDesc,
+                    Usage: D3D11_USAGE_DEFAULT,
+                    BindFlags: (D3D11_BIND_RENDER_TARGET.0 | D3D11_BIND_SHADER_RESOURCE.0) as u32,
+                    CPUAccessFlags: 0,
+                    MiscFlags: 0,
+                };
+                let mut created: Option<ID3D11Texture2D> = None;
+                gpu.device
+                    .CreateTexture2D(&copy_desc, None, Some(&mut created))
+                    .context("allocate D3D11 texture copy for AMF re-encode")?;
+                created.context("D3D11 returned no texture copy")
+            })?;
+            let lock: ID3D11Multithread = gpu.context.cast()?;
+            lock.Enter();
+            gpu.context
+                .CopySubresourceRegion(&*copy, 0, 0, 0, 0, texture, subresource, None);
+            lock.Leave();
+            Ok(copy)
+        }
+    }
+}
+
+/// The NV12 or P010 D3D11 texture and array subresource behind a VPE output
+/// `surface`, used only when an oversize scene cut triggers an IDR re-encode.
+fn vpe_surface_texture(
     surface: &gpu::Surface,
-) -> Result<Option<std::sync::Arc<windows::Win32::Graphics::Direct3D11::ID3D11Texture2D>>> {
+) -> Option<(windows::Win32::Graphics::Direct3D11::ID3D11Texture2D, u32)> {
     use windows::Win32::Graphics::{
         Direct3D11::{D3D11_TEXTURE2D_DESC, ID3D11Texture2D},
         Dxgi::Common::{DXGI_FORMAT_NV12, DXGI_FORMAT_P010},
     };
     // SAFETY: `surface.0` is a live `AMFSurface` returned by `Vpe::convert`;
     // plane 0's native pointer is a live `ID3D11Texture2D` kept alive by the
-    // surface, cloned (`AddRef`) or copied before returning.
+    // surface and cloned (`AddRef`) before returning.
     unsafe {
         let v = &*(*surface.0).pVtbl;
         if (v.GetMemoryType.unwrap())(surface.0) != AMF_MEMORY_TYPE_AMF_MEMORY_DX11 {
-            return Ok(None);
+            return None;
         }
         let plane = (v.GetPlaneAt.unwrap())(surface.0, 0);
         if plane.is_null() {
-            return Ok(None);
+            return None;
         }
         let raw = ((*(*plane).pVtbl).GetNative.unwrap())(plane);
-        let Some(texture) = ID3D11Texture2D::from_raw_borrowed(&raw) else {
-            return Ok(None);
-        };
+        let texture = ID3D11Texture2D::from_raw_borrowed(&raw)?;
         let mut desc = D3D11_TEXTURE2D_DESC::default();
         texture.GetDesc(&mut desc);
         if desc.Format != DXGI_FORMAT_NV12 && desc.Format != DXGI_FORMAT_P010 {
-            return Ok(None);
+            return None;
         }
-        if desc.ArraySize > 1 {
+        let index = if desc.ArraySize > 1 {
             let mut index = 0u32;
             let mut size = std::mem::size_of::<u32>() as u32;
             let _ = texture.GetPrivateData(
@@ -115,12 +178,11 @@ fn vpe_kept_texture(
                 &mut size,
                 Some(ptr::addr_of_mut!(index).cast()),
             );
-            if index >= desc.ArraySize {
-                index = 0;
-            }
-            return copy_d3d11_texture(gpu, texture, index).map(Some);
-        }
-        Ok(Some(std::sync::Arc::new(texture.clone())))
+            if index >= desc.ArraySize { 0 } else { index }
+        } else {
+            0
+        };
+        Some((texture.clone(), index))
     }
 }
 
@@ -370,28 +432,31 @@ impl Encoder {
     /// names only the keyframe. SubmitInput is the last step that can fail:
     /// before it, nothing has changed.
     pub(super) fn reencode_as_idr(&mut self, cut: &Submission) -> Result<()> {
-        let (surface, reencoded_converted) =
+        let (surface, reencoded_converted) = if let Some(vpe_surface) = self
+            .vpe_kept
+            .as_ref()
+            .filter(|(pts, _)| *pts == cut.pts)
+            .map(|(_, surface)| surface)
+        {
+            let (texture, index) = vpe_surface_texture(vpe_surface)
+                .context("VPE surface has no NV12/P010 D3D11 texture for re-encode")?;
+            let texture = self.reencode_pool.copy(&self._device, &texture, index)?;
+            (
+                gpu::wrap(self.context, &texture, &mut self.ownership)?.0,
+                Some(texture),
+            )
+        } else {
             match (&cut._converted, &cut._converted12, self.compute.as_ref()) {
-                (Some(texture), _, _) => {
-                    // VPE's output surface may live in AMFVideoConverter's internal pool,
-                    // which the next frame can reuse once the encoder outputs this one.
-                    // Copy to an exclusive texture when VPE is active so the IDR reads
-                    // intact pixels.
-                    let texture = if self.vpe.is_some() {
-                        copy_d3d11_texture(&self._device, texture, 0)?
-                    } else {
-                        texture.clone()
-                    };
-                    (
-                        gpu::wrap(self.context, &texture, &mut self.ownership)?.0,
-                        Some(texture),
-                    )
-                }
+                (Some(texture), _, _) => (
+                    gpu::wrap(self.context, texture, &mut self.ownership)?.0,
+                    Some(texture.clone()),
+                ),
                 (None, Some(texture), Some(input)) => {
                     (input.context.wrap(texture, &mut self.ownership)?, None)
                 }
                 _ => bail!("the frame's converted input was not kept"),
-            };
+            }
+        };
         let frame = cut.pts as u64 + 1;
         // SAFETY: As in `encode_gpu`: the fresh surface wraps the converted
         // texture the submission kept, which no later conversion has reused.
@@ -417,6 +482,7 @@ impl Encoder {
             self.last_submit = Some(result);
             check(result).context("AMF SubmitInput of the keyframe")?;
             // Only now: had SubmitInput failed, the references stay as they were.
+            self.release_vpe_kept(cut.pts);
             if ltr_rejected {
                 self.references.disable();
             }
@@ -500,6 +566,9 @@ impl Encoder {
         let started = Instant::now();
         let repeat = std::mem::take(&mut self.repeat);
         let mut output = self.wait_capacity()?;
+        // Any earlier VPE surface can no longer be the newest submission once
+        // this frame is converted; release it before asking VPE for a new one.
+        self.vpe_kept = None;
         let idr = idr || self.hdr_metadata.needs_idr() || self.recover;
         if self._device.device.as_raw() != image.gpu.device.as_raw() {
             bail!("GPU frame and encoder must use the same D3D11 device");
@@ -534,7 +603,8 @@ impl Encoder {
                     let surface = timed("AMF surface wrap", || {
                         input.context.wrap(texture, &mut self.ownership)
                     })?;
-                    let kept = self.cut_limit.map(|_| texture.clone());
+                    let kept = (self.cut_limit.is_some() && self.slice_blocks == 0 && !idr)
+                        .then(|| texture.clone());
                     Some((surface, (None, kept), None))
                 }
                 (CachedTexture::D3d11(texture), None) => {
@@ -575,7 +645,9 @@ impl Encoder {
                     )
                 })?;
                 timed("conversion fence wait", || {
-                    gpu::synchronize(&converted.texture, &converted.fence, converted.value)
+                    input
+                        .context
+                        .synchronize(&converted.texture, &converted.fence, converted.value)
                 })?;
                 let surface = timed("AMF surface wrap", || {
                     input.context.wrap(&converted.texture, &mut self.ownership)
@@ -584,19 +656,17 @@ impl Encoder {
                     to_cache = Some(CachedTexture::D3d12(converted.texture.clone()));
                 }
                 // Kept while the frame may need encoding again (`reencodes_cut`).
-                let kept = self.cut_limit.map(|_| converted.texture.clone());
+                let kept = (self.cut_limit.is_some() && self.slice_blocks == 0 && !idr)
+                    .then(|| converted.texture.clone());
                 (surface, (None, kept), Some(converted.conversion))
             } else if let Some(converted) = self.convert_vpe(image, source)? {
                 vpe_used = Some(true);
                 // HLG's `held` prepass texture is RGB/FP16 input to VPE (already
                 // held by `self.ownership`), not the NV12/P010 output for re-encoding.
+                // `converted.surface` itself is retained in `self.vpe_kept` after
+                // `SubmitInput` so non-cut frames pay zero D3D11 copy or allocation.
                 let _ = converted.held;
-                let kept = if self.cut_limit.is_some() {
-                    vpe_kept_texture(&self._device, &converted.surface)?
-                } else {
-                    None
-                };
-                (converted.surface, (kept, None), None)
+                (converted.surface, (None, None), None)
             } else {
                 if self.vpe.is_some() {
                     vpe_used = Some(false);
@@ -724,6 +794,12 @@ impl Encoder {
                 _converted: converted,
                 _converted12: converted12,
             });
+            if vpe_used == Some(true) && self.cut_limit.is_some() && self.slice_blocks == 0 && !idr
+            {
+                self.vpe_kept = Some((self.index, surface));
+            } else {
+                drop(surface);
+            }
             self.backlog.submitted();
             if let Some(thread) = &self.output_thread {
                 thread.want(true);
@@ -736,5 +812,38 @@ impl Encoder {
             output.extend(self.poll()?);
             Ok(output)
         }
+    }
+}
+
+#[cfg(test)]
+mod pool_tests {
+    use super::*;
+
+    #[test]
+    fn reencode_texture_slots_reuse_up_to_two_and_reset_on_key_change() {
+        let mut pool = TextureSlots::<(u32, u32), u32>::default();
+        let next = std::cell::Cell::new(0u32);
+        let make = || {
+            let value = next.get() + 1;
+            next.set(value);
+            Ok::<_, ()>(value)
+        };
+        let a = pool.acquire((1920, 1080), make).unwrap();
+        assert_eq!(*a, 1);
+        // While `a` is held, a second acquisition allocates slot 2.
+        let b = pool.acquire((1920, 1080), make).unwrap();
+        assert_eq!(*b, 2);
+        assert_eq!(pool.slots.len(), 2);
+        // Dropping `a` returns slot 1 for reuse without creating slot 3.
+        drop(a);
+        let reused = pool.acquire((1920, 1080), make).unwrap();
+        assert_eq!(*reused, 1);
+        assert_eq!(next.get(), 2);
+        // Changing key clears the cached slots and allocates fresh.
+        drop(b);
+        drop(reused);
+        let resized = pool.acquire((2560, 1440), make).unwrap();
+        assert_eq!(*resized, 3);
+        assert_eq!(pool.slots.len(), 1);
     }
 }

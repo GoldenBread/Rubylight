@@ -4,6 +4,79 @@ use super::*;
 use crate::capture::Crop;
 use std::sync::atomic::AtomicBool;
 
+/// Reusable auto-reset Win32 event closed on thread exit so [`wait_fence`]
+/// avoids `CreateEventW`/`CloseHandle` kernel round trips on every wait.
+struct FenceEvent(HANDLE);
+impl Drop for FenceEvent {
+    fn drop(&mut self) {
+        if !self.0.is_invalid() && !self.0.0.is_null() {
+            // SAFETY: `self.0` was created by `CreateEventW` in `wait_fence` and is closed once.
+            unsafe {
+                let _ = CloseHandle(self.0);
+            }
+        }
+    }
+}
+thread_local! {
+    static FENCE_EVENT: std::cell::RefCell<Option<FenceEvent>> = const {
+        std::cell::RefCell::new(None)
+    };
+}
+/// Wait on the CPU until `fence` reaches `value`, for at most two seconds.
+/// The copies wait for fences another device signals; after that device is
+/// lost they may never complete, and an unbounded wait froze the stream for
+/// good with no error to recover from.
+pub(super) fn wait_fence(fence: &ID3D12Fence, value: u64) -> Result<()> {
+    use windows::Win32::Foundation::{WAIT_FAILED, WAIT_OBJECT_0};
+    use windows::Win32::System::Threading::*;
+    // SAFETY: `fence` is a live D3D12 fence. The auto-reset event is owned exclusively by this
+    // call while taken from TLS, returned only after a clean `WAIT_OBJECT_0` completion so a
+    // timed-out or failed registration can never spuriously wake a later wait.
+    let result = (|| unsafe {
+        if completed_value(fence.GetCompletedValue())? >= value {
+            return Ok(());
+        }
+        let event = match FENCE_EVENT
+            .try_with(|cell| cell.borrow_mut().take())
+            .ok()
+            .flatten()
+        {
+            Some(event) => event,
+            None => FenceEvent(CreateEventW(None, false, false, PCWSTR::null())?),
+        };
+        let waited = fence.SetEventOnCompletion(value, event.0).and_then(|()| {
+            let waited = WaitForSingleObject(event.0, 2000);
+            if waited == WAIT_FAILED {
+                Err(windows::core::Error::from_thread())
+            } else {
+                Ok(waited)
+            }
+        })?;
+        // Device removal wakes the event too; check the fence after any wake.
+        if completed_value(fence.GetCompletedValue())? < value {
+            bail!("GPU work did not finish within two seconds");
+        }
+        if waited == WAIT_OBJECT_0 {
+            let _ = FENCE_EVENT.try_with(|cell| {
+                *cell.borrow_mut() = Some(event);
+            });
+        }
+        Ok(())
+    })();
+    result.map_err(|error| {
+        let mut device: Option<ID3D12Device> = None;
+        // SAFETY: The fence owns its device and the out-parameter is a live local.
+        let _ = unsafe { fence.GetDevice(&mut device) };
+        match device
+            .as_ref()
+            .and_then(crate::device_loss::DeviceLost::d3d12)
+        {
+            Some(loss) => error.context(loss),
+            None => error,
+        }
+    })
+}
+
 /// A D3D12 fence the capture's D3D11 device can signal and wait for.
 fn shared_fence(compute: &Compute, device: &ID3D11Device5) -> Result<(ID3D12Fence, ID3D11Fence)> {
     // SAFETY: The fence is created on the live `compute.device`, the NT handle is closed once after
@@ -103,10 +176,11 @@ impl Compute {
             let texture: ID3D11Texture2D = device
                 .OpenSharedResource1(HANDLE(handle.as_raw_handle()))
                 .context("opening a D3D12 texture on the capture device")?;
-            self.foreign
-                .lock()
-                .unwrap()
-                .insert(texture.as_raw() as usize, (texture.clone(), resource));
+            {
+                let mut foreign = self.foreign.lock().unwrap();
+                foreign.insert(texture.as_raw() as usize, (texture.clone(), resource));
+                self.has_foreign.store(true, Ordering::Release);
+            }
             Ok((texture, handle))
         }
     }
@@ -191,6 +265,41 @@ impl Ready {
             }
         }
         Ok(())
+    }
+}
+
+/// Signals a shared D3D11->D3D12 fence after a D3D11 copy or render into a
+/// shared texture so downstream D3D12 compute work waits for it on the GPU.
+pub(crate) struct D3d11Signal {
+    compute: Arc<Compute>,
+    fence: (ID3D12Fence, ID3D11Fence),
+    context: ID3D11DeviceContext4,
+    value: u64,
+}
+// SAFETY: The D3D11 context's device is multithread-protected (`capture::Device::create`),
+// the D3D12 fence is free-threaded, and `value` is only mutated through `&mut self`.
+unsafe impl Send for D3d11Signal {}
+impl D3d11Signal {
+    pub(crate) fn new(compute: Arc<Compute>, gpu: &crate::capture::Device) -> Result<Self> {
+        compute.ensure_active()?;
+        let device: ID3D11Device5 = gpu.device.cast()?;
+        Ok(Self {
+            fence: shared_fence(&compute, &device)?,
+            compute,
+            context: gpu.context.cast()?,
+            value: 0,
+        })
+    }
+    pub(crate) fn signal(&mut self) -> Result<Ready> {
+        self.compute.ensure_active()?;
+        let next = self.value + 1;
+        // SAFETY: The shared fence belongs to this multithread-protected context's device.
+        unsafe {
+            self.context.Signal(&self.fence.1, next)?;
+            self.context.Flush();
+        }
+        self.value = next;
+        Ok(Ready::on(&self.compute, self.fence.0.clone(), next))
     }
 }
 
@@ -642,11 +751,14 @@ impl Drop for Handoff {
                 work.keep(&d3d12);
             }
         }
-        self.compute
-            .opened
-            .lock()
-            .unwrap()
-            .retain(|key, _| !self.opened.contains(key));
+        if !self.opened.is_empty() {
+            let mut opened = self.compute.opened.lock().unwrap();
+            let before = opened.len();
+            opened.retain(|key, _| !self.opened.contains(key));
+            if opened.len() != before {
+                self.compute.cache_epoch.fetch_add(1, Ordering::Release);
+            }
+        }
         work.finish(&self.compute);
     }
 }

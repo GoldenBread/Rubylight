@@ -8,7 +8,7 @@ use crate::state::{Session, Shared};
 use anyhow::{Result, bail};
 use butterpollo_config::config::Config;
 use butterpollo_media_policy::{
-    packet::{ConventionalPlan, PacketBlock, VideoPacketizer},
+    packet::{ConventionalPlan, InlineBlocks, PacketBlock, VideoPacketizer},
     performance::{Claim, Claims},
 };
 use butterpollo_win_graphics::encoder::{Encoded, Unit};
@@ -114,9 +114,9 @@ struct Frame {
 }
 /// Fully prepared packets. Their Moonlight timing is immutable before the send queue.
 struct Prepared {
-    blocks: Vec<PacketBlock>,
-    counts: Vec<usize>,
-    layout: Vec<(usize, usize)>,
+    blocks: InlineBlocks<PacketBlock>,
+    counts: InlineBlocks<usize>,
+    layout: InlineBlocks<(usize, usize)>,
     packetizer: VideoPacketizer,
     wire_frame: u32,
     idr: bool,
@@ -567,7 +567,7 @@ impl Sender {
                 };
                 if early {
                     let dropped = early::send(shared, &mut packetizer, &frame, timestamp, processing, &plan.layout, &plan, peer, |blocks, counts, block, part, frame_wire_bytes| {
-                        details(blocks, counts, vec![block], Some(part), frame_wire_bytes)
+                        details(blocks, counts, InlineBlocks::one(block), Some(part), frame_wire_bytes)
                     });
                     if let Some(error) = dropped? {
                         shared.abandon_whole();
@@ -586,29 +586,24 @@ impl Sender {
                         "packetized picture block by block");
                     return Ok(packetizer.frame);
                 }
-                let mut blocks: Vec<PacketBlock> = {
+                let mut blocks: InlineBlocks<PacketBlock> = {
                     let mut state = shared.state.lock().unwrap();
                     (0..plan.layout.len()).map(|_| state.take_block()).collect()
                 };
-                let mut counts = Vec::with_capacity(plan.layout.len());
+                let mut counts = InlineBlocks::new();
                 let prepared = (|| -> Result<()> {
                     let (_, mut next) = packetizer.conventional_blocks_planned(
                         &frame.bytes, frame.idr, frame.after_invalidation, timestamp, processing,
                         &plan,
                     )?;
-                    loop {
-                        if counts.len() == blocks.len() {
-                            blocks.push(Vec::new());
-                        }
-                        let count = next(&mut blocks[counts.len()])?;
+                    for block in blocks.iter_mut() {
+                        let count = next(block)?;
                         if count == 0 { break; }
                         counts.push(count);
                     }
                     Ok(())
                 })();
-                // The block that only ended the loop (and any the layout over-counted) goes back
-                // to the pool: left at the end of the frame it would be the next frame's block 0,
-                // empty, every time.
+                // Any block the layout over-counted goes back to the pool.
                 if prepared.is_ok() && blocks.len() > counts.len() {
                     let unused = blocks.split_off(counts.len());
                     let mut spill = Vec::new();

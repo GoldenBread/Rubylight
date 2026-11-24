@@ -1,6 +1,6 @@
 //! Per-frame PyroWave conversion slots (shared plane images, single timeline
-//! sync object, optional D3D12 compute converter and lazy D3D11 fallback) plus
-//! creation-time warmup helpers.
+//! sync object, optional D3D12 compute targets driven by the encoder's shared
+//! compute converter, and lazy D3D11 fallback) plus creation-time warmup helpers.
 
 use super::*;
 
@@ -145,30 +145,21 @@ impl Drop for SlotSync {
     }
 }
 
-/// The colour conversion on the GPU's compute queue. Beside a game using the
-/// whole GPU, the D3D11 conversion of a 1080p HDR 4:4:4 frame waited 5.1 ms
-/// on the graphics queue, against 0.15 ms idle, nearly all of the encode's
-/// 5.7 ms; PyroWave's own GPU work took 0.2 ms either way.
-pub(super) struct ComputePlanes {
-    pub(super) converter: crate::compute::Converter,
+/// Per-slot D3D12 compute target (shared plane resources and timeline fence)
+/// driven by the encoder's single shared [`crate::compute::Converter`].
+pub(super) struct ComputeTarget {
+    compute: Arc<crate::compute::Compute>,
     target: crate::compute::Planes,
     textures: [Arc<ID3D11Texture2D>; 3],
 }
 
-impl ComputePlanes {
+impl ComputeTarget {
     fn new(
-        d3d: &Device,
+        compute: &Arc<crate::compute::Compute>,
         config: &Negotiated,
         textures: &[Arc<ID3D11Texture2D>; 3],
         fence: &ID3D11Fence,
     ) -> Result<Self> {
-        let compute = crate::compute::Compute::for_device(&d3d.device)?;
-        let converter = crate::compute::Converter::new_planar(
-            compute.clone(),
-            config.width,
-            config.height,
-            config.ten_bit(),
-        )?;
         let planes = [
             compute.open(&textures[0])?,
             compute.open(&textures[1])?,
@@ -185,7 +176,7 @@ impl ComputePlanes {
             opened.context("no shared fence")?
         };
         Ok(Self {
-            converter,
+            compute: compute.clone(),
             textures: textures.clone(),
             target: crate::compute::Planes {
                 planes,
@@ -204,28 +195,29 @@ impl ComputePlanes {
     /// Convert once the encoder has signalled `after`; signals `done`.
     pub(super) fn convert(
         &mut self,
+        converter: &mut crate::compute::Converter,
         image: &GpuImage,
         config: &Negotiated,
         luminance: [f32; 2],
         after: u64,
         done: u64,
     ) -> Result<()> {
-        let texture = self.converter.compute().open(&image.texture)?;
+        let texture = converter.compute().open(&image.texture)?;
         let pointer = image
             .cursor
             .as_ref()
-            .map(|cursor| self.converter.pointer(cursor))
+            .map(|cursor| converter.pointer(cursor))
             .transpose()?;
-        self.converter.values = crate::gpu_color::constants(
+        converter.values = crate::gpu_color::constants(
             config,
             (image.width, image.height, image.pixel),
             luminance,
             image.cursor.as_ref(),
         );
-        self.converter.values[11] = u32::from(config.yuv444);
+        converter.values[11] = u32::from(config.yuv444);
         self.target.after = after;
         self.target.done = done;
-        self.converter.convert_planes(
+        converter.convert_planes(
             &texture,
             crate::compute::format(image.pixel),
             pointer.as_ref(),
@@ -236,10 +228,10 @@ impl ComputePlanes {
     }
 }
 
-impl Drop for ComputePlanes {
+impl Drop for ComputeTarget {
     fn drop(&mut self) {
         for texture in &self.textures {
-            self.converter.compute().forget(texture);
+            self.compute.forget(texture);
         }
     }
 }
@@ -318,7 +310,7 @@ pub(super) fn finish_warmup(
 /// the fence between the conversion and the encode. Each frame in flight has
 /// its own; fields drop in this order.
 pub(super) struct Slot {
-    pub(super) compute: Option<ComputePlanes>,
+    pub(super) compute: Option<ComputeTarget>,
     /// The three planes as Vulkan images.
     pub(super) planes: [PlaneImage; 3],
     /// The shared fence and Vulkan timeline semaphore ordering this slot.
@@ -338,7 +330,7 @@ impl Slot {
         device: p::pyrowave_device,
         config: &Negotiated,
         source: Option<(u32, u32, Pixel)>,
-        use_compute: bool,
+        compute_device: Option<&Arc<crate::compute::Compute>>,
         warnings: &Arc<dyn WarningSink>,
     ) -> Result<Self> {
         let textures = crate::gpu_color::planar_textures(d3d, config)?;
@@ -349,9 +341,9 @@ impl Slot {
         let planes: [PlaneImage; 3] = planes.try_into().ok().unwrap();
         let sync = SlotSync::new(api.clone(), d3d, device)?;
         let mut compute = None;
-        if use_compute {
-            match ComputePlanes::new(d3d, config, &textures, &sync.fence) {
-                Ok(planes) => compute = Some(planes),
+        if let Some(compute_device) = compute_device {
+            match ComputeTarget::new(compute_device, config, &textures, &sync.fence) {
+                Ok(target) => compute = Some(target),
                 Err(error) => {
                     warnings.set("pyrowave_conversion", &format!("PyroWave compute conversion unavailable ({error:#}); converting on the graphics queue. Game rendering may delay frames; update the AMD driver or lower GPU load."))
                 }
@@ -378,5 +370,71 @@ impl Slot {
     pub(super) fn semaphore(&self) -> p::VkSemaphore {
         // SAFETY: `sync` is the live sync object `SlotSync::new` imported on this device.
         unsafe { (self.sync.api.sync_object_get_semaphore)(self.sync.sync) }
+    }
+
+    /// Submits one discarded warmup encode on this slot's zero-initialized
+    /// planes for `slot_index` and returns the release semaphore value.
+    pub(super) fn warm_up_submit(
+        &mut self,
+        api: &Api,
+        encoder: p::pyrowave_encoder,
+        depth: usize,
+        slot_index: usize,
+        budget: usize,
+    ) -> Result<u64> {
+        let images: [p::pyrowave_gpu_external_reference; 3] =
+            std::array::from_fn(|plane| p::pyrowave_gpu_external_reference {
+                image: self.planes[plane].image,
+                queue_family_index: 0xfffffffe,
+            });
+        let views = [
+            self.planes[0].view,
+            self.planes[1].view,
+            self.planes[2].view,
+        ];
+        self.sync.counter = self
+            .sync
+            .counter
+            .checked_add(1)
+            .context("PyroWave fence exhausted")?;
+        let release_value = self.sync.counter;
+        let semaphore = self.semaphore();
+        let acquire = p::pyrowave_gpu_sync_operation {
+            images: images.as_ptr(),
+            num_images: 3,
+            sync: p::pyrowave_sync_point {
+                semaphore: ptr::null_mut(),
+                value: 0,
+            },
+        };
+        let release = p::pyrowave_gpu_sync_operation {
+            sync: p::pyrowave_sync_point {
+                semaphore,
+                value: release_value,
+            },
+            ..acquire
+        };
+        let buffers = p::pyrowave_gpu_buffers { planes: views };
+        // SAFETY: `images`, `acquire`, `release` and `buffers` are live locals naming the
+        // slot's images and views on `self.device`; `acquire` uses `VK_NULL_HANDLE` ("no
+        // sync", pyrowave.h) because freshly allocated D3D11 planes have no pending writes.
+        unsafe {
+            if depth > 1 {
+                let set = api
+                    .set_frame_context
+                    .context("PyroWave frame contexts unavailable")?;
+                check(set(encoder, slot_index as std::ffi::c_int))?;
+            }
+            check((api.encoder_encode_gpu)(
+                encoder,
+                &acquire,
+                &release,
+                &buffers,
+                &p::pyrowave_rate_control {
+                    maximum_bitstream_size: budget,
+                },
+            ))?;
+        }
+        Ok(release_value)
     }
 }

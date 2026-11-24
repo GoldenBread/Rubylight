@@ -69,33 +69,47 @@ impl Codec {
 /// Interleaved samples as PCM's s16le, clamped to full scale.
 pub fn pcm_s16le(samples: &[f32]) -> Vec<u8> {
     let mut out = Vec::with_capacity(samples.len() * 2);
+    pcm_s16le_into(samples, &mut out);
+    out
+}
+
+/// [`pcm_s16le`] writing into `out` (emptied first), reusing its buffer across packets.
+pub fn pcm_s16le_into(samples: &[f32], out: &mut Vec<u8>) {
+    out.clear();
+    out.reserve(samples.len() * 2);
     for sample in samples {
         let value = (sample.clamp(-1.0, 1.0) * f32::from(i16::MAX)).round() as i16;
         out.extend_from_slice(&value.to_le_bytes());
     }
-    out
 }
 
 /// The RTP payloads of one AC3 or E-AC3 frame: [`CHUNK_BYTES`] of it behind each
 /// [`ChunkHeader`], the last zero-padded to the same size.
 pub fn chunks(frame: &[u8], frame_index: u16) -> Vec<Vec<u8>> {
+    let mut out = Vec::with_capacity(audio_ext::chunks_for(frame.len()));
+    let count = chunks_into(frame, frame_index, &mut out);
+    out.truncate(count);
+    out
+}
+
+/// [`chunks`] reusing the chunk buffers in `out` and returning how many chunks were filled.
+pub fn chunks_into(frame: &[u8], frame_index: u16, out: &mut Vec<Vec<u8>>) -> usize {
     let count = audio_ext::chunks_for(frame.len());
-    frame
-        .chunks(CHUNK_BYTES)
-        .enumerate()
-        .map(|(index, piece)| {
-            let header = ChunkHeader {
-                first: index == 0,
-                last: index + 1 == count,
-                frame_index,
-            };
-            let mut payload = Vec::with_capacity(audio_ext::CHUNK_PAYLOAD_BYTES);
-            payload.extend_from_slice(&header.encode());
-            payload.extend_from_slice(piece);
-            payload.resize(audio_ext::CHUNK_PAYLOAD_BYTES, 0);
-            payload
-        })
-        .collect()
+    if out.len() < count {
+        out.resize_with(count, || Vec::with_capacity(audio_ext::CHUNK_PAYLOAD_BYTES));
+    }
+    for (index, (piece, payload)) in frame.chunks(CHUNK_BYTES).zip(out.iter_mut()).enumerate() {
+        let header = ChunkHeader {
+            first: index == 0,
+            last: index + 1 == count,
+            frame_index,
+        };
+        payload.clear();
+        payload.extend_from_slice(&header.encode());
+        payload.extend_from_slice(piece);
+        payload.resize(audio_ext::CHUNK_PAYLOAD_BYTES, 0);
+    }
+    count
 }
 
 #[cfg(test)]

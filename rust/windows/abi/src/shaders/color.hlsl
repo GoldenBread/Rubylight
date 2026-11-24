@@ -29,6 +29,11 @@ float3 pq(float3 luminance) {
     return pow((3424.0 / 4096.0 + 2413.0 / 128.0 * power) /
                (1.0 + 2392.0 / 128.0 * power), 2523.0 / 32.0);
 }
+float pq1(float luminance) {
+    float power = pow(clamp(luminance, 0, 1), 2610.0 / 16384.0);
+    return pow((3424.0 / 4096.0 + 2413.0 / 128.0 * power) /
+               (1.0 + 2392.0 / 128.0 * power), 2523.0 / 32.0);
+}
 float3 depq(float3 rgb) {
     float3 p = pow(clamp(rgb, 0, 1), 32.0 / 2523.0);
     return pow(max(p - 3424.0 / 4096.0, 0) / max(2413.0 / 128.0 - 2392.0 / 128.0 * p, 0.000001), 16384.0 / 2610.0);
@@ -95,16 +100,18 @@ float3 load(int2 p) {
 // The source keeps its aspect ratio, centred in the stream with black bars
 // (a 32:9 desktop streamed to a 16:10 tablet). Sizes within a pixel of the
 // stream's shape still fill it, so rounding never adds a one-pixel line.
-bool content(float2 target, out float2 p) {
+bool content(float2 target, out float2 p, out float2 footprint) {
     float2 ratio = float2(targetSize) / float2(sourceSize);
     float scale = min(ratio.x, ratio.y);
     float2 size = float2(sourceSize) * scale;
     if (all(abs(size - float2(targetSize)) < 1)) {
         p = (target + 0.5) / ratio - 0.5;
+        footprint = 1 / ratio;
         return true;
     }
     float2 at = target + 0.5 - (float2(targetSize) - size) * 0.5;
     p = at / scale - 0.5;
+    footprint = 1 / scale;
     return all(at >= 0) && all(at < size);
 }
 float3 bilinear(float2 p) {
@@ -161,11 +168,8 @@ float3 sample_source(float2 target) {
         rgb /= 9;
     } else {
         float2 p;
-        if (!content(target, p)) return float3(0, 0, 0);
-        float2 ratio = float2(targetSize) / float2(sourceSize);
-        float scale = min(ratio.x, ratio.y);
-        float2 size = float2(sourceSize) * scale;
-        float2 footprint = all(abs(size - float2(targetSize)) < 1) ? 1 / ratio : 1 / scale;
+        float2 footprint;
+        if (!content(target, p, footprint)) return float3(0, 0, 0);
         rgb = resize(p, footprint);
     }
     return rgb;
@@ -339,11 +343,51 @@ float2 yuv420Block(uint2 id, bool menu, out float4 y) {
     chromaPlane[id] = uv;
     return uv;
 }
-[numthreads(8, 8, 1)]
-void yuv420_cs(uint3 id : SV_DispatchThreadID) {
-    if (any(id.xy >= targetSize / 2)) return;
+// Right-column chroma-light samples shared across each 8x8 threadgroup so
+// `gtid.x > 0` reuses its left neighbour's right column instead of re-reading
+// and re-converting two source pixels per 2x2 block.
+groupshared float3 yuv420Right0[8][8];
+groupshared float3 yuv420Right1[8][8];
+float4 yuv420LumaAndLight(uint2 at, out float3 l00, out float3 l10, out float3 l01, out float3 l11) {
     float4 y;
-    yuv420Block(id.xy, false, y);
+    // Each store follows its code, keeping live temporaries minimal for fxc.
+    y.x = lumaCode(pixel_and_light(float2(at), false, l00));
+    lumaPlane[at] = y.x;
+    y.y = lumaCode(pixel_and_light(float2(at + uint2(1, 0)), false, l10));
+    lumaPlane[at + uint2(1, 0)] = y.y;
+    y.z = lumaCode(pixel_and_light(float2(at + uint2(0, 1)), false, l01));
+    lumaPlane[at + uint2(0, 1)] = y.z;
+    y.w = lumaCode(pixel_and_light(float2(at + uint2(1, 1)), false, l11));
+    lumaPlane[at + uint2(1, 1)] = y.w;
+    return y;
+}
+[numthreads(8, 8, 1)]
+void yuv420_cs(uint3 id : SV_DispatchThreadID, uint3 gtid : SV_GroupThreadID) {
+    bool active = all(id.xy < targetSize / 2);
+    uint2 at = id.xy * 2;
+    float3 l00 = 0, l10 = 0, l01 = 0, l11 = 0;
+    if (active) {
+        yuv420LumaAndLight(at, l00, l10, l01, l11);
+        yuv420Right0[gtid.y][gtid.x] = l10;
+        yuv420Right1[gtid.y][gtid.x] = l11;
+    }
+    GroupMemoryBarrierWithGroupSync();
+    if (active) {
+        float3 left0;
+        float3 left1;
+        if (gtid.x > 0) {
+            left0 = yuv420Right0[gtid.y][gtid.x - 1];
+            left1 = yuv420Right1[gtid.y][gtid.x - 1];
+        } else if (at.x == 0) {
+            left0 = l00;
+            left1 = l01;
+        } else {
+            float2 left = float2(at.x - 1, at.y);
+            left0 = chroma_sample_at(left, false);
+            left1 = chroma_sample_at(left + float2(0, 1), false);
+        }
+        chromaPlane[id.xy] = chromaCode(chromaCodes((left0 + left1 + 2 * (l00 + l01) + l10 + l11) * 0.125));
+    }
 }
 // The menu passes run over the panel's blocks only, `menuBlocks` of the
 // entry's own block size from `menuOriginBlocks`, after the closed pass.
@@ -442,23 +486,20 @@ void packedPair(uint2 id, uint2 size, float3 even, float3 odd) {
 [numthreads(8, 8, 1)]
 void chroma_pack_cs(uint3 id : SV_DispatchThreadID) {
     uint2 size = packedSize();
-    if (any(id.xy >= uint2(size.x / 2, size.y))) return;
-    uint2 at = uint2(id.x * 2, id.y);
-    float3 even = packedRgb(at, false);
-    float3 odd = packedRgb(at + uint2(1, 0), false);
-    if (padding == 2) {
-        // The lower half of the dispatch exits.
-        if (id.y >= size.y / 2) return;
+    [branch] if (padding == 2) {
+        if (any(id.xy >= size / 2)) return;
         packedBlock(id.xy, size, false);
         return;
     }
-    packedPair(id.xy, size, even, odd);
+    if (any(id.xy >= uint2(size.x / 2, size.y))) return;
+    uint2 at = uint2(id.x * 2, id.y);
+    packedPair(id.xy, size, packedRgb(at, false), packedRgb(at + uint2(1, 0), false));
 }
 [numthreads(8, 8, 1)]
 void chroma_pack_menu_cs(uint3 id : SV_DispatchThreadID) {
     if (any(id.xy >= menuBlocks)) return;
     uint2 block = menuOriginBlocks + id.xy;
-    if (padding == 2) {
+    [branch] if (padding == 2) {
         packedBlock(block, packedSize(), true);
         return;
     }
@@ -612,6 +653,26 @@ void yuv444_ayuv_menu_cs(uint3 id : SV_DispatchThreadID) {
     uint2 at = menuOriginBlocks + id.xy;
     ayuvPlane[at] = yuv444AyuvPixel(at, true);
 }
+// 10-bit native 4:4:4 in a single compute pass: converts each pixel once and
+// writes Y, U and V into the stacked R16_UINT target (`Layout::Planes444`),
+// reusing u0 (never bound beside `lumaPlane` or `ayuvPlane`).
+RWTexture2D<uint> yuv444Planes : register(u0);
+void yuv444PlanesPixel(uint2 at, bool menu) {
+    uint3 c = yuv444Codes(rgb_at(float2(at), menu));
+    yuv444Planes[at] = c.x;
+    yuv444Planes[uint2(at.x, at.y + targetSize.y)] = c.y;
+    yuv444Planes[uint2(at.x, at.y + 2 * targetSize.y)] = c.z;
+}
+[numthreads(16, 16, 1)]
+void yuv444_planes_cs(uint3 id : SV_DispatchThreadID) {
+    if (any(id.xy >= targetSize)) return;
+    yuv444PlanesPixel(id.xy, false);
+}
+[numthreads(8, 8, 1)]
+void yuv444_planes_menu_cs(uint3 id : SV_DispatchThreadID) {
+    if (any(id.xy >= menuBlocks)) return;
+    yuv444PlanesPixel(menuOriginBlocks + id.xy, true);
+}
 // Encoder focus (docs/encoder-focus-design.md): `yuv420_cs` plus a still-age
 // per 16x16 block, then the codec blocks' importances AMF reads as its ROI
 // map. Kept apart so the focus-off pipeline stays the shader it was.
@@ -636,7 +697,7 @@ uint focusCode(float v) {
     return (tenBit != 0 ? uint(v * (65535.0 / 64.0) + 0.5) : uint(v * 255.0 + 0.5)) >> focusNoiseBits;
 }
 [numthreads(8, 8, 1)]
-void yuv420_focus_cs(uint3 id : SV_DispatchThreadID, uint3 group : SV_GroupID, uint index : SV_GroupIndex) {
+void yuv420_focus_cs(uint3 id : SV_DispatchThreadID, uint3 group : SV_GroupID, uint3 gtid : SV_GroupThreadID, uint index : SV_GroupIndex) {
     if (index == 0) {
         focusSum = 0;
         if (all(group.xy == 0)) {
@@ -644,10 +705,32 @@ void yuv420_focus_cs(uint3 id : SV_DispatchThreadID, uint3 group : SV_GroupID, u
             focusMap[1] = 0;
         }
     }
+    bool active = all(id.xy < targetSize / 2);
+    uint2 at = id.xy * 2;
+    float4 y = 0;
+    float3 l00 = 0, l10 = 0, l01 = 0, l11 = 0;
+    if (active) {
+        y = yuv420LumaAndLight(at, l00, l10, l01, l11);
+        yuv420Right0[gtid.y][gtid.x] = l10;
+        yuv420Right1[gtid.y][gtid.x] = l11;
+    }
     GroupMemoryBarrierWithGroupSync();
-    if (all(id.xy < targetSize / 2)) {
-        float4 y;
-        float2 uv = yuv420Block(id.xy, false, y);
+    if (active) {
+        float3 left0;
+        float3 left1;
+        if (gtid.x > 0) {
+            left0 = yuv420Right0[gtid.y][gtid.x - 1];
+            left1 = yuv420Right1[gtid.y][gtid.x - 1];
+        } else if (at.x == 0) {
+            left0 = l00;
+            left1 = l01;
+        } else {
+            float2 left = float2(at.x - 1, at.y);
+            left0 = chroma_sample_at(left, false);
+            left1 = chroma_sample_at(left + float2(0, 1), false);
+        }
+        float2 uv = chromaCode(chromaCodes((left0 + left1 + 2 * (l00 + l01) + l10 + l11) * 0.125));
+        chromaPlane[id.xy] = uv;
         uint h = focusHash(index * 0x9e3779b9u ^ focusCode(y.x));
         h = focusHash(h ^ focusCode(y.y));
         h = focusHash(h ^ focusCode(y.z));
@@ -657,10 +740,10 @@ void yuv420_focus_cs(uint3 id : SV_DispatchThreadID, uint3 group : SV_GroupID, u
     }
     GroupMemoryBarrierWithGroupSync();
     if (index == 0) {
-        uint at = group.y * focusAgeGrid.x + group.x;
-        uint2 previous = focusAges[at];
+        uint ageAt = group.y * focusAgeGrid.x + group.x;
+        uint2 previous = focusAges[ageAt];
         bool same = focusReset == 0 && previous.x == focusSum;
-        focusAges[at] = uint2(focusSum, same ? min(previous.y + 1, 255) : 0);
+        focusAges[ageAt] = uint2(focusSum, same ? min(previous.y + 1, 255) : 0);
     }
 }
 // Encoder focus for 8-bit native 4:4:4: one 16x16 thread group per 16x16 age
@@ -721,19 +804,32 @@ uint focusCentreWeight(uint2 block) {
     }
     return 0;
 }
+groupshared uint focusGroupMin;
+groupshared uint focusGroupMax;
 // One thread per codec block: `encoder_focus::importance`.
 [numthreads(8, 8, 1)]
-void focus_map_cs(uint3 id : SV_DispatchThreadID) {
-    if (any(id.xy >= focusGrid)) return;
-    int ramp = int(clamp(focusRamp, 1, 255));
-    int moving = int(min(focusMoving, 10));
-    int still = int(min(focusStill, 10));
-    int age = int(min(focusBlockAge(id.xy), uint(ramp)));
-    uint value = uint(clamp(moving + (still - moving) * age / ramp, 0, 10));
-    if (focusMode == 1) value = min(value + (min(focusCentre, 10) * focusCentreWeight(id.xy) + 128) / 256, 10);
-    focusMap[2 + id.y * focusGrid.x + id.x] = value;
-    InterlockedMin(focusMap[0], value);
-    InterlockedMax(focusMap[1], value);
+void focus_map_cs(uint3 id : SV_DispatchThreadID, uint index : SV_GroupIndex) {
+    if (index == 0) {
+        focusGroupMin = 0xffffffff;
+        focusGroupMax = 0;
+    }
+    GroupMemoryBarrierWithGroupSync();
+    if (all(id.xy < focusGrid)) {
+        int ramp = int(clamp(focusRamp, 1, 255));
+        int moving = int(min(focusMoving, 10));
+        int still = int(min(focusStill, 10));
+        int age = int(min(focusBlockAge(id.xy), uint(ramp)));
+        uint value = uint(clamp(moving + (still - moving) * age / ramp, 0, 10));
+        if (focusMode == 1) value = min(value + (min(focusCentre, 10) * focusCentreWeight(id.xy) + 128) / 256, 10);
+        focusMap[2 + id.y * focusGrid.x + id.x] = value;
+        InterlockedMin(focusGroupMin, value);
+        InterlockedMax(focusGroupMax, value);
+    }
+    GroupMemoryBarrierWithGroupSync();
+    if (index == 0 && focusGroupMin <= focusGroupMax) {
+        InterlockedMin(focusMap[0], focusGroupMin);
+        InterlockedMax(focusMap[1], focusGroupMax);
+    }
 }
 // HDR dynamic metadata statistics (butterpollo_core::hdr_dynamic): PQ(maxRGB)
 // of the source as the conversion loads it (pointer drawn, before scaling and
@@ -765,12 +861,19 @@ void hdr_stats_cs(uint3 id : SV_DispatchThreadID, uint index : SV_GroupIndex) {
     GroupMemoryBarrierWithGroupSync();
     if (all(id.xy < statsGrid)) {
         float3 rgb = load(int2((2 * id.xy + 1) * sourceSize / (2 * statsGrid)));
-        if (pixel != 2) rgb = pq(gamut2020(rgb) / 125.0);
+        float peak;
+        if (pixel != 2) {
+            // `pq1` is monotonic, so PQ(maxRGB) needs one scalar evaluation instead of three.
+            float3 lin = gamut2020(rgb) / 125.0;
+            peak = pq1(max(lin.r, max(lin.g, lin.b)));
+        } else {
+            peak = max(rgb.r, max(rgb.g, rgb.b));
+        }
         // An HLG stream is graded for 1000 nits (`hlg`): its statistics end
         // there, PQ(1000 nits), as the signal does.
-        if (hdr == 2) rgb = min(rgb, 0.7518271);
+        if (hdr == 2) peak = min(peak, 0.7518271);
         // Without the sign bit, the bits of floats in 0..=1 order as integers.
-        uint code = asuint(saturate(max(rgb.r, max(rgb.g, rgb.b)))) & 0x7fffffff;
+        uint code = asuint(saturate(peak)) & 0x7fffffff;
         InterlockedAdd(statsBins[min(uint(asfloat(code) * 1024), 1023)], 1);
         InterlockedMin(statsMin, code);
         InterlockedMax(statsMax, code);

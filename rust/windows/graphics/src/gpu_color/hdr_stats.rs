@@ -251,43 +251,64 @@ impl HdrStats {
         let Some(passes) = self.passes.as_ref() else {
             return Ok(None);
         };
-        let mut copies: Vec<_> = passes
-            .ring
-            .iter()
-            .filter_map(|copy| copy.measured.map(|measured| (copy, measured)))
-            .filter(|&(_, (conversion, _))| conversion > newer_than)
-            .collect();
-        copies.sort_by_key(|&(_, (conversion, _))| std::cmp::Reverse(conversion));
+        let mut copies: [Option<(usize, u64, u64)>; RING] = [None; RING];
+        let mut len = 0;
+        for (index, copy) in passes.ring.iter().enumerate() {
+            if let Some((conversion, samples)) = copy.measured
+                && conversion > newer_than
+            {
+                copies[len] = Some((index, conversion, samples));
+                len += 1;
+            }
+        }
+        if len == 0 {
+            return Ok(None);
+        }
+        copies[..len].sort_unstable_by_key(|entry| std::cmp::Reverse(entry.unwrap().1));
         let lock = self.lock.as_ref().context("no D3D11 multithread lock")?;
-        for (copy, (conversion, samples)) in copies {
-            // SAFETY: The context is held from Enter to Leave with no early return between; a
-            // mapped staging buffer holds `BYTES`, read before it is unmapped.
-            let result = unsafe {
-                lock.Enter();
+        let mut words = [0u32; WORDS];
+        let mut ready = None;
+        let mut map_error = None;
+        // SAFETY: The context is held from Enter to Leave with no early return between; a
+        // mapped staging buffer holds `BYTES`, copied into `words` before it is unmapped.
+        unsafe {
+            lock.Enter();
+            for entry in &copies[..len] {
+                let (index, conversion, samples) = entry.unwrap();
+                let staging = &passes.ring[index].staging;
                 let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
-                let result = self.gpu.context.Map(
-                    &copy.staging,
+                match self.gpu.context.Map(
+                    staging,
                     0,
                     D3D11_MAP_READ,
                     D3D11_MAP_FLAG_DO_NOT_WAIT.0 as u32,
                     Some(&mut mapped),
-                );
-                if result.is_ok() {
-                    let words = std::slice::from_raw_parts(mapped.pData.cast::<u32>(), WORDS);
-                    let parsed = HdrStatsReadout::parse(conversion, samples, words);
-                    self.gpu.context.Unmap(&copy.staging, 0);
-                    lock.Leave();
-                    return parsed.map(Some);
+                ) {
+                    Ok(()) => {
+                        let mapped_words =
+                            std::slice::from_raw_parts(mapped.pData.cast::<u32>(), WORDS);
+                        words.copy_from_slice(mapped_words);
+                        self.gpu.context.Unmap(staging, 0);
+                        ready = Some((conversion, samples));
+                        break;
+                    }
+                    Err(error)
+                        if error.code()
+                            == windows::Win32::Graphics::Dxgi::DXGI_ERROR_WAS_STILL_DRAWING => {}
+                    Err(error) => {
+                        map_error = Some(error);
+                        break;
+                    }
                 }
-                lock.Leave();
-                result
-            };
-            if let Err(error) = result
-                && error.code() != windows::Win32::Graphics::Dxgi::DXGI_ERROR_WAS_STILL_DRAWING
-            {
-                return Err(error).context("HDR statistics readback");
             }
+            lock.Leave();
         }
-        Ok(None)
+        if let Some(error) = map_error {
+            return Err(error).context("HDR statistics readback");
+        }
+        let Some((conversion, samples)) = ready else {
+            return Ok(None);
+        };
+        HdrStatsReadout::parse(conversion, samples, &words).map(Some)
     }
 }

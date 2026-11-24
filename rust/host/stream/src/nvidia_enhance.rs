@@ -196,6 +196,9 @@ struct Parsed {
     warning: Option<String>,
     /// RTX HDR's NGX values, compared against the filter's on every picture.
     parameters: [u32; 4],
+    /// RTX Video's quality level, cached once per revision so `convert` and
+    /// repeat-cache invalidation avoid reparsing config strings every frame.
+    quality: Option<u32>,
     /// The encoder's SDR white and linear scale while RTX HDR converts.
     luminance: (f32, f32),
 }
@@ -233,6 +236,7 @@ fn parse(
         wanted: nvidia_enhance::select(config, runs, stream_hdr, source),
         warning: nvidia_enhance::unavailable(config, offered, stream_hdr, source, elsewhere),
         parameters: nvidia_enhance::rtx_parameters(config),
+        quality: nvidia_enhance::rtx_video_quality(config),
         luminance: nvidia_enhance::rtx_luminance(config),
     }
 }
@@ -288,6 +292,18 @@ impl Enhancer {
     ) -> Enhancement {
         let device = image.gpu.key();
         let stream_hdr = s.hdr_active();
+        if self
+            .inner
+            .parsed
+            .as_ref()
+            .is_some_and(|parsed| parsed.revision != revision)
+            && !std::mem::take(&mut self.inner.tuned_revision_pending)
+        {
+            // External runtime_revision bump (e.g., user config change replacing
+            // runtime_config with base_config): re-apply driver profile on next tune.
+            self.inner.last_tune = None;
+            self.inner.profile_due = None;
+        }
         if !self
             .inner
             .parsed
@@ -382,7 +398,13 @@ mod active {
         last: Option<(Weak<GpuImage>, u64, Arc<GpuImage>)>,
         profiles: Option<Profiles>,
         foreground: Option<butterpollo_win_graphics::foreground::Tracker>,
-        profile_due: Option<Instant>,
+        pub(super) profile_due: Option<Instant>,
+        /// Last foreground app + NVIDIA driver profile applied by [`Self::tune`]:
+        /// unchanged polls return `None` with no `Config` clone or revision bump.
+        pub(super) last_tune: Option<(Option<String>, std::collections::BTreeMap<String, i64>)>,
+        /// Set when [`Self::tune`] returned `Some(Config)` so the resulting
+        /// `runtime_revision` bump is recognized as self-inflicted.
+        pub(super) tuned_revision_pending: bool,
     }
 
     impl Inner {
@@ -433,6 +455,15 @@ mod active {
                     self.rtx_hdr
                         .as_ref()
                         .is_some_and(|filter| filter.parameters() != parsed.parameters)
+                })
+            {
+                self.last = None;
+            }
+            if wanted == Enhancement::RtxVideo
+                && self.parsed.as_ref().is_some_and(|parsed| {
+                    self.rtx_video
+                        .as_ref()
+                        .is_some_and(|filter| Some(filter.quality()) != parsed.quality)
                 })
             {
                 self.last = None;
@@ -493,7 +524,10 @@ mod active {
         ) -> anyhow::Result<GpuImage> {
             match wanted {
                 Enhancement::RtxHdr => {
-                    let parameters = nvidia_enhance::rtx_parameters(config);
+                    let parameters = self
+                        .parsed
+                        .as_ref()
+                        .map_or_else(|| nvidia_enhance::rtx_parameters(config), |p| p.parameters);
                     let filter = match &mut self.rtx_hdr {
                         Some(filter) => filter,
                         none => none.insert(truehdr::Filter::new_gpu(image, parameters)?),
@@ -502,7 +536,10 @@ mod active {
                     filter.apply_gpu(image)
                 }
                 Enhancement::RtxVideo => {
-                    let quality = nvidia_enhance::rtx_video_quality(config)
+                    let quality = self
+                        .parsed
+                        .as_ref()
+                        .map_or_else(|| nvidia_enhance::rtx_video_quality(config), |p| p.quality)
                         .context("RTX Video enhancement has no strength")?;
                     let filter = match &mut self.rtx_video {
                         Some(filter) => filter,
@@ -523,6 +560,7 @@ mod active {
         ) -> Option<Config> {
             if self.selected != Enhancement::RtxHdr {
                 self.profile_due = None;
+                self.last_tune = None;
                 return None;
             }
             let now = Instant::now();
@@ -548,14 +586,113 @@ mod active {
                 })
                 .flatten();
             let profiles = self.profiles.get_or_insert_with(Profiles::new);
-            Some(nvidia_enhance::resolve(
+            let profile = profiles.poll(visible.as_deref());
+            resolve_tune(
+                &mut self.last_tune,
+                &mut self.tuned_revision_pending,
+                visible,
+                profile,
                 base,
-                visible.is_some(),
-                profiles.poll(visible.as_deref()),
-            ))
+            )
         }
+    }
+
+    pub(super) fn resolve_tune(
+        last_tune: &mut Option<(Option<String>, std::collections::BTreeMap<String, i64>)>,
+        tuned_revision_pending: &mut bool,
+        visible: Option<String>,
+        profile: &std::collections::BTreeMap<String, i64>,
+        base: &Config,
+    ) -> Option<Config> {
+        if let Some((last_app, last_profile)) = last_tune.as_ref()
+            && *last_app == visible
+            && last_profile == profile
+        {
+            return None;
+        }
+        let foreground_matches = visible.is_some();
+        *last_tune = Some((visible, profile.clone()));
+        *tuned_revision_pending = true;
+        Some(nvidia_enhance::resolve(base, foreground_matches, profile))
     }
 }
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod opt_tests {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn parsed_caches_rtx_video_quality() {
+        let low = Config::parse("rtx_video_intensity = 25\n").unwrap();
+        let ultra = Config::parse("rtx_video_intensity = 100\n").unwrap();
+        let off = Config::parse("rtx_video_intensity = 0\n").unwrap();
+        assert_eq!(
+            parse(1, 0, 0x10de, "RTX", Pixel::Bgra8, false, &low).quality,
+            Some(1)
+        );
+        assert_eq!(
+            parse(2, 0, 0x10de, "RTX", Pixel::Bgra8, false, &ultra).quality,
+            Some(4)
+        );
+        assert_eq!(
+            parse(3, 0, 0x10de, "RTX", Pixel::Bgra8, false, &off).quality,
+            None
+        );
+    }
+
+    #[test]
+    fn resolve_tune_skips_unchanged_app_and_profile_polls() {
+        let base = Config::default();
+        let mut last = None;
+        let mut pending = false;
+        let mut profile = BTreeMap::new();
+        profile.insert("rtx_hdr_contrast".to_owned(), 25);
+
+        let first = active::resolve_tune(
+            &mut last,
+            &mut pending,
+            Some("game.exe".into()),
+            &profile,
+            &base,
+        );
+        assert!(first.is_some());
+        assert!(pending);
+
+        // Identical app and profile returns None (no Config clone, no revision bump).
+        pending = false;
+        let same = active::resolve_tune(
+            &mut last,
+            &mut pending,
+            Some("game.exe".into()),
+            &profile,
+            &base,
+        );
+        assert!(same.is_none());
+        assert!(!pending);
+
+        // Profile value change triggers a fresh Config.
+        profile.insert("rtx_hdr_contrast".to_owned(), 40);
+        let updated = active::resolve_tune(
+            &mut last,
+            &mut pending,
+            Some("game.exe".into()),
+            &profile,
+            &base,
+        );
+        assert!(updated.is_some());
+        assert!(pending);
+
+        // Foreground app change triggers a fresh Config even with an empty profile.
+        pending = false;
+        let empty = BTreeMap::new();
+        let desktop = active::resolve_tune(&mut last, &mut pending, None, &empty, &base);
+        assert!(desktop.is_some());
+        assert!(pending);
+        pending = false;
+        assert!(active::resolve_tune(&mut last, &mut pending, None, &empty, &base).is_none());
+    }
+}

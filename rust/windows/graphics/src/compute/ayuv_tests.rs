@@ -64,6 +64,20 @@ fn ayuv_output_layout_uses_r8g8b8a8_uint_uav_and_never_ayuv_view() {
             "{width}x{height}"
         );
     }
+
+    // Packed 4:4:4 v2 owns 2x2 logical blocks per thread, halving vertical dispatch.
+    for (coded_w, coded_h) in [(128, 144), (320, 368), (1920, 2176), (2560, 2880)] {
+        let v1 = OutputLayout::Nv12.dispatch_groups_for(coded_w, coded_h, true, 1);
+        let v2 = OutputLayout::Nv12.dispatch_groups_for(coded_w, coded_h, true, 2);
+        assert_eq!(v1, ((coded_w / 2).div_ceil(8), (coded_h / 2).div_ceil(8)));
+        assert_eq!(v2, ((coded_w / 2).div_ceil(8), (coded_h / 4).div_ceil(8)));
+        assert!(v2.1 <= v1.1);
+        assert_eq!(
+            OutputLayout::Nv12.dispatch_groups_for(coded_w, coded_h, false, 2),
+            v1,
+            "non-packed dispatch ignores padding"
+        );
+    }
 }
 
 #[test]
@@ -79,8 +93,10 @@ fn ayuv_initial_pipeline_compiles_only_ayuv_shader_with_one_uav() {
         &b"yuv444_ayuv_cs\0"[..],
         &b"yuv444_ayuv_menu_cs\0"[..],
         &b"yuv444_ayuv_focus_cs\0"[..],
+        &b"yuv444_planes_cs\0"[..],
+        &b"yuv444_planes_menu_cs\0"[..],
     ] {
-        let code = shader(entry).expect("AYUV compute shader missing from precompiled DXBC");
+        let code = shader(entry).expect("4:4:4 compute shader missing from precompiled DXBC");
         assert!(!code.is_empty(), "empty DXBC for {entry:?}");
     }
 }

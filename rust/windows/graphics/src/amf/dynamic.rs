@@ -264,6 +264,29 @@ pub(crate) fn sample(
     dynamic.take(stats.latest(dynamic.sampled()), started);
 }
 
+/// [`output`] from borrowed or owned bytes: a borrowed frame is copied linearly
+/// into one pooled buffer with the metadata already in place (no reallocation,
+/// no `copy_within` shift); an owned buffer (already allocated with headroom)
+/// is spliced in place.
+pub(crate) fn output_cow(
+    dynamic: Option<&mut Dynamic>,
+    unit: Unit,
+    bytes: std::borrow::Cow<'_, [u8]>,
+    cap: Option<u64>,
+    keyframe: bool,
+) -> (Vec<u8>, Option<u64>) {
+    match (dynamic, bytes) {
+        (None, std::borrow::Cow::Borrowed(slice)) => (crate::frame_pool::copy(slice), cap),
+        (None, std::borrow::Cow::Owned(owned)) => (owned, cap),
+        (Some(dynamic), std::borrow::Cow::Owned(owned)) => {
+            output(Some(dynamic), unit, owned, cap, keyframe)
+        }
+        (Some(dynamic), std::borrow::Cow::Borrowed(slice)) => {
+            dynamic.output_borrowed(unit, slice, cap, keyframe)
+        }
+    }
+}
+
 /// An output `unit` as the sender gets it, from the bytes AMF wrote and
 /// its frame `cap`: HDR10+ and HDR Vivid go before a frame's first slice or
 /// tile, the Dolby Vision RPU after its last (a whole frame gets both) or,
@@ -384,6 +407,109 @@ impl Dynamic {
             rpu: Vec::new(),
             report: Report::default(),
         }
+    }
+    /// Upper bound on bytes this stream's dynamic metadata adds to a frame,
+    /// so buffers allocated before splicing avoid reallocating.
+    pub(crate) fn headroom(&self) -> usize {
+        let t35 = if self.wanted.t35 {
+            self.writer.units().len()
+        } else {
+            0
+        };
+        // Profile 8.4 (HLG) RPUs carry polynomial + MMR reshaping tables (~350 B).
+        let rpu = if self.dovi.is_some() { 512 } else { 0 };
+        t35 + rpu
+    }
+    /// Single-pass copy + splice for borrowed encoder bytes: writes the head,
+    /// HDR10+/Vivid (and AV1 RPU), body, and HEVC RPU suffix linearly into one
+    /// pooled buffer with no reallocation and no `copy_within`.
+    fn output_borrowed(
+        &mut self,
+        unit: Unit,
+        slice: &[u8],
+        cap: Option<u64>,
+        keyframe: bool,
+    ) -> (Vec<u8>, Option<u64>) {
+        let first = matches!(
+            unit,
+            Unit::Whole | Unit::Slice { index: 0 } | Unit::Last { index: 0 }
+        );
+        let last = matches!(unit, Unit::Whole | Unit::Last { .. });
+        if !first {
+            let out = if last && !self.rpu.is_empty() {
+                let suffix = std::mem::take(&mut self.rpu);
+                crate::frame_pool::copy_spliced(slice, slice.len(), &[], &suffix)
+            } else {
+                crate::frame_pool::copy(slice)
+            };
+            return (out, self.cap(cap));
+        }
+        self.next_rpu(!slice.is_empty(), keyframe);
+        let started = Instant::now();
+        self.added = 0;
+        if slice.is_empty() {
+            return (Vec::new(), self.cap(cap));
+        }
+        self.report.frames += 1;
+        let codec = self.writer.codec();
+        let t35 = if self.wanted.t35 {
+            self.writer.units()
+        } else {
+            &[]
+        };
+        let (av1_rpu, suffix) = if codec == Codec::Av1 {
+            (std::mem::take(&mut self.rpu), Vec::new())
+        } else {
+            self.added = self.rpu.len() as u64;
+            let suffix = if last {
+                std::mem::take(&mut self.rpu)
+            } else {
+                Vec::new()
+            };
+            (Vec::new(), suffix)
+        };
+        let out = if t35.is_empty() && av1_rpu.is_empty() {
+            if suffix.is_empty() {
+                crate::frame_pool::copy(slice)
+            } else {
+                crate::frame_pool::copy_spliced(slice, slice.len(), &[], &suffix)
+            }
+        } else if let Some(at) = hdr_dynamic::insert_offset(codec, slice) {
+            let out = if av1_rpu.is_empty() {
+                crate::frame_pool::copy_spliced(slice, at, t35, &suffix)
+            } else if t35.is_empty() {
+                crate::frame_pool::copy_spliced(slice, at, &av1_rpu, &suffix)
+            } else {
+                let total = slice.len() + t35.len() + av1_rpu.len();
+                let mut out = crate::frame_pool::take(total);
+                out.extend_from_slice(&slice[..at]);
+                out.extend_from_slice(t35);
+                out.extend_from_slice(&av1_rpu);
+                out.extend_from_slice(&slice[at..]);
+                out
+            };
+            self.added += (t35.len() + av1_rpu.len()) as u64;
+            self.report.spliced += 1;
+            self.report.stand_in += u64::from(!t35.is_empty() && !self.writer.measured());
+            self.report.splice.add(started);
+            out
+        } else {
+            if self.report.no_insertion == 0 {
+                tracing::warn!(
+                    codec = ?codec,
+                    bytes = slice.len(),
+                    dolby_vision = !av1_rpu.is_empty(),
+                    "AMF output frame has no place for HDR dynamic metadata; sending it without. Report this with the host log"
+                );
+            }
+            self.report.no_insertion += 1;
+            if suffix.is_empty() {
+                crate::frame_pool::copy(slice)
+            } else {
+                crate::frame_pool::copy_spliced(slice, slice.len(), &[], &suffix)
+            }
+        };
+        (out, self.cap(cap))
     }
     /// The conversion the last sample measured, for
     /// [`crate::compute::Converter::latest_hdr_stats`].
@@ -589,5 +715,7 @@ impl Drop for Dynamic {
     }
 }
 
+#[cfg(test)]
+mod splice_tests;
 #[cfg(test)]
 mod tests;

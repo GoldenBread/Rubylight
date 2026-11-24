@@ -23,15 +23,12 @@ type Create = unsafe extern "C" fn(*mut c_void, *mut u32) -> *mut c_void;
 type Convert = unsafe extern "C" fn(*mut c_void, *mut c_void, u32, *mut u32) -> *mut c_void;
 type Destroy = unsafe extern "C" fn(*mut c_void);
 
-/// Waits for the capture's copy and orders D3D11 work after it: NGX and the
-/// passes below read the texture on the D3D11 context.
-pub(crate) fn ready_for_d3d11(image: &GpuImage) -> Result<()> {
-    if let Some(ready) = &image.ready {
-        ready
-            .wait()
-            .context("wait for the captured picture before enhancing it")?;
-    }
-    image.order_d3d11()
+/// Try to create a shared D3D11->D3D12 fence signal for `device` so enhanced
+/// textures can stay `SHARED_NTHANDLE | SHARED` on the D3D12 compute queue.
+fn d3d11_signal(device: &Device) -> Option<crate::compute::D3d11Signal> {
+    crate::compute::Compute::for_device(&device.device)
+        .and_then(|compute| crate::compute::D3d11Signal::new(compute, device))
+        .ok()
 }
 
 pub struct Filter {
@@ -39,8 +36,10 @@ pub struct Filter {
     convert: Convert,
     destroy: Destroy,
     device: Device,
+    lock: ID3D11Multithread,
     quality: u32,
     pool: GpuPool,
+    signal: Option<crate::compute::D3d11Signal>,
     hdr: Option<HdrPasses>,
     _dll: libloading::Library,
 }
@@ -52,6 +51,7 @@ impl Filter {
         if device.vendor != 0x10de {
             bail!("RTX Video enhancement needs an NVIDIA GPU");
         }
+        let lock: ID3D11Multithread = device.context.cast()?;
         let dll = crate::nvidia_enhance::load()?;
         // SAFETY: The adapter's ABI 3 (checked by `load`) exports these symbols with these types,
         // and Filter keeps `dll` and `device` while the pointers are used.
@@ -64,13 +64,21 @@ impl Filter {
             if state.is_null() {
                 bail!("RTX Video enhancement could not start: {}", describe(error));
             }
+            let signal = d3d11_signal(&device);
+            let pool = if signal.is_some() {
+                GpuPool::shared_rtv()
+            } else {
+                GpuPool::default()
+            };
             Ok(Self {
                 state,
                 convert,
                 destroy,
                 device,
+                lock,
                 quality: quality.clamp(1, 4),
-                pool: GpuPool::default(),
+                pool,
+                signal,
                 hdr: None,
                 _dll: dll,
             })
@@ -79,8 +87,13 @@ impl Filter {
     pub fn set_quality(&mut self, quality: u32) {
         self.quality = quality.clamp(1, 4);
     }
-    /// The enhanced picture, in the capture's format. NGX's output is copied
-    /// into a bounded pool before another enhancement can overwrite it.
+    /// The VSR quality level this filter uses.
+    pub fn quality(&self) -> u32 {
+        self.quality
+    }
+    /// The enhanced picture, in the capture's format. SDR output is copied into
+    /// a bounded shared pool; HDR output resolves directly into a pooled shared
+    /// render-target texture when D3D11->D3D12 fence signalling is available.
     pub fn apply_gpu(&mut self, image: &GpuImage) -> Result<GpuImage> {
         if image.gpu.device.as_raw() != self.device.device.as_raw() {
             bail!("RTX Video enhancement needs a picture on the capture's GPU");
@@ -88,76 +101,180 @@ impl Filter {
         if !matches!(image.pixel, Pixel::Bgra8 | Pixel::RgbaF16) {
             bail!("RTX Video enhancement reads 8-bit SDR and FP16 HDR pictures only");
         }
-        ready_for_d3d11(image)?;
+        // Order D3D11 work after any external producer fence on the GPU without
+        // stalling the stream thread on the CPU.
+        image.order_d3d11()?;
         // SAFETY: `state` is the live NGX state on this device and `image` a live picture on it.
         // The adapter takes its own lock and then the device's multithread lock (ABI 3), so VSR
-        // runs with neither held here; this filter's own passes and the copy into the pool hold the
-        // device's lock. NGX's output is only borrowed while it is read.
-        unsafe {
-            let lock: ID3D11Multithread = self.device.context.cast()?;
-            let result = self.enhance(image, &lock);
-            // The enhanced picture is read on the compute queue (a shared handle imported into
-            // D3D12) while the D3D11 commands that wrote it sit in the context's buffer: hand them
-            // to the GPU now, before the copy into the pool and the return to the caller.
-            lock.Enter();
-            self.device.context.Flush();
-            lock.Leave();
-            result
+        // runs with neither held here; this filter's own passes, pool work and fence signal hold
+        // the cached device multithread lock. NGX's output is only borrowed while it is read.
+        unsafe { self.enhance(image) }
+    }
+    /// Copy `texture` into `self.pool`, falling back once to a non-shared pool
+    /// if shared texture allocation fails on a healthy device.
+    ///
+    /// # Safety
+    /// Caller holds `self.lock`.
+    unsafe fn copy_pooled(&mut self, texture: &ID3D11Texture2D) -> Result<GpuImage> {
+        let mut copy = self.pool.copy(&self.device, texture, None);
+        if copy.is_err()
+            && self.pool.shared
+            && crate::device_loss::DeviceLost::d3d11(&self.device.device).is_none()
+        {
+            self.downgrade_pool();
+            copy = self.pool.copy(&self.device, texture, None);
+        }
+        let mut enhanced = copy?.context("the enhanced pictures are all still being encoded")?;
+        if self.pool.shared {
+            if enhanced.ready.is_none() {
+                // Downgrade and re-copy into a non-shared pool so even this transition
+                // frame is non-shareable instead of reaching D3D12 with `ready: None`.
+                self.downgrade_pool();
+                enhanced = self
+                    .pool
+                    .copy(&self.device, texture, None)?
+                    .context("the enhanced pictures are all still being encoded")?;
+                // SAFETY: Caller holds `self.lock`.
+                unsafe { self.device.context.Flush() };
+            }
+        } else {
+            // SAFETY: Caller holds `self.lock`.
+            unsafe { self.device.context.Flush() };
+        }
+        Ok(enhanced)
+    }
+    fn downgrade_pool(&mut self) {
+        self.pool = GpuPool::default();
+        self.signal = None;
+        if let Some(passes) = self.hdr.as_mut() {
+            passes.pooled_targets.clear();
         }
     }
     /// # Safety
-    /// The caller holds no multithread lock of the device; `lock` is it.
-    unsafe fn enhance(&mut self, image: &GpuImage, lock: &ID3D11Multithread) -> Result<GpuImage> {
-        // SAFETY: the HDR passes and the pool copy run under the device's multithread lock, VSR
-        // outside it; `image` is a live picture on this device.
+    /// The caller holds no multithread lock of the device.
+    unsafe fn enhance(&mut self, image: &GpuImage) -> Result<GpuImage> {
+        // SAFETY: VSR runs outside `self.lock` (matching adapter lock order);
+        // our passes, pool operations, and fence/flush run under `self.lock`.
         unsafe {
-            let locked = |work: &mut dyn FnMut() -> Result<()>| {
-                lock.Enter();
-                let result = work();
-                lock.Leave();
-                result
-            };
-            let texture = if image.pixel == Pixel::Bgra8 {
-                self.vsr(image.texture.as_raw())?
-            } else {
-                let mut original = None;
-                locked(&mut || {
-                    if self.hdr.is_none() {
-                        self.hdr = Some(HdrPasses::new(&self.device)?);
-                    }
-                    let passes = self.hdr.as_mut().unwrap();
-                    passes.size(&self.device, image.width, image.height)?;
-                    let copy = passes.original(&self.device, image)?;
-                    passes.prepare(&self.device, &copy, image.width, image.height);
-                    original = Some(copy);
-                    Ok(())
-                })?;
-                let original = original.context("the HDR passes made no copy")?;
-                let proxy = self.hdr.as_ref().unwrap().proxy.as_raw();
-                let enhanced = self.vsr(proxy)?;
-                locked(&mut || {
-                    self.hdr.as_mut().unwrap().resolve(
-                        &self.device,
-                        &original,
-                        &enhanced,
-                        image.width,
-                        image.height,
-                    )
-                })?;
-                self.hdr.as_ref().unwrap().output.clone()
-            };
-            let mut enhanced = None;
-            locked(&mut || {
-                enhanced = Some(
-                    self.pool
-                        .copy(&self.device, &texture, None)?
-                        .context("the enhanced pictures are all still being encoded")?,
-                );
-                Ok(())
-            })?;
-            let mut enhanced = enhanced.context("the pool returned no picture")?;
+            if image.pixel == Pixel::Bgra8 {
+                let texture = self.vsr(image.texture.as_raw())?;
+                self.lock.Enter();
+                if let Some(passes) = self.hdr.as_mut() {
+                    // Format switched to SDR: release any cached FP16 pooled RTVs immediately.
+                    passes.pooled_targets.clear();
+                }
+                let result = self.copy_pooled(&texture);
+                self.lock.Leave();
+                let mut enhanced = result?;
+                enhanced.inherit(image);
+                return Ok(enhanced);
+            }
+            self.lock.Enter();
+            let prepared = (|| -> Result<(ID3D11ShaderResourceView, *mut c_void)> {
+                if self.hdr.is_none() {
+                    self.hdr = Some(HdrPasses::new(&self.device)?);
+                }
+                let passes = self.hdr.as_mut().unwrap();
+                passes.size(&self.device, image.width, image.height)?;
+                let copy = passes.original(&self.device, image)?;
+                passes.prepare(&self.device, &copy, image.width, image.height);
+                Ok((copy, passes.proxy.as_raw()))
+            })();
+            self.lock.Leave();
+            let (original, proxy) = prepared?;
+            let vsr_out = self.vsr(proxy)?;
+            self.lock.Enter();
+            let result = self.resolve_hdr(image, &original, &vsr_out);
+            self.lock.Leave();
+            let mut enhanced = result?;
             enhanced.inherit(image);
             Ok(enhanced)
+        }
+    }
+    /// Resolve the HDR enhancement pass directly into a pooled shared RTV
+    /// texture (eliminating an extra 4K FP16 copy) when D3D11->D3D12 fencing
+    /// is available, or fall back to an internal target + pool copy.
+    ///
+    /// # Safety
+    /// Caller holds `self.lock`.
+    unsafe fn resolve_hdr(
+        &mut self,
+        image: &GpuImage,
+        original: &ID3D11ShaderResourceView,
+        vsr_out: &ID3D11Texture2D,
+    ) -> Result<GpuImage> {
+        // SAFETY: Caller holds `self.lock`; all resources live on `self.device`.
+        unsafe {
+            if self.signal.is_some() {
+                match self.pool.acquire_texture(
+                    &self.device,
+                    image.width,
+                    image.height,
+                    DXGI_FORMAT_R16G16B16A16_FLOAT,
+                ) {
+                    Ok(Some(texture)) => {
+                        let passes = self.hdr.as_mut().unwrap();
+                        let rtv = passes.pooled_target(
+                            &self.device,
+                            texture.as_ref(),
+                            image.width,
+                            image.height,
+                        )?;
+                        passes.resolve_into(
+                            &self.device,
+                            original,
+                            vsr_out,
+                            &rtv,
+                            image.width,
+                            image.height,
+                        )?;
+                        match self.signal.as_mut().unwrap().signal() {
+                            Ok(ready) => {
+                                return Ok(GpuImage::from_texture(
+                                    self.device.clone(),
+                                    texture,
+                                    image.width,
+                                    image.height,
+                                    Pixel::RgbaF16,
+                                    Some(ready),
+                                ));
+                            }
+                            Err(error) => {
+                                tracing::debug!(
+                                    %error,
+                                    "RTX Video shared D3D11 fence signal failed; copying into non-shared pool"
+                                );
+                                self.downgrade_pool();
+                                // Copy the already-resolved pixels into the fresh non-shared pool
+                                // so this transition frame is non-shareable too.
+                                return self.copy_pooled(texture.as_ref());
+                            }
+                        }
+                    }
+                    Ok(None) => bail!("the enhanced pictures are all still being encoded"),
+                    Err(error)
+                        if crate::device_loss::DeviceLost::d3d11(&self.device.device).is_none() =>
+                    {
+                        tracing::debug!(
+                            %error,
+                            "RTX Video shared RTV pool unavailable; falling back to non-shared pool"
+                        );
+                        self.downgrade_pool();
+                    }
+                    Err(error) => return Err(error),
+                }
+            }
+            let passes = self.hdr.as_mut().unwrap();
+            let (output, rtv) = passes.fallback_target(&self.device, image.width, image.height)?;
+            passes.resolve_into(
+                &self.device,
+                original,
+                vsr_out,
+                &rtv,
+                image.width,
+                image.height,
+            )?;
+            self.copy_pooled(&output)
         }
     }
     /// NGX's VSR over `input` at its own size.
@@ -176,6 +293,9 @@ impl Filter {
 }
 impl Drop for Filter {
     fn drop(&mut self) {
+        // Release any cached SRV/RTV referencing NGX's output texture before
+        // tearing down the NGX state.
+        self.hdr = None;
         // SAFETY: `state` came from create and is destroyed once, here; `_dll` is dropped after
         // this.
         unsafe {
@@ -206,12 +326,17 @@ struct HdrPasses {
     proxy: ID3D11Texture2D,
     proxy_view: ID3D11ShaderResourceView,
     proxy_target: ID3D11RenderTargetView,
-    output: ID3D11Texture2D,
-    output_target: ID3D11RenderTargetView,
+    /// Lazy fallback FP16 render target used only when shared RTV pooling is
+    /// unavailable.
+    fallback_output: Option<(ID3D11Texture2D, ID3D11RenderTargetView)>,
     shape: (u32, u32),
     /// Views of the pictures this pass prepared, kept while the capture pool hands the same
     /// textures again: making one every frame cost the render thread a call and a lock turn.
     originals: Vec<Original>,
+    /// Cached shader resource view for NGX's VSR output texture.
+    enhanced_view: Option<(usize, u32, u32, ID3D11ShaderResourceView)>,
+    /// Cached render target views for pooled FP16 textures rendered into directly.
+    pooled_targets: Vec<(usize, u32, u32, ID3D11RenderTargetView)>,
 }
 /// A picture's view, with the texture, size and format it was made for.
 struct Original {
@@ -245,7 +370,6 @@ impl HdrPasses {
             )?;
             let (proxy, proxy_view, proxy_target) =
                 target(device, 1, 1, DXGI_FORMAT_B8G8R8A8_UNORM)?;
-            let (output, _, output_target) = target(device, 1, 1, DXGI_FORMAT_R16G16B16A16_FLOAT)?;
             Ok(Self {
                 vertex: vertex.context("no vertex shader")?,
                 prepare: prepare.context("no prepare shader")?,
@@ -253,10 +377,11 @@ impl HdrPasses {
                 proxy,
                 proxy_view,
                 proxy_target,
-                output,
-                output_target,
+                fallback_output: None,
                 shape: (1, 1),
                 originals: Vec::new(),
+                enhanced_view: None,
+                pooled_targets: Vec::new(),
             })
         }
     }
@@ -287,9 +412,8 @@ impl HdrPasses {
         }
         // SAFETY: `image`'s texture is live on `device`.
         let created = unsafe { view(device, image.texture.as_ref()) }?;
-        // The capture pool rotates a handful of textures; a view for each is enough, and they go
-        // when a new size or format replaces the pool.
-        if self.originals.len() >= 4 {
+        // The capture pool rotates up to 8 textures; clear if shapes rotated.
+        if self.originals.len() >= 8 {
             self.originals.clear();
         }
         self.originals.push(Original {
@@ -301,17 +425,85 @@ impl HdrPasses {
         });
         Ok(created)
     }
-    /// Makes the proxy and output textures `width` by `height`.
+    /// Cached shader resource view for NGX's VSR output texture.
+    ///
+    /// # Safety
+    /// Caller holds the device's multithread lock and `enhanced` is live on `device`.
+    unsafe fn enhanced_view(
+        &mut self,
+        device: &Device,
+        enhanced: &ID3D11Texture2D,
+        width: u32,
+        height: u32,
+    ) -> Result<ID3D11ShaderResourceView> {
+        let raw = enhanced.as_raw() as usize;
+        if let Some((cached_raw, w, h, cached_view)) = &self.enhanced_view
+            && (*cached_raw, *w, *h) == (raw, width, height)
+        {
+            return Ok(cached_view.clone());
+        }
+        // SAFETY: `enhanced` is a live texture on `device`.
+        let created = unsafe { view(device, enhanced) }?;
+        self.enhanced_view = Some((raw, width, height, created.clone()));
+        Ok(created)
+    }
+    /// Cached render target view for a pooled FP16 texture.
+    ///
+    /// # Safety
+    /// Caller holds the device's multithread lock and `texture` is live on `device`.
+    unsafe fn pooled_target(
+        &mut self,
+        device: &Device,
+        texture: &ID3D11Texture2D,
+        width: u32,
+        height: u32,
+    ) -> Result<ID3D11RenderTargetView> {
+        let raw = texture.as_raw() as usize;
+        if let Some((_, _, _, rtv)) = self
+            .pooled_targets
+            .iter()
+            .find(|(k, w, h, _)| (*k, *w, *h) == (raw, width, height))
+        {
+            return Ok(rtv.clone());
+        }
+        let mut render = None;
+        // SAFETY: `texture` is a live RTV-bound texture on `device`.
+        unsafe {
+            device
+                .device
+                .CreateRenderTargetView(texture, None, Some(&mut render))?;
+        }
+        let rtv = render.context("D3D11 returned no pooled render view")?;
+        if self.pooled_targets.len() >= 8 {
+            self.pooled_targets.clear();
+        }
+        self.pooled_targets.push((raw, width, height, rtv.clone()));
+        Ok(rtv)
+    }
+    fn fallback_target(
+        &mut self,
+        device: &Device,
+        width: u32,
+        height: u32,
+    ) -> Result<(ID3D11Texture2D, ID3D11RenderTargetView)> {
+        if let Some((texture, rtv)) = &self.fallback_output {
+            return Ok((texture.clone(), rtv.clone()));
+        }
+        let (texture, _, rtv) = target(device, width, height, DXGI_FORMAT_R16G16B16A16_FLOAT)?;
+        self.fallback_output = Some((texture.clone(), rtv.clone()));
+        Ok((texture, rtv))
+    }
+    /// Makes the proxy texture `width` by `height` and drops stale views.
     fn size(&mut self, device: &Device, width: u32, height: u32) -> Result<()> {
         if self.shape == (width, height) {
             return Ok(());
         }
-        // The capture pool replaces its textures at a new size: the views of the old ones go.
         self.originals.clear();
+        self.enhanced_view = None;
+        self.pooled_targets.clear();
+        self.fallback_output = None;
         (self.proxy, self.proxy_view, self.proxy_target) =
             target(device, width, height, DXGI_FORMAT_B8G8R8A8_UNORM)?;
-        let output = target(device, width, height, DXGI_FORMAT_R16G16B16A16_FLOAT)?;
-        (self.output, self.output_target) = (output.0, output.2);
         self.shape = (width, height);
         Ok(())
     }
@@ -370,18 +562,19 @@ impl HdrPasses {
             );
         }
     }
-    unsafe fn resolve(
-        &self,
+    unsafe fn resolve_into(
+        &mut self,
         device: &Device,
         original: &ID3D11ShaderResourceView,
         enhanced: &ID3D11Texture2D,
+        output_target: &ID3D11RenderTargetView,
         width: u32,
         height: u32,
     ) -> Result<()> {
         // SAFETY: the caller holds the device's multithread lock, as `draw` requires; both
-        // textures are live on `device`.
+        // textures and `output_target` are live on `device`.
         unsafe {
-            let enhanced = view(device, enhanced)?;
+            let enhanced = self.enhanced_view(device, enhanced, width, height)?;
             self.draw(
                 device,
                 &self.resolve,
@@ -390,7 +583,7 @@ impl HdrPasses {
                     Some(self.proxy_view.clone()),
                     Some(enhanced),
                 ],
-                &self.output_target,
+                output_target,
                 width,
                 height,
             );

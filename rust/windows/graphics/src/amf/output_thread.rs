@@ -99,12 +99,14 @@ impl OutputThread {
                         }
                         continue;
                     }
-                    worker
-                        .queue
-                        .lock()
-                        .unwrap_or_else(PoisonError::into_inner)
-                        .push_back((code, data as usize));
-                    let _ = worker.ready.set();
+                    {
+                        let mut queue = worker.queue.lock().unwrap_or_else(PoisonError::into_inner);
+                        let was_empty = queue.is_empty();
+                        queue.push_back((code, data as usize));
+                        if was_empty {
+                            let _ = worker.ready.set();
+                        }
+                    }
                     if code != AMF_RESULT_AMF_OK {
                         // The stream thread reports the failure and recreates
                         // the encoder; querying further gains nothing.
@@ -134,30 +136,31 @@ impl OutputThread {
     pub(super) fn wanted(&self) -> bool {
         self.shared.wanted.load(Ordering::Acquire)
     }
-    /// The oldest result the thread queued: its code and buffer (null for a
-    /// failure), or `None` while there is none.
-    pub(super) fn take(&self) -> Option<(AMF_RESULT, *mut AMFData)> {
-        self.shared
-            .queue
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .pop_front()
-            .map(|(code, data)| (code, data as *mut AMFData))
-    }
-    /// The event a wait for output adds: set while output is queued, reset
-    /// otherwise so that it ends the wait with the next one. Checked under
-    /// the queue's lock, so a result queued meanwhile still sets it.
-    pub(super) fn event(&self) -> &crate::timing::Signal {
-        let queue = self
+    /// The oldest result the thread queued and whether more results remain
+    /// behind it: its code and buffer (null for a failure), or `None` while
+    /// there is none. Resets `ready` when the queue drains to empty.
+    pub(super) fn take_with_more(&self) -> Option<(AMF_RESULT, *mut AMFData, bool)> {
+        let mut queue = self
             .shared
             .queue
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
-        let _ = if queue.is_empty() {
-            self.shared.ready.reset()
-        } else {
-            self.shared.ready.set()
-        };
+        let (code, data) = queue.pop_front()?;
+        let more = !queue.is_empty();
+        if !more {
+            let _ = self.shared.ready.reset();
+        }
+        Some((code, data as *mut AMFData, more))
+    }
+    /// The oldest result the thread queued: its code and buffer (null for a
+    /// failure), or `None` while there is none.
+    pub(super) fn take(&self) -> Option<(AMF_RESULT, *mut AMFData)> {
+        self.take_with_more().map(|(code, data, _)| (code, data))
+    }
+    /// The event a wait for output adds: maintained on empty <-> non-empty
+    /// transitions under the queue's lock, so returning it needs neither a
+    /// mutex lock nor an event syscall.
+    pub(super) fn event(&self) -> &crate::timing::Signal {
         &self.shared.ready
     }
     /// Wait up to `timeout` for output.
@@ -174,9 +177,17 @@ impl OutputThread {
     }
     /// The next result as a query on the stream thread would return it:
     /// an empty queue reads as a query that found nothing.
+    #[cfg(test)]
     pub(super) fn next(&self) -> (AMF_RESULT, *mut AMFData) {
         self.take()
             .unwrap_or((AMF_RESULT_AMF_REPEAT, ptr::null_mut()))
+    }
+    /// The next result as a query on the stream thread would return it (an
+    /// empty queue reads as `AMF_REPEAT`), together with whether another
+    /// result is already queued right behind it.
+    pub(super) fn next_with_more(&self) -> (AMF_RESULT, *mut AMFData, bool) {
+        self.take_with_more()
+            .unwrap_or((AMF_RESULT_AMF_REPEAT, ptr::null_mut(), false))
     }
     /// With nothing in flight: release what the thread queued for frames
     /// already given up, and report a failed query, which would otherwise
@@ -304,6 +315,58 @@ mod tests {
             after,
             "stopped after a failure"
         );
+        drop(thread);
+        Ok(())
+    }
+
+    #[test]
+    fn ready_signal_tracks_empty_and_non_empty_transitions_without_locking_event() -> Result<()> {
+        let (answers, script) = mpsc::channel::<(AMF_RESULT, usize)>();
+        let thread = OutputThread::start(move |data| {
+            match script.recv_timeout(Duration::from_millis(1)) {
+                Ok((code, buffer)) => {
+                    // SAFETY: `data` is the thread's own out pointer.
+                    unsafe { *data = buffer as *mut AMFData };
+                    code
+                }
+                Err(_) => AMF_RESULT_AMF_REPEAT,
+            }
+        })?;
+        assert!(
+            !thread.event().is_set(),
+            "starts reset while queue is empty"
+        );
+        thread.want(true);
+        answers.send((AMF_RESULT_AMF_OK, FRAME)).unwrap();
+        answers.send((AMF_RESULT_AMF_OK, FRAME + 0x10)).unwrap();
+        // Wait until both items have been queued.
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while thread.shared.queue.lock().unwrap().len() < 2 {
+            assert!(Instant::now() < deadline, "worker did not queue two items");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert!(thread.event().is_set(), "set while items are queued");
+        assert_eq!(
+            thread.next_with_more(),
+            (AMF_RESULT_AMF_OK, FRAME as *mut AMFData, true)
+        );
+        assert!(
+            thread.event().is_set(),
+            "stays set while a second item remains queued"
+        );
+        assert_eq!(
+            thread.next_with_more(),
+            (AMF_RESULT_AMF_OK, (FRAME + 0x10) as *mut AMFData, false)
+        );
+        assert!(
+            !thread.event().is_set(),
+            "resets once queue drains to empty"
+        );
+        assert_eq!(
+            thread.next_with_more(),
+            (AMF_RESULT_AMF_REPEAT, ptr::null_mut(), false)
+        );
+        assert!(!thread.event().is_set());
         drop(thread);
         Ok(())
     }

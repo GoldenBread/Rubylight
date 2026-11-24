@@ -52,6 +52,8 @@ fn flight(dropped: &Rc<Cell<usize>>, slot: usize, at: Instant) -> Flight<Resourc
             kbps: 500_000,
             interval: Duration::from_millis(8),
         },
+        seq_offset: 0,
+        cache_repeat: None,
     }
 }
 

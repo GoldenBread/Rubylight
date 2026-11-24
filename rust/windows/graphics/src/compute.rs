@@ -34,6 +34,7 @@ use windows::{
 use butterpollo_win_abi::shaders::shader_bytecode;
 mod handoff;
 mod retained;
+use handoff::wait_fence;
 pub use handoff::*;
 #[cfg(test)]
 use retained::RETAINED;
@@ -66,6 +67,11 @@ pub struct Compute {
     /// Textures another process created and shared, opened from its handle
     /// (CreateSharedHandle cannot share them again); kept until forgotten.
     foreign: Mutex<HashMap<usize, (ID3D11Texture2D, ID3D12Resource)>>,
+    /// Fast path for [`Self::open`]: skip locking `foreign` while empty.
+    has_foreign: std::sync::atomic::AtomicBool,
+    /// Incremented whenever an entry is removed from `opened` or `foreign`,
+    /// invalidating cached per-slot source SRV keys against COM address reuse.
+    cache_epoch: AtomicU64,
     pub priority: i32,
     /// Set when the queue cannot safely be reused after an ordering error or timeout.
     stuck: std::sync::atomic::AtomicBool,
@@ -155,48 +161,6 @@ fn ensure_queue_active(retired: &std::sync::atomic::AtomicBool) -> Result<()> {
     );
     Ok(())
 }
-/// Wait on the CPU until `fence` reaches `value`, for at most two seconds.
-/// The copies wait for fences another device signals; after that device is
-/// lost they may never complete, and an unbounded wait froze the stream for
-/// good with no error to recover from.
-fn wait_fence(fence: &ID3D12Fence, value: u64) -> Result<()> {
-    use windows::Win32::System::Threading::*;
-    // SAFETY: `fence` is a live D3D12 fence, and the event is created here, used only by
-    // SetEventOnCompletion and the wait, and closed once.
-    let result = (|| unsafe {
-        if completed_value(fence.GetCompletedValue())? >= value {
-            return Ok(());
-        }
-        let event = CreateEventW(None, false, false, PCWSTR::null())?;
-        let waited = fence.SetEventOnCompletion(value, event).and_then(|()| {
-            let waited = WaitForSingleObject(event, 2000);
-            if waited == windows::Win32::Foundation::WAIT_FAILED {
-                Err(windows::core::Error::from_thread())
-            } else {
-                Ok(waited)
-            }
-        });
-        let _ = CloseHandle(event);
-        waited?;
-        // Device removal wakes the event too; check the fence after any wake.
-        if completed_value(fence.GetCompletedValue())? < value {
-            bail!("GPU work did not finish within two seconds");
-        }
-        Ok(())
-    })();
-    result.map_err(|error| {
-        let mut device: Option<ID3D12Device> = None;
-        // SAFETY: The fence owns its device and the out-parameter is a live local.
-        let _ = unsafe { fence.GetDevice(&mut device) };
-        match device
-            .as_ref()
-            .and_then(crate::device_loss::DeviceLost::d3d12)
-        {
-            Some(loss) => error.context(loss),
-            None => error,
-        }
-    })
-}
 /// A compute queue at high priority, or the normal one when Windows refuses
 /// it. Never real-time: a real-time queue pre-empts the desktop compositor
 /// that every captured frame comes from, and an HDR stream on an RX 7900 XT
@@ -273,6 +237,8 @@ impl Compute {
                 next: Mutex::new(0),
                 opened: Mutex::new(HashMap::new()),
                 foreign: Mutex::new(HashMap::new()),
+                has_foreign: std::sync::atomic::AtomicBool::new(false),
+                cache_epoch: AtomicU64::new(0),
                 priority,
                 stuck: std::sync::atomic::AtomicBool::new(false),
             }))
@@ -388,7 +354,9 @@ impl Compute {
     pub fn open(&self, texture: &ID3D11Texture2D) -> Result<ID3D12Resource> {
         self.ensure_active()?;
         let key = texture.as_raw() as usize;
-        if let Some((_, resource)) = self.foreign.lock().unwrap().get(&key) {
+        if self.has_foreign.load(Ordering::Acquire)
+            && let Some((_, resource)) = self.foreign.lock().unwrap().get(&key)
+        {
             return Ok(resource.clone());
         }
         let mut opened = self.opened.lock().unwrap();
@@ -417,6 +385,7 @@ impl Compute {
             // stale 4K HDR textures from pinning gigabytes of video memory.
             if opened.len() >= 24 {
                 opened.clear();
+                self.cache_epoch.fetch_add(1, Ordering::Release);
             }
             opened.insert(key, (texture.clone(), resource.clone()));
             Ok(resource)
@@ -435,13 +404,17 @@ impl Compute {
         unsafe {
             self.device.OpenSharedHandle(handle, &mut resource)?;
         }
-        self.foreign.lock().unwrap().insert(
-            texture.as_raw() as usize,
-            (
-                texture.clone(),
-                resource.context("no imported shared resource")?,
-            ),
-        );
+        {
+            let mut foreign = self.foreign.lock().unwrap();
+            foreign.insert(
+                texture.as_raw() as usize,
+                (
+                    texture.clone(),
+                    resource.context("no imported shared resource")?,
+                ),
+            );
+            self.has_foreign.store(true, Ordering::Release);
+        }
         Ok(())
     }
     pub(crate) fn forget(&self, texture: &ID3D11Texture2D) {
@@ -458,8 +431,16 @@ impl Compute {
         if let Some(pair) = self.opened.lock().unwrap().remove(&key) {
             removed.push(pair);
         }
-        if let Some(pair) = self.foreign.lock().unwrap().remove(&key) {
-            removed.push(pair);
+        if self.has_foreign.load(Ordering::Acquire) {
+            let mut foreign = self.foreign.lock().unwrap();
+            if let Some(pair) = foreign.remove(&key) {
+                removed.push(pair);
+            }
+            self.has_foreign
+                .store(!foreign.is_empty(), Ordering::Release);
+        }
+        if !removed.is_empty() {
+            self.cache_epoch.fetch_add(1, Ordering::Release);
         }
         removed
     }
@@ -660,9 +641,10 @@ struct Slot {
     /// (`compute_hdr_stats.rs`): 0 for none, [`hdr_stats::QUEUED`] until it is
     /// submitted, `u64::MAX` while it is.
     stats: u64,
-    /// The target whose luma and chroma UAVs are in the slot's `at(2..4)`, so
-    /// a repeated conversion into it does not recreate them.
-    target_view: Option<usize>,
+    /// Cached source SRV identity `(raw_ptr, dxgi_format, cache_epoch)` in `at(0)`.
+    source_srv: Option<(usize, i32, u64)>,
+    /// Cached pointer SRV identity `(raw_ptr_or_0, pointer_epoch)` in `at(1)`.
+    pointer_srv: Option<(usize, u64)>,
     /// The PyroWave planes whose three UAVs are in the slot's `at(2..=4)`, with
     /// their format, so a repeated conversion of the encoder's planes does not
     /// recreate them. The slot's `outputs` keep the planes alive while cached.
@@ -752,6 +734,21 @@ impl OutputLayout {
             Self::Ayuv => (width.div_ceil(16), height.div_ceil(16)),
         }
     }
+    /// Dispatch groups accounting for packed 4:4:4 v2, where each thread owns
+    /// a 2x2 logical block (half as many rows as v1's 2x1 pairs).
+    pub(crate) const fn dispatch_groups_for(
+        self,
+        width: u32,
+        height: u32,
+        packs_chroma: bool,
+        packing: u32,
+    ) -> (u32, u32) {
+        if packs_chroma && packing == 2 {
+            ((width / 2).div_ceil(8), (height / 4).div_ceil(8))
+        } else {
+            self.dispatch_groups(width, height)
+        }
+    }
 }
 
 /// RGB to NV12, P010 or 8-bit AYUV on the compute queue, with the same shader
@@ -778,6 +775,8 @@ pub struct Converter {
     targets: Vec<Target>,
     /// Bounded cache of immutable pointer textures for recurring animation shapes.
     pointers: crate::cursor::ShapeCache<ID3D12Resource>,
+    /// Bumped whenever a new pointer shape is inserted (which may evict an older one).
+    pointer_epoch: u64,
     uploads: Vec<PointerUpload>,
     /// Encoder focus, once [`Converter::enable_focus`] made it.
     focus: Option<Box<Focus>>,
@@ -793,9 +792,14 @@ pub struct Converter {
 // used only through `&mut self`.
 unsafe impl Send for Converter {}
 const SLOTS: usize = 4;
-/// Descriptors per slot: the source and pointer, up to three outputs, then
-/// the couch menu's panel image ([`menu::VIEW`]).
+/// Descriptors per slot: the source and pointer, up to three planar outputs,
+/// then the couch menu's panel image ([`menu::VIEW`]).
 const VIEWS: usize = 6;
+/// Maximum pooled YUV targets; each target owns 2 permanent UAV descriptors
+/// after the slot region so coprime target counts (e.g. 3 targets vs 4 slots)
+/// never recreate target UAVs.
+const MAX_TARGETS: usize = 8;
+const TARGET_UAV_BASE: usize = SLOTS * VIEWS;
 
 fn validate_colour_input(values: &[u32; 20]) -> Result<()> {
     // cbuffer Config: pixel=4, hdr=5. scRGB/FP16 has an SDR path, PQ does not.
@@ -870,17 +874,11 @@ impl Converter {
                 D3D12_FORMAT_SUPPORT2_UAV_TYPED_STORE,
             )?;
         }
-        let index = self.target()?;
-        if self.layout == OutputLayout::Ayuv
-            && self.slots[0].fence == 0
-            && self.slots[0].target_view.is_none()
-        {
-            // Confirm the driver accepts an R8G8B8A8_UINT UAV on DXGI_FORMAT_AYUV
-            // before NVENC opens its D3D12 session (Rubylight #150).
-            // SAFETY: Slot 0 has never been submitted (`fence == 0`) and `index` is live.
-            unsafe {
-                self.create_target_uavs(0, index);
-            }
+        let _ = self.target()?;
+        if self.layout == OutputLayout::Ayuv {
+            // `target()` created the R8G8B8A8_UINT UAV on DXGI_FORMAT_AYUV;
+            // confirm the driver accepted it before NVENC opens its D3D12
+            // session (Rubylight #150).
             if let Some(loss) = crate::device_loss::DeviceLost::d3d12(&self.compute.device) {
                 self.compute.retire();
                 return Err(anyhow::Error::new(loss)
@@ -923,7 +921,7 @@ impl Converter {
             let heap: ID3D12DescriptorHeap =
                 device.CreateDescriptorHeap(&D3D12_DESCRIPTOR_HEAP_DESC {
                     Type: D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV,
-                    NumDescriptors: (SLOTS * VIEWS) as u32,
+                    NumDescriptors: (TARGET_UAV_BASE + MAX_TARGETS * 2) as u32,
                     Flags: D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE,
                     NodeMask: 0,
                 })?;
@@ -965,7 +963,8 @@ impl Converter {
                     outputs: Vec::new(),
                     waits: Vec::new(),
                     stats: 0,
-                    target_view: None,
+                    source_srv: None,
+                    pointer_srv: None,
                     planar_view: None,
                 });
             }
@@ -985,6 +984,7 @@ impl Converter {
                 layout,
                 targets: vec![],
                 pointers: Default::default(),
+                pointer_epoch: 0,
                 uploads: Vec::new(),
                 focus: None,
                 packs_chroma: false,
@@ -1120,6 +1120,7 @@ impl Converter {
                 cursor.pixels.clone(),
                 texture.clone(),
             );
+            self.pointer_epoch = self.pointer_epoch.wrapping_add(1);
             Ok(texture)
         }
     }
@@ -1218,7 +1219,7 @@ impl Converter {
                 return Ok(index);
             }
         }
-        if self.targets.len() >= 8 {
+        if self.targets.len() >= MAX_TARGETS {
             // AMF can release its surface reference just before its GPU
             // completion signal. Wait for such a target instead of declaring
             // the bounded pool exhausted and triggering keyframe recovery.
@@ -1267,27 +1268,32 @@ impl Converter {
                 .context("YUV texture on the compute device")?;
             let texture = texture.context("no YUV texture")?;
             crate::amf::gpu::set_resource_state(&texture, D3D12_RESOURCE_STATE_COMMON)?;
+            let index = self.targets.len();
             self.targets.push(Target {
                 texture: Arc::new(texture),
                 fence: self.compute.device.CreateFence(0, D3D12_FENCE_FLAG_NONE)?,
                 value: 0,
             });
-            Ok(self.targets.len() - 1)
+            self.create_target_uavs(index);
+            Ok(index)
         }
     }
-    /// Write `slot`'s output UAV descriptor(s) at `at(2..)` for `self.targets[index]`.
+    /// Write the permanent UAV descriptor(s) for `self.targets[index]` at
+    /// `TARGET_UAV_BASE + index * 2`.
     ///
     /// # Safety
-    /// `slot` is idle on the GPU and `index < self.targets.len()`.
-    unsafe fn create_target_uavs(&mut self, slot: usize, index: usize) {
+    /// `index < self.targets.len()` and `self.targets[index]` is freshly created
+    /// (not referenced by any in-flight command list yet).
+    unsafe fn create_target_uavs(&self, index: usize) {
         let device = &self.compute.device;
         let target = &self.targets[index].texture;
-        // SAFETY: `self.heap` is live on `device` and the caller guarantees `slot` is idle.
+        // SAFETY: `self.heap` is live on `device` and holds `MAX_TARGETS * 2` descriptors past
+        // `TARGET_UAV_BASE`.
         unsafe {
             let cpu = self.heap.GetCPUDescriptorHandleForHeapStart();
             for (plane, &uav_format) in self.layout.uav_formats().iter().enumerate() {
                 let handle = D3D12_CPU_DESCRIPTOR_HANDLE {
-                    ptr: cpu.ptr + (slot * VIEWS + 2 + plane) * self.increment as usize,
+                    ptr: cpu.ptr + (TARGET_UAV_BASE + index * 2 + plane) * self.increment as usize,
                 };
                 device.CreateUnorderedAccessView(
                     target.as_ref(),
@@ -1297,9 +1303,49 @@ impl Converter {
                 );
             }
         }
-        self.slots[slot].target_view = Some(index);
-        // `convert` overwrites `at(2..)` with its own UAV(s).
-        self.slots[slot].planar_view = None;
+    }
+    /// Update `slot`'s source (`at(0)`) and pointer (`at(1)`) SRVs only when
+    /// the resource, format or cache epoch changed.
+    ///
+    /// # Safety
+    /// `slot` is idle on the GPU and `source`/`pointer` live on `self.compute.device`.
+    unsafe fn update_input_srvs(
+        &mut self,
+        slot: usize,
+        source: &ID3D12Resource,
+        format: DXGI_FORMAT,
+        pointer: Option<&ID3D12Resource>,
+    ) {
+        let cache_epoch = self.compute.cache_epoch.load(Ordering::Acquire);
+        let source_key = (source.as_raw() as usize, format.0, cache_epoch);
+        let pointer_key = (
+            pointer.map_or(0, |p| p.as_raw() as usize),
+            if pointer.is_some() {
+                self.pointer_epoch
+            } else {
+                0
+            },
+        );
+        // SAFETY: `self.heap` is live on `device` and the caller waited for `slot` to finish.
+        unsafe {
+            let device = &self.compute.device;
+            let cpu = self.heap.GetCPUDescriptorHandleForHeapStart();
+            let at = |index: usize| D3D12_CPU_DESCRIPTOR_HANDLE {
+                ptr: cpu.ptr + (slot * VIEWS + index) * self.increment as usize,
+            };
+            if self.slots[slot].source_srv != Some(source_key) {
+                device.CreateShaderResourceView(source, Some(&texture_srv(format)), at(0));
+                self.slots[slot].source_srv = Some(source_key);
+            }
+            if self.slots[slot].pointer_srv != Some(pointer_key) {
+                device.CreateShaderResourceView(
+                    pointer,
+                    Some(&texture_srv(DXGI_FORMAT_R8G8B8A8_UNORM)),
+                    at(1),
+                );
+                self.slots[slot].pointer_srv = Some(pointer_key);
+            }
+        }
     }
     /// Convert `source` (an RGB texture opened on this device) into a new
     /// YUV texture. The values follow the D3D11 converter's constants.
@@ -1340,21 +1386,9 @@ impl Converter {
         // views may be rewritten, and every view and barrier names a live resource on this device.
         unsafe {
             self.write_values(slot);
-            if self.slots[slot].target_view != Some(index) {
-                self.create_target_uavs(slot, index);
-            }
-            let device = &self.compute.device;
-            let cpu = self.heap.GetCPUDescriptorHandleForHeapStart();
+            self.slots[slot].planar_view = None;
+            self.update_input_srvs(slot, source, format, pointer);
             let gpu = self.heap.GetGPUDescriptorHandleForHeapStart();
-            let at = |index: usize| D3D12_CPU_DESCRIPTOR_HANDLE {
-                ptr: cpu.ptr + (slot * VIEWS + index) * self.increment as usize,
-            };
-            device.CreateShaderResourceView(source, Some(&texture_srv(format)), at(0));
-            device.CreateShaderResourceView(
-                pointer,
-                Some(&texture_srv(DXGI_FORMAT_R8G8B8A8_UNORM)),
-                at(1),
-            );
             let Slot {
                 allocator, list, ..
             } = &self.slots[slot];
@@ -1387,15 +1421,29 @@ impl Converter {
                 0,
                 self.constants.GetGPUVirtualAddress() + (slot * 256) as u64,
             );
-            let table = |index: usize| D3D12_GPU_DESCRIPTOR_HANDLE {
-                ptr: gpu.ptr + ((slot * VIEWS + index) * self.increment as usize) as u64,
+            let target_uav = D3D12_GPU_DESCRIPTOR_HANDLE {
+                ptr: gpu.ptr + ((TARGET_UAV_BASE + index * 2) * self.increment as usize) as u64,
+            };
+            let table = |which: usize| {
+                if which == 2 {
+                    target_uav
+                } else {
+                    D3D12_GPU_DESCRIPTOR_HANDLE {
+                        ptr: gpu.ptr + ((slot * VIEWS + which) * self.increment as usize) as u64,
+                    }
+                }
             };
             list.SetComputeRootDescriptorTable(1, table(0));
-            list.SetComputeRootDescriptorTable(2, table(2));
+            list.SetComputeRootDescriptorTable(2, target_uav);
             if let Some(focus) = focus {
                 focus.bind(list);
             }
-            let (groups_x, groups_y) = self.layout.dispatch_groups(self.width, self.height);
+            let (groups_x, groups_y) = self.layout.dispatch_groups_for(
+                self.width,
+                self.height,
+                self.packs_chroma,
+                self.values[11],
+            );
             list.Dispatch(groups_x, groups_y, 1);
             if let Some(focus) = focus {
                 focus.record(list, slot);

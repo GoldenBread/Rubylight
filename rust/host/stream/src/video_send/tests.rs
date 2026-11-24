@@ -2240,7 +2240,7 @@ fn an_idle_sender_gets_a_whole_frame_block_by_block() {
                     last: index + 1 == layout.len()
                 }),
                 None,
-                vec![block.0 + block.1]
+                InlineBlocks::one(block.0 + block.1)
             )
         );
     }
@@ -2429,7 +2429,7 @@ fn a_whole_frame_given_up_part_way_queues_no_more_blocks() {
     assert!(layout.len() >= 3);
     layout[1].1 += 1;
     let plan = butterpollo_media_policy::packet::ConventionalPlan {
-        layout: layout.clone(),
+        layout: layout.iter().copied().collect(),
         percentage: wire.conventional_plan(picture.bytes.len()).percentage,
     };
     let template = wire.clone();
@@ -2437,7 +2437,7 @@ fn a_whole_frame_given_up_part_way_queues_no_more_blocks() {
     let make = |blocks, counts, block, part, frame_wire_bytes| Prepared {
         blocks,
         counts,
-        layout: vec![block],
+        layout: InlineBlocks::one(block),
         packetizer: template.clone(),
         wire_frame: 1,
         idr: true,

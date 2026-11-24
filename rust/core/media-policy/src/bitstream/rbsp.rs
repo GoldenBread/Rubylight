@@ -15,6 +15,58 @@ pub const TRUNCATED: Unsupported = Unsupported("header cut short");
 /// A NAL unit's new bytes, and the index in the old unit from which its
 /// bytes follow them unchanged.
 pub type Replacement = (Vec<u8>, usize);
+/// One NAL unit edit whose replacement bytes live in a shared `heads` scratch
+/// buffer, so rewriting a multi-slice frame allocates no per-slice vectors.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Edit {
+    pub start: usize,
+    pub end: usize,
+    pub head_start: usize,
+    pub head_end: usize,
+    pub rest: usize,
+}
+
+/// Reusable Annex B / RBSP scratch buffers shared across frames and slices so
+/// steady-state header rewriting allocates nothing.
+#[derive(Default)]
+pub struct Scratch {
+    pub starts: Vec<usize>,
+    pub nals: Vec<(usize, usize)>,
+    pub edits: Vec<Edit>,
+    pub heads: Vec<u8>,
+    pub rbsp: Vec<u8>,
+    pub from: Vec<usize>,
+    pub writer: Writer,
+}
+
+impl Scratch {
+    pub fn begin(&mut self, bytes: &[u8]) {
+        units_into(bytes, &mut self.starts, &mut self.nals);
+        self.edits.clear();
+        self.heads.clear();
+    }
+    pub fn unescape(&mut self, payload: &[u8], limit: usize) {
+        unescape_into(payload, limit, &mut self.rbsp, &mut self.from);
+    }
+    pub fn push_edit(
+        &mut self,
+        start: usize,
+        end: usize,
+        head: std::ops::Range<usize>,
+        rest: usize,
+    ) {
+        self.edits.push(Edit {
+            start,
+            end,
+            head_start: head.start,
+            head_end: head.end,
+            rest,
+        });
+    }
+    pub fn assemble(&self, bytes: &[u8], output: &mut Vec<u8>) {
+        assemble_edits_into(bytes, &self.heads, &self.edits, output);
+    }
+}
 
 pub struct Reader<'a> {
     bytes: &'a [u8],
@@ -79,6 +131,11 @@ pub struct Writer {
     at: usize,
 }
 impl Writer {
+    /// Reset for another header while retaining the allocated backing buffer.
+    pub fn clear(&mut self) {
+        self.bytes.clear();
+        self.at = 0;
+    }
     pub fn bits(&mut self, count: u32, value: u32) {
         for index in (0..count).rev() {
             if self.at.is_multiple_of(8) {
@@ -108,13 +165,20 @@ impl Writer {
             self.flag((from[at / 8] >> (7 - at % 8)) & 1 == 1);
         }
     }
-    /// The bytes after a one bit and zeros to the byte boundary: RBSP
-    /// trailing bits, or a slice header's byte alignment.
-    pub fn finish(mut self) -> Vec<u8> {
+    /// Finish RBSP trailing bits or slice header alignment in place, keeping
+    /// the backing buffer reusable across headers.
+    pub fn finish_in_place(&mut self) -> &[u8] {
         self.flag(true);
         while !self.at.is_multiple_of(8) {
             self.flag(false);
         }
+        &self.bytes
+    }
+    /// The bytes after a one bit and zeros to the byte boundary: RBSP
+    /// trailing bits, or a slice header's byte alignment.
+    #[cfg(test)]
+    pub fn finish(mut self) -> Vec<u8> {
+        self.finish_in_place();
         self.bytes
     }
 }
@@ -123,6 +187,16 @@ impl Writer {
 /// bytes before a start code belong to it, as a NAL unit never ends in zero.
 pub fn units(bytes: &[u8]) -> Vec<(usize, usize)> {
     let mut starts = Vec::new();
+    let mut out = Vec::new();
+    units_into(bytes, &mut starts, &mut out);
+    out
+}
+
+/// [`units`] writing into caller-owned scratch buffers to avoid per-frame
+/// allocations.
+pub fn units_into(bytes: &[u8], starts: &mut Vec<usize>, out: &mut Vec<(usize, usize)>) {
+    starts.clear();
+    out.clear();
     let mut index = 0;
     while index + 2 < bytes.len() {
         // No start code begins at a byte that is not zero: skip eight
@@ -143,26 +217,33 @@ pub fn units(bytes: &[u8]) -> Vec<(usize, usize)> {
             index += 1;
         }
     }
-    starts
-        .iter()
-        .enumerate()
-        .map(|(position, &start)| {
-            let mut end = starts
-                .get(position + 1)
-                .map_or(bytes.len(), |&next| next - 3);
-            while end > start && bytes[end - 1] == 0 {
-                end -= 1;
-            }
-            (start, end)
-        })
-        .collect()
+    out.reserve(starts.len());
+    for (position, &start) in starts.iter().enumerate() {
+        let mut end = starts
+            .get(position + 1)
+            .map_or(bytes.len(), |&next| next - 3);
+        while end > start && bytes[end - 1] == 0 {
+            end -= 1;
+        }
+        out.push((start, end));
+    }
 }
 
 /// Up to `limit` RBSP bytes of a NAL unit's payload, each with the index of
 /// the payload byte it came from.
 pub fn unescape(payload: &[u8], limit: usize) -> (Vec<u8>, Vec<usize>) {
+    let (mut rbsp, mut from) = (Vec::new(), Vec::new());
+    unescape_into(payload, limit, &mut rbsp, &mut from);
+    (rbsp, from)
+}
+
+/// [`unescape`] writing into caller-owned scratch buffers.
+pub fn unescape_into(payload: &[u8], limit: usize, rbsp: &mut Vec<u8>, from: &mut Vec<usize>) {
+    rbsp.clear();
+    from.clear();
     let capacity = limit.min(payload.len());
-    let (mut rbsp, mut from) = (Vec::with_capacity(capacity), Vec::with_capacity(capacity));
+    rbsp.reserve(capacity);
+    from.reserve(capacity);
     let mut zeros = 0;
     for (index, &byte) in payload.iter().enumerate() {
         if rbsp.len() >= limit {
@@ -176,7 +257,6 @@ pub fn unescape(payload: &[u8], limit: usize) -> (Vec<u8>, Vec<usize>) {
         from.push(index);
         zeros = if byte == 0 { zeros + 1 } else { 0 };
     }
-    (rbsp, from)
 }
 
 pub fn escape(rbsp: &[u8], output: &mut Vec<u8>) {
@@ -191,21 +271,25 @@ pub fn escape(rbsp: &[u8], output: &mut Vec<u8>) {
     }
 }
 
-/// A NAL unit whose first `header` RBSP bytes become `rewritten`. The rest
-/// stays as it was, emulation prevention included: the last byte of both
-/// headers is non-zero (it holds a one bit), so no escape spans the seam.
-pub fn splice(
+/// Replace a NAL unit's first `header` RBSP bytes with `rewritten`, appending
+/// the escaped replacement header onto `heads` and returning its range within
+/// `heads` together with the unchanged tail offset. The rest stays as it was,
+/// emulation prevention included: the last byte of both headers is non-zero
+/// (it holds a one bit), so no escape spans the seam.
+pub fn splice_into(
     nal: &[u8],
     prefix: usize,
     rewritten: &[u8],
     from: &[usize],
     header: usize,
-) -> Replacement {
+    heads: &mut Vec<u8>,
+) -> (std::ops::Range<usize>, usize) {
     debug_assert!(header > 0 && rewritten.last().is_some_and(|&byte| byte != 0));
-    let mut head = Vec::with_capacity(prefix + rewritten.len() + rewritten.len() / 2);
-    head.extend_from_slice(&nal[..prefix]);
-    escape(rewritten, &mut head);
-    (head, prefix + from[header - 1] + 1)
+    let head_start = heads.len();
+    heads.reserve(prefix + rewritten.len() + rewritten.len() / 2);
+    heads.extend_from_slice(&nal[..prefix]);
+    escape(rewritten, heads);
+    (head_start..heads.len(), prefix + from[header - 1] + 1)
 }
 
 /// `bytes` with the NAL units at `edits` replaced, copied once.
@@ -221,15 +305,35 @@ pub fn assemble_into(
     edits: Vec<((usize, usize), Replacement)>,
     output: &mut Vec<u8>,
 ) {
-    let extra: usize = edits.iter().map(|(_, (head, _))| head.len()).sum();
+    let final_len = edits.iter().fold(bytes.len(), |len, (_, (head, rest))| {
+        len.saturating_sub(*rest).saturating_add(head.len())
+    });
     output.clear();
-    output.reserve(bytes.len() + extra);
+    output.reserve(final_len);
     let mut cursor = 0;
     for ((start, end), (head, rest)) in edits {
         output.extend_from_slice(&bytes[cursor..start]);
         output.extend_from_slice(&head);
         output.extend_from_slice(&bytes[start + rest..end]);
         cursor = end;
+    }
+    output.extend_from_slice(&bytes[cursor..]);
+}
+
+/// [`assemble_into`] for edits whose replacement headers share `heads`.
+pub fn assemble_edits_into(bytes: &[u8], heads: &[u8], edits: &[Edit], output: &mut Vec<u8>) {
+    let final_len = edits.iter().fold(bytes.len(), |len, edit| {
+        len.saturating_sub(edit.rest)
+            .saturating_add(edit.head_end - edit.head_start)
+    });
+    output.clear();
+    output.reserve(final_len);
+    let mut cursor = 0;
+    for edit in edits {
+        output.extend_from_slice(&bytes[cursor..edit.start]);
+        output.extend_from_slice(&heads[edit.head_start..edit.head_end]);
+        output.extend_from_slice(&bytes[edit.start + edit.rest..edit.end]);
+        cursor = edit.end;
     }
     output.extend_from_slice(&bytes[cursor..]);
 }
@@ -295,5 +399,78 @@ mod tests {
         assert_eq!(ceil_log2(1), 0);
         assert_eq!(ceil_log2(2), 1);
         assert_eq!(ceil_log2(920), 10);
+    }
+    #[test]
+    fn scratch_helpers_match_allocating_versions_and_reuse_capacity() {
+        let mut writer = Writer::default();
+        writer.ue(42);
+        writer.bits(8, 0xA5);
+        let first = writer.finish_in_place().to_vec();
+        let ptr = writer.bytes.as_ptr();
+        writer.clear();
+        writer.ue(7);
+        let second = writer.finish_in_place().to_vec();
+        assert_eq!(writer.bytes.as_ptr(), ptr, "writer reuses backing buffer");
+        let mut fresh = Writer::default();
+        fresh.ue(42);
+        fresh.bits(8, 0xA5);
+        assert_eq!(first, fresh.finish());
+        let mut fresh = Writer::default();
+        fresh.ue(7);
+        assert_eq!(second, fresh.finish());
+
+        let stream = [
+            0, 0, 0, 1, 0x02, 0x01, 0x00, 0x00, 0x03, 0x01, 0x80, 0x55, 0, 0, 1, 0x02, 0x01, 0x90,
+            0x66,
+        ];
+        let (mut starts, mut nals) = (Vec::new(), Vec::new());
+        units_into(&stream, &mut starts, &mut nals);
+        assert_eq!(nals, units(&stream));
+        let (mut rbsp, mut from) = (Vec::new(), Vec::new());
+        let (s0, e0) = nals[0];
+        unescape_into(&stream[s0 + 2..e0], 4, &mut rbsp, &mut from);
+        assert_eq!(
+            (rbsp.clone(), from.clone()),
+            unescape(&stream[s0 + 2..e0], 4)
+        );
+
+        let mut heads = Vec::new();
+        let (r0, rest0) = splice_into(
+            &stream[s0..e0],
+            2,
+            &[0x00, 0x00, 0x01, 0x80],
+            &from,
+            4,
+            &mut heads,
+        );
+        let (s1, e1) = nals[1];
+        unescape_into(&stream[s1 + 2..e1], 1, &mut rbsp, &mut from);
+        let (r1, rest1) = splice_into(&stream[s1..e1], 2, &[0xC0], &from, 1, &mut heads);
+        let edits = [
+            Edit {
+                start: s0,
+                end: e0,
+                head_start: r0.start,
+                head_end: r0.end,
+                rest: rest0,
+            },
+            Edit {
+                start: s1,
+                end: e1,
+                head_start: r1.start,
+                head_end: r1.end,
+                rest: rest1,
+            },
+        ];
+        let mut out = Vec::new();
+        assemble_edits_into(&stream, &heads, &edits, &mut out);
+        let expected = assemble(
+            &stream,
+            vec![
+                ((s0, e0), (heads[r0].to_vec(), rest0)),
+                ((s1, e1), (heads[r1].to_vec(), rest1)),
+            ],
+        );
+        assert_eq!(out, expected);
     }
 }

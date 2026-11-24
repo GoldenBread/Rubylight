@@ -54,6 +54,7 @@ impl Encoder {
             let stale = self.in_flight.pop_front();
             if let Some(stale) = &stale {
                 self.units.forget(stale.pts);
+                self.release_vpe_kept(stale.pts);
             }
             match unreturned_notice(self.probe, stale.map(|s| s.pts)) {
                 Unreturned::Warning(message) => self.warnings.event(
@@ -104,22 +105,31 @@ impl Encoder {
     pub fn poll_blocks(&self) -> bool {
         self.output_thread.is_none()
     }
-    /// A query now, for waits that need capacity back.
+    /// A query now, for waits that need capacity back. With `amd_output_thread`
+    /// drains every output already queued in one call without blocking.
     pub(super) fn poll_now(&mut self) -> Result<Vec<Encoded>> {
-        // A unit of a joined frame leaves nothing to hand on: ask again at
-        // once for the frame's next unit instead of after the caller's wait.
+        let mut output = Vec::new();
         loop {
             self.unit_held = false;
-            let output = self.poll_once()?;
-            if !(self.unit_held && output.is_empty()) {
+            let before = output.len();
+            let more = self.poll_once(&mut output)?;
+            if self.in_flight.is_empty() {
                 // The stream thread polls only while frames are in flight, so
                 // the poll that took the last one stops the output thread too;
                 // it would otherwise query until the next submission.
-                if self.in_flight.is_empty()
-                    && let Some(thread) = &self.output_thread
-                {
+                if let Some(thread) = &self.output_thread {
                     thread.want(false);
                 }
+                return Ok(output);
+            }
+            let drain = if self.output_thread.is_some() {
+                more
+            } else {
+                // A unit of a joined frame leaves nothing to hand on: ask again at
+                // once for the frame's next unit instead of after the caller's wait.
+                self.unit_held && output.len() == before
+            };
+            if !drain {
                 return Ok(output);
             }
         }
@@ -131,7 +141,7 @@ impl Encoder {
             thread.wait(QUERY_TIMEOUT);
         }
     }
-    fn poll_once(&mut self) -> Result<Vec<Encoded>> {
+    fn poll_once(&mut self, output: &mut Vec<Encoded>) -> Result<bool> {
         if let Some(input) = &mut self.compute {
             input.converter.release_completed();
         }
@@ -139,7 +149,6 @@ impl Encoder {
         // owned AMFBuffer through its AMFData base. Null and size checks bound its host
         // bytes, copied before Release; the picture union is read only with an INT64 tag.
         unsafe {
-            let mut output = vec![];
             // With a query timeout, asking when nothing is in flight would only
             // wait for it. One finished frame is handed to the sender at once:
             // asking for the next one still in flight would hold it for the
@@ -149,18 +158,18 @@ impl Encoder {
                     thread.want(false);
                     thread.check_idle()?;
                 }
-                return Ok(output);
+                return Ok(false);
             }
-            let (code, data) = match &self.output_thread {
+            let (code, data, more) = match &self.output_thread {
                 // Its queue answers at once; empty, it reads as a query that
                 // found nothing.
-                Some(thread) => thread.next(),
+                Some(thread) => thread.next_with_more(),
                 None => {
                     let mut data = ptr::null_mut();
                     let code = timed("AMF QueryOutput", || {
                         ((*(*self.component).pVtbl).QueryOutput.unwrap())(self.component, &mut data)
                     });
-                    (code, data)
+                    (code, data, false)
                 }
             };
             self.last_query = Some(code);
@@ -172,17 +181,17 @@ impl Encoder {
                 // Query first, preserving ready pictures and their timestamps;
                 // only an empty query can retire an unanswered submission.
                 self.expire_unreturned();
-                return Ok(output);
+                return Ok(more);
             }
             check(code)?;
             if data.is_null() {
                 self.expire_unreturned();
-                return Ok(output);
+                return Ok(more);
             }
             let buffer = data as *mut AMFBuffer;
             let pts = ((*(*data).pVtbl).GetPts.unwrap())(data);
             if self.unit_log.is_some() && self.log_unit(buffer, pts) {
-                return Ok(output);
+                return Ok(more);
             }
             // In slice output mode a frame stays in flight until its last unit.
             let kind = if self.slice_blocks > 0 {
@@ -261,7 +270,7 @@ impl Encoder {
                         (v.Release.unwrap())(buffer);
                         // poll() asks again at once, for the keyframe.
                         self.unit_held = true;
-                        return Ok(output);
+                        return Ok(more);
                     }
                     Err(error) => {
                         self.reencode_failures += 1;
@@ -269,6 +278,9 @@ impl Encoder {
                         self.warnings.event("encoder_reencode", &format!("AMF could not encode an oversize scene cut again as a keyframe ({error:#}); the frame goes without full FEC and may freeze the picture briefly. Report this with the host log."), butterpollo_media_policy::EVENT_PERIOD);
                     }
                 }
+            }
+            if finished.is_some() {
+                self.release_vpe_kept(pts);
             }
             let Some(sent) = self.repaired(
                 std::slice::from_raw_parts(raw, size),
@@ -282,7 +294,7 @@ impl Encoder {
                 if last {
                     self.frame_completed(timing, false);
                 }
-                return Ok(output);
+                return Ok(more);
             };
             self.frame_bytes += sent.len();
             if last {
@@ -311,21 +323,22 @@ impl Encoder {
                 }
                 self.references.encoded(idr, frame_bytes);
             }
-            let bytes: &[u8] = &sent;
             if self.slice_blocks > 0 {
                 let streamable = !self.slices_joined
                     && !idr
                     && !after_invalidation
                     && frame_cap_bytes.is_some_and(|cap| cap > 0);
-                let pushed = self.units.push(pts, kind, bytes, || units::Meta {
-                    streamed: streamable,
-                    idr,
-                });
+                let headroom = self
+                    .dynamic
+                    .as_deref()
+                    .map_or(0, dynamic::Dynamic::headroom);
+                let pushed = self
+                    .units
+                    .push_with_headroom(pts, kind, sent, headroom, || units::Meta {
+                        streamed: streamable,
+                        idr,
+                    });
                 (v.Release.unwrap())(buffer);
-                // The header repair's pooled rewrite has been copied on.
-                if let std::borrow::Cow::Owned(rewritten) = sent {
-                    crate::frame_pool::give(rewritten);
-                }
                 // Whether a frame is a keyframe is read from its first slice.
                 // If a later one says otherwise, that assumption is wrong for
                 // this driver: say so, once, rather than stream a keyframe.
@@ -344,15 +357,15 @@ impl Encoder {
                 let (unit, bytes) = match pushed.step {
                     units::Step::Hold => {
                         self.unit_held = true;
-                        return Ok(output);
+                        return Ok(more);
                     }
                     units::Step::Unit(unit, bytes) => (unit, bytes),
                     units::Step::Whole(bytes) => (Unit::Whole, bytes),
                 };
                 // Dynamic metadata goes before the first slice or tile, the
                 // Dolby Vision RPU after the last (AV1: before the first),
-                // spliced into the unit's own buffer, which the sequencer
-                // copied once.
+                // spliced into the unit's own buffer (allocated with headroom
+                // or moved directly from header repair).
                 let (bytes, frame_cap_bytes) = dynamic::output(
                     self.dynamic.as_deref_mut(),
                     unit,
@@ -389,28 +402,28 @@ impl Encoder {
                     latency,
                     presentation,
                 });
-                return Ok(output);
+                return Ok(more);
             }
             // The sender outlives this AMF buffer reference. Own the compressed
             // bytes before Release makes its native storage available for reuse:
-            // a rewrite already owns its pooled buffer, and the splice writes
-            // into it. H.264 carries no dynamic metadata (`dynamic::wanted`).
+            // borrowed frames copy linearly with dynamic metadata already in
+            // place; rewritten frames already own a pooled buffer with headroom.
+            // H.264 carries no dynamic metadata (`dynamic::wanted`).
             let (bytes, frame_cap_bytes) = if self.codec == 0 && idr && self.references.enabled() {
-                let mut recovered = crate::frame_pool::take(bytes.len());
+                let mut recovered = crate::frame_pool::take(sent.len());
                 butterpollo_media_policy::bitstream::h264_reference_recovery_into(
-                    bytes,
+                    &sent,
                     &mut recovered,
                 );
+                if let std::borrow::Cow::Owned(rewritten) = sent {
+                    crate::frame_pool::give(rewritten);
+                }
                 (recovered, frame_cap_bytes)
             } else {
-                let owned = match sent {
-                    std::borrow::Cow::Borrowed(bytes) => crate::frame_pool::copy(bytes),
-                    std::borrow::Cow::Owned(bytes) => bytes,
-                };
-                dynamic::output(
+                dynamic::output_cow(
                     self.dynamic.as_deref_mut(),
                     Unit::Whole,
-                    owned,
+                    sent,
                     frame_cap_bytes,
                     idr,
                 )
@@ -429,7 +442,7 @@ impl Encoder {
                 latency,
                 presentation,
             });
-            Ok(output)
+            Ok(more)
         }
     }
     /// [`dynamic::sample`]: a failed statistics pass costs the stream its
@@ -505,11 +518,18 @@ impl Encoder {
             }
             self.repair_dropping = false;
         }
+        let headroom = self
+            .dynamic
+            .as_deref()
+            .map_or(0, dynamic::Dynamic::headroom);
         let result = match self.repair_headers.as_mut() {
-            // HEVC's rewrite of every P-frame goes into a pooled buffer,
+            // HEVC's rewrite of every P-frame goes into a pooled buffer with
+            // headroom for widened slice headers and dynamic HDR metadata,
             // returned to the pool when nothing in the frame changed.
             Some(butterpollo_media_policy::bitstream::RepairHeaders::Hevc(order)) => {
-                let mut pooled = crate::frame_pool::take(bytes.len());
+                let mut pooled = crate::frame_pool::take(
+                    bytes.len().saturating_add(64).saturating_add(headroom),
+                );
                 match order.rewrite_into(bytes, &mut pooled) {
                     Ok(true) => Ok(std::borrow::Cow::Owned(pooled)),
                     Ok(false) => {

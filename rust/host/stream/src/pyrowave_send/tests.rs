@@ -296,8 +296,8 @@ fn prepared_intra_frames_freeze_timing_and_keep_only_the_newest_waiter() {
                     f.processing,
                     f.latency,
                     f.kbps,
-                    f.blocks[0][0].clone(),
-                    f.blocks.iter().map(Vec::len).sum::<usize>(),
+                    f.blocks[0].packets[0].clone(),
+                    f.blocks.iter().map(|b| b.count).sum::<usize>(),
                 )
             });
             drop(ready);
@@ -452,7 +452,7 @@ fn an_idle_sender_gets_each_block_as_it_is_built() {
                 .blocks
                 .iter()
                 .chain(&ready.blocks)
-                .map(Vec::len)
+                .map(|block| block.count)
                 .sum::<usize>();
             (
                 frame.streamed,
@@ -505,7 +505,7 @@ fn a_failed_block_abandons_a_frame_handed_over_block_by_block() {
         )
         .unwrap();
         let slot = &sender.slot;
-        let block = |tag: u8| vec![vec![tag; 4]];
+        let block = |tag: u8| SentBlock::from_packets(vec![vec![tag; 4]]);
         let mut step = 0;
         let blocks = std::iter::from_fn(|| {
             step += 1;
@@ -553,11 +553,11 @@ fn a_failed_block_abandons_a_frame_handed_over_block_by_block() {
         // the one queued behind the frame in hand. Pooled buffers are
         // refilled whole, so their order does not matter.
         if taken {
-            assert_eq!(slot.pool.take(), block(2));
+            assert_eq!(slot.pool.take(), block(2).packets);
         } else {
             let mut pooled = [slot.pool.take(), slot.pool.take()];
             pooled.sort();
-            assert_eq!(pooled, [block(1), block(2)]);
+            assert_eq!(pooled, [block(1).packets, block(2).packets]);
         }
         assert!(slot.pool.take().is_empty());
     }
@@ -586,7 +586,7 @@ fn a_stalled_frame_returns_its_blocks_and_leaves_the_sender_idle() {
         )
         .unwrap();
         let slot = &sender.slot;
-        let block = |tag: u8| vec![vec![tag; 4]];
+        let block = |tag: u8| SentBlock::from_packets(vec![vec![tag; 4]]);
         {
             let mut ready = slot.ready.lock().unwrap();
             ready.sending = true;
@@ -619,9 +619,9 @@ fn a_stalled_frame_returns_its_blocks_and_leaves_the_sender_idle() {
             .take_while(|block| !block.is_empty())
             .collect();
         pooled.sort();
-        let mut expected = vec![block(2), block(3), block(4)];
+        let mut expected = vec![block(2).packets, block(3).packets, block(4).packets];
         if building {
-            expected.push(block(5));
+            expected.push(block(5).packets);
         }
         assert_eq!(pooled, expected, "building {building}");
     }

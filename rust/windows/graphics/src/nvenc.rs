@@ -10,9 +10,13 @@
 //! compute conversion the session runs on its `ID3D12Device` and waits for
 //! each conversion's fence on the GPU (API 12.0, driver 522.25 and newer).
 
+mod cache;
 mod cuda;
 mod drain;
+mod params;
 mod teardown;
+use cache::{CachedConversion, OutputEvent};
+use params::*;
 use teardown::cleanup_slot;
 
 use crate::capture::{Device, GpuImage, Image, Pixel};
@@ -37,7 +41,7 @@ use std::{
 };
 use windows::{
     Win32::{
-        Foundation::{CloseHandle, HANDLE, WAIT_FAILED, WAIT_OBJECT_0, WAIT_TIMEOUT},
+        Foundation::{HANDLE, WAIT_FAILED, WAIT_OBJECT_0, WAIT_TIMEOUT},
         Graphics::{
             Direct3D11::ID3D11Texture2D,
             Direct3D12::{
@@ -46,9 +50,8 @@ use windows::{
             },
         },
         System::{
-            LibraryLoader::LOAD_LIBRARY_SEARCH_SYSTEM32,
-            SystemInformation::GetSystemDirectoryW,
-            Threading::{CreateEventW, WaitForSingleObject},
+            LibraryLoader::LOAD_LIBRARY_SEARCH_SYSTEM32, SystemInformation::GetSystemDirectoryW,
+            Threading::WaitForSingleObject,
         },
     },
     core::Interface,
@@ -76,6 +79,10 @@ const MIN_VBV_BITS: u64 = 100_000;
 const OVERSIZE_WARNING_INTERVAL: Duration = Duration::from_secs(10);
 /// Subframe frames whose locks are traced at debug level.
 const TRACED_SUBFRAMES: u8 = 4;
+/// Extra output buffer capacity reserved when dynamic HDR metadata will be
+/// spliced in so `Dynamic::first_unit`/`last_unit` (including T.35 + Dolby
+/// Vision 8.4 RPU) avoid reallocating.
+const DYNAMIC_HEADROOM: usize = 768;
 type CreateInstance = unsafe extern "C" fn(*mut NV_ENCODE_API_FUNCTION_LIST) -> NVENCSTATUS;
 type GetMaximum = unsafe extern "C" fn(*mut u32) -> NVENCSTATUS;
 
@@ -222,223 +229,6 @@ fn retry_version(error: &anyhow::Error) -> bool {
         )
     })
 }
-/// What a stream loses when the driver rejected a newer API and an older one
-/// opened instead, for its session warning: the retry must not drop HDR10
-/// metadata or split encoding silently.
-fn api_fallback_warning(
-    failures: &[String],
-    api: ApiVersion,
-    stream: &Negotiated,
-    tuning: &Tuning,
-) -> String {
-    let mut lost = Vec::new();
-    if stream.hdr && api < ApiVersion(13, 0) {
-        lost.push("HDR10 mastering metadata is sent on the control channel only");
-    }
-    if stream.codec != 0
-        && tuning.split != butterpollo_media_policy::nvenc::SPLIT_DISABLED
-        && !api.modern_depth()
-    {
-        lost.push("split-frame encoding is unavailable");
-    }
-    let lost = if lost.is_empty() {
-        "The stream continues, but without the newer API's encoder features.".to_owned()
-    } else {
-        format!("The stream continues, but {}.", lost.join(", and "))
-    };
-    format!(
-        "The NVIDIA driver rejected a newer NVENC API ({}) and Rubylight opened {}.{}. {lost} Update the NVIDIA driver if HDR looks wrong or encoding is slower than expected.",
-        failures.join("; "),
-        api.0,
-        api.1
-    )
-}
-fn validate(functions: &NV_ENCODE_API_FUNCTION_LIST) -> Result<()> {
-    macro_rules! require { ($($entry:ident),+ $(,)?) => { $(
-        if functions.$entry.is_none() { bail!(concat!("NVENC driver lacks ", stringify!($entry))); }
-    )+ }; }
-    require!(
-        nvEncOpenEncodeSessionEx,
-        nvEncGetEncodeCaps,
-        nvEncInitializeEncoder,
-        nvEncRegisterResource,
-        nvEncUnregisterResource,
-        nvEncMapInputResource,
-        nvEncUnmapInputResource,
-        nvEncCreateBitstreamBuffer,
-        nvEncDestroyBitstreamBuffer,
-        nvEncEncodePicture,
-        nvEncLockBitstream,
-        nvEncUnlockBitstream,
-        nvEncDestroyEncoder
-    );
-    Ok(())
-}
-fn codec_guid(codec: u8) -> Result<GUID> {
-    match codec {
-        0 => Ok(NV_ENC_CODEC_H264_GUID),
-        1 => Ok(NV_ENC_CODEC_HEVC_GUID),
-        2 => Ok(NV_ENC_CODEC_AV1_GUID),
-        _ => bail!("unsupported NVENC codec"),
-    }
-}
-fn preset_guid(preset: usize) -> GUID {
-    [
-        NV_ENC_PRESET_P1_GUID,
-        NV_ENC_PRESET_P2_GUID,
-        NV_ENC_PRESET_P3_GUID,
-        NV_ENC_PRESET_P4_GUID,
-        NV_ENC_PRESET_P5_GUID,
-        NV_ENC_PRESET_P6_GUID,
-        NV_ENC_PRESET_P7_GUID,
-    ][preset.clamp(1, 7) - 1]
-}
-fn buffer_format(config: &Negotiated) -> NV_ENC_BUFFER_FORMAT {
-    match (config.yuv444, config.ten_bit()) {
-        (false, false) => _NV_ENC_BUFFER_FORMAT_NV_ENC_BUFFER_FORMAT_NV12,
-        (false, true) => _NV_ENC_BUFFER_FORMAT_NV_ENC_BUFFER_FORMAT_YUV420_10BIT,
-        (true, false) => _NV_ENC_BUFFER_FORMAT_NV_ENC_BUFFER_FORMAT_AYUV,
-        (true, true) => _NV_ENC_BUFFER_FORMAT_NV_ENC_BUFFER_FORMAT_YUV444_10BIT,
-    }
-}
-fn vui(config: &Negotiated) -> NV_ENC_CONFIG_H264_VUI_PARAMETERS {
-    let (primaries, transfer, matrix) = colors(config);
-    NV_ENC_CONFIG_H264_VUI_PARAMETERS {
-        videoSignalTypePresentFlag: 1,
-        videoFormat: 5,
-        videoFullRangeFlag: u32::from(config.full_range()),
-        colourDescriptionPresentFlag: 1,
-        colourPrimaries: primaries,
-        transferCharacteristics: transfer,
-        colourMatrix: matrix,
-        chromaSampleLocationFlag: u32::from(!config.yuv444),
-        bitstreamRestrictionFlag: 1,
-        ..Default::default()
-    }
-}
-fn colors(config: &Negotiated) -> (u32, u32, u32) {
-    let (primaries, matrix, transfer) = match config.color_matrix() {
-        0 => (6, 6, 6),
-        2 => (9, 9, 14),
-        _ => (1, 1, 1),
-    };
-    // PQ, or ARIB STD-B67 for HLG and Dolby Vision 8.4.
-    let transfer = match (config.hdr, config.hlg()) {
-        (true, true) => 18,
-        (true, false) => 16,
-        _ => transfer,
-    };
-    (primaries, transfer, matrix)
-}
-fn same_guid(a: &GUID, b: &GUID) -> bool {
-    a.Data1 == b.Data1 && a.Data2 == b.Data2 && a.Data3 == b.Data3 && a.Data4 == b.Data4
-}
-/// The codec's name for a refusal.
-fn codec_name(codec: u8) -> &'static str {
-    match codec {
-        0 => "H.264",
-        1 => "HEVC",
-        _ => "AV1",
-    }
-}
-/// What [`Session::open`] tried: each rejected API, or, when the driver is
-/// older than all of them, its API and the reviewed ones for the codec.
-fn api_failures(codec: u8, maximum: ApiVersion, failures: &[String]) -> String {
-    if !failures.is_empty() {
-        return failures.join("; ");
-    }
-    let reviewed = ApiVersion::candidates(codec, ApiVersion::COMPILED)
-        .map(|api| format!("{}.{}", api.0, api.1))
-        .collect::<Vec<_>>();
-    format!(
-        "this driver offers API {}.{}, and {} needs one of {}. Update the NVIDIA driver",
-        maximum.0,
-        maximum.1,
-        codec_name(codec),
-        if reviewed.is_empty() {
-            "none".into()
-        } else {
-            reviewed.join(", ")
-        }
-    )
-}
-/// The NVENC capability behind AMF's throughput property names, for the
-/// codec it names.
-fn throughput_codec(name: &str) -> Option<u8> {
-    match name {
-        "MaxThroughput" => Some(0),
-        "HevcMaxThroughput" => Some(1),
-        "Av1CapMaxThroughput" => Some(2),
-        _ => None,
-    }
-}
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct EncodedMetadata {
-    primaries: [[u16; 2]; 3],
-    white: [u16; 2],
-    maximum: u32,
-    minimum: u32,
-    max_cll: u16,
-    max_fall: u16,
-}
-#[derive(Default)]
-struct Metadata {
-    mastering: Box<MASTERING_DISPLAY_INFO>,
-    light: Box<CONTENT_LIGHT_LEVEL>,
-}
-impl Metadata {
-    fn new(codec: u8) -> Self {
-        let mut metadata = Self::default();
-        metadata.update(butterpollo_media_policy::hdr::Metadata::default(), codec);
-        metadata
-    }
-    fn update(&mut self, metadata: butterpollo_media_policy::hdr::Metadata, codec: u8) {
-        // NVENC takes each codec's syntax units, not a common HDR10 unit.
-        // AV1 uses 0.16 chromaticities, 24.8 maximum and 18.14 minimum nits;
-        // HEVC uses 1/50000 chromaticities and 1/10000 nit luminance.
-        let point = |[x, y]: [u16; 2]| {
-            let scale = |value| {
-                if codec == 2 {
-                    ((u32::from(value) * 65536 + 25000) / 50000).min(u32::from(u16::MAX)) as u16
-                } else {
-                    value
-                }
-            };
-            CHROMA_POINTS {
-                x: scale(x),
-                y: scale(y),
-            }
-        };
-        self.mastering.r = point(metadata.primaries[0]);
-        self.mastering.g = point(metadata.primaries[1]);
-        self.mastering.b = point(metadata.primaries[2]);
-        self.mastering.whitePoint = point(metadata.white);
-        self.mastering.maxLuma =
-            u32::from(metadata.maximum_nits) * if codec == 2 { 256 } else { 10000 };
-        self.mastering.minLuma = if codec == 2 {
-            (u32::from(metadata.minimum) * 16384 + 5000) / 10000
-        } else {
-            u32::from(metadata.minimum)
-        };
-        self.light.maxContentLightLevel = metadata.max_cll;
-        self.light.maxPicAverageLightLevel = metadata.max_fall;
-    }
-    fn encoded(&self) -> EncodedMetadata {
-        let point = |p: CHROMA_POINTS| [p.x, p.y];
-        EncodedMetadata {
-            primaries: [
-                point(self.mastering.r),
-                point(self.mastering.g),
-                point(self.mastering.b),
-            ],
-            white: point(self.mastering.whitePoint),
-            maximum: self.mastering.maxLuma,
-            minimum: self.mastering.minLuma,
-            max_cll: self.light.maxContentLightLevel,
-            max_fall: self.light.maxPicAverageLightLevel,
-        }
-    }
-}
 struct Input {
     key: usize,
     raw: *mut c_void,
@@ -532,7 +322,7 @@ struct Slot {
     d3d12: Option<Box<D3d12Slot>>,
     /// The QP delta map of the frame in flight, which the driver reads.
     deltas: Vec<i8>,
-    event: HANDLE,
+    event: Option<crate::timing::Signal>,
     event_registered: bool,
     signaled: bool,
 }
@@ -546,7 +336,7 @@ impl Slot {
     /// reuses or trims it.
     fn released(&self) -> bool {
         self.input.key == 0
-            && self.event.is_invalid()
+            && self.event.is_none()
             && self.registered.is_null()
             && self.mapped.is_null()
             && self.output.is_null()
@@ -560,24 +350,11 @@ impl Slot {
     /// driver no longer has registered, and let go of the input, and leave
     /// the slot without a key so no input finds it.
     fn release(&mut self) {
-        if !self.event.is_invalid() {
-            // SAFETY: This slot alone owns the event; `cleanup_slot` unregistered it from the
-            // driver, and the handle is cleared so `Drop` does not close it twice.
-            let _ = unsafe { CloseHandle(self.event) };
-            self.event = HANDLE::default();
-        }
+        self.event = None;
         self.input.key = 0;
         self.input._texture = None;
         self.input.cuda = None;
         self.input.d3d12 = None;
-    }
-}
-impl Drop for Slot {
-    fn drop(&mut self) {
-        if !self.event.is_invalid() {
-            // SAFETY: This slot alone owns the event that `Session::slot` created.
-            let _ = unsafe { CloseHandle(self.event) };
-        }
     }
 }
 struct Pending {
@@ -710,6 +487,8 @@ struct Session {
     /// A frame sent slice by slice came out a keyframe, and the log says so.
     unit_idr_reported: bool,
     next: u64,
+    last_idr: u64,
+    dynamic_headroom: usize,
     initialized: bool,
     force_idr: bool,
     /// A session on the D3D12 conversion's device ([`Session::open`]).
@@ -871,6 +650,8 @@ impl Session {
             slice_offsets: Vec::new(),
             unit_idr_reported: false,
             next: 1,
+            last_idr: 0,
+            dynamic_headroom: 0,
             initialized: false,
             force_idr: false,
         };
@@ -1302,6 +1083,7 @@ impl Session {
         rc.set_enableTemporalAQ(u32::from(temporal_aq));
         if custom_vbv {
             rc.vbvBufferSize = tuning.vbv(self.stream.bitrate_kbps, self.stream.fps_millihz());
+            rc.vbvInitialDelay = rc.vbvBufferSize;
             self.vbv_ceiling = rc.vbvBufferSize;
         }
         if let Some(qp) = tuning.min_qp {
@@ -1522,6 +1304,21 @@ impl Session {
         };
         self.check(status, "initialize encoder")?;
         self.initialized = true;
+        if let (Some(cuda), Some(set_streams)) = (&self.cuda, self.functions.nvEncSetIOCudaStreams)
+            && let Some(stream_ptr) = cuda.stream_ptr()
+        {
+            // SAFETY: `self.raw` is initialized, `stream_ptr` points to the live `CUstream` in
+            // `Rc<cuda::Context>` (`NV_ENC_CUSTREAM_PTR` = `CUstream*`, nvEncodeAPI.h:116,3532),
+            // and `self.cuda` drops only after `nvEncDestroyEncoder`.
+            let status = unsafe { set_streams(self.raw, stream_ptr, stream_ptr) };
+            match self.check(status, "set IO CUDA streams") {
+                Ok(()) => cuda.mark_stream_bound(),
+                Err(error) => tracing::warn!(
+                    %error,
+                    "NVENC refused non-blocking CUDA IO stream; falling back to default stream"
+                ),
+            }
+        }
         tracing::info!(
             api_major = self.api.0,
             api_minor = self.api.1,
@@ -1575,7 +1372,7 @@ impl Session {
             output: ptr::null_mut(),
             d3d12: None,
             deltas: Vec::new(),
-            event: HANDLE::default(),
+            event: None,
             event_registered: false,
             signaled: false,
         };
@@ -1711,12 +1508,12 @@ impl Session {
             bail!("NVENC returned no output buffer");
         }
         if self.initialize.enableEncodeAsync != 0 {
-            // SAFETY: No pointers are passed; the handle is owned by the slot and closed in
-            // `Slot::drop`.
-            self.slots[index].event = unsafe { CreateEventW(None, false, false, None) }?;
+            let signal = crate::timing::Signal::new()?;
+            let raw_event = signal.raw().0;
+            self.slots[index].event = Some(signal);
             let mut event = NV_ENC_EVENT_PARAMS {
                 version: self.api.event(),
-                completionEvent: self.slots[index].event.0,
+                completionEvent: raw_event,
                 ..Default::default()
             };
             self.check(
@@ -1794,7 +1591,7 @@ impl Session {
         idr: bool,
         presentation: Instant,
     ) -> Result<()> {
-        self.submit_frame(slot, texture, idr, presentation, None)
+        self.submit_frame(slot, texture, idr, presentation, None, false)
     }
     fn submit_frame(
         &mut self,
@@ -1803,8 +1600,9 @@ impl Session {
         idr: bool,
         presentation: Instant,
         again: Option<Again>,
+        skip_cuda_copy: bool,
     ) -> Result<()> {
-        let _guard = self.guard()?;
+        let guard = self.guard()?;
         let frame = again.map_or(self.next, |again| again.frame);
         if self.pending.len() >= MAX_PENDING || self.pending.iter().any(|p| p.slot == slot) {
             bail!("NVENC input is still in flight");
@@ -1815,8 +1613,14 @@ impl Session {
             (Some(_), Some(Kept::D3d12 { fence, value, .. })) => Some((*fence, *value)),
             (Some(_), _) => bail!("a D3D12 NVENC frame needs its conversion's fence"),
         };
-        if let Some(input) = self.slots[slot].input.cuda.as_mut() {
-            input.copy()?;
+        if let Some(signal) = self.slots[slot].event.as_ref() {
+            signal.reset()?;
+        }
+        if !skip_cuda_copy
+            && let (Some(input), Some(guard)) =
+                (self.slots[slot].input.cuda.as_mut(), guard.as_ref())
+        {
+            input.copy(guard)?;
         }
         let mut map = NV_ENC_MAP_INPUT_RESOURCE {
             version: self.api.structure(4, false),
@@ -1883,7 +1687,10 @@ impl Session {
         let (pitch, output, event) = (
             self.slots[slot].input.pitch,
             self.slots[slot].output,
-            self.slots[slot].event.0,
+            self.slots[slot]
+                .event
+                .as_ref()
+                .map_or(ptr::null_mut(), |signal| signal.raw().0),
         );
         self.picture.inputPitch = pitch;
         self.picture.frameIdx = frame as u32;
@@ -2101,9 +1908,28 @@ impl Session {
                 frame: cut.frame,
                 started: cut.started,
             }),
+            true,
         )?;
         self.reencoded_cuts += 1;
         Ok(())
+    }
+    fn slot_pending(&self, slot: usize) -> bool {
+        self.pending.iter().any(|pending| pending.slot == slot)
+    }
+    fn slot_has_key(&self, slot: usize, key: usize) -> bool {
+        key != 0
+            && self
+                .slots
+                .get(slot)
+                .is_some_and(|entry| entry.input.key == key)
+    }
+    /// Oldest pending slot's completion event for an async D3D11/CUDA session.
+    fn async_output_event(&self) -> Option<&crate::timing::Signal> {
+        if self.d3d12.is_some() || !self.ready.is_empty() {
+            return None;
+        }
+        let slot = &self.slots[self.pending.front()?.slot];
+        (!slot.signaled).then_some(slot.event.as_ref()).flatten()
     }
     /// Arm `event` to be set when the oldest frame in flight of a D3D12
     /// session is written: true when the caller may wait on it (set already
@@ -2154,9 +1980,11 @@ impl Session {
                 break;
             }
             let slot = &mut self.slots[index];
-            if !slot.event.is_invalid() && !slot.signaled {
-                // SAFETY: `slot.event` is a valid handle (checked above) owned by the slot.
-                match unsafe { WaitForSingleObject(slot.event, 0) } {
+            if let Some(signal) = slot.event.as_ref()
+                && !slot.signaled
+            {
+                // SAFETY: `signal` is owned by the slot and stays open until release/drop.
+                match unsafe { WaitForSingleObject(signal.raw(), 0) } {
                     WAIT_OBJECT_0 => slot.signaled = true,
                     WAIT_TIMEOUT => {
                         if pending.submitted.elapsed() > COMPLETION_TIMEOUT {
@@ -2177,11 +2005,9 @@ impl Session {
                 },
                 ..Default::default()
             };
-            // In subframe mode a lock that does not wait returns the slices
-            // written so far.
-            lock.set_doNotWait(u32::from(
-                !slot.event.is_invalid() || self.subframe || self.d3d12.is_some(),
-            ));
+            // Never stall the stream thread inside nvEncLockBitstream (`nvEncodeAPI.h`);
+            // LOCK_BUSY / NEED_MORE_INPUT leave the frame pending for the next poll.
+            lock.set_doNotWait(1);
             if pending.measured {
                 let (columns, rows) = butterpollo_media_policy::nvenc::delta_grid(
                     self.stream.codec,
@@ -2257,7 +2083,11 @@ impl Session {
                     let written = unsafe {
                         std::slice::from_raw_parts(lock.bitstreamBufferPtr.cast::<u8>(), ready)
                     };
-                    Ok(Some(crate::frame_pool::copy(&written[sent..])))
+                    let headroom = if sent == 0 { self.dynamic_headroom } else { 0 };
+                    Ok(Some(crate::frame_pool::copy_with_headroom(
+                        &written[sent..],
+                        headroom,
+                    )))
                 })();
                 self.check(
                     // SAFETY: `output` was locked by the successful nvEncLockBitstream above.
@@ -2326,7 +2156,10 @@ impl Session {
                 Ok((
                     Encoded {
                         framing: None,
-                        bytes: crate::frame_pool::copy(&written[sent..]),
+                        bytes: crate::frame_pool::copy_with_headroom(
+                            &written[sent..],
+                            self.dynamic_headroom,
+                        ),
                         unit,
                         idr: whole && idr,
                         after_invalidation: whole && pending.after_invalidation && !idr,
@@ -2436,6 +2269,9 @@ impl Session {
                     "NVENC wrote a frame over twice its frame cap; the one-frame VBV targets the cap but the driver does not guarantee it"
                 );
             }
+            if idr {
+                self.last_idr = pending.frame;
+            }
             self.references.completed(pending.frame, idr);
             self.ready.push_back(encoded);
         }
@@ -2493,11 +2329,11 @@ impl Session {
             return Ok(drain::DrainWait::Waited);
         }
         let slot = &mut self.slots[index];
-        if slot.event.is_invalid() || slot.signaled {
+        let Some(signal) = slot.event.as_ref().filter(|_| !slot.signaled) else {
             return Ok(drain::DrainWait::Unavailable);
-        }
-        // SAFETY: `slot.event` is a valid handle owned by the slot.
-        match unsafe { WaitForSingleObject(slot.event, millis) } {
+        };
+        // SAFETY: `signal` is owned by the slot.
+        match unsafe { WaitForSingleObject(signal.raw(), millis) } {
             WAIT_OBJECT_0 => slot.signaled = true,
             WAIT_TIMEOUT => {}
             _ => bail!("NVENC completion event failed"),
@@ -2513,14 +2349,21 @@ impl Session {
         self.slots.clear();
         Ok(())
     }
+    fn queue_frame_cap(&mut self, bytes: u64) -> Option<u64> {
+        if bytes > 0 {
+            self.frame_cap_target = Some(bytes);
+        }
+        self.frame_cap()
+    }
+    #[cfg(test)]
     fn bitrate(&mut self, bitrate: u32) -> Result<()> {
+        let _ = self.apply_bitrate(bitrate, false)?;
+        Ok(())
+    }
+    fn apply_bitrate(&mut self, bitrate: u32, with_cap: bool) -> Result<Result<(), anyhow::Error>> {
         if bitrate == 0 {
             bail!("NVENC bitrate out of range");
         }
-        // Cap before comparing: a request above the ceiling that the stream
-        // already runs at needs no reconfiguration. nvEncodeAPI.h 13.0 takes
-        // `averageBitRate` and `maxBitRate` as 32-bit bits per second, and
-        // 2 Gbit/s stays inside them.
         let requested = bitrate;
         let bitrate = bitrate.min(butterpollo_media_policy::rtsp::MAX_BITRATE_KBPS);
         if bitrate != requested {
@@ -2531,7 +2374,10 @@ impl Session {
             );
         }
         if bitrate == self.stream.bitrate_kbps {
-            return Ok(());
+            return Ok(match (with_cap, self.frame_cap_target) {
+                (true, Some(bytes)) => self.set_frame_cap(bytes).map(|_| ()),
+                _ => Ok(()),
+            });
         }
         if self.functions.nvEncReconfigureEncoder.is_none() {
             bail!("NVENC driver cannot change bitrate in this session");
@@ -2546,26 +2392,47 @@ impl Session {
                 bits
             }
         };
-        let vbv = scale(self.config.rcParams.vbvBufferSize);
+        let scaled_vbv = scale(self.config.rcParams.vbvBufferSize);
         let ceiling = scale(self.vbv_ceiling);
-        // A driver that reports NV_ENC_CAPS_SUPPORT_DYN_BITRATE_CHANGE takes
-        // a new rate in place, either way, as AMF does; any other needs a
-        // reset and a keyframe.
+        let capped_vbv = (with_cap && ceiling > 0 && self.dynamic_bitrate)
+            .then(|| {
+                self.frame_cap_target.map(|bytes| {
+                    bytes
+                        .saturating_mul(8)
+                        .clamp(MIN_VBV_BITS, u64::from(ceiling.max(MIN_VBV_BITS as u32)))
+                        as u32
+                })
+            })
+            .flatten();
         let reset = !self.dynamic_bitrate;
-        if let Err(error) = self.reconfigure(after, vbv, reset, "change bitrate") {
+        let mut cap_result = Ok(());
+        let mut applied_cap = capped_vbv.is_some();
+        if let Err(error) = self.reconfigure(
+            after,
+            capped_vbv.unwrap_or(scaled_vbv),
+            reset,
+            "change bitrate",
+        ) {
             if reset {
                 return Err(error);
             }
-            // Refused in place, the same change may still apply with a reset;
-            // otherwise every later frame would fail on it.
-            tracing::warn!(error = %format!("{error:#}"), bitrate, "NVENC refused a bitrate change in place; resetting the encoder with a keyframe");
-            self.reconfigure(after, vbv, true, "change bitrate with a reset")?;
+            if capped_vbv.is_some_and(|vbv| vbv != scaled_vbv) {
+                if let Err(err) = self.reconfigure(after, scaled_vbv, false, "change bitrate") {
+                    tracing::warn!(error = %format!("{err:#}"), bitrate, "NVENC refused a bitrate change in place; resetting the encoder with a keyframe");
+                    self.reconfigure(after, scaled_vbv, true, "change bitrate with a reset")?;
+                }
+                cap_result = Err(error);
+            } else {
+                tracing::warn!(error = %format!("{error:#}"), bitrate, "NVENC refused a bitrate change in place; resetting the encoder with a keyframe");
+                self.reconfigure(after, scaled_vbv, true, "change bitrate with a reset")?;
+                applied_cap = false;
+            }
         }
         self.vbv_ceiling = ceiling;
-        // The next frame cap is measured against the new ceiling.
-        self.cap_requested = None;
+        self.cap_requested = applied_cap.then_some(self.frame_cap_target).flatten();
+        self.cap_refused = cap_result.is_err();
         self.stream.bitrate_kbps = bitrate;
-        Ok(())
+        Ok(cap_result)
     }
     /// Reconfigure the rate control to `bitrate` bits per second and a VBV of
     /// `vbv` bits. With `reset` the encoder resets and forces a keyframe,
@@ -2587,6 +2454,9 @@ impl Session {
         config.rcParams.averageBitRate = bitrate;
         config.rcParams.maxBitRate = self.rate_control.max_bitrate(bitrate);
         config.rcParams.vbvBufferSize = vbv;
+        if vbv > 0 {
+            config.rcParams.vbvInitialDelay = vbv;
+        }
         self.apply(config, reset, operation)
     }
     /// Hand the driver `config` in place of the session's. `reset` resets
@@ -2620,6 +2490,25 @@ impl Session {
         Ok(())
     }
     fn invalidate(&mut self, first: u64, last: u64) -> Result<bool> {
+        if !self.invalidation || first == 0 || last < first || last >= self.next {
+            return Ok(false);
+        }
+        if last < self.last_idr
+            || self
+                .references
+                .plan(first, last, self.retained, self.invalidation)
+                == Recovery::AlreadyApplied
+        {
+            return Ok(true);
+        }
+        if first <= self.last_idr
+            && !self
+                .pending
+                .iter()
+                .any(|p| p.frame > last && (p.idr || p.cut_limit.is_some()))
+        {
+            return Ok(false);
+        }
         self.drain()?;
         let _guard = self.guard()?;
         match self
@@ -2818,10 +2707,13 @@ pub struct Encoder {
     answers: Vec<crate::amf::focus::Grid>,
     /// The focus probe is running: every frame is measured.
     probing: bool,
-    /// `nvenc_output_event`: set by the D3D12 output fence once the oldest
-    /// frame is written, so the stream wakes for it instead of on its next
-    /// output poll. Declared last: it outlives the fence that may set it.
-    output_event: Option<crate::timing::Signal>,
+    /// Next frame repeats the previous picture (`Encoder::set_repeat`).
+    repeat: bool,
+    /// Last converted surface retained for static repeat-frame reuse.
+    last_converted: Option<CachedConversion>,
+    /// `nvenc_output_event`: D3D12 output fence event or D3D11/CUDA async slot
+    /// completion event. Declared last: it outlives the fence that may set it.
+    output_event: OutputEvent,
 }
 /// A frame whose block QP statistics were asked for.
 struct Ask {
@@ -2946,14 +2838,22 @@ impl Encoder {
             asked: VecDeque::new(),
             answers: Vec::new(),
             probing: false,
-            output_event: None,
+            repeat: false,
+            last_converted: None,
+            output_event: OutputEvent::Off,
         };
-        if options.nvenc_output_event() && encoder.session.d3d12.is_some() {
-            match crate::timing::Signal::new() {
-                Ok(event) => encoder.output_event = Some(event),
-                Err(error) => {
-                    tracing::warn!("NVENC output event unavailable ({error:#}); polling for output")
+        if options.nvenc_output_event() {
+            if encoder.session.d3d12.is_some() {
+                match crate::timing::Signal::new() {
+                    Ok(event) => encoder.output_event = OutputEvent::D3d12(event),
+                    Err(error) => {
+                        tracing::warn!(
+                            "NVENC output event unavailable ({error:#}); polling for output"
+                        )
+                    }
                 }
+            } else if encoder.session.initialize.enableEncodeAsync != 0 {
+                encoder.output_event = OutputEvent::Async;
             }
         }
         if let Some(warning) = api_warning {
@@ -2962,6 +2862,9 @@ impl Encoder {
             encoder.warnings.set("nvenc_api", &warning);
         }
         encoder.dynamic = encoder.enable_dynamic(options);
+        if encoder.dynamic.is_some() {
+            encoder.session.dynamic_headroom = DYNAMIC_HEADROOM;
+        }
         encoder.set_hdr_metadata(metadata);
         Ok(encoder)
     }
@@ -2983,7 +2886,13 @@ impl Encoder {
         )
     }
     pub fn set_luminance(&mut self, luminance: [f32; 2]) {
-        self.luminance = luminance;
+        if self.luminance != luminance {
+            self.luminance = luminance;
+            self.last_converted = None;
+        }
+    }
+    pub fn set_repeat(&mut self, repeat: bool) {
+        self.repeat = repeat;
     }
     /// HDR10 static metadata for the bitstream (API 13 and newer) and as the
     /// stand-in of dynamic metadata.
@@ -3055,24 +2964,10 @@ impl Encoder {
     pub fn budget(&self) -> Option<Budget> {
         self.session.budget
     }
-    /// The host's pace-based frame cap ([`Session::set_frame_cap`]); the
-    /// bound frames are held to, or `None` when the driver controls buffering.
+    /// The host's pace-based frame cap ([`Session::set_frame_cap`]); coalesced
+    /// with any bitrate change on the next submission.
     pub fn set_frame_cap(&mut self, bytes: u64) -> Option<u64> {
-        match self.session.set_frame_cap(bytes) {
-            Ok(cap) => {
-                // The warning stays while the cap it names is still refused.
-                if !self.session.cap_refused && std::mem::take(&mut self.cap_warned) {
-                    self.warnings.clear("encoder_frame_size");
-                }
-                cap
-            }
-            Err(error) => {
-                self.cap_warned = true;
-                tracing::warn!(error = %format!("{error:#}"), bytes, "NVENC could not hold frames to the frame cap; keeping its one-frame VBV");
-                self.warnings.set("encoder_frame_size", &format!("NVENC could not lower its frame size limit to {bytes} bytes ({error:#}); large frames may leave without full FEC. Update the NVIDIA driver."));
-                self.session.frame_cap()
-            }
-        }
+        self.session.queue_frame_cap(bytes)
     }
     pub fn frame_cap(&self) -> Option<u64> {
         self.session.frame_cap()
@@ -3128,10 +3023,17 @@ impl Encoder {
         }
     }
     pub fn poll(&mut self) -> Result<Vec<Encoded>> {
+        self.finish_poll(true)
+    }
+    fn finish_poll(&mut self, collect: bool) -> Result<Vec<Encoded>> {
         if let Some(converter) = self.compute.as_deref_mut() {
             converter.release_completed();
         }
-        let mut frames = self.session.poll()?;
+        let mut frames = if collect {
+            self.session.poll()?
+        } else {
+            self.session.ready.drain(..).collect()
+        };
         self.focus_feedback();
         if let Some(error) = self.session.reencode_failure.take() {
             self.warnings.event("encoder_reencode", &format!("NVENC could not encode an oversize scene cut again as a keyframe ({error}); the frame goes without full FEC and may freeze the picture briefly. Report this with the host log."), butterpollo_media_policy::EVENT_PERIOD);
@@ -3142,21 +3044,24 @@ impl Encoder {
         Ok(frames)
     }
     /// An event set once the oldest frame in flight is written, armed by
-    /// this call; `None` when there is nothing to wait for or the session
-    /// has none (D3D11, CUDA, `nvenc_output_event` off), and the caller
-    /// keeps its output poll, which stays the bound of any wait.
+    /// this call (or the oldest pending slot's completion event on async
+    /// D3D11/CUDA sessions); `None` when there is nothing to wait for or
+    /// `nvenc_output_event` is off.
     pub fn output_event(&self) -> Option<&crate::timing::Signal> {
-        let event = self.output_event.as_ref()?;
-        match self.session.arm_output(event) {
-            Ok(armed) => armed.then_some(event),
-            Err(error) => {
-                self.warnings.event(
-                    "encoder_output_event",
-                    &format!("NVENC could not arm its output event ({error:#}); polling for output instead. Report this with the host log."),
-                    butterpollo_media_policy::EVENT_PERIOD,
-                );
-                None
-            }
+        match &self.output_event {
+            OutputEvent::Off => None,
+            OutputEvent::Async => self.session.async_output_event(),
+            OutputEvent::D3d12(event) => match self.session.arm_output(event) {
+                Ok(armed) => armed.then_some(event),
+                Err(error) => {
+                    self.warnings.event(
+                        "encoder_output_event",
+                        &format!("NVENC could not arm its output event ({error:#}); polling for output instead. Report this with the host log."),
+                        butterpollo_media_policy::EVENT_PERIOD,
+                    );
+                    None
+                }
+            },
         }
     }
     pub fn accepts_gpu_device(&self, image: &GpuImage) -> bool {
@@ -3192,14 +3097,47 @@ impl Encoder {
         idr: bool,
         bitrate: u32,
     ) -> Result<Vec<Encoded>> {
+        let repeat = std::mem::take(&mut self.repeat);
         if !self.accepts_gpu_device(image) {
             bail!("NVENC capture device changed; recreate the encoder");
         }
         self.session.collect()?;
-        self.session.bitrate(bitrate)?;
+        match self.session.apply_bitrate(bitrate, true)? {
+            Ok(()) => {
+                if !self.session.cap_refused && std::mem::take(&mut self.cap_warned) {
+                    self.warnings.clear("encoder_frame_size");
+                }
+            }
+            Err(error) => {
+                let bytes = self.session.frame_cap_target.unwrap_or(0);
+                self.cap_warned = true;
+                tracing::warn!(error = %format!("{error:#}"), bytes, "NVENC could not hold frames to the frame cap; keeping its one-frame VBV");
+                self.warnings.set("encoder_frame_size", &format!("NVENC could not lower its frame size limit to {bytes} bytes ({error:#}); large frames may leave without full FEC. Update the NVIDIA driver."));
+            }
+        }
         if self.session.pending.len() >= MAX_PENDING {
             self.session.drain()?;
         }
+        let focus_active = self.focus.settings.is_some() || self.focus.fixed.is_some();
+        let cached_hit = if repeat
+            && !focus_active
+            && let Some(cached) = &self.last_converted
+            && cached.matches(image, self.luminance, self.overlay.as_ref())
+            && !self.session.slot_pending(cached.slot)
+            && self.session.slot_has_key(cached.slot, cached.slot_key)
+        {
+            Some((cached.slot, cached.kept.clone()))
+        } else {
+            None
+        };
+        if let Some((slot, kept)) = cached_hit {
+            self.attach_focus(idr, None);
+            self.session
+                .submit_frame(slot, Some(kept), idr, image.captured, None, true)?;
+            self.last_submitted = Some(Instant::now());
+            return self.finish_poll(self.session.pending.len() > 1);
+        }
+        self.last_converted = None;
         let source = (image.width, image.height, image.pixel);
         if let Some(converter) = self.compute.as_deref_mut() {
             let compute = converter.compute().clone();
@@ -3223,6 +3161,7 @@ impl Encoder {
                 image,
             )?;
             let size = readback_size(&self.session.stream);
+            let slot_key = converted.texture.as_raw() as usize;
             let slot = self.session.resource_slot(
                 &converted.texture,
                 Some((converted.fence.as_raw(), converted.value)),
@@ -3244,14 +3183,28 @@ impl Encoder {
                 _fence: Some(converted.fence),
             };
             self.attach_focus(idr, Some(converted.conversion));
-            self.session.submit(slot, Some(kept), idr, image.captured)?;
+            self.session
+                .submit(slot, Some(kept.clone()), idr, image.captured)?;
+            if !focus_active {
+                self.last_converted = Some(CachedConversion::new(
+                    image,
+                    self.luminance,
+                    self.overlay.as_ref(),
+                    slot,
+                    slot_key,
+                    kept,
+                ));
+            }
             self.last_submitted = Some(Instant::now());
             crate::amf::dynamic::sample(
                 &mut self.dynamic,
                 stats(self.compute.as_deref_mut(), None),
                 &self.warnings,
             );
-            return self.poll();
+            if self.dynamic.is_none() {
+                self.session.dynamic_headroom = 0;
+            }
+            return self.finish_poll(self.session.pending.len() > 1);
         }
         if self.source != Some(source) {
             self.session.clear_inputs()?;
@@ -3270,17 +3223,32 @@ impl Encoder {
         if let (Some(stats), Some(converter)) = (self.stats.as_deref_mut(), &self.converter) {
             stats.queue(image, converter);
         }
+        let slot_key = converted.as_raw() as usize;
         let slot = self.session.texture_slot(converted.as_ref())?;
         let kept = Kept::D3d11 {
             _texture: converted,
         };
         self.attach_focus(idr, None);
-        self.session.submit(slot, Some(kept), idr, image.captured)?;
+        self.session
+            .submit(slot, Some(kept.clone()), idr, image.captured)?;
+        if !focus_active {
+            self.last_converted = Some(CachedConversion::new(
+                image,
+                self.luminance,
+                self.overlay.as_ref(),
+                slot,
+                slot_key,
+                kept,
+            ));
+        }
         self.last_submitted = Some(Instant::now());
         // Before the poll, so the frame it returns carries the newest
         // finished sample.
         crate::amf::dynamic::sample(&mut self.dynamic, self.stats.as_deref_mut(), &self.warnings);
-        self.poll()
+        if self.dynamic.is_none() {
+            self.session.dynamic_headroom = 0;
+        }
+        self.finish_poll(self.session.pending.len() > 1)
     }
 }
 // Encoder focus (docs/encoder-focus-design.md) through NVENC's QP delta
@@ -3309,6 +3277,7 @@ impl Encoder {
             converter.set_focus(settings)?;
         }
         self.focus.settings = settings;
+        self.last_converted = None;
         Ok(())
     }
     /// Read block QP statistics on one frame in `every` that carries a map,
@@ -3501,6 +3470,9 @@ impl Encoder {
             .open_session(&stream, &tuning)
             .context("NVENC could not open the stream session again after the focus probe")?;
         self.session.metadata = metadata;
+        if self.dynamic.is_some() {
+            self.session.dynamic_headroom = DYNAMIC_HEADROOM;
+        }
         // The new session's first picture is a keyframe the stream asks for.
         self.session.force_idr = true;
         self.last_submitted = last_submitted;

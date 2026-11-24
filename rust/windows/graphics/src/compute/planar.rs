@@ -106,9 +106,6 @@ impl Converter {
         self.compute.wait(self.slots[slot].last())?;
         self.slots[slot].capture = None;
         self.reset_hdr_stats(slot);
-        // `convert_planes` writes planar UAVs into `at(2..=4)`; a later `convert`
-        // into this slot must make its own target views there.
-        self.slots[slot].target_view = None;
         let menu = self.menu_pass(slot, b"pyro_menu_cs\0", 2, 3, [2, 2])?;
         self.slots[slot].inputs = [
             Some(source.clone()),
@@ -139,18 +136,13 @@ impl Converter {
         // SAFETY: As in `convert`, the slot is idle; `target`'s planes are on `compute.device`.
         unsafe {
             self.write_values(slot);
+            self.update_input_srvs(slot, source, format, pointer);
             let device = &self.compute.device;
             let cpu = self.heap.GetCPUDescriptorHandleForHeapStart();
             let gpu = self.heap.GetGPUDescriptorHandleForHeapStart();
             let at = |index: usize| D3D12_CPU_DESCRIPTOR_HANDLE {
                 ptr: cpu.ptr + (slot * VIEWS + index) * self.increment as usize,
             };
-            device.CreateShaderResourceView(source, Some(&texture_srv(format)), at(0));
-            device.CreateShaderResourceView(
-                pointer,
-                Some(&texture_srv(DXGI_FORMAT_R8G8B8A8_UNORM)),
-                at(1),
-            );
             if self.slots[slot].planar_view != Some(planar_key) {
                 for (index, plane) in target.planes.iter().enumerate() {
                     device.CreateUnorderedAccessView(

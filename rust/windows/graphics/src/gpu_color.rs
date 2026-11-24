@@ -71,7 +71,13 @@ struct Target {
     texture: Arc<ID3D11Texture2D>,
     luma: ID3D11RenderTargetView,
     chroma: Option<ID3D11RenderTargetView>,
-    unordered: Option<[ID3D11UnorderedAccessView; 2]>,
+    unordered: Option<(ID3D11UnorderedAccessView, Option<ID3D11UnorderedAccessView>)>,
+}
+/// Graphics pixel-shader fallback, compiled lazily only when compute is off or unavailable.
+struct GraphicsShaders {
+    vertex: ID3D11VertexShader,
+    luma: ID3D11PixelShader,
+    chroma: Option<ID3D11PixelShader>,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Layout {
@@ -129,9 +135,7 @@ pub(crate) struct Converter {
     gpu: Device,
     /// The context's multithread lock, held across each conversion.
     lock: ID3D11Multithread,
-    vertex: ID3D11VertexShader,
-    luma: ID3D11PixelShader,
-    chroma: ID3D11PixelShader,
+    graphics: Option<GraphicsShaders>,
     compute: Option<ID3D11ComputeShader>,
     constants: ID3D11Buffer,
     values: [u32; 20],
@@ -281,48 +285,17 @@ impl Converter {
         // SAFETY: `gpu.device` is a live D3D11 device, `compile` gets NUL-terminated names, and
         // every descriptor and the 80-byte `values` outlive the calls that read them.
         unsafe {
-            let mut vertex = None;
-            let mut luma = None;
-            let mut chroma = None;
-            gpu.device.CreateVertexShader(
-                &compile(b"vertex\0", b"vs_5_0\0")?,
-                None,
-                Some(&mut vertex),
-            )?;
             let layout = Layout::of(config);
-            // A 4:4:4 target is one draw: the AYUV picture, or the three
-            // stacked planes.
-            let first: &'static [u8] = match (config.chroma_packing != 0, layout) {
-                (true, _) => b"chroma_pack_y\0",
-                (false, Layout::Ayuv) => b"yuv444_ayuv\0",
-                (false, Layout::Planes444) => b"yuv444_planes\0",
-                (false, _) => b"luma\0",
+            let compute_entry: Option<&'static [u8]> = match (config.chroma_packing != 0, layout) {
+                (true, _) => Some(b"chroma_pack_cs\0"),
+                (false, Layout::Nv12 | Layout::P010) => Some(b"yuv420_cs\0"),
+                (false, Layout::Planes444) => Some(b"yuv444_planes_cs\0"),
+                (false, Layout::Ayuv) => None,
             };
-            gpu.device
-                .CreatePixelShader(&compile(first, b"ps_5_0\0")?, None, Some(&mut luma))?;
-            gpu.device.CreatePixelShader(
-                &compile(
-                    if config.chroma_packing != 0 {
-                        b"chroma_pack_uv\0"
-                    } else {
-                        b"chroma\0"
-                    },
-                    b"ps_5_0\0",
-                )?,
-                None,
-                Some(&mut chroma),
-            )?;
             let mut compute = None;
-            if !config.yuv444 {
+            if let Some(entry) = compute_entry {
                 let _ = gpu.device.CreateComputeShader(
-                    &compile(
-                        if config.chroma_packing != 0 {
-                            b"chroma_pack_cs\0"
-                        } else {
-                            b"yuv420_cs\0"
-                        },
-                        b"cs_5_0\0",
-                    )?,
+                    &compile(entry, b"cs_5_0\0")?,
                     None,
                     Some(&mut compute),
                 );
@@ -345,9 +318,7 @@ impl Converter {
             Ok(Self {
                 gpu: gpu.clone(),
                 lock: windows::core::Interface::cast(&gpu.context)?,
-                vertex: vertex.unwrap(),
-                luma: luma.unwrap(),
-                chroma: chroma.unwrap(),
+                graphics: None,
                 compute,
                 constants: constants.unwrap(),
                 values,
@@ -360,6 +331,58 @@ impl Converter {
                 sources: Default::default(),
             })
         }
+    }
+    /// Lazily compile the graphics fallback shaders outside the context lock.
+    fn ensure_graphics(&mut self) -> Result<()> {
+        if self.graphics.is_some() {
+            return Ok(());
+        }
+        let packed = self.values[11] != 0;
+        // SAFETY: `self.gpu.device` is live and `compile` receives NUL-terminated names.
+        unsafe {
+            let mut vertex = None;
+            self.gpu.device.CreateVertexShader(
+                &compile(b"vertex\0", b"vs_5_0\0")?,
+                None,
+                Some(&mut vertex),
+            )?;
+            let first: &'static [u8] = match (packed, self.layout) {
+                (true, _) => b"chroma_pack_y\0",
+                (false, Layout::Ayuv) => b"yuv444_ayuv\0",
+                (false, Layout::Planes444) => b"yuv444_planes\0",
+                (false, _) => b"luma\0",
+            };
+            let mut luma = None;
+            self.gpu.device.CreatePixelShader(
+                &compile(first, b"ps_5_0\0")?,
+                None,
+                Some(&mut luma),
+            )?;
+            let chroma = if self.layout.formats().2.is_some() {
+                let mut shader = None;
+                self.gpu.device.CreatePixelShader(
+                    &compile(
+                        if packed {
+                            b"chroma_pack_uv\0"
+                        } else {
+                            b"chroma\0"
+                        },
+                        b"ps_5_0\0",
+                    )?,
+                    None,
+                    Some(&mut shader),
+                )?;
+                Some(shader.context("no chroma pixel shader")?)
+            } else {
+                None
+            };
+            self.graphics = Some(GraphicsShaders {
+                vertex: vertex.context("no vertex shader")?,
+                luma: luma.context("no luma pixel shader")?,
+                chroma,
+            });
+        }
+        Ok(())
     }
     pub fn set_luminance(&mut self, luminance: [f32; 2]) {
         set_luminance_values(&mut self.values, &mut self.dirty, luminance);
@@ -443,12 +466,7 @@ impl Converter {
             let luma = view(luma_view)?;
             let chroma = chroma_view.map(view).transpose()?;
             let unordered = if self.compute.is_some() {
-                let formats = if self.layout == Layout::Nv12 {
-                    [DXGI_FORMAT_R8_UNORM, DXGI_FORMAT_R8G8_UNORM]
-                } else {
-                    [DXGI_FORMAT_R16_UNORM, DXGI_FORMAT_R16G16_UNORM]
-                };
-                let views = formats.map(|format| -> Result<ID3D11UnorderedAccessView> {
+                let make_uav = |format| -> Result<ID3D11UnorderedAccessView> {
                     let mut view = None;
                     self.gpu.device.CreateUnorderedAccessView(
                         &texture,
@@ -462,13 +480,36 @@ impl Converter {
                         Some(&mut view),
                     )?;
                     Ok(view.unwrap())
-                });
-                match views {
-                    [Ok(y), Ok(uv)] => Some([y, uv]),
-                    _ => {
-                        self.compute = None;
-                        None
-                    }
+                };
+                match self.layout {
+                    Layout::Nv12 => match (
+                        make_uav(DXGI_FORMAT_R8_UNORM),
+                        make_uav(DXGI_FORMAT_R8G8_UNORM),
+                    ) {
+                        (Ok(y), Ok(uv)) => Some((y, Some(uv))),
+                        _ => {
+                            self.compute = None;
+                            None
+                        }
+                    },
+                    Layout::P010 => match (
+                        make_uav(DXGI_FORMAT_R16_UNORM),
+                        make_uav(DXGI_FORMAT_R16G16_UNORM),
+                    ) {
+                        (Ok(y), Ok(uv)) => Some((y, Some(uv))),
+                        _ => {
+                            self.compute = None;
+                            None
+                        }
+                    },
+                    Layout::Planes444 => match make_uav(DXGI_FORMAT_R16_UINT) {
+                        Ok(planes) => Some((planes, None)),
+                        Err(_) => {
+                            self.compute = None;
+                            None
+                        }
+                    },
+                    Layout::Ayuv => None,
                 }
             } else {
                 None
@@ -495,11 +536,18 @@ impl Converter {
         let index = self.target()?;
         let source = self.source_views(image)?;
         let computes = self.compute.is_some() && self.targets[index].unordered.is_some();
+        if !computes {
+            self.ensure_graphics()?;
+        }
         let packing = self.values[11];
         let menu = self.menu.prepare(
             &self.gpu,
             &self.values,
-            if packing == 1 { [2, 1] } else { [2, 2] },
+            match (self.layout, packing) {
+                (Layout::Ayuv | Layout::Planes444, _) => [1, 1],
+                (_, 1) => [2, 1],
+                _ => [2, 2],
+            },
             match (computes, packing, self.layout) {
                 (true, _, _) => &[],
                 (false, 0, Layout::Ayuv) => &[b"menu_yuv444_ayuv\0"],
@@ -507,10 +555,10 @@ impl Converter {
                 (false, 0, _) => &[b"menu_luma\0", b"menu_chroma\0"],
                 (false, _, _) => &[b"menu_chroma_pack_y\0", b"menu_chroma_pack_uv\0"],
             },
-            computes.then_some(if packing == 0 {
-                &b"yuv420_menu_cs\0"[..]
-            } else {
-                &b"chroma_pack_menu_cs\0"[..]
+            computes.then_some(match (self.layout, packing) {
+                (Layout::Planes444, _) => &b"yuv444_planes_menu_cs\0"[..],
+                (_, 0) => &b"yuv420_menu_cs\0"[..],
+                _ => &b"chroma_pack_menu_cs\0"[..],
             }),
         )?;
         // SAFETY: The context is held from Enter to Leave with no early return between, all bound
@@ -536,27 +584,34 @@ impl Converter {
                 menu.update(context);
             }
             let target = &self.targets[index];
-            if let (Some(shader), Some(views)) = (&self.compute, &target.unordered) {
+            if let (Some(shader), Some((u0, u1))) = (&self.compute, &target.unordered) {
                 context.CSSetShader(shader, None);
                 context.CSSetShaderResources(0, Some(&source));
                 context.CSSetConstantBuffers(0, Some(&[Some(self.constants.clone())]));
-                context.CSSetUnorderedAccessViews(
-                    0,
-                    2,
-                    Some(views.each_ref().map(|v| Some(v.clone())).as_ptr()),
-                    None,
-                );
-                context.Dispatch(self.width.div_ceil(16), self.height.div_ceil(16), 1);
+                let uavs = [Some(u0.clone()), u1.clone()];
+                let count = if u1.is_some() { 2 } else { 1 };
+                context.CSSetUnorderedAccessViews(0, count, Some(uavs.as_ptr()), None);
+                let groups_x = self.width.div_ceil(16);
+                let groups_y = if self.layout != Layout::Planes444 && packing == 2 {
+                    (self.height / 2).div_ceil(16)
+                } else {
+                    self.height.div_ceil(16)
+                };
+                context.Dispatch(groups_x, groups_y, 1);
                 if let Some(menu) = &menu {
                     menu.dispatch(context);
                 }
-                context.CSSetUnorderedAccessViews(0, 2, Some([None, None].as_ptr()), None);
+                context.CSSetUnorderedAccessViews(0, count, Some([None, None].as_ptr()), None);
                 context.CSSetShaderResources(0, Some(&[None, None]));
                 context.CSSetShader(None, None);
             } else {
+                let graphics = self
+                    .graphics
+                    .as_ref()
+                    .expect("graphics shaders ensured above");
                 context.IASetInputLayout(None);
                 context.IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-                context.VSSetShader(&self.vertex, None);
+                context.VSSetShader(&graphics.vertex, None);
                 context.PSSetShaderResources(0, Some(&source));
                 context.PSSetConstantBuffers(0, Some(&[Some(self.constants.clone())]));
                 context.RSSetState(None);
@@ -565,8 +620,14 @@ impl Converter {
                     menu.bind(context);
                 }
                 for (plane, (view, shader, divisor)) in
-                    std::iter::once((&target.luma, &self.luma, 1))
-                        .chain(target.chroma.as_ref().map(|view| (view, &self.chroma, 2)))
+                    std::iter::once((&target.luma, &graphics.luma, 1))
+                        .chain(
+                            target
+                                .chroma
+                                .as_ref()
+                                .zip(graphics.chroma.as_ref())
+                                .map(|(view, shader)| (view, shader, 2)),
+                        )
                         .enumerate()
                 {
                     // The stacked 4:4:4 planes are one viewport three

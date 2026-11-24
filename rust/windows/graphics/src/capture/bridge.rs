@@ -335,6 +335,8 @@ pub struct Session {
     pipe: Box<dyn HelperPipe>,
     pub(super) gpu: Device,
     textures: Vec<Texture>,
+    /// Immutable `(width, height, pixel)` of every shared helper texture.
+    shape: (u32, u32, Pixel),
     owned: GpuPool,
     slots: Slots,
     pending: VecDeque<Announced>,
@@ -458,25 +460,10 @@ impl Session {
         );
         let device: ID3D11Device1 = gpu.device.cast()?;
         let mut owned = GpuPool {
-            compute: handoff(&gpu, config, &warnings),
             warnings: warnings.clone(),
             ..Default::default()
         };
-        // Reading the helper's textures in place skips the host's copy. Only
-        // compute work and this device's context may read them: the lease
-        // waits for those before the helper may write again.
-        let mut returns = (config.boolean("wgc_helper_zero_copy", true)
-            && owned.compute.is_some())
-        .then(|| {
-            crate::compute::Compute::for_device(&gpu.device)
-                .and_then(|compute| crate::compute::Returns::new(compute, &gpu))
-        })
-        .transpose()
-        .unwrap_or_else(|error| {
-            tracing::warn!(error = %format!("{error:#}"), "WGC helper textures cannot be read in place; copying them");
-            None
-        });
-        let mut textures = Vec::with_capacity(SLOTS);
+        let mut opened = Vec::with_capacity(SLOTS);
         for handle in handles {
             let handle = process
                 .duplicate_resource(usize::try_from(handle)?)
@@ -489,28 +476,49 @@ impl Session {
                 texture.map_err(|error| startup_failure(error.into(), &*pipe, &*process))?;
             let mut desc = D3D11_TEXTURE2D_DESC::default();
             // SAFETY: `texture` is a live texture and `desc` a live local.
-            unsafe {
-                texture.GetDesc(&mut desc);
-            }
+            unsafe { texture.GetDesc(&mut desc) };
             validate_texture(&desc, width, height, format)?;
-            if let Some(copy) = &mut owned.compute
-                && let Err(error) = copy.import_shared(&texture, raw(&handle))
-            {
-                warnings.set("capture_compute", &format!("WGC shared texture cannot use compute ({error:#}); using the graphics queue. Lower game GPU load or update the graphics driver if capture stutters."));
-                owned.compute = None;
-                returns = None;
-            }
-            if let Some(lender) = &mut returns
-                && let Err(error) = lender.import(&texture, raw(&handle))
-            {
-                tracing::warn!(error = %format!("{error:#}"), "WGC helper textures cannot be read in place; copying them");
-                returns = None;
-            }
-            textures.push(Texture {
-                mutex: texture.cast()?,
-                texture: Arc::new(texture),
-            });
+            opened.push((texture, handle));
         }
+        let pixel = Pixel::try_from_dxgi_raw(format).context("unsupported WGC shared format")?;
+        // Prefer in-place `Returns`; only create `Handoff` (and import handles
+        // into it) when zero-copy is off or unavailable.
+        let mut returns = None;
+        if config.boolean("wgc_compute_copy", true) && crate::compute::enabled(config) {
+            if config.boolean("wgc_helper_zero_copy", true) {
+                let lent = crate::compute::Compute::for_device(&gpu.device)
+                    .and_then(|compute| crate::compute::Returns::new(compute, &gpu))
+                    .and_then(|mut lender| {
+                        opened
+                            .iter()
+                            .try_for_each(|(t, h)| lender.import(t, raw(h)))?;
+                        Ok(lender)
+                    });
+                match lent {
+                    Ok(lender) => returns = Some(lender),
+                    Err(error) => {
+                        tracing::warn!(error = %format!("{error:#}"), "WGC helper textures cannot be read in place; copying them")
+                    }
+                }
+            }
+            if returns.is_none()
+                && let Some(mut copy) = handoff(&gpu, config, &*warnings)
+            {
+                match opened.iter().try_for_each(|(t, h)| copy.import_shared(t, raw(h))) {
+                    Ok(()) => owned.compute = Some(copy),
+                    Err(error) => warnings.set("capture_compute", &format!("WGC shared texture cannot use compute ({error:#}); using the graphics queue. Lower game GPU load or update the graphics driver if capture stutters.")),
+                }
+            }
+        }
+        let textures: Vec<Texture> = opened
+            .into_iter()
+            .map(|(texture, _)| {
+                Ok(Texture {
+                    mutex: texture.cast()?,
+                    texture: Arc::new(texture),
+                })
+            })
+            .collect::<Result<_>>()?;
         tracing::info!(
             pid,
             output = %gpu.display.display_name,
@@ -518,10 +526,10 @@ impl Session {
             width,
             height,
             format,
-            pixel = ?Pixel::try_from_dxgi_raw(format),
+            pixel = ?pixel,
             in_hdr = gpu.display_in_hdr(),
             sdr_white_nits = gpu.sdr_white_nits(),
-            compute = owned.compute.is_some(),
+            compute = owned.compute.is_some() || returns.is_some(),
             worker_compute,
             zero_copy = returns.is_some(),
             "Windows Graphics Capture running in the signed-in user's process"
@@ -531,6 +539,7 @@ impl Session {
             pipe,
             gpu,
             textures,
+            shape: (width, height, pixel),
             owned,
             slots: Slots::default(),
             pending: VecDeque::with_capacity(SLOTS),
@@ -713,43 +722,27 @@ impl Session {
     /// its keyed mutex (key 1) until the image's lease hands it back.
     fn lend(&self, slot: usize, returns: Arc<Mutex<crate::compute::Returns>>) -> Result<GpuImage> {
         let texture = &self.textures[slot];
-        let mut desc = D3D11_TEXTURE2D_DESC::default();
-        // SAFETY: `texture` is a live texture and `desc` a live local.
-        unsafe {
-            texture.texture.GetDesc(&mut desc);
-        }
-        let pixel = match desc.Format {
-            DXGI_FORMAT_B8G8R8A8_UNORM => Pixel::Bgra8,
-            DXGI_FORMAT_R16G16B16A16_FLOAT => Pixel::RgbaF16,
-            _ => bail!("unsupported WGC shared format {:?}", desc.Format),
-        };
+        let (width, height, pixel) = self.shape;
         let (ready, compute_read) = returns.lock().unwrap().acquired()?;
-        Ok(GpuImage {
-            cursor: None,
-            width: desc.Width,
-            height: desc.Height,
+        let mut image = GpuImage::from_texture(
+            self.gpu.clone(),
+            texture.texture.clone(),
+            width,
+            height,
             pixel,
-            captured: Instant::now(),
-            wgc_stamp: None,
-            acquired: Instant::now(),
-            published: Instant::now(),
-            gpu: self.gpu.clone(),
-            texture: texture.texture.clone(),
-            ready: Some(ready),
-            lease: Some(Arc::new(Lease {
-                slot,
-                back: Back::Keyed(crate::compute::KeyedLease::new(
-                    texture.mutex.clone(),
-                    returns,
-                    compute_read,
-                    0,
-                )),
-                notify: Some((self.freed.clone(), self.frame.clone())),
-            })),
-            focus: None,
-            repeat: false,
-            origin: 0,
-        })
+            Some(ready),
+        );
+        image.lease = Some(Arc::new(Lease {
+            slot,
+            back: Back::Keyed(crate::compute::KeyedLease::new(
+                texture.mutex.clone(),
+                returns,
+                compute_read,
+                0,
+            )),
+            notify: Some((self.freed.clone(), self.frame.clone())),
+        }));
+        Ok(image)
     }
 }
 impl Drop for Session {

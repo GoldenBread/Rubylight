@@ -63,6 +63,31 @@ pub fn copy(bytes: &[u8]) -> Vec<u8> {
     buffer
 }
 
+/// `bytes` in a buffer from [`take`] with room for at least `headroom` more
+/// bytes, so a caller that splices or appends metadata does not reallocate.
+pub fn copy_with_headroom(bytes: &[u8], headroom: usize) -> Vec<u8> {
+    let mut buffer = take(bytes.len().saturating_add(headroom));
+    buffer.extend_from_slice(bytes);
+    buffer
+}
+
+/// `bytes` in a buffer from [`take`] with `prefix` spliced in at `at` and
+/// `suffix` appended at the end, written linearly in one pass without
+/// reallocation or shifting. `at` past `bytes.len()` is clamped to the end.
+pub fn copy_spliced(bytes: &[u8], at: usize, prefix: &[u8], suffix: &[u8]) -> Vec<u8> {
+    let at = at.min(bytes.len());
+    let total = bytes
+        .len()
+        .saturating_add(prefix.len())
+        .saturating_add(suffix.len());
+    let mut buffer = take(total);
+    buffer.extend_from_slice(&bytes[..at]);
+    buffer.extend_from_slice(prefix);
+    buffer.extend_from_slice(&bytes[at..]);
+    buffer.extend_from_slice(suffix);
+    buffer
+}
+
 /// Keep `buffer` for a later [`take`], if it is large and the pool has room;
 /// otherwise it is freed.
 pub fn give(buffer: Vec<u8>) {
@@ -258,5 +283,61 @@ mod tests {
         let small = take(16);
         assert!(small.capacity() >= 16 && small.capacity() < POOLED);
         assert_eq!(copy(&[7; 16]), [7; 16]);
+    }
+
+    #[test]
+    fn copy_with_headroom_reserves_extra_capacity_and_reuses_pooled_buffers() {
+        let _alone = alone();
+        let mut small = copy_with_headroom(b"hello", 128);
+        assert_eq!(small, b"hello");
+        assert!(small.capacity() >= 5 + 128);
+        let ptr = small.as_ptr();
+        small.extend_from_slice(&[9u8; 128]);
+        assert_eq!(small.as_ptr(), ptr, "no realloc within headroom");
+
+        // Large buffer reuses the pool with room for bytes + headroom.
+        clear();
+        let size = POOLED + 1024;
+        let seeded = Vec::with_capacity(size + 256);
+        let seeded_ptr = seeded.as_ptr();
+        give(seeded);
+        let payload = vec![0x42; size];
+        let mut large = copy_with_headroom(&payload, 256);
+        assert_eq!(large.as_ptr(), seeded_ptr);
+        assert_eq!(large, payload);
+        assert!(large.capacity() >= size + 256);
+        large.extend_from_slice(&[0x55; 256]);
+        assert_eq!(large.as_ptr(), seeded_ptr, "pooled headroom avoids realloc");
+        give(large);
+        clear();
+    }
+
+    #[test]
+    fn copy_spliced_writes_linearly_across_all_positions_and_reuses_pool() {
+        let _alone = alone();
+        assert_eq!(copy_spliced(b"abcdef", 0, b"PP", b"SS"), b"PPabcdefSS");
+        assert_eq!(copy_spliced(b"abcdef", 2, b"PP", b"SS"), b"abPPcdefSS");
+        assert_eq!(copy_spliced(b"abcdef", 6, b"PP", b"SS"), b"abcdefPPSS");
+        assert_eq!(copy_spliced(b"abcdef", 99, b"PP", b"SS"), b"abcdefPPSS");
+        assert_eq!(copy_spliced(b"abcdef", 3, b"", b"SS"), b"abcdefSS");
+        assert_eq!(copy_spliced(b"abcdef", 3, b"PP", b""), b"abcPPdef");
+        assert_eq!(copy_spliced(b"", 5, b"PP", b"SS"), b"PPSS");
+
+        clear();
+        let size = POOLED + 512;
+        let seeded = Vec::with_capacity(size + 64);
+        let seeded_ptr = seeded.as_ptr();
+        give(seeded);
+        let payload: Vec<u8> = (0..size).map(|i| (i % 251) as u8).collect();
+        let prefix = [0xAA; 20];
+        let suffix = [0xBB; 30];
+        let out = copy_spliced(&payload, 17, &prefix, &suffix);
+        assert_eq!(out.as_ptr(), seeded_ptr);
+        assert_eq!(&out[..17], &payload[..17]);
+        assert_eq!(&out[17..37], &prefix);
+        assert_eq!(&out[37..size + 20], &payload[17..]);
+        assert_eq!(&out[size + 20..], &suffix);
+        give(out);
+        clear();
     }
 }

@@ -988,6 +988,36 @@ impl GpuImage {
             pixels: &cursor.pixels,
         })
     }
+    /// Wrap a pooled or rendered texture with no lease or detached cursor and
+    /// current timestamps. Callers deriving from an existing capture follow
+    /// this with [`Self::inherit`].
+    pub(crate) fn from_texture(
+        gpu: Device,
+        texture: std::sync::Arc<ID3D11Texture2D>,
+        width: u32,
+        height: u32,
+        pixel: Pixel,
+        ready: Option<crate::compute::Ready>,
+    ) -> Self {
+        let now = Instant::now();
+        Self {
+            cursor: None,
+            width,
+            height,
+            pixel,
+            captured: now,
+            wgc_stamp: None,
+            acquired: now,
+            published: now,
+            gpu,
+            texture,
+            ready,
+            lease: None,
+            focus: None,
+            repeat: false,
+            origin: 0,
+        }
+    }
     /// Take `source`'s timing, pointer, focus and content identity for a
     /// picture made from it (the NVIDIA image enhancements).
     pub(crate) fn inherit(&mut self, source: &GpuImage) {
@@ -1079,23 +1109,16 @@ impl GpuImage {
             let mut texture = None;
             gpu.device
                 .CreateTexture2D(&desc, Some(&data), Some(&mut texture))?;
-            Ok(Self {
-                cursor: None,
-                width: image.width,
-                height: image.height,
-                pixel: image.pixel,
-                captured: image.captured,
-                wgc_stamp: None,
-                acquired: Instant::now(),
-                published: Instant::now(),
-                gpu: gpu.clone(),
-                texture: std::sync::Arc::new(texture.unwrap()),
-                ready: None,
-                lease: None,
-                focus: None,
-                repeat: false,
-                origin: 0,
-            })
+            let mut uploaded = Self::from_texture(
+                gpu.clone(),
+                std::sync::Arc::new(texture.unwrap()),
+                image.width,
+                image.height,
+                image.pixel,
+                None,
+            );
+            uploaded.captured = image.captured;
+            Ok(uploaded)
         }
     }
 }
@@ -1108,6 +1131,13 @@ pub(crate) struct GpuPool {
     /// Copies on a compute queue instead of the D3D11 graphics queue,
     /// where they wait behind a game's rendering.
     pub(crate) compute: Option<crate::compute::Handoff>,
+    /// Keep allocated textures NT-handle shared (`SHARED_NTHANDLE | SHARED`)
+    /// even when copying on D3D11, so downstream compute conversion stays on D3D12.
+    pub(crate) shared: bool,
+    /// Add `D3D11_BIND_RENDER_TARGET` alongside `D3D11_BIND_SHADER_RESOURCE`.
+    render_target: bool,
+    /// Shared D3D11->D3D12 fence signalling D3D11 copies into `shared` textures.
+    d3d11_signal: Option<Option<crate::compute::D3d11Signal>>,
     /// Sources this pool copied from, with their descriptions: a texture's
     /// description never changes, and holding a reference pins each source,
     /// so its address cannot be reused by another texture while the entry
@@ -1122,6 +1152,9 @@ impl Default for GpuPool {
             textures: Vec::new(),
             shape: None,
             compute: None,
+            shared: false,
+            render_target: false,
+            d3d11_signal: None,
             sources: Vec::new(),
         }
     }
@@ -1155,6 +1188,89 @@ fn snapshot_publication_deadline(available: bool, deadline: Option<Instant>) -> 
 }
 
 impl GpuPool {
+    /// A pool whose textures carry `SHARED_NTHANDLE | SHARED` even without a
+    /// D3D12 copy handoff, so downstream encoders keep D3D12 compute conversion.
+    #[allow(dead_code)]
+    pub(crate) fn shared() -> Self {
+        Self {
+            shared: true,
+            ..Self::default()
+        }
+    }
+    /// [`Self::shared`] with `D3D11_BIND_RENDER_TARGET` so a GPU pass can
+    /// render directly into a pooled texture without an extra copy.
+    #[allow(dead_code)]
+    pub(crate) fn shared_rtv() -> Self {
+        Self {
+            shared: true,
+            render_target: true,
+            ..Self::default()
+        }
+    }
+    /// Obtain a free pooled texture of `width` x `height` in `format`, or
+    /// `None` when the bounded pool is full. Replaces the pool on shape change.
+    pub(crate) fn acquire_texture(
+        &mut self,
+        gpu: &Device,
+        width: u32,
+        height: u32,
+        format: DXGI_FORMAT,
+    ) -> Result<Option<std::sync::Arc<ID3D11Texture2D>>> {
+        let shape = Some((width, height, format));
+        if self.shape != shape {
+            if let Some(handoff) = &mut self.compute {
+                for texture in &self.textures {
+                    handoff.forget(texture);
+                }
+            }
+            self.textures.clear();
+            self.shape = shape;
+        }
+        if let Some(texture) = self
+            .textures
+            .iter()
+            .find(|texture| std::sync::Arc::strong_count(texture) == 1)
+            .cloned()
+        {
+            return Ok(Some(texture));
+        }
+        if self.textures.len() >= GPU_SNAPSHOT_CAPACITY {
+            return Ok(None);
+        }
+        let desc = D3D11_TEXTURE2D_DESC {
+            Width: width,
+            Height: height,
+            MipLevels: 1,
+            ArraySize: 1,
+            Format: format,
+            SampleDesc: DXGI_SAMPLE_DESC {
+                Count: 1,
+                Quality: 0,
+            },
+            Usage: D3D11_USAGE_DEFAULT,
+            BindFlags: (D3D11_BIND_SHADER_RESOURCE.0
+                | if self.render_target {
+                    D3D11_BIND_RENDER_TARGET.0
+                } else {
+                    0
+                }) as u32,
+            CPUAccessFlags: 0,
+            MiscFlags: if self.compute.is_some() || self.shared {
+                (D3D11_RESOURCE_MISC_SHARED_NTHANDLE.0 | D3D11_RESOURCE_MISC_SHARED.0) as u32
+            } else {
+                0
+            },
+        };
+        let mut texture = None;
+        // SAFETY: `gpu.device` is live and `desc` describes a valid single-sample 2D texture.
+        unsafe {
+            gpu.device
+                .CreateTexture2D(&desc, None, Some(&mut texture))?;
+        }
+        let texture = std::sync::Arc::new(texture.unwrap());
+        self.textures.push(texture.clone());
+        Ok(Some(texture))
+    }
     fn has_capacity(&self) -> bool {
         snapshot_capacity(&self.textures)
     }
@@ -1187,7 +1303,7 @@ impl GpuPool {
         // SAFETY: `source` and the pool's textures are live on `gpu.device` with matching size and
         // format, and that device's context is multithread-protected.
         unsafe {
-            let mut desc = match self
+            let desc = match self
                 .sources
                 .iter()
                 .find(|(texture, _)| texture.as_raw() == source.as_raw())
@@ -1219,51 +1335,17 @@ impl GpuPool {
             });
             // Every pooled texture has the shape it was made with, so a new
             // size or format replaces them all, without a GetDesc each frame.
-            let shape = Some((width, height, desc.Format));
-            if self.shape != shape {
-                if let Some(handoff) = &mut self.compute {
-                    for texture in &self.textures {
-                        handoff.forget(texture);
-                    }
-                }
-                self.textures.clear();
-                self.shape = shape;
+            if self.shape != Some((width, height, desc.Format)) {
                 // The old shape's frame-pool, ring or helper textures need
                 // not stay pinned by the description cache.
                 let current = source.as_raw();
                 self.sources
                     .retain(|(texture, _)| texture.as_raw() == current);
             }
-            let free = self
-                .textures
-                .iter()
-                .find(|texture| std::sync::Arc::strong_count(texture) == 1)
-                .cloned();
-            let texture = if let Some(texture) = free {
-                texture
-            } else {
+            let Some(texture) = self.acquire_texture(gpu, width, height, desc.Format)? else {
                 // Capture retains only the newest native update while consumers
                 // own every snapshot, instead of growing a frame queue.
-                if self.textures.len() >= GPU_SNAPSHOT_CAPACITY {
-                    return Ok(None);
-                }
-                desc.Width = width;
-                desc.Height = height;
-                desc.Usage = D3D11_USAGE_DEFAULT;
-                desc.BindFlags = D3D11_BIND_SHADER_RESOURCE.0 as u32;
-                desc.CPUAccessFlags = 0;
-                // Shared with the compute queue that copies and converts it.
-                desc.MiscFlags = if self.compute.is_some() {
-                    (D3D11_RESOURCE_MISC_SHARED_NTHANDLE.0 | D3D11_RESOURCE_MISC_SHARED.0) as u32
-                } else {
-                    0
-                };
-                let mut texture = None;
-                gpu.device
-                    .CreateTexture2D(&desc, None, Some(&mut texture))?;
-                let texture = std::sync::Arc::new(texture.unwrap());
-                self.textures.push(texture.clone());
-                texture
+                return Ok(None);
             };
             let ready = match self
                 .compute
@@ -1284,8 +1366,8 @@ impl GpuPool {
                     }
                     // Replace the shared textures and copy this same frame on
                     // D3D11. Waiting for another update can strand a stream on
-                    // a static desktop. Consumers see an unshared texture and
-                    // rebuild for the graphics queue.
+                    // a static desktop. Consumers see an unshared texture unless
+                    // `self.shared` keeps D3D12 conversion active.
                     self.warnings.set("capture_compute", &format!("Compute capture copy failed ({error:#}); copying on the graphics queue. A busy game can delay capture; lower GPU load or update the graphics driver."));
                     self.compute = None;
                     self.textures.clear();
@@ -1307,27 +1389,38 @@ impl GpuPool {
                     } else {
                         gpu.context.CopyResource(texture.as_ref(), source);
                     }
-                    None
+                    if self.shared {
+                        let signal = self.d3d11_signal.get_or_insert_with(|| {
+                            crate::compute::Compute::for_device(&gpu.device)
+                                .and_then(|compute| crate::compute::D3d11Signal::new(compute, gpu))
+                                .ok()
+                        });
+                        match signal.as_mut().map(|s| s.signal()) {
+                            Some(Ok(ready)) => Some(ready),
+                            Some(Err(error)) => {
+                                tracing::debug!(%error, "shared D3D11 fence signal failed; flushing context");
+                                *signal = None;
+                                gpu.context.Flush();
+                                None
+                            }
+                            None => {
+                                gpu.context.Flush();
+                                None
+                            }
+                        }
+                    } else {
+                        None
+                    }
                 }
             };
-            let now = Instant::now();
-            Ok(Some(GpuImage {
-                cursor: None,
+            Ok(Some(GpuImage::from_texture(
+                gpu.clone(),
+                texture,
                 width,
                 height,
                 pixel,
-                captured: now,
-                wgc_stamp: None,
-                acquired: now,
-                published: now,
-                gpu: gpu.clone(),
-                texture,
                 ready,
-                lease: None,
-                focus: None,
-                repeat: false,
-                origin: 0,
-            }))
+            )))
         }
     }
 }
@@ -1698,9 +1791,24 @@ impl Capture {
         if kind == "amd" {
             // The driver's own surface carries the desktop's format; `hdr`
             // follows the display, as Desktop Duplication's does.
-            let session = amd_direct::Session::new(name)?;
+            let mut session = amd_direct::Session::new(name)?;
             if let Err(error) = crate::gpu_priority::configure(&session.gpu, config) {
                 tracing::debug!(%error, "GPU priority remains at the process default");
+            }
+            session.owned.warnings = warnings.clone();
+            if crate::compute::enabled(config) {
+                // Keep pooled textures NT-handle shared even if AMF's source
+                // cannot be opened by D3D12 `Handoff`, so downstream AMF and
+                // PyroWave conversion still runs on D3D12 compute.
+                session.owned.shared = true;
+                match crate::compute::Compute::for_device(&session.gpu.device)
+                    .and_then(|compute| crate::compute::Handoff::new(compute, &session.gpu))
+                {
+                    Ok(compute) => session.owned.compute = Some(compute),
+                    Err(error) => {
+                        warnings.set("capture_compute", &format!("AMD Direct Capture compute copies unavailable ({error:#}); copying on the graphics queue. Lower game GPU load or update the graphics driver if capture stutters."));
+                    }
+                }
             }
             return Ok(Self::AmdDirect(Box::new(session)));
         }

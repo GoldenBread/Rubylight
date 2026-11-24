@@ -9,10 +9,9 @@
 //! the SPS with [`POC_LSB_BITS`] and each slice header's POC and long-term
 //! references to match, which leaves the pictures as they were and lets a
 //! repair reach a decoder up to [`ORDER_WINDOW`] frames after its last one.
-use super::rbsp::{
-    Reader, Replacement, Result, TRUNCATED, Unsupported, Writer, assemble_into, ceil_log2, splice,
-    unescape, units,
-};
+use super::rbsp::{Reader, Result, Scratch, TRUNCATED, Unsupported, ceil_log2, splice_into};
+#[cfg(test)]
+use super::rbsp::{Replacement, Writer, unescape, units};
 
 /// Low bits of the POC in the rewritten stream: x265's default, and well
 /// within the 16 the standard allows.
@@ -84,6 +83,11 @@ pub struct PictureOrder {
     known: Vec<i64>,
     picture: Option<Picture>,
     after_end_of_sequence: bool,
+    /// Reusable scratch buffers so steady-state slice rewriting allocates nothing.
+    rbsp: Scratch,
+    known_scratch: Vec<i64>,
+    long_term: Vec<(u32, bool, Option<u32>)>,
+    resolved: Vec<(u32, i64)>,
 }
 
 impl PictureOrder {
@@ -99,20 +103,29 @@ impl PictureOrder {
     /// allocation. `false` when nothing changes, with `output` left empty.
     pub fn rewrite_into(&mut self, bytes: &[u8], output: &mut Vec<u8>) -> Result<bool> {
         output.clear();
-        let mut edits = Vec::new();
-        for (start, end) in units(bytes) {
-            if let Some(nal) = self.unit(&bytes[start..end])? {
-                edits.push(((start, end), nal));
+        self.rbsp.begin(bytes);
+        for index in 0..self.rbsp.nals.len() {
+            let (start, end) = self.rbsp.nals[index];
+            if let Some((head, rest)) = self.unit_into(&bytes[start..end])? {
+                self.rbsp.push_edit(start, end, head, rest);
             }
         }
-        if edits.is_empty() {
+        if self.rbsp.edits.is_empty() {
             return Ok(false);
         }
-        assemble_into(bytes, edits, output);
+        self.rbsp.assemble(bytes, output);
         Ok(true)
     }
 
+    #[cfg(test)]
     fn unit(&mut self, nal: &[u8]) -> Result<Option<Replacement>> {
+        self.rbsp.heads.clear();
+        Ok(self
+            .unit_into(nal)?
+            .map(|(range, rest)| (self.rbsp.heads[range].to_vec(), rest)))
+    }
+
+    fn unit_into(&mut self, nal: &[u8]) -> Result<Option<(std::ops::Range<usize>, usize)>> {
         if nal.len() < 3 {
             return Ok(None);
         }
@@ -120,17 +133,17 @@ impl PictureOrder {
             return Err(Unsupported("layered HEVC"));
         }
         match (nal[0] >> 1) & 63 {
-            kind @ 0..=21 => match self.slice(kind, nal, HEADER_FIRST) {
+            kind @ 0..=21 => match self.slice_into(kind, nal, HEADER_FIRST) {
                 Err(TRUNCATED) if nal.len() > 2 + HEADER_FIRST => {
-                    self.slice(kind, nal, HEADER_LIMIT)
+                    self.slice_into(kind, nal, HEADER_LIMIT)
                 }
                 result => result,
             },
             22..=31 => Err(Unsupported("reserved HEVC slice type")),
-            33 => self.parameter_set(nal),
+            33 => self.parameter_set_into(nal),
             34 => {
-                let (rbsp, _) = unescape(&nal[2..], usize::MAX);
-                let (id, pps) = picture_parameter_set(&rbsp)?;
+                self.rbsp.unescape(&nal[2..], usize::MAX);
+                let (id, pps) = picture_parameter_set(&self.rbsp.rbsp)?;
                 self.pps.resize_with(self.pps.len().max(id + 1), || None);
                 self.pps[id] = Some(pps);
                 Ok(None)
@@ -143,37 +156,49 @@ impl PictureOrder {
         }
     }
 
-    fn parameter_set(&mut self, nal: &[u8]) -> Result<Option<Replacement>> {
-        let (rbsp, _) = unescape(&nal[2..], usize::MAX);
-        let (id, sps, field) = sequence_parameter_set(&rbsp)?;
+    fn parameter_set_into(
+        &mut self,
+        nal: &[u8],
+    ) -> Result<Option<(std::ops::Range<usize>, usize)>> {
+        self.rbsp.unescape(&nal[2..], usize::MAX);
+        let (id, sps, field) = sequence_parameter_set(&self.rbsp.rbsp)?;
         let widen = sps.lsb_bits < POC_LSB_BITS;
         self.sps.resize_with(self.sps.len().max(id + 1), || None);
         self.sps[id] = Some(sps);
         if !widen {
             return Ok(None);
         }
+        let rbsp = &self.rbsp.rbsp;
         let stop = rbsp
             .iter()
             .rposition(|&byte| byte != 0)
             .map(|index| index * 8 + 7 - rbsp[index].trailing_zeros() as usize)
             .ok_or(Unsupported("SPS without trailing bits"))?;
-        let mut writer = Writer::default();
-        writer.copy(&rbsp, 0, field.0);
-        writer.ue(POC_LSB_BITS - 4);
-        writer.copy(&rbsp, field.1, stop);
-        let mut output = nal[..2].to_vec();
-        super::rbsp::escape(&writer.finish(), &mut output);
-        Ok(Some((output, nal.len())))
+        self.rbsp.writer.clear();
+        self.rbsp.writer.copy(rbsp, 0, field.0);
+        self.rbsp.writer.ue(POC_LSB_BITS - 4);
+        self.rbsp.writer.copy(rbsp, field.1, stop);
+        let finished = self.rbsp.writer.finish_in_place();
+        let head_start = self.rbsp.heads.len();
+        self.rbsp.heads.extend_from_slice(&nal[..2]);
+        super::rbsp::escape(finished, &mut self.rbsp.heads);
+        Ok(Some((head_start..self.rbsp.heads.len(), nal.len())))
     }
 
     /// A slice's header rewritten from its first `limit` RBSP bytes. Nothing
     /// changes before the header has parsed, so a cut one can be read again.
-    fn slice(&mut self, kind: u8, nal: &[u8], limit: usize) -> Result<Option<Replacement>> {
+    fn slice_into(
+        &mut self,
+        kind: u8,
+        nal: &[u8],
+        limit: usize,
+    ) -> Result<Option<(std::ops::Range<usize>, usize)>> {
         let temporal_id = (nal[1] & 7)
             .checked_sub(1)
             .ok_or(Unsupported("NAL temporal id zero"))?;
-        let (rbsp, from) = unescape(&nal[2..], limit);
-        let mut reader = Reader::new(&rbsp);
+        self.rbsp.unescape(&nal[2..], limit);
+        let rbsp = &self.rbsp.rbsp;
+        let mut reader = Reader::new(rbsp);
         let first = reader.flag()?;
         if (16..=23).contains(&kind) {
             reader.skip(1)?;
@@ -213,30 +238,34 @@ impl PictureOrder {
         }
         if kind == 19 || kind == 20 {
             if first {
-                self.picture = Some(Picture {
+                let picture = self.picture.get_or_insert_with(|| Picture {
                     poc: 0,
                     long_term: Vec::new(),
                 });
+                picture.poc = 0;
+                picture.long_term.clear();
                 self.previous = Some(0);
-                self.known = vec![0];
+                self.known.clear();
+                self.known.push(0);
                 self.after_end_of_sequence = false;
             }
             return Ok(None);
         }
         let poc_at = reader.at;
         let lsb = reader.bits(sps.lsb_bits)?;
-        let short_term = if !reader.flag()? {
-            short_term_set(&mut reader, sps.sets.len(), sps.sets.len(), &sps.sets)?
+        let owned_rps;
+        let short_term: &Rps = if !reader.flag()? {
+            owned_rps = short_term_set(&mut reader, sps.sets.len(), sps.sets.len(), &sps.sets)?;
+            &owned_rps
         } else {
             let bits = ceil_log2(sps.sets.len() as u32);
             let index = reader.bits(bits)? as usize;
             sps.sets
                 .get(index)
-                .cloned()
                 .ok_or(Unsupported("short-term set index"))?
         };
         let long_term_at = reader.at;
-        let mut long_term = Vec::new();
+        self.long_term.clear();
         if sps.long_term {
             for _ in 0..reader.ue_max(32, "long-term pictures")? {
                 let lsb = reader.bits(sps.lsb_bits)?;
@@ -246,12 +275,12 @@ impl PictureOrder {
                 } else {
                     None
                 };
-                long_term.push((lsb, used, cycle));
+                self.long_term.push((lsb, used, cycle));
             }
         }
         let long_term_end = reader.at;
         let used = short_term.deltas().filter(|(_, used)| *used).count()
-            + long_term.iter().filter(|(_, used, _)| *used).count();
+            + self.long_term.iter().filter(|(_, used, _)| *used).count();
         let end = rest_of_header(&mut reader, sps, pps, slice_type, used as u32)?;
 
         let max = 1i64 << sps.lsb_bits;
@@ -276,8 +305,8 @@ impl PictureOrder {
             };
             let poc = msb + i64::from(lsb);
             let mut cycle = 0i64;
-            let mut resolved = Vec::with_capacity(long_term.len());
-            for (index, &(lt_lsb, _, delta)) in long_term.iter().enumerate() {
+            self.resolved.clear();
+            for (index, &(lt_lsb, _, delta)) in self.long_term.iter().enumerate() {
                 let full = match delta {
                     Some(delta) => {
                         cycle = if index == 0 {
@@ -298,39 +327,43 @@ impl PictureOrder {
                         }
                     }
                 };
-                resolved.push((lt_lsb, full));
+                self.resolved.push((lt_lsb, full));
             }
-            let mut known: Vec<i64> = std::iter::once(poc)
-                .chain(
-                    short_term
-                        .deltas()
-                        .map(|(delta, _)| poc + i64::from(*delta)),
-                )
-                .chain(resolved.iter().map(|(_, full)| *full))
-                .collect();
+            self.known_scratch.clear();
+            self.known_scratch.push(poc);
+            self.known_scratch.extend(
+                short_term
+                    .deltas()
+                    .map(|(delta, _)| poc + i64::from(*delta)),
+            );
+            self.known_scratch
+                .extend(self.resolved.iter().map(|(_, full)| *full));
             let sub_layer_non_reference = kind <= 14 && kind.is_multiple_of(2);
             if temporal_id == 0 && !sub_layer_non_reference && !(6..=9).contains(&kind) {
                 self.previous = Some(poc);
-                std::mem::swap(&mut self.known, &mut known);
+                std::mem::swap(&mut self.known, &mut self.known_scratch);
             } else {
                 self.known.push(poc);
             }
             self.after_end_of_sequence = false;
-            &*self.picture.insert(Picture {
-                poc,
-                long_term: resolved,
-            })
+            let picture = self.picture.get_or_insert_with(|| Picture {
+                poc: 0,
+                long_term: Vec::new(),
+            });
+            picture.poc = poc;
+            std::mem::swap(&mut picture.long_term, &mut self.resolved);
+            &*picture
         } else {
             let picture = self
                 .picture
                 .as_ref()
                 .ok_or(Unsupported("slice without its picture's first slice"))?;
             if picture.poc.rem_euclid(max) != i64::from(lsb)
-                || picture.long_term.len() != long_term.len()
+                || picture.long_term.len() != self.long_term.len()
                 || picture
                     .long_term
                     .iter()
-                    .zip(&long_term)
+                    .zip(&self.long_term)
                     .any(|((first, _), (this, _, _))| first != this)
             {
                 return Err(Unsupported("slices of one picture disagree"));
@@ -339,16 +372,17 @@ impl PictureOrder {
         };
 
         let wide = 1i64 << POC_LSB_BITS;
-        let mut writer = Writer::default();
-        writer.copy(&rbsp, 0, poc_at);
+        let writer = &mut self.rbsp.writer;
+        writer.clear();
+        writer.copy(rbsp, 0, poc_at);
         writer.bits(POC_LSB_BITS, picture.poc.rem_euclid(wide) as u32);
-        writer.copy(&rbsp, poc_at + sps.lsb_bits as usize, long_term_at);
+        writer.copy(rbsp, poc_at + sps.lsb_bits as usize, long_term_at);
         if sps.long_term {
-            writer.ue(long_term.len() as u32);
+            writer.ue(self.long_term.len() as u32);
             // Every entry names its MSB, so the reference resolves from the
             // POC alone, whatever else a lossy client still holds.
             let mut previous = 0;
-            for ((_, full), (_, used, _)) in picture.long_term.iter().zip(&long_term) {
+            for ((_, full), (_, used, _)) in picture.long_term.iter().zip(&self.long_term) {
                 writer.bits(POC_LSB_BITS, full.rem_euclid(wide) as u32);
                 writer.flag(*used);
                 writer.flag(true);
@@ -359,10 +393,17 @@ impl PictureOrder {
                 previous = cycle;
             }
         }
-        writer.copy(&rbsp, long_term_end, end);
-        let header = writer.finish();
+        writer.copy(rbsp, long_term_end, end);
+        let header = writer.finish_in_place();
         let length = end / 8 + 1;
-        Ok(Some(splice(nal, 2, &header, &from, length)))
+        Ok(Some(splice_into(
+            nal,
+            2,
+            header,
+            &self.rbsp.from,
+            length,
+            &mut self.rbsp.heads,
+        )))
     }
 }
 
@@ -730,5 +771,7 @@ fn rest_of_header(
     Ok(end)
 }
 
+#[cfg(test)]
+mod scratch_tests;
 #[cfg(test)]
 mod tests;

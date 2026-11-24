@@ -15,6 +15,7 @@ pub struct Filter {
     convert: Convert,
     destroy: Destroy,
     device: Device,
+    lock: ID3D11Multithread,
     parameters: [u32; 4],
     pool: GpuPool,
     _dll: libloading::Library,
@@ -37,6 +38,7 @@ impl Filter {
         if device.vendor != 0x10de {
             bail!("RTX HDR needs an NVIDIA GPU");
         }
+        let lock: ID3D11Multithread = device.context.cast()?;
         let dll = crate::nvidia_enhance::load()?;
         // SAFETY: The adapter's ABI 3 (checked by `load`) exports these symbols with these types,
         // and Filter keeps `dll` and `device` while the pointers are used.
@@ -54,23 +56,26 @@ impl Filter {
                 convert,
                 destroy,
                 device,
+                lock,
                 parameters,
-                pool: GpuPool::default(),
+                pool: GpuPool::shared(),
                 _dll: dll,
             })
         }
     }
     /// The HDR picture for an SDR capture. NGX's output is copied into a
-    /// bounded pool before another conversion can overwrite it.
+    /// bounded shared pool before another conversion can overwrite it.
     pub fn apply_gpu(&mut self, image: &GpuImage) -> Result<GpuImage> {
         if image.pixel != Pixel::Bgra8 || image.gpu.device.as_raw() != self.device.device.as_raw() {
             bail!("RTX HDR needs an SDR picture on the capture's GPU");
         }
-        crate::rtx_video::ready_for_d3d11(image)?;
+        // Order D3D11 work after any external producer fence on the GPU without
+        // stalling the stream thread on the CPU.
+        image.order_d3d11()?;
         // SAFETY: `state` is the live NGX state, created on this device. The adapter takes its own
         // lock and then the device's multithread lock (ABI 3), so this thread holds neither while
         // it converts; the returned texture is only borrowed while it is copied into the pool,
-        // under the device's lock.
+        // under the cached device lock.
         unsafe {
             let [contrast, saturation, middle, peak] = self.parameters;
             let mut error = 0;
@@ -85,20 +90,36 @@ impl Filter {
             );
             let texture = ID3D11Texture2D::from_raw_borrowed(&output)
                 .with_context(|| format!("RTX HDR conversion failed: {}", describe(error)))?;
-            let lock: ID3D11Multithread = self.device.context.cast()?;
-            lock.Enter();
+            self.lock.Enter();
             let result = (|| {
-                let mut converted = self
-                    .pool
-                    .copy(&self.device, texture, None)?
-                    .context("the RTX HDR pictures are all still being encoded")?;
+                let mut copy = self.pool.copy(&self.device, texture, None);
+                if copy.is_err()
+                    && self.pool.shared
+                    && crate::device_loss::DeviceLost::d3d11(&self.device.device).is_none()
+                {
+                    self.pool = GpuPool::default();
+                    copy = self.pool.copy(&self.device, texture, None);
+                }
+                let mut converted =
+                    copy?.context("the RTX HDR pictures are all still being encoded")?;
+                if self.pool.shared {
+                    if converted.ready.is_none() {
+                        // Downgrade and re-copy into a non-shared pool so even this transition
+                        // frame is non-shareable instead of reaching D3D12 with `ready: None`.
+                        self.pool = GpuPool::default();
+                        converted = self
+                            .pool
+                            .copy(&self.device, texture, None)?
+                            .context("the RTX HDR pictures are all still being encoded")?;
+                        self.device.context.Flush();
+                    }
+                } else {
+                    self.device.context.Flush();
+                }
                 converted.inherit(image);
                 Ok(converted)
             })();
-            // The HDR picture is read on the compute queue through a shared handle: flush the
-            // D3D11 commands that wrote it before it is handed on.
-            self.device.context.Flush();
-            lock.Leave();
+            self.lock.Leave();
             result
         }
     }

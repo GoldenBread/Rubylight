@@ -10,7 +10,7 @@
 //! v2025.801.111024 and v2025.810), Copyright (c) Foundation Sunshine
 //! authors, GPL-3.0: `WAIT_FOR_PRESENT` instead of `GET_CURRENT_SURFACE`,
 //! the stream's frame rate instead of 0, and a duplicated output surface.
-use super::{Device, GpuImage, GpuPool, Image, read_texture};
+use super::{Device, GpuImage, GpuPool, Image};
 use crate::{amf::check, text::static_wide};
 use anyhow::{Context, Result, bail};
 use butterpollo_win_abi::amf::*;
@@ -342,12 +342,9 @@ impl Session {
     }
     /// The newest presented picture in CPU memory.
     pub fn next_frame(&mut self) -> Result<Option<Image>> {
-        let Some(image) = self.next_gpu(0)? else {
-            return Ok(None);
-        };
-        let mut read = read_texture(&self.gpu, &image.texture, &mut self.staging)?;
-        read.captured = image.captured;
-        Ok(Some(read))
+        self.next_gpu(0)?
+            .map(|image| image.readback(&mut self.staging))
+            .transpose()
     }
 }
 /// This build's AMF header version.
@@ -359,6 +356,9 @@ fn header_version() -> u64 {
 }
 impl Drop for Session {
     fn drop(&mut self) {
+        // Drain any in-flight D3D12 compute copy reading AMF's surface before
+        // releasing the surface and terminating the AMF capture component.
+        self.owned.compute = None;
         self.release_held();
         if let Some(last) = self.last {
             tracing::info!(

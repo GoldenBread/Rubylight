@@ -184,30 +184,28 @@ static DATA_PATH: Mutex<Option<Vec<u16>>> = Mutex::new(None);
 fn check(code: u32) -> Result<(), u32> {
     if code == 1 { Ok(()) } else { Err(code) }
 }
-/// A device's D3D multithread lock, held while this lives. The adapter
-/// takes it only while it holds `DEVICES`, so the two are always taken in
-/// the same order.
+/// A device's D3D multithread lock, held while this lives. The adapter takes
+/// it only while holding `DEVICES`, so the two are always taken in order.
 struct Locked(Option<ID3D11Multithread>);
 impl Locked {
-    fn new(device: &ID3D11Device) -> Self {
-        // SAFETY: `device` is a live D3D11 device; Enter is balanced by Drop.
-        unsafe {
-            let lock = device
-                .GetImmediateContext()
-                .ok()
-                .and_then(|context| context.cast::<ID3D11Multithread>().ok());
-            if let Some(lock) = &lock {
-                let _ = lock.SetMultithreadProtected(true);
-                lock.Enter();
-            }
-            Self(lock)
+    fn from_context(context: &ID3D11DeviceContext) -> Option<ID3D11Multithread> {
+        let lock = context.cast::<ID3D11Multithread>().ok()?;
+        // SAFETY: `lock` belongs to this live immediate context.
+        let _ = unsafe { lock.SetMultithreadProtected(true) };
+        Some(lock)
+    }
+    fn enter(lock: Option<ID3D11Multithread>) -> Self {
+        if let Some(lock) = &lock {
+            // SAFETY: `lock` is live; Enter is balanced by Drop on this thread.
+            unsafe { lock.Enter() };
         }
+        Self(lock)
     }
 }
 impl Drop for Locked {
     fn drop(&mut self) {
         if let Some(lock) = &self.0 {
-            // SAFETY: entered in `new`, on this thread.
+            // SAFETY: entered in `enter`, on this thread.
             unsafe { lock.Leave() };
         }
     }
@@ -402,6 +400,7 @@ struct Converter {
     feature: Feature,
     device: ID3D11Device,
     context: ID3D11DeviceContext,
+    lock: Option<ID3D11Multithread>,
     params: *mut c_void,
     handle: *mut c_void,
     output: Option<ID3D11Texture2D>,
@@ -416,10 +415,12 @@ impl Converter {
             let context = device
                 .GetImmediateContext()
                 .map_err(|e| e.code().0 as u32)?;
+            let lock = Locked::from_context(&context);
             let mut state = Box::new(Self {
                 feature,
                 device,
                 context,
+                lock,
                 params: ptr::null_mut(),
                 handle: ptr::null_mut(),
                 output: None,
@@ -428,7 +429,7 @@ impl Converter {
             });
             // On failure, Drop releases what was made, after these locks go.
             let mut devices = DEVICES.lock().unwrap();
-            let locked = Locked::new(&state.device);
+            let locked = Locked::enter(state.lock.clone());
             acquire(&mut devices, &state.device)?;
             state.acquired = true;
             state.params = feature_available(feature, &mut 0)?;
@@ -552,7 +553,7 @@ impl Converter {
     ) -> Result<*mut c_void, u32> {
         unsafe {
             let _devices = DEVICES.lock().unwrap();
-            let _locked = Locked::new(&self.device);
+            let _locked = Locked::enter(self.lock.clone());
             if self.feature != Feature::TrueHdr {
                 return Err(ERROR_FEATURE);
             }
@@ -595,7 +596,7 @@ impl Converter {
     ) -> Result<*mut c_void, u32> {
         unsafe {
             let _devices = DEVICES.lock().unwrap();
-            let _locked = Locked::new(&self.device);
+            let _locked = Locked::enter(self.lock.clone());
             if self.feature != Feature::Vsr {
                 return Err(ERROR_FEATURE);
             }
@@ -628,7 +629,7 @@ impl Drop for Converter {
         self.output = None;
         let releases = {
             let mut devices = DEVICES.lock().unwrap();
-            let _locked = Locked::new(&self.device);
+            let _locked = Locked::enter(self.lock.clone());
             // SAFETY: the handle and parameters came from NGX on this device and are released once.
             unsafe {
                 if !self.handle.is_null() {
@@ -717,7 +718,12 @@ pub unsafe extern "C" fn butterpollo_ngx_available(
     let mut minimum = 0;
     let (result, releases) = {
         let mut devices = DEVICES.lock().unwrap();
-        let _locked = Locked::new(device);
+        // SAFETY: `device` is a live D3D11 device.
+        let _locked = Locked::enter(
+            unsafe { device.GetImmediateContext() }
+                .ok()
+                .and_then(|context| Locked::from_context(&context)),
+        );
         match acquire(&mut devices, device) {
             Err(code) => (Err(code), None),
             Ok(()) => {
@@ -917,17 +923,10 @@ mod tests {
     /// gets its own error, and any other failure keeps D3D's result.
     #[test]
     fn an_output_without_typed_uav_gets_its_own_error() {
-        use super::{D3D11_FORMAT_SUPPORT_TYPED_UNORDERED_ACCESS_VIEW, ERROR_OUTPUT_UAV};
-        let uav = D3D11_FORMAT_SUPPORT_TYPED_UNORDERED_ACCESS_VIEW.0 as u32;
-        let out_of_memory = 0x8007_000e;
-        assert_eq!(
-            super::output_failure(Some(0), out_of_memory),
-            ERROR_OUTPUT_UAV
-        );
-        assert_eq!(
-            super::output_failure(Some(uav), out_of_memory),
-            out_of_memory
-        );
-        assert_eq!(super::output_failure(None, out_of_memory), out_of_memory);
+        let uav = super::D3D11_FORMAT_SUPPORT_TYPED_UNORDERED_ACCESS_VIEW.0 as u32;
+        let oom = 0x8007_000e;
+        assert_eq!(super::output_failure(Some(0), oom), super::ERROR_OUTPUT_UAV);
+        assert_eq!(super::output_failure(Some(uav), oom), oom);
+        assert_eq!(super::output_failure(None, oom), oom);
     }
 }

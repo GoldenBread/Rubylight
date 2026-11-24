@@ -738,14 +738,12 @@ fn gpu_420_video_plane_uavs_are_disjoint() -> Result<()> {
             let views = converter.targets[index]
                 .unordered
                 .as_ref()
+                .and_then(|(y, uv)| Some([y, uv.as_ref()?]))
                 .context("native video UAVs unavailable")?;
             messages.ClearStoredMessages();
-            gpu.context.CSSetUnorderedAccessViews(
-                0,
-                2,
-                Some(views.each_ref().map(|v| Some(v.clone())).as_ptr()),
-                None,
-            );
+            let bound_in = views.map(|v| Some(v.clone()));
+            gpu.context
+                .CSSetUnorderedAccessViews(0, 2, Some(bound_in.as_ptr()), None);
             let mut bound = [None, None];
             gpu.context.CSGetUnorderedAccessViews(0, Some(&mut bound));
             gpu.context

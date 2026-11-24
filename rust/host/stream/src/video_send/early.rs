@@ -24,7 +24,13 @@ pub(super) fn send(
     layout: &[(usize, usize)],
     plan: &ConventionalPlan,
     peer: SocketAddr,
-    part: impl Fn(Vec<PacketBlock>, Vec<usize>, (usize, usize), Part, Option<usize>) -> Prepared,
+    part: impl Fn(
+        InlineBlocks<PacketBlock>,
+        InlineBlocks<usize>,
+        (usize, usize),
+        Part,
+        Option<usize>,
+    ) -> Prepared,
 ) -> Result<Option<anyhow::Error>> {
     let packets: usize = layout.iter().map(|(data, parity)| data + parity).sum();
     let frame_wire = packets
@@ -41,7 +47,7 @@ pub(super) fn send(
         Err(error) => return Ok(Some(error)),
     };
     for (index, &block) in layout.iter().enumerate() {
-        let mut parts = vec![shared.state.lock().unwrap().take_block()];
+        let mut parts = InlineBlocks::one(shared.state.lock().unwrap().take_block());
         let count = match next(&mut parts[0]) {
             Ok(count) if count == block.0 + block.1 => count,
             built => {
@@ -58,7 +64,7 @@ pub(super) fn send(
         };
         shared.enqueue(part(
             parts,
-            vec![count],
+            InlineBlocks::one(count),
             block,
             place,
             place.first.then_some(frame_wire),

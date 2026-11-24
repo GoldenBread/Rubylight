@@ -177,11 +177,15 @@ fn dolby_ready(directory: &Path, codec: Codec, channels: u8) -> Result<()> {
 
 pub(super) enum AudioEncoder {
     Opus(Opus),
-    Pcm,
+    Pcm(Vec<u8>),
     Dolby {
-        encoder: Ac3Encoder,
+        encoder: Box<Ac3Encoder>,
         /// The next frame's [`rubylight_protocol::audio_ext::ChunkHeader`] index.
         frame: u16,
+        /// Reusable encoded frame buffer.
+        encoded: Vec<u8>,
+        /// Reusable RTP chunk buffers.
+        chunks: Vec<Vec<u8>>,
     },
 }
 
@@ -190,10 +194,12 @@ impl AudioEncoder {
     pub(super) fn passthrough(directory: &Path, codec: Codec, channels: u8) -> Result<Self> {
         Ok(match codec {
             Codec::Opus => bail!("Opus is not a passthrough codec"),
-            Codec::Pcm => Self::Pcm,
+            Codec::Pcm => Self::Pcm(Vec::new()),
             Codec::Ac3 | Codec::Eac3 => Self::Dolby {
-                encoder: dolby(directory, codec, channels)?,
+                encoder: Box::new(dolby(directory, codec, channels)?),
                 frame: 0,
+                encoded: Vec::new(),
+                chunks: Vec::new(),
             },
         })
     }
@@ -209,11 +215,20 @@ impl AudioEncoder {
     ) -> Result<usize> {
         match self {
             Self::Opus(opus) => output.send(opus.encode_frame(samples)?, captured, position),
-            Self::Pcm => output.send(&audio_passthrough::pcm_s16le(samples), captured, position),
-            Self::Dolby { encoder, frame } => {
-                let parts = audio_passthrough::chunks(&encoder.encode(samples)?, *frame);
+            Self::Pcm(buf) => {
+                audio_passthrough::pcm_s16le_into(samples, buf);
+                output.send(buf, captured, position)
+            }
+            Self::Dolby {
+                encoder,
+                frame,
+                encoded,
+                chunks,
+            } => {
+                encoder.encode_into(samples, encoded)?;
+                let count = audio_passthrough::chunks_into(encoded, *frame, chunks);
                 *frame = frame.wrapping_add(1);
-                output.send_frame(&parts, captured, position)
+                output.send_frame(&chunks[..count], captured, position)
             }
         }
     }

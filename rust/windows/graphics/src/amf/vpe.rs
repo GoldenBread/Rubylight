@@ -24,8 +24,8 @@ use windows::Win32::Graphics::Direct3D11::ID3D11Texture2D;
 
 /// How long a conversion may take before the stream gives up on it.
 const QUERY_DEADLINE: Duration = Duration::from_millis(100);
-/// The pause between conversion polls after the first retry.
-const POLL_PAUSE: Duration = Duration::from_millis(1);
+/// High-resolution pause between conversion polls after the first retry.
+const POLL_PAUSE: Duration = Duration::from_micros(150);
 /// How often the conversion tally is logged.
 const REPORT_EVERY: Duration = Duration::from_secs(10);
 
@@ -65,9 +65,11 @@ pub(crate) struct Vpe {
     run: plan::RefusalRun,
     pub(crate) gave_way: bool,
     index: i64,
+    /// Reused high-resolution timer for bounded `QueryOutput` retries.
+    waiter: Option<crate::timing::Timer>,
 }
-// SAFETY: The component and context are used only from the encoder's thread,
-// through `&mut self`, as the encoder's own are.
+// SAFETY: The component, context and waitable timer handle are used only from
+// the encoder's thread, through `&mut self`, as the encoder's own are.
 unsafe impl Send for Vpe {}
 
 /// Set one of the converter's properties.
@@ -180,6 +182,7 @@ impl Vpe {
             run: Default::default(),
             gave_way: false,
             index: 0,
+            waiter: crate::timing::Timer::new().ok(),
         };
         vpe.engine = vpe.engine_available();
         Ok(vpe)
@@ -366,8 +369,12 @@ impl Vpe {
         input: Input,
         ownership: &mut gpu::Ownership,
     ) -> Result<Converted> {
-        // A compute-queue capture copy may still be writing the texture:
-        // the converter reads it on D3D11, which does not wait for D3D12.
+        // A compute-queue or fence-ring capture write may still be in flight.
+        // AMFContext::InitDX11 takes `gpu.device` and `AMFVideoConverter` can
+        // dispatch on AMD's VPE hardware engine rather than `gpu.context`, so a
+        // D3D11 immediate-context Wait alone is not guaranteed to order VPE;
+        // `ready.wait()` fast-paths when the fence is already complete, and
+        // `image.order_d3d11()` still marks fence-ring slots for D3D11 release.
         if let Some(ready) = &image.ready {
             ready.wait().context("capture copy before AMF conversion")?;
         }
@@ -424,7 +431,13 @@ impl Vpe {
                     bail!("AMF video converter returned no picture within 100 ms");
                 }
                 if paused {
-                    std::thread::sleep(POLL_PAUSE);
+                    let until = (Instant::now() + POLL_PAUSE).min(deadline);
+                    match &self.waiter {
+                        Some(timer) => timer.until(until),
+                        None => {
+                            std::thread::sleep(until.saturating_duration_since(Instant::now()));
+                        }
+                    }
                 } else {
                     std::thread::yield_now();
                     paused = true;

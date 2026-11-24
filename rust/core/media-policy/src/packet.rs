@@ -2,12 +2,43 @@
 //! PyroWave FEC, audio packets, encrypted control packets and replay
 //! protection.
 use anyhow::{Context, Result, bail};
+use std::{borrow::Cow, cell::RefCell, sync::Arc};
 
-use crate::pyrowave::Payload;
+use crate::pyrowave::{Payload, PayloadCursor};
 use butterpollo_crypto::crypto;
+
+mod audio;
+mod inline_blocks;
+pub use audio::AudioPacketizer;
+pub use inline_blocks::InlineBlocks;
+pub use rubylight_wire::crypto::CbcKey;
+pub use rubylight_wire::mic::open_into as mic_open_into;
+
+thread_local! {
+    /// Cached per-thread video packet sealer keyed by the 128-bit session key.
+    static VIDEO_SEALER: RefCell<Option<([u8; 16], Arc<crypto::PacketSealer>)>> =
+        const { RefCell::new(None) };
+}
+
+fn cached_sealer(key: &[u8; 16]) -> Arc<crypto::PacketSealer> {
+    VIDEO_SEALER.with(|cell| {
+        let mut cache = cell.borrow_mut();
+        if let Some((k, s)) = cache.as_ref()
+            && crypto::equal(k, key)
+        {
+            return Arc::clone(s);
+        }
+        let sealer = Arc::new(crypto::PacketSealer::new(key));
+        *cache = Some((*key, Arc::clone(&sealer)));
+        sealer
+    })
+}
 
 /// Datagram storage for one video FEC block.
 pub type PacketBlock = Vec<Vec<u8>>;
+
+/// A pooled FEC block alongside its count of filled packets in `0..=block.len()`.
+pub type PooledBlock = (PacketBlock, usize);
 
 /// Blocks the paced sender has sent, for the packetizer to fill again instead
 /// of allocating every packet of every frame. First in, first out: a frame's
@@ -28,7 +59,10 @@ impl BlockPool {
         let mut blocks = self.0.lock().unwrap();
         if blocks.len() < Self::KEEP {
             blocks.push_back(block);
+            return;
         }
+        drop(blocks);
+        drop(block);
     }
 
     /// A block taken but not filled goes back first in line.
@@ -141,7 +175,7 @@ fn block_parity(count: usize, percentage: usize, minimum: usize) -> (usize, usiz
 pub struct ConventionalPlan {
     /// Data and parity shards of each block, in send order, as
     /// [`VideoPacketizer::block_layout`] returns them.
-    pub layout: Vec<(usize, usize)>,
+    pub layout: InlineBlocks<(usize, usize)>,
     /// The percentage every block carries; below `fec_percent` when limited.
     pub percentage: usize,
 }
@@ -152,11 +186,14 @@ impl ConventionalPlan {
     }
 }
 impl VideoPacketizer {
+    fn sealer(&self) -> Option<Arc<crypto::PacketSealer>> {
+        self.key.as_ref().map(cached_sealer)
+    }
     /// Data and parity shards of each FEC block of an H.264, HEVC or AV1
     /// frame of `payload_bytes`, in send order, as `encode` frames it. A block
     /// loses the frame once more of its packets are lost than it has parity.
     pub fn block_layout(&self, payload_bytes: usize) -> Vec<(usize, usize)> {
-        self.conventional_plan(payload_bytes).layout
+        self.conventional_plan(payload_bytes).layout.to_vec()
     }
     /// The conventional FEC plan of a frame of `payload_bytes`, computed once
     /// so the block layout, the FEC-limited flag and the block fill share it.
@@ -259,6 +296,30 @@ impl VideoPacketizer {
         fec: PyrowaveFec,
         pool: Option<&'a BlockPool>,
     ) -> Result<(usize, bool, impl Iterator<Item = Result<PacketBlock>> + 'a)> {
+        let (count, limited, blocks) =
+            self.pyrowave_blocks_pooled(payload, timestamp, latency_us, fec, pool)?;
+        Ok((
+            count,
+            limited,
+            blocks.map(|item| {
+                item.map(|(mut packets, filled)| {
+                    packets.truncate(filled);
+                    packets
+                })
+            }),
+        ))
+    }
+    /// [`Self::pyrowave_blocks_in`] returning `(PacketBlock, valid_count)`
+    /// without truncating `packets`, so pooled shard buffers are preserved
+    /// across alternating critical and detail block sizes.
+    pub fn pyrowave_blocks_pooled<'a>(
+        &'a mut self,
+        payload: impl Into<Payload<'a>>,
+        timestamp: u32,
+        latency_us: u64,
+        fec: PyrowaveFec,
+        pool: Option<&'a BlockPool>,
+    ) -> Result<(usize, bool, impl Iterator<Item = Result<PooledBlock>> + 'a)> {
         let (count, limited, mut next) = self.frame_blocks(
             payload.into(),
             true,
@@ -277,12 +338,13 @@ impl VideoPacketizer {
                     }
                     None
                 }
-                Ok(filled) => {
-                    // A reused buffer can be longer than this block.
-                    packets.truncate(filled);
-                    Some(Ok(packets))
+                Ok(filled) => Some(Ok((packets, filled))),
+                Err(error) => {
+                    if let Some(pool) = pool {
+                        pool.give(packets);
+                    }
+                    Some(Err(error))
                 }
-                Err(error) => Some(Err(error)),
             }
         });
         Ok((count, limited, blocks))
@@ -383,27 +445,31 @@ impl VideoPacketizer {
         }
         let block_size = self.packet_size + 16;
         let slice = block_size - 32;
-        if payload.is_empty() {
+        let payload_len = payload.len();
+        if payload_len == 0 {
             bail!("encoded frame is empty");
         }
-        if payload.len() > slice * 4092 - 8 {
+        if payload_len > slice * 4092 - 8 {
             // The dropped frame still takes its index: Moonlight notices a
             // lost frame only from the gap, and would otherwise decode the
             // next frames against a picture it never received.
             self.frame = self.frame.wrapping_add(1);
             bail!("encoded frame exceeds Moonlight packet limit");
         }
-        let total = payload.len() + 8;
+        let total = payload_len + 8;
         let total_shards = total.div_ceil(slice);
         let aligned = crate::pyrowave::aligned_payload(self.packet_size);
         // A framed picture carries the layout its framing pass computed; one
         // that arrives as plain bytes is parsed.
-        let layout = match payload.stored_layout(aligned) {
-            Some(stored) if pyrowave.as_ref().is_some_and(|p| p.records) => Some(stored.clone()),
+        let layout: Option<Cow<'a, crate::pyrowave::Layout>> = match payload.stored_layout(aligned)
+        {
+            Some(stored) if pyrowave.as_ref().is_some_and(|p| p.records) => {
+                Some(Cow::Borrowed(stored))
+            }
             _ => pyrowave
                 .as_ref()
                 .filter(|p| p.records)
-                .map(|_| crate::pyrowave::layout(payload, aligned))
+                .map(|_| crate::pyrowave::layout(payload, aligned).map(Cow::Owned))
                 .transpose()?,
         };
         let critical = layout.as_ref().map_or(0, |l| l.critical_shards);
@@ -431,11 +497,11 @@ impl VideoPacketizer {
         }) {
             bail!("invalid PyroWave FEC plan");
         }
-        let plan = if let Some(pyro) = pyrowave
+        let plan: InlineBlocks<crate::pyrowave::FecBlock> = if let Some(pyro) = pyrowave
             .as_ref()
             .filter(|pyro| pyro.records || pyro.critical_percentage == 0)
         {
-            let baseline = crate::pyrowave::plan(
+            let baseline = crate::pyrowave::plan_inline(
                 total_shards,
                 critical,
                 pyro.critical_percentage,
@@ -454,7 +520,7 @@ impl VideoPacketizer {
                 + 8
                 + if self.key.is_some() { 32 } else { 0 };
             let extra = (pyro.wire_budget / wire_bytes).saturating_sub(baseline_packets);
-            crate::pyrowave::plan(
+            crate::pyrowave::plan_inline(
                 total_shards,
                 critical,
                 pyro.critical_percentage,
@@ -498,7 +564,7 @@ impl VideoPacketizer {
                 }
         });
         let blocks = plan.len();
-        let sealer = self.key.as_ref().map(crypto::PacketSealer::new);
+        let sealer = self.sealer();
         let packet_count = plan
             .iter()
             .map(|b| b.data + crate::pyrowave::parity(b.data, b.percentage, minimum))
@@ -506,6 +572,7 @@ impl VideoPacketizer {
         let mut first_shard = 0;
         let frame = self.frame;
         let mut plan = plan.into_iter().enumerate();
+        let mut cursor = payload.cursor();
         let next = move |shards: &mut PacketBlock| {
             let Some((block, planned)) = plan.next() else {
                 return Ok(0);
@@ -523,12 +590,12 @@ impl VideoPacketizer {
                     percentage: planned.percentage,
                     minimum,
                     header: &header,
-                    payload,
-                    layout: layout.as_ref(),
-                    sealer: sealer.as_ref(),
+                    layout: layout.as_deref(),
+                    sealer: sealer.as_deref(),
                     timestamp,
                     frame,
                 },
+                &mut cursor,
                 shards,
             )?;
             first_shard += count;
@@ -537,10 +604,15 @@ impl VideoPacketizer {
         Ok((packet_count, fec_limited, next))
     }
     /// Build one FEC block, the shards `first_shard..first_shard + count` of
-    /// the frame's byte stream (`header`, then `payload`), with its parity,
+    /// the frame's byte stream (`header`, then `cursor`), with its parity,
     /// and advance the packet and nonce counters. Returns the packets in
     /// `shards`. The frame index advances once block 0 is built.
-    fn fill_block(&mut self, spec: &BlockFill, shards: &mut PacketBlock) -> Result<usize> {
+    fn fill_block(
+        &mut self,
+        spec: &BlockFill,
+        cursor: &mut PayloadCursor<'_>,
+        shards: &mut PacketBlock,
+    ) -> Result<usize> {
         let BlockFill {
             block,
             blocks,
@@ -549,7 +621,6 @@ impl VideoPacketizer {
             percentage,
             minimum,
             header,
-            payload,
             layout,
             sealer,
             timestamp,
@@ -557,6 +628,7 @@ impl VideoPacketizer {
         } = *spec;
         let block_size = self.packet_size + 16;
         let slice = block_size - 32;
+        let payload_len = cursor.len();
         let envelope = if sealer.is_some() { 32 } else { 0 };
         if count >= 1024 {
             bail!("FEC shard index overflow");
@@ -591,8 +663,8 @@ impl VideoPacketizer {
                 s[32..32 + h].copy_from_slice(&header[offset..offset + h]);
             }
             let begin = offset.saturating_sub(header.len());
-            let n = (slice - h).min(payload.len() - begin);
-            payload.copy_to(begin, &mut s[32 + h..32 + h + n]);
+            let n = (slice - h).min(payload_len - begin);
+            cursor.copy_to(begin, &mut s[32 + h..32 + h + n]);
             s[32 + h + n..].fill(0);
             s[16..20].copy_from_slice(&(self.sequence.wrapping_add(i as u32) << 8).to_le_bytes());
             s[24] = 1 | if i == 0 { 4 } else { 0 } | if i == count - 1 { 2 } else { 0 };
@@ -746,10 +818,12 @@ impl VideoPacketizer {
                 .unwrap_or(1)
         };
         Ok(StreamedFrame {
-            sealer: self.key.as_ref().map(crypto::PacketSealer::new),
+            sealer: self.sealer(),
             header,
             pieces: buffer,
             len: 0,
+            piece_index: 0,
+            piece_at: 0,
             timestamp,
             frame: self.frame,
             slice,
@@ -809,7 +883,7 @@ fn tail_split(
 /// remaining blocks like a whole frame. If the cap was too small, the frame
 /// fails with [`SliceOverflow`], the caller's cue to ask for a recovery frame.
 pub struct StreamedFrame {
-    sealer: Option<crypto::PacketSealer>,
+    sealer: Option<Arc<crypto::PacketSealer>>,
     header: [u8; 8],
     /// The encoder's units, moved in as they arrive and read in order, so the
     /// packetizer copies each byte straight from its unit into a shard.
@@ -817,6 +891,9 @@ pub struct StreamedFrame {
     /// Payload bytes received, which `pieces` stop holding once the frame
     /// is over.
     len: usize,
+    /// Saved monotonic cursor position across blocks of this frame.
+    piece_index: usize,
+    piece_at: usize,
     timestamp: u32,
     frame: u32,
     slice: usize,
@@ -846,6 +923,25 @@ impl StreamedFrame {
         shards: &mut PacketBlock,
         mut emit: impl FnMut(&mut [Vec<u8>], StreamedBlock) -> Result<()>,
     ) -> Result<()> {
+        self.push_blocks(
+            packetizer,
+            unit,
+            last,
+            shards,
+            |block_shards, filled, block| emit(&mut block_shards[..filled], block),
+        )
+    }
+    /// [`Self::push`] handing the whole `PacketBlock` and its filled packet
+    /// count to `emit`, so the caller can swap the whole block with a recycled
+    /// one in O(1) without per-shard swapping.
+    pub fn push_blocks(
+        &mut self,
+        packetizer: &mut VideoPacketizer,
+        unit: Vec<u8>,
+        last: bool,
+        shards: &mut PacketBlock,
+        mut emit: impl FnMut(&mut PacketBlock, usize, StreamedBlock) -> Result<()>,
+    ) -> Result<()> {
         match self.state {
             StreamState::Open => {}
             StreamState::Done => bail!("streamed video frame is already finished"),
@@ -873,6 +969,11 @@ impl StreamedFrame {
             packetizer.skip_frame();
         }
     }
+    /// The unit buffers moved into this frame, returned intact so the caller
+    /// can hand each unit buffer back to a pool (`frame_pool::give`).
+    pub fn take_pieces(mut self) -> Vec<Vec<u8>> {
+        std::mem::take(&mut self.pieces)
+    }
     /// The unit buffers, emptied, for the next frame ([`VideoPacketizer::streamed_in`]).
     pub fn into_buffer(mut self) -> Vec<Vec<u8>> {
         self.pieces.clear();
@@ -884,7 +985,7 @@ impl StreamedFrame {
         unit: Vec<u8>,
         last: bool,
         shards: &mut PacketBlock,
-        emit: &mut impl FnMut(&mut [Vec<u8>], StreamedBlock) -> Result<()>,
+        emit: &mut impl FnMut(&mut PacketBlock, usize, StreamedBlock) -> Result<()>,
     ) -> Result<()> {
         self.len += unit.len();
         self.pieces.push(unit);
@@ -952,7 +1053,7 @@ impl StreamedFrame {
         packetizer: &mut VideoPacketizer,
         stream_len: usize,
         shards: &mut PacketBlock,
-        emit: &mut impl FnMut(&mut [Vec<u8>], StreamedBlock) -> Result<()>,
+        emit: &mut impl FnMut(&mut PacketBlock, usize, StreamedBlock) -> Result<()>,
     ) -> Result<()> {
         while self.next_block < self.blocks - 1
             && self.units >= ((self.next_block + 1) * self.slices).div_ceil(self.blocks)
@@ -982,8 +1083,14 @@ impl StreamedFrame {
         percentage: usize,
         blocks: usize,
         shards: &mut PacketBlock,
-        emit: &mut impl FnMut(&mut [Vec<u8>], StreamedBlock) -> Result<()>,
+        emit: &mut impl FnMut(&mut PacketBlock, usize, StreamedBlock) -> Result<()>,
     ) -> Result<()> {
+        let mut cursor = PayloadCursor::from_pieces_position(
+            &self.pieces,
+            self.len,
+            self.piece_index,
+            self.piece_at,
+        );
         let filled = packetizer.fill_block(
             &BlockFill {
                 block: self.next_block,
@@ -993,14 +1100,15 @@ impl StreamedFrame {
                 percentage,
                 minimum: self.minimum,
                 header: &self.header,
-                payload: Payload::Pieces(&self.pieces),
                 layout: None,
-                sealer: self.sealer.as_ref(),
+                sealer: self.sealer.as_deref(),
                 timestamp: self.timestamp,
                 frame: self.frame,
             },
+            &mut cursor,
             shards,
         )?;
+        (self.piece_index, self.piece_at) = cursor.position();
         let block = StreamedBlock {
             index: self.next_block,
             data,
@@ -1009,7 +1117,7 @@ impl StreamedFrame {
         };
         self.first_shard += data;
         self.next_block += 1;
-        emit(&mut shards[..filled], block)
+        emit(shards, filled, block)
     }
     /// The frame was fully built.
     pub fn is_done(&self) -> bool {
@@ -1047,8 +1155,6 @@ struct BlockFill<'a> {
     percentage: usize,
     minimum: usize,
     header: &'a [u8; 8],
-    /// The frame after `header`, at least up to this block's last shard.
-    payload: Payload<'a>,
     layout: Option<&'a crate::pyrowave::Layout>,
     sealer: Option<&'a crypto::PacketSealer>,
     timestamp: u32,
@@ -1436,117 +1542,6 @@ unsafe fn axpy_ssse3(out: &mut [u8], input: &[u8], table: &[u8; 32]) {
     }
 }
 
-pub struct AudioPacketizer {
-    pub sequence: u16,
-    pub timestamp: u32,
-    pub key: [u8; 16],
-    pub key_id: u32,
-    pub encrypted: bool,
-    pub packet_ms: u32,
-    pending: Vec<Vec<u8>>,
-    /// The RTP timestamp of the FEC block's first packet.
-    block_timestamp: u32,
-    /// The buffers earlier packets came in, reused for the next: a stream sends
-    /// one packet after another, and none of them allocates its own buffer.
-    spare: Vec<Vec<u8>>,
-}
-impl AudioPacketizer {
-    pub fn new(key: [u8; 16], key_id: u32, encrypted: bool, packet_ms: u32) -> Self {
-        Self {
-            sequence: 0,
-            timestamp: 0,
-            key,
-            key_id,
-            encrypted,
-            packet_ms,
-            pending: vec![],
-            block_timestamp: 0,
-            spare: vec![],
-        }
-    }
-    /// One Opus or PCM packet, `packet_ms` after the last.
-    pub fn encode(&mut self, opus: &[u8]) -> Result<Vec<Vec<u8>>> {
-        self.encode_part(opus, true)
-    }
-    /// One piece of a frame. Every piece of a frame carries its timestamp, which moves on by
-    /// `packet_ms` after the `last` piece (AC3 and E-AC3 frames take several packets).
-    pub fn encode_part(&mut self, opus: &[u8], last: bool) -> Result<Vec<Vec<u8>>> {
-        let mut output = Vec::new();
-        self.encode_part_into(opus, last, &mut output)?;
-        Ok(output)
-    }
-    /// [`Self::encode`] into `output`, whose buffers this packetizer reuses: pass the same
-    /// `output` every call and each packet comes in the previous one's room. The caller
-    /// sends between calls; this first takes the buffers of the packets already sent.
-    pub fn encode_into(&mut self, opus: &[u8], output: &mut Vec<Vec<u8>>) -> Result<()> {
-        self.encode_part_into(opus, true, output)
-    }
-    /// [`Self::encode_part`] into `output`, reused the same way as [`Self::encode_into`].
-    pub fn encode_part_into(
-        &mut self,
-        opus: &[u8],
-        last: bool,
-        output: &mut Vec<Vec<u8>>,
-    ) -> Result<()> {
-        // The previous call's packets, handed back, become this one's buffers.
-        self.spare.append(output);
-        if self.pending.is_empty() {
-            self.block_timestamp = self.timestamp;
-        }
-        let seq = self.sequence;
-        let mut iv = [0; 16];
-        iv[..4].copy_from_slice(&self.key_id.wrapping_add(u32::from(seq)).to_be_bytes());
-        let mut data = self.spare.pop().unwrap_or_default();
-        if self.encrypted {
-            crypto::cbc_seal_into(&self.key, &iv, opus, &mut data);
-        } else {
-            data.clear();
-            data.extend_from_slice(opus);
-        }
-        let mut p = self.room(12);
-        p[0] = 0x80;
-        p[1] = 97;
-        p[2..4].copy_from_slice(&seq.to_be_bytes());
-        p[4..8].copy_from_slice(&self.timestamp.to_be_bytes());
-        p.extend_from_slice(&data);
-        output.push(p);
-        self.pending.push(data);
-        self.sequence = self.sequence.wrapping_add(1);
-        if last {
-            self.timestamp = self.timestamp.wrapping_add(self.packet_ms);
-        }
-        if self.pending.len() == 4 {
-            let len = self.pending.iter().map(Vec::len).max().unwrap();
-            let matrix = [[0x77, 0x40, 0x38, 0x0e], [0xc7, 0xa7, 0x0d, 0x6c]];
-            for (index, row) in matrix.iter().enumerate() {
-                let mut p = self.room(24 + len);
-                p[0] = 0x80;
-                p[1] = 127;
-                p[2..4].copy_from_slice(&self.sequence.wrapping_add(index as u16).to_be_bytes());
-                p[4..8].copy_from_slice(&self.timestamp.to_be_bytes());
-                p[12] = index as u8;
-                p[13] = 97;
-                p[14..16].copy_from_slice(&seq.wrapping_sub(3).to_be_bytes());
-                p[16..20].copy_from_slice(&self.block_timestamp.to_be_bytes());
-                for (j, b) in self.pending.iter().enumerate() {
-                    axpy(&mut p[24..24 + b.len()], b, row[j]);
-                }
-                output.push(p);
-            }
-            // The block's payloads become the next packets' buffers too.
-            self.spare.append(&mut self.pending);
-        }
-        Ok(())
-    }
-    /// A packet buffer off the free list, zeroed to `len`.
-    fn room(&mut self, len: usize) -> Vec<u8> {
-        let mut room = self.spare.pop().unwrap_or_default();
-        room.clear();
-        room.resize(len, 0);
-        room
-    }
-}
-
 /// nanors uses a Cauchy matrix; the Vandermonde matrix used by many RS crates is not wire compatible.
 pub fn cauchy_encode(shards: &mut [Vec<u8>], data: usize, parity: usize) -> Result<()> {
     cauchy_encode_offset::<0>(shards, data, parity)
@@ -1615,6 +1610,8 @@ fn cauchy_encode_with<const OFFSET: usize>(
     }
     Ok(())
 }
+#[cfg(test)]
+mod opt_tests;
 #[cfg(test)]
 mod streamed_tests;
 #[cfg(test)]

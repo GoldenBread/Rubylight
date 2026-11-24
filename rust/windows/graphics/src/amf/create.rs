@@ -384,6 +384,8 @@ impl Encoder {
                 dynamic: None,
                 graphics_stats: None,
                 vpe: None,
+                vpe_kept: None,
+                reencode_pool: submit::ReencodePool::default(),
                 last_query: None,
                 last_submit: None,
                 last_accepted: None,
