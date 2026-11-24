@@ -9,7 +9,7 @@
 REPO=$(cd "$(dirname "$0")/../../.." && pwd)
 S=${WORK_ROOT:-${TMPDIR:-/tmp}/rubylight-pad-stream}; mkdir -p "$S"
 cd "$REPO"
-REC=$(realpath target/probes/release/input_recorder)
+REC=$(realpath ${PROBE:-target/probes/release/input_recorder})
 label=$1 type=$2 conf=$3; out=$S/pads-$label.txt; rm -f $out
 echo "=== $label (client type $type, ${conf:-defaults})"
 (sleep 21; for d in /sys/class/input/event*; do e=${d##*/}; ph=$(grep -s HID_PHYS= $d/device/device/uevent | cut -d= -f2); n=$(cat $d/device/name); case "$ph$n" in rubylight-*|*Rubylight*) acl=$(getfacl -p /dev/input/$e 2>/dev/null | grep -c "^user:$USER:"); echo "  device $e \"$n\" phys=${ph:-none} user_acl=$acl";; esac; done) > $S/mid-$label.txt &

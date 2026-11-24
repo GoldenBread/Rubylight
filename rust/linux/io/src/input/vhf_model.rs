@@ -40,9 +40,11 @@ const SWITCH_PERIOD: Duration = Duration::from_millis(10);
 const STEAM_PERIOD: Duration = Duration::from_millis(4);
 /// Moonlight's Menu (start) button.
 const MENU: u32 = 0x10;
-/// The Steam Controller's commands for lizard mode: on (default mappings), off (cleared).
+/// The Steam Controller's command for lizard mode on (default mappings), and the output report
+/// the driver writes twice as it switches it off, to tell the player (the clear-mappings command
+/// comes with it, but a program that has the pad open sends that too).
 const LIZARD_ON: u8 = steam_controller::CMD_SET_DEFAULT_DIGITAL_MAPPINGS;
-const LIZARD_OFF: u8 = steam_controller::CMD_CLEAR_DIGITAL_MAPPINGS;
+const SWITCHED: u8 = steam_controller::HAPTIC_PULSE_ID;
 /// Moonlight's `LI_CCAP_DUAL_TOUCHPAD`.
 const CCAP_DUAL_TOUCHPAD: u16 = 0x100;
 
@@ -278,6 +280,8 @@ impl VhfModel {
             let kind = event.feedback_type;
             let data = event.payload[..usize::from(event.payload_size).min(32)].to_vec();
             if let Some(routed) = steam_pad::route(self.id as u16, kind, &data, self.capabilities) {
+                // The pulses with which the driver tells the player it switched are no game's.
+                let routed = routed.filter(|_| !self.lizard.quiet());
                 match routed {
                     Some(steam_pad::Feedback::Forward(kind, data)) => {
                         self.feedback.push((kind, data));
@@ -394,11 +398,6 @@ impl PadModel for VhfModel {
                         // settings, as it turns lizard mode on.
                         Some(&steam_controller::CMD_LOAD_DEFAULT_SETTINGS) => self.bound = true,
                         Some(&LIZARD_ON) => self.lizard.driver_enabled(),
-                        // The driver left lizard mode: the reports go on, Menu let go.
-                        Some(&LIZARD_OFF) => {
-                            self.lizard.driver_disabled();
-                            self.show_hold();
-                        }
                         _ => {}
                     }
                 }
@@ -419,6 +418,13 @@ impl PadModel for VhfModel {
         {
             self.written(number, data);
             self.bound = true;
+            return;
+        }
+        if self.profile == Profile::SteamController && number == SWITCHED {
+            // The driver left lizard mode: the reports go on, Menu let go.
+            self.lizard.driver_disabled();
+            self.written(number, data);
+            self.show_hold();
             return;
         }
         self.written(number, data);

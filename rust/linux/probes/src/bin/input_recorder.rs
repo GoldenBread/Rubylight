@@ -138,7 +138,9 @@ fn describe(event: &Event) -> Option<String> {
 /// `phys` the kernel's drivers leave empty) and records its buttons and axes. A device this
 /// user may not open is logged as such.
 fn watch_pads(log: &Log) {
-    let mut opened = std::collections::BTreeSet::new();
+    // A device the kernel removes frees its path, which a new device may take (hid-steam makes
+    // its input devices again when a program lets go of the controller's hidraw node).
+    let opened = std::sync::Arc::new(std::sync::Mutex::new(std::collections::BTreeSet::new()));
     loop {
         for entry in std::fs::read_dir("/dev/input")
             .into_iter()
@@ -150,7 +152,7 @@ fn watch_pads(log: &Log) {
                 .file_name()
                 .and_then(|name| name.to_str())
                 .is_some_and(|name| name.starts_with("event"));
-            if !is_event || opened.contains(&path) {
+            if !is_event || opened.lock().unwrap().contains(&path) {
                 continue;
             }
             let node = path.file_name().unwrap().to_string_lossy().into_owned();
@@ -164,7 +166,7 @@ fn watch_pads(log: &Log) {
             let file = match file {
                 Ok(file) => file,
                 Err(error) if phys.starts_with("rubylight-") => {
-                    opened.insert(path.clone());
+                    opened.lock().unwrap().insert(path.clone());
                     write(log, &format!("pad refused {node} {phys}: {error}"));
                     continue;
                 }
@@ -174,7 +176,7 @@ fn watch_pads(log: &Log) {
             if id != Some((0x045e, 0x028e)) && !phys.starts_with("rubylight-") {
                 continue;
             }
-            opened.insert(path.clone());
+            opened.lock().unwrap().insert(path.clone());
             let (vendor, product) = id.unwrap_or_default();
             let name = text(&file, 0x06).unwrap_or_default();
             write(
@@ -182,7 +184,11 @@ fn watch_pads(log: &Log) {
                 &format!("pad opened {node} {vendor:04x}:{product:04x} {name:?} {phys}"),
             );
             let log = log.clone();
-            std::thread::spawn(move || read_pad(file, &node, &log));
+            let opened = opened.clone();
+            std::thread::spawn(move || {
+                read_pad(file, &node, &log);
+                opened.lock().unwrap().remove(&path);
+            });
         }
         std::thread::sleep(Duration::from_millis(100));
     }

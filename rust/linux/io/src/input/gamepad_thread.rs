@@ -229,6 +229,14 @@ impl GamepadThread {
             let (key, name) = want.warning();
             match self.make(want, id, arrival.1) {
                 Ok(pad) => {
+                    tracing::info!(
+                        controller = id,
+                        client_type = arrival.0,
+                        capabilities = format!("{:#x}", arrival.1),
+                        pad = name,
+                        refused = ?refused,
+                        "virtual controller connected"
+                    );
                     self.warn(|warnings| {
                         warnings.clear(key);
                         if want == Want::Switch
@@ -252,7 +260,7 @@ impl GamepadThread {
                 }
                 Err(error) if want == Want::Xbox => return Err(error),
                 Err(error) => {
-                    tracing::warn!(controller = id, error = %format!("{error:#}"), "virtual {name} could not be made");
+                    tracing::warn!(controller = id, error = %format!("{error:#}"), "virtual {name} could not be made, choosing another pad");
                     self.warn(|warnings| {
                         warnings.set(
                             key,

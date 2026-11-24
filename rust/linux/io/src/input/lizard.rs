@@ -36,6 +36,8 @@ pub(super) struct Lizard {
     /// the driver's hidraw node meanwhile made it drop the controller and register it again,
     /// which wastes the hold.
     reenabled: bool,
+    /// When the driver last switched, for [`Lizard::quiet`].
+    switched: Option<Instant>,
 }
 
 impl Lizard {
@@ -45,6 +47,7 @@ impl Lizard {
             wanted: allowed,
             since: None,
             reenabled: false,
+            switched: None,
         }
     }
     pub(super) fn phase(&self) -> Phase {
@@ -54,6 +57,14 @@ impl Lizard {
             _ => Phase::Idle,
         }
     }
+    /// Whether the driver is switching, or just did: the haptic pulses it makes to tell the
+    /// player are not a game's, and must not reach the client as rumble.
+    pub(super) fn quiet(&self) -> bool {
+        self.since.is_some()
+            || self
+                .switched
+                .is_some_and(|at| at.elapsed() < Duration::from_millis(600))
+    }
     /// The driver turned lizard mode on (it does as it registers the controller).
     pub(super) fn driver_enabled(&mut self) {
         self.wanted = self.allowed;
@@ -61,6 +72,10 @@ impl Lizard {
     }
     /// The driver turned lizard mode off: the hold is done.
     pub(super) fn driver_disabled(&mut self) {
+        if self.since.is_some() {
+            tracing::info!("hid-steam left lizard mode: the gamepad's input reaches games now");
+            self.switched = Some(Instant::now());
+        }
         self.since = None;
         self.wanted = false;
     }
@@ -72,9 +87,14 @@ impl Lizard {
             // The driver did not switch: it is held by a program of Steam's kind, which needs
             // no hold, unless it started over meanwhile. A report with Menu let go comes
             // first: the driver counts presses, and takes a new one only after that.
+            tracing::info!(
+                again = self.reenabled,
+                "hid-steam did not leave lizard mode within the wait (another program has the pad open?)"
+            );
             self.since = None;
             self.wanted = self.reenabled;
         } else if self.wanted && self.since.is_none() && ready && !menu {
+            tracing::info!("holding Menu for hid-steam to leave lizard mode");
             self.since = Some(Instant::now());
             self.reenabled = false;
         }

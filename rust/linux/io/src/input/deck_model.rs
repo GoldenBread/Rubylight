@@ -23,8 +23,10 @@ const RUMBLE_KIND: u16 = 4;
 const MENU_BYTE: (usize, u8) = (9, 0x40);
 /// ID_SET_DEFAULT_DIGITAL_MAPPINGS: what the driver sends when it turns lizard mode on.
 const LIZARD_ON: u8 = 0x85;
-/// ID_CLEAR_DIGITAL_MAPPINGS: what it sends when it turns lizard mode off, the hold done.
-const LIZARD_OFF: u8 = 0x81;
+/// ID_TRIGGER_HAPTIC_PULSE: what the driver sends twice as it switches, to tell the player.
+/// (ID_CLEAR_DIGITAL_MAPPINGS comes with it, but a program that has the pad open, as SDL does,
+/// sends that too.)
+const SWITCHED: u8 = 0x8f;
 
 pub(super) struct DeckModel {
     deck: SteamDeck,
@@ -122,7 +124,7 @@ impl PadModel for DeckModel {
         match data.first() {
             Some(&LIZARD_ON) => self.lizard.driver_enabled(),
             // The driver left lizard mode: the reports go on, with Options let go.
-            Some(&LIZARD_OFF) => {
+            Some(&SWITCHED) => {
                 self.lizard.driver_disabled();
                 self.report();
             }
