@@ -315,14 +315,15 @@ Test PC: an RX 7800 XT (Navi 32, RDNA 3, VCN 4) with a Ryzen 7 5700X3D, CachyOS 
 | AV1 profile 0, 1080p60 | Tested | moonlight-qt, 20 s, no dropped frame, host p95 4.1 ms. VCN 4 codes 1080 rows as 1082. |
 | HEVC Main10, AV1 10-bit | Supported | Encode and decode tests with HDR10 metadata; no client stream. |
 | HDR | Unsupported | No capture gives an HDR picture: gamescope 3.17's PipeWire stream and KWin 6.8's screen sharing are 8-bit SDR. |
-| 4:4:4, packed 4:4:4 | Unsupported | VA-API on this GPU encodes 4:2:0 only. |
+| Native 4:4:4 | Unsupported | VA-API on this GPU encodes 4:2:0 only. |
+| Packed 4:4:4, 8-bit HEVC and AV1 | Tested | Release builds, 1080p60 to the headless client: one-pixel red and blue columns came back exact (4:2:0 averages them to purple); 60 s each, host p50 1.7 to 2.9 ms (HEVC) and 1.4 to 2.3 ms (AV1), the pass itself 0.08 ms; desktop and gamescope captures. The 10-bit and layered modes are not offered. |
 | PyroWave 4:2:0 and 4:4:4 | Supported | The host advertises both; the SDK's decoder reads the encoder's output. No client stream: the headless client does not decode PyroWave. |
 | Loss recovery (reference invalidation) | Supported | A test drops reported pictures and the rest decodes bit-identical. |
 | GPU clocks held up while streaming (`vaapi_latency_over_power`) | Tested | 1080p60 HEVC host time p95 7.0 to 1.7 ms, 2160p60 output 55.9 to 60 fps, GPU 18.9 to 58.5 W. Needs `rust/linux/packaging/udev/70-rubylight-encoder-clock.rules`. |
 | The game's own gamescope session | Tested | Every stream above. |
 | The user's desktop (ScreenCast portal) | Tested | 1080p HEVC, 1,500 of 1,500 frames at 60 fps with a 60 fps picture on the desktop; the portal asked once. |
 | A Steam game started through the library | Tested | DISSIDIA FINAL FANTASY NT Free Edition under Proton: 3 minutes streamed; the stream ends when the game does, and the client's quit ends the game. |
-| Heroic and Lutris games | Supported | Library import tests; none started. |
+| Heroic and Lutris games | Tested (Heroic), Supported (Lutris) | FINAL FANTASY VII REMAKE INTERGRADE (Epic, through Heroic) imported, streamed 2 minutes and ended by the client's quit; Lutris is not installed here. |
 | Keyboard and mouse (gamescope session, desktop) | Tested | The headless client's input reached an X client in the session; desktop input by device tests. |
 | Xbox 360 pad (uinput) with rumble | Tested | Device tests and a stream (`tools/hw/linux-host/pad-stream.sh`). |
 | DualSense, DualShock 4, Switch Pro, Steam Deck, Steam Controller (uhid) | Tested | A stream each: the client's button and stick reached the game, the game's rumble reached the client. Motion and touchpad devices open to the user with `71-rubylight-pads.rules`. |
