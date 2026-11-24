@@ -110,8 +110,20 @@ pub fn active(host_id: &str) -> bool {
 
 /// Waits up to `wait` for `tunnel` to come through: the loopback address that reaches the host.
 pub fn wait(tunnel: &ClientTunnel, wait: Duration) -> Result<IpAddr, String> {
+    wait_while(tunnel, wait, || false)
+}
+
+/// Waits up to `wait` for `tunnel` to come through, aborting promptly when `cancelled()` returns `true`.
+pub fn wait_while(
+    tunnel: &ClientTunnel,
+    wait: Duration,
+    mut cancelled: impl FnMut() -> bool,
+) -> Result<IpAddr, String> {
     let deadline = Instant::now() + wait;
     loop {
+        if cancelled() {
+            return Err("cancelled".into());
+        }
         match tunnel.status() {
             Status::Connected { address, .. } => return Ok(address),
             Status::Failed(reason) => return Err(reason),
@@ -121,7 +133,7 @@ pub fn wait(tunnel: &ClientTunnel, wait: Duration) -> Result<IpAddr, String> {
         if Instant::now() >= deadline {
             return Err("the PC did not answer in time".into());
         }
-        std::thread::sleep(Duration::from_millis(100));
+        std::thread::sleep(Duration::from_millis(50));
     }
 }
 
@@ -262,11 +274,24 @@ pub fn unreachable(reply: &InternetPlay, tried: Tried, punched: Option<String>) 
 /// The punched path to `host_id` as one blocking step: the tunnel, then its loopback address,
 /// or the words for every path when it does not come through.
 pub fn punch(host_id: &str, reply: &InternetPlay, tried: Tried) -> Result<SocketAddr, String> {
+    punch_cancellable(host_id, reply, tried, || false)
+}
+
+/// Cancellable variant of [`punch`] that aborts waiting promptly when `cancelled()` returns `true`.
+pub fn punch_cancellable(
+    host_id: &str,
+    reply: &InternetPlay,
+    tried: Tried,
+    mut cancelled: impl FnMut() -> bool,
+) -> Result<SocketAddr, String> {
+    if cancelled() {
+        return Err("cancelled".into());
+    }
     if !enabled() || !reply.enabled || reply.secret.is_none() {
         return Err(unreachable(reply, tried, None));
     }
     tunnel(host_id, reply)
-        .and_then(|tunnel| wait(&tunnel, PUNCH_WAIT))
+        .and_then(|tunnel| wait_while(&tunnel, PUNCH_WAIT, &mut cancelled))
         .map(|ip| SocketAddr::new(ip, reply.ports.http))
         .map_err(|reason| unreachable(reply, tried, Some(reason)))
 }

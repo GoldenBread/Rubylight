@@ -707,7 +707,7 @@ fn connection<T>(request: &Request<'_>, cancels: &[&Cancel], deadline: Deadline,
         return Err(Error::Cancelled);
     }
     let connect_by = match deadline { Deadline::At(at) => Some(at), _ => None };
-    let result = connect(request.host, request.port, request.timeouts.connect, connect_by).and_then(|tcp| {
+    let result = connect_with_cancels(request.host, request.port, request.timeouts.connect, connect_by, cancels).and_then(|tcp| {
         let abort = Abort::new(&tcp)?;
         let mut ids = Vec::with_capacity(cancels.len());
         let result = cancels
@@ -727,15 +727,28 @@ fn connection<T>(request: &Request<'_>, cancels: &[&Cancel], deadline: Deadline,
 }
 
 pub(crate) fn connect(host: &Host, port: u16, timeout: Duration, deadline: Option<std::time::Instant>) -> Result<TcpStream, Error> {
-    connect_each(&host.socket_addrs(port)?, timeout, deadline, TcpStream::connect_timeout)
+    connect_with_cancels(host, port, timeout, deadline, &[])
+}
+
+fn connect_with_cancels(host: &Host, port: u16, timeout: Duration, deadline: Option<std::time::Instant>, cancels: &[&Cancel]) -> Result<TcpStream, Error> {
+    connect_each_with(&host.socket_addrs(port)?, timeout, deadline, cancels, TcpStream::connect_timeout)
 }
 
 /// Tries the addresses in turn, each for `timeout` but never past `deadline`; a deadline that
 /// runs out before an address answers fails with `TimedOut`.
+#[cfg_attr(not(test), allow(dead_code))]
 fn connect_each<S>(addresses: &[SocketAddr], timeout: Duration, deadline: Option<std::time::Instant>,
+    attempt: impl FnMut(&SocketAddr, Duration) -> std::io::Result<S>) -> Result<S, Error> {
+    connect_each_with(addresses, timeout, deadline, &[], attempt)
+}
+
+fn connect_each_with<S>(addresses: &[SocketAddr], timeout: Duration, deadline: Option<std::time::Instant>, cancels: &[&Cancel],
     mut attempt: impl FnMut(&SocketAddr, Duration) -> std::io::Result<S>) -> Result<S, Error> {
     let mut last = None;
     for address in addresses {
+        if cancels.iter().any(|cancel| cancel.is_cancelled()) {
+            return Err(Error::Cancelled);
+        }
         let budget = match deadline {
             None => timeout,
             Some(deadline) => match deadline.checked_duration_since(std::time::Instant::now()).filter(|left| !left.is_zero()) {

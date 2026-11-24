@@ -28,14 +28,15 @@ pub(crate) struct ManagedHostBridge {
 }
 
 impl ManagedHostBridge {
-    fn shutdown(&self) {
+    fn shutdown_nonblocking(&self) {
         self.closed.store(true, Ordering::Release);
         self.events.1.notify_all();
-        self.manager.stop_polling();
+        self.manager.shutdown();
     }
 }
 
 pub(crate) static HOST_MANAGERS: Slab<ManagedHostBridge> = Slab::new();
+static PENDING_DESTROYS: Mutex<Vec<std::thread::JoinHandle<()>>> = Mutex::new(Vec::new());
 
 #[derive(Default, Deserialize)]
 #[serde(default)]
@@ -177,8 +178,22 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarHostsJni_hostMana
     _: JClass,
     handle: jlong,
 ) {
-    if let Some(bridge) = HOST_MANAGERS.take(handle) {
-        bridge.shutdown();
+    let Some(bridge) = HOST_MANAGERS.take(handle) else {
+        return;
+    };
+    bridge.shutdown_nonblocking();
+    if bridge.manager.has_active_workers() {
+        let reaper = std::thread::Builder::new()
+            .name("nj-hm-reaper".into())
+            .spawn(move || {
+                bridge.manager.wait_for_polling_stopped();
+            })
+            .ok();
+        if let Some(reaper_handle) = reaper {
+            let mut pending = lock(&PENDING_DESTROYS);
+            pending.retain(|h| !h.is_finished());
+            pending.push(reaper_handle);
+        }
     }
 }
 
@@ -188,7 +203,15 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarHostsJni_hostMana
     _: JClass,
 ) {
     for bridge in HOST_MANAGERS.drain_all() {
-        bridge.shutdown();
+        bridge.shutdown_nonblocking();
+        bridge.manager.wait_for_polling_stopped();
+    }
+    let pending = {
+        let mut guard = lock(&PENDING_DESTROYS);
+        guard.drain(..).collect::<Vec<_>>()
+    };
+    for handle in pending {
+        let _ = handle.join();
     }
     super::hosts_poller::drain_all_pollers();
 }

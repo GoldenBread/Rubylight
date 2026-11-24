@@ -21,10 +21,13 @@ use crate::stun::{MOONLIGHT_STUN_PORT, MOONLIGHT_STUN_SERVER, STUN_TIMEOUT, find
 
 use super::client_pool::HostClientPool;
 use super::identity::IdentityStore;
+#[cfg(test)]
+pub(super) use super::manager_ops::apply_server_info;
+pub(super) use super::manager_ops::{PollCommitOutcome, merge_entry_in_memory};
 use super::meta::HostMetaStore;
 use super::poll::{
-    compute_internet_path, is_site_local_host, parallel_poll_direct, parse_internet_reply,
-    poll_over_the_internet, refresh_internet_play,
+    PollCancel, is_site_local_host, parallel_poll_direct_cancellable,
+    poll_over_the_internet_cancellable, refresh_internet_play_cancellable,
 };
 use super::store::{HostEntry, HostStore};
 
@@ -70,6 +73,7 @@ pub(super) struct ManagedTuple {
     pub(super) network_lock: Arc<Mutex<()>>,
     pub(super) stop_signal: Arc<(Mutex<bool>, Condvar)>,
     pub(super) poll_thread: Option<JoinHandle<()>>,
+    pub(super) active_cancel: Option<PollCancel>,
     pub(super) removal_tombstone: bool,
 }
 
@@ -86,6 +90,9 @@ pub(super) struct Inner {
     pub(super) vpn_active: AtomicBool,
     active_polls: Mutex<usize>,
     active_polls_cv: Condvar,
+    pub(super) stopping_threads: Mutex<Vec<JoinHandle<()>>>,
+    wait_lock: Mutex<()>,
+    pub(super) shutdown_cancel: PollCancel,
     listener: Mutex<Option<HostUpdateListener>>,
     pub(super) stun_resolver: Mutex<ExternalIpv4Resolver>,
 }
@@ -98,6 +105,20 @@ impl Drop for ActivePollGuard<'_> {
         *count = count.saturating_sub(1);
         if *count == 0 {
             self.0.active_polls_cv.notify_all();
+        }
+    }
+}
+
+struct ActiveCancelClearGuard {
+    arc: Arc<Mutex<ManagedTuple>>,
+    cancel: PollCancel,
+}
+
+impl Drop for ActiveCancelClearGuard {
+    fn drop(&mut self) {
+        let mut t = self.arc.lock().unwrap_or_else(|e| e.into_inner());
+        if t.active_cancel.as_ref().is_some_and(|c| c.ptr_eq(&self.cancel)) {
+            t.active_cancel = None;
         }
     }
 }
@@ -162,6 +183,9 @@ impl HostManager {
                 vpn_active: AtomicBool::new(false),
                 active_polls: Mutex::new(0),
                 active_polls_cv: Condvar::new(),
+                stopping_threads: Mutex::new(Vec::new()),
+                wait_lock: Mutex::new(()),
+                shutdown_cancel: PollCancel::new(),
                 listener: Mutex::new(None),
                 stun_resolver: Mutex::new(Arc::new(refresh_external_ipv4_direct)),
             }),
@@ -205,20 +229,66 @@ impl HostManager {
         internet::set_enabled(enabled);
     }
 
-    /// Blocks until every in-flight `poll_host` call has completed.
+    /// Joins stopped worker threads and blocks until every in-flight `poll_host` call completes.
     pub fn wait_for_polling_stopped(&self) {
-        let mut count = self
+        let _wait = self.inner.wait_lock.lock().unwrap_or_else(|e| e.into_inner());
+        loop {
+            let handles = {
+                let mut stopping = self
+                    .inner
+                    .stopping_threads
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner());
+                std::mem::take(&mut *stopping)
+            };
+            for h in handles {
+                let _ = h.join();
+            }
+            let mut count = self
+                .inner
+                .active_polls
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            while *count != 0 {
+                count = self
+                    .inner
+                    .active_polls_cv
+                    .wait(count)
+                    .unwrap_or_else(|e| e.into_inner());
+            }
+            let empty = self
+                .inner
+                .stopping_threads
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .is_empty();
+            if empty {
+                break;
+            }
+        }
+    }
+
+    /// Whether any poll pass is active or any stopped worker thread has not yet exited.
+    pub fn has_active_workers(&self) -> bool {
+        let active = *self
             .inner
             .active_polls
             .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            != 0;
+        let mut stopping = self
+            .inner
+            .stopping_threads
+            .lock()
             .unwrap_or_else(|e| e.into_inner());
-        while *count != 0 {
-            count = self
-                .inner
-                .active_polls_cv
-                .wait(count)
-                .unwrap_or_else(|e| e.into_inner());
-        }
+        stopping.retain(|h| !h.is_finished());
+        active || !stopping.is_empty()
+    }
+
+    /// Cancels all polling and ad-hoc manager requests non-blockingly for teardown.
+    pub fn shutdown(&self) {
+        self.inner.shutdown_cancel.cancel();
+        self.stop_polling();
     }
 
     /// Monotonic milliseconds elapsed since this manager was opened.
@@ -317,6 +387,7 @@ impl HostManager {
                 network_lock: Arc::new(Mutex::new(())),
                 stop_signal: Arc::new((Mutex::new(false), Condvar::new())),
                 poll_thread: None,
+                active_cancel: None,
                 removal_tombstone: false,
             }));
             tuples.insert(uuid, Arc::clone(&arc));
@@ -384,7 +455,9 @@ impl HostManager {
         }
     }
 
-    /// Stops periodic background polling and joins every tuple's worker thread before returning.
+    /// Signals polling to stop and cancels active poll sockets without blocking on thread joins.
+    ///
+    /// Call [`Self::wait_for_polling_stopped`] off the UI thread when synchronous join is needed.
     pub fn stop_polling(&self) {
         self.inner.polling_active.store(false, Ordering::Release);
         let arcs: Vec<_> = self
@@ -396,6 +469,7 @@ impl HostManager {
             .cloned()
             .collect();
         let mut handles = Vec::new();
+        let mut cancels = Vec::new();
         for arc in arcs {
             let mut t = arc.lock().unwrap_or_else(|e| e.into_inner());
             let (lock, cvar) = &*t.stop_signal;
@@ -404,15 +478,29 @@ impl HostManager {
             if let Some(h) = t.poll_thread.take() {
                 handles.push(h);
             }
+            if let Some(c) = t.active_cancel.take() {
+                cancels.push(c);
+            }
+        }
+        if !handles.is_empty() {
+            let mut stopping = self
+                .inner
+                .stopping_threads
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            stopping.retain(|h| !h.is_finished());
+            stopping.extend(handles);
         }
         self.inner.pool.clear();
-        for h in handles {
-            let _ = h.join();
+        for c in cancels {
+            c.cancel();
         }
     }
 
     fn maybe_start_tuple_thread(&self, tuple_arc: &Arc<Mutex<ManagedTuple>>) {
-        if !self.inner.polling_active.load(Ordering::Acquire) {
+        if !self.inner.polling_active.load(Ordering::Acquire)
+            || self.inner.shutdown_cancel.is_cancelled()
+        {
             return;
         }
         let mut t = tuple_arc.lock().unwrap_or_else(|e| e.into_inner());
@@ -421,25 +509,34 @@ impl HostManager {
         }
         let now_ms = self.now_ms();
         t.poll_state.enforce_ttl(now_ms);
-        *t.stop_signal.0.lock().unwrap_or_else(|e| e.into_inner()) = false;
+        let stop_signal = Arc::new((Mutex::new(false), Condvar::new()));
+        t.stop_signal = Arc::clone(&stop_signal);
 
         let uuid = t.snapshot.entry.shared.unique_id.clone();
-        let stop_signal = Arc::clone(&t.stop_signal);
-        let mgr = self.clone();
+        let weak = Arc::downgrade(&self.inner);
         let handle = std::thread::Builder::new()
             .name(format!("nj-host-poll-{uuid}"))
             .spawn(move || {
                 loop {
-                    let _ = mgr.poll_host(&uuid, false);
+                    let Some(inner) = weak.upgrade() else {
+                        break;
+                    };
+                    let mgr = HostManager { inner };
+                    let _ = mgr.poll_host_inner(&uuid, false, Some(&stop_signal));
+                    let active = mgr.inner.polling_active.load(Ordering::Acquire);
+                    drop(mgr);
                     let (lock, cvar) = &*stop_signal;
                     let guard = lock.lock().unwrap_or_else(|e| e.into_inner());
-                    if *guard || !mgr.inner.polling_active.load(Ordering::Acquire) {
+                    if *guard || !active {
                         break;
                     }
                     let (guard, _) = cvar
                         .wait_timeout(guard, Duration::from_millis(SERVERINFO_POLL_PERIOD_MS))
                         .unwrap_or_else(|e| e.into_inner());
-                    if *guard || !mgr.inner.polling_active.load(Ordering::Acquire) {
+                    let still_active = weak
+                        .upgrade()
+                        .is_some_and(|inner| inner.polling_active.load(Ordering::Acquire));
+                    if *guard || !still_active {
                         break;
                     }
                 }
@@ -452,6 +549,15 @@ impl HostManager {
     ///
     /// Returns `true` if visible state or persisted details changed.
     pub fn poll_host(&self, uuid: &str, force: bool) -> bool {
+        self.poll_host_inner(uuid, force, None)
+    }
+
+    fn poll_host_inner(
+        &self,
+        uuid: &str,
+        force: bool,
+        bg_stop: Option<&Arc<(Mutex<bool>, Condvar)>>,
+    ) -> bool {
         let Some(arc) = self
             .inner
             .tuples
@@ -462,7 +568,7 @@ impl HostManager {
         else {
             return false;
         };
-        let (network_lock, initial_state, mut snap_before, last_internet_read_ms) = {
+        let (network_lock, initial_state, snap_before, last_internet_read_ms) = {
             let t = arc.lock().unwrap_or_else(|e| e.into_inner());
             if t.removal_tombstone {
                 return false;
@@ -489,6 +595,25 @@ impl HostManager {
         }
         let _active_guard = ActivePollGuard(&self.inner);
 
+        let pass_cancel = PollCancel::new();
+        {
+            let mut t = arc.lock().unwrap_or_else(|e| e.into_inner());
+            let bg_stopped = bg_stop.is_some_and(|sig| {
+                *sig.0.lock().unwrap_or_else(|e| e.into_inner())
+                    || !self.inner.polling_active.load(Ordering::Acquire)
+            });
+            if t.removal_tombstone || bg_stopped || self.inner.shutdown_cancel.is_cancelled() {
+                return false;
+            }
+            t.active_cancel = Some(pass_cancel.clone());
+        }
+        let _cancel_guard = ActiveCancelClearGuard {
+            arc: Arc::clone(&arc),
+            cancel: pass_cancel.clone(),
+        };
+        let is_cancelled =
+            || pass_cancel.is_cancelled() || self.inner.shutdown_cancel.is_cancelled();
+
         let cert_der = snap_before.entry.server_certificate_der();
         let slots = snap_before.entry.slots();
         let active_port = snap_before.active_endpoint.as_ref().map(|e| e.port);
@@ -499,13 +624,17 @@ impl HostManager {
             snap_before.entry.shared.https_port,
         );
         let likely_online = initial_state == HostReachState::Online;
-        let direct = parallel_poll_direct(
+        let direct = parallel_poll_direct_cancellable(
             &self.inner.pool,
             &candidates,
             Some(uuid),
             cert_der.as_deref(),
             likely_online,
+            Some(&pass_cancel),
         );
+        if is_cancelled() {
+            return false;
+        }
 
         let now_ms = self.now_ms();
         let mut winner = direct.winner;
@@ -525,7 +654,7 @@ impl HostManager {
                 initial_state == HostReachState::Offline,
                 active_is_tunnel,
             );
-            match poll_over_the_internet(
+            match poll_over_the_internet_cancellable(
                 &self.inner.pool,
                 uuid,
                 reply_json,
@@ -535,12 +664,16 @@ impl HostManager {
                 direct.tried,
                 likely_online,
                 allow_punch,
+                Some(&pass_cancel),
             ) {
                 Ok((_, win)) => winner = Some(win),
                 Err(fail) => {
                     internet_another_cert = fail.another_certificate;
                     unreachable_msg = Some(fail.reason);
                 }
+            }
+            if is_cancelled() {
+                return false;
             }
         }
 
@@ -552,6 +685,9 @@ impl HostManager {
                 && win.info.external_ip.is_none()
                 && is_site_local_host(&win.candidate.address)
             {
+                if is_cancelled() {
+                    return false;
+                }
                 if self.inner.vpn_active.load(Ordering::Acquire) {
                     needs_vpn_stun = true;
                 } else {
@@ -566,17 +702,19 @@ impl HostManager {
             }
             if win.info.paired
                 && !win.should_clear_cert
+                && !is_cancelled()
                 && is_internet_play_read_due(last_internet_read_ms, now_ms)
                 && is_site_local_host(&win.candidate.address)
                 && let Some(ref cert) = cert_der
             {
-                match refresh_internet_play(
+                match refresh_internet_play_cancellable(
                     &self.inner.pool,
                     &win.candidate.address,
                     win.candidate.port,
                     win.info.https_port,
                     cert,
                     &win.info.capabilities,
+                    Some(&pass_cancel),
                 ) {
                     Ok(raw) => internet_play_update = Some(Some(raw)),
                     Err(HostApiError::Host(Error::NotFound(_))) => internet_play_update = Some(None),
@@ -584,89 +722,35 @@ impl HostManager {
                 }
             }
         }
+        if is_cancelled() {
+            return false;
+        }
 
         let _rem_guard = self.inner.removal_lock.lock().unwrap_or_else(|e| e.into_inner());
         let mut t = arc.lock().unwrap_or_else(|e| e.into_inner());
         if t.removal_tombstone {
             return false;
         }
-        let changed = match winner {
-            Some(win) => {
-                t.poll_state.record_poll_success(now_ms);
-                let prev = t.snapshot.clone();
-                apply_server_info(&mut t.snapshot, &win.info, win.candidate.port, &win.candidate);
-                t.snapshot.state = HostReachState::Online;
-                t.snapshot.another_certificate = false;
-                t.snapshot.unreachable = None;
-                t.snapshot.needs_vpn_stun = needs_vpn_stun;
-                if win.should_clear_cert {
-                    t.snapshot.entry.shared.server_certificate = None;
-                    t.snapshot.entry.shared.internet_play = None;
-                    t.snapshot.paired = false;
-                    internet::stop(uuid);
-                    self.inner.pool.clear();
-                } else {
-                    t.snapshot.paired = win.info.paired;
-                }
-                if let Some(remote) = resolved_stun_remote {
-                    t.snapshot.entry.remote_endpoint = Some(remote);
-                    t.snapshot.needs_vpn_stun = false;
-                }
-                if !win.should_clear_cert
-                    && let Some(ref raw_update) = internet_play_update
-                {
-                    t.snapshot.entry.shared.internet_play = raw_update.clone();
-                    t.last_internet_read_ms = Some(now_ms);
-                }
-                if let Some(caps_json) = win.info.capabilities.to_versioned_json() {
-                    let _ = self.inner.meta.save_capabilities(uuid, &caps_json);
-                    t.snapshot.capabilities_json = Some(caps_json);
-                }
-                let reply = parse_internet_reply(t.snapshot.entry.shared.internet_play.as_deref());
-                t.snapshot.internet_path = compute_internet_path(
-                    t.snapshot.active_endpoint.as_ref(),
-                    t.snapshot.entry.local_endpoint.as_ref(),
-                    t.snapshot.entry.manual_endpoint.as_ref(),
-                    reply.as_ref(),
-                );
-                t.snapshot.entry.sync_shared_from_slots();
-                let _ = self.inner.store.upsert(t.snapshot.entry.clone());
-                t.snapshot != prev
-            }
-            None => {
-                let offline_now =
-                    t.poll_state
-                        .record_poll_failure(initial_state == HostReachState::Unknown);
-                let prev_state = t.snapshot.state;
-                let prev_cert_flag = t.snapshot.another_certificate;
-                let prev_unreach = t.snapshot.unreachable.clone();
-                let prev_path = t.snapshot.internet_path.clone();
-                let prev_vpn_stun = t.snapshot.needs_vpn_stun;
-                if offline_now {
-                    t.snapshot.state = HostReachState::Offline;
-                }
-                t.snapshot.server_info = None;
-                t.snapshot.another_certificate =
-                    direct.another_certificate || internet_another_cert;
-                t.snapshot.internet_path = None;
-                t.snapshot.needs_vpn_stun = false;
-                if let Some(msg) = unreachable_msg {
-                    t.snapshot.unreachable = Some(msg);
-                }
-                t.snapshot.state != prev_state
-                    || t.snapshot.another_certificate != prev_cert_flag
-                    || t.snapshot.unreachable != prev_unreach
-                    || t.snapshot.internet_path != prev_path
-                    || t.snapshot.needs_vpn_stun != prev_vpn_stun
-            }
-        };
+        let changed = self.commit_poll_outcome(
+            &mut t,
+            uuid,
+            now_ms,
+            initial_state,
+            PollCommitOutcome {
+                winner,
+                resolved_stun_remote,
+                needs_vpn_stun,
+                internet_play_update,
+                another_certificate: direct.another_certificate || internet_another_cert,
+                unreachable_msg,
+            },
+        );
         let emitted = changed.then(|| t.snapshot.clone());
         drop(t);
         if let Some(snap) = emitted {
             self.emit(&snap);
             return true;
         }
-        let _ = &mut snap_before;
         false
     }
 }
@@ -674,76 +758,7 @@ impl HostManager {
 impl Drop for HostManager {
     fn drop(&mut self) {
         if Arc::strong_count(&self.inner) == 1 {
-            self.stop_polling();
+            self.shutdown();
         }
     }
-}
-
-pub(super) fn apply_server_info(
-    snap: &mut HostSnapshot,
-    info: &ServerInfo,
-    answered_port: u16,
-    candidate: &nightjar_policy::hosts::ProbeCandidate,
-) {
-    if !info.hostname.is_empty() && info.hostname != "UNKNOWN" {
-        snap.entry.shared.name = info.hostname.clone();
-    }
-    if let Some(ref mac) = info.mac_address {
-        snap.entry.shared.mac = Some(mac.clone());
-    }
-    if info.https_port != 0 {
-        snap.entry.shared.https_port = info.https_port;
-    }
-    snap.external_port = info.external_port;
-    snap.running_game_id = info.current_game;
-    snap.running_game_uuid = info.current_game_uuid.clone();
-    snap.active_endpoint = Some(EndpointSlot {
-        address: candidate.address.clone(),
-        port: answered_port,
-    });
-    if let Some(ref local_ip) = info.local_ip
-        && !local_ip.is_empty()
-        && !local_ip.starts_with("127.")
-    {
-        snap.entry.local_endpoint = EndpointSlot::new(local_ip, answered_port);
-    }
-    if let Some(ref external_ip) = info.external_ip
-        && !external_ip.is_empty()
-    {
-        let ext_port = if info.external_port != 0 {
-            info.external_port
-        } else {
-            answered_port
-        };
-        snap.entry.remote_endpoint = EndpointSlot::new(external_ip, ext_port);
-    }
-    snap.server_info = Some(info.clone());
-}
-
-fn merge_entry_in_memory(dst: &mut HostEntry, src: HostEntry) {
-    if !src.shared.name.is_empty() {
-        dst.shared.name = src.shared.name;
-    }
-    if src.shared.mac.is_some() {
-        dst.shared.mac = src.shared.mac;
-    }
-    if src.local_endpoint.is_some() {
-        dst.local_endpoint = src.local_endpoint;
-    }
-    if src.manual_endpoint.is_some() {
-        dst.manual_endpoint = src.manual_endpoint;
-    }
-    if src.ipv6_endpoint.is_some() {
-        dst.ipv6_endpoint = src.ipv6_endpoint;
-    }
-    if src.remote_endpoint.is_some() {
-        dst.remote_endpoint = src.remote_endpoint;
-    }
-    if src.pinned_endpoint.is_some() {
-        dst.pinned_endpoint = src.pinned_endpoint;
-    }
-    if src.shared.server_certificate.is_some() {
-        dst.shared.server_certificate = src.shared.server_certificate;
-    }
-    dst.sync_shared_from_slots();
 }

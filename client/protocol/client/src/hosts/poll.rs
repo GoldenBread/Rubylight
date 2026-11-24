@@ -2,7 +2,8 @@
 //! `is_site_local_host` resolution, Desktop address ordering, and `/internet-play/v1` refresh.
 
 use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
-use std::sync::{mpsc, Arc};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{mpsc, Arc, Mutex};
 
 use nightjar_policy::hosts::{
     is_site_local_ip, is_tunnel_address, should_clear_cert_on_unpair, CandidateSlot, PollErrorKind,
@@ -43,6 +44,81 @@ pub struct DirectPollOutcome {
     pub last_error: Option<PollErrorKind>,
 }
 
+#[derive(Default)]
+struct PollCancelState {
+    next_id: u64,
+    cancellers: Vec<(u64, HostClientCanceller)>,
+}
+
+#[derive(Default)]
+struct PollCancelInner {
+    cancelled: AtomicBool,
+    state: Mutex<PollCancelState>,
+}
+
+/// Thread-safe cancellation scope tracking active [`HostClientCanceller`]s for a poll pass.
+#[derive(Clone, Default)]
+pub struct PollCancel(Arc<PollCancelInner>);
+
+/// RAII guard unregistering a [`HostClientCanceller`] from [`PollCancel`] on drop.
+pub struct PollCancelGuard {
+    inner: Arc<PollCancelInner>,
+    id: u64,
+}
+
+impl Drop for PollCancelGuard {
+    fn drop(&mut self) {
+        let mut state = self.inner.state.lock().unwrap_or_else(|e| e.into_inner());
+        state.cancellers.retain(|(id, _)| *id != self.id);
+    }
+}
+
+impl PollCancel {
+    /// Creates an uncancelled [`PollCancel`] scope.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Whether [`Self::cancel`] has been called on this scope.
+    pub fn is_cancelled(&self) -> bool {
+        self.0.cancelled.load(Ordering::Acquire)
+    }
+
+    pub(super) fn ptr_eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+
+    /// Registers `canceller` until the returned guard is dropped, or cancels immediately if already
+    /// cancelled.
+    pub fn register(&self, canceller: HostClientCanceller) -> Option<PollCancelGuard> {
+        let mut state = self.0.state.lock().unwrap_or_else(|e| e.into_inner());
+        if self.0.cancelled.load(Ordering::Acquire) {
+            drop(state);
+            canceller.cancel();
+            return None;
+        }
+        let id = state.next_id;
+        state.next_id = state.next_id.wrapping_add(1);
+        state.cancellers.push((id, canceller));
+        Some(PollCancelGuard {
+            inner: Arc::clone(&self.0),
+            id,
+        })
+    }
+
+    /// Marks this scope cancelled and aborts every currently registered [`HostClientCanceller`].
+    pub fn cancel(&self) {
+        let cancellers = {
+            let mut state = self.0.state.lock().unwrap_or_else(|e| e.into_inner());
+            self.0.cancelled.store(true, Ordering::Release);
+            std::mem::take(&mut state.cancellers)
+        };
+        for (_, canceller) in cancellers {
+            canceller.cancel();
+        }
+    }
+}
+
 /// Resolves whether `host` points at a site-local / private / link-local address.
 ///
 /// IP literals are classified directly without network I/O; hostnames resolve via DNS.
@@ -73,6 +149,25 @@ pub fn try_poll_ip(
     cert_der: Option<&[u8]>,
     likely_online: bool,
 ) -> Result<PollIpSuccess, PollIpError> {
+    try_poll_ip_cancellable(pool, candidate, expected_uuid, cert_der, likely_online, None)
+}
+
+/// Cancellable variant of [`try_poll_ip`], registering the borrowed client with `cancel`.
+pub fn try_poll_ip_cancellable(
+    pool: &HostClientPool,
+    candidate: &ProbeCandidate,
+    expected_uuid: Option<&str>,
+    cert_der: Option<&[u8]>,
+    likely_online: bool,
+    cancel: Option<&PollCancel>,
+) -> Result<PollIpSuccess, PollIpError> {
+    if cancel.is_some_and(PollCancel::is_cancelled) {
+        return Err(PollIpError {
+            candidate: candidate.clone(),
+            kind: PollErrorKind::Cancelled,
+            message: Some("cancelled".into()),
+        });
+    }
     let (client, pool_gen) = match pool.take(
         &candidate.address,
         candidate.port,
@@ -88,7 +183,23 @@ pub fn try_poll_ip(
             });
         }
     };
+    let guard = if let Some(scope) = cancel {
+        match scope.register(client.canceller()) {
+            Some(g) => Some(g),
+            None => {
+                pool.give_back(&candidate.address, candidate.port, cert_der, pool_gen, client);
+                return Err(PollIpError {
+                    candidate: candidate.clone(),
+                    kind: PollErrorKind::Cancelled,
+                    message: Some("cancelled".into()),
+                });
+            }
+        }
+    } else {
+        None
+    };
     let result = try_poll_ip_with_client(&client, candidate, expected_uuid, cert_der.is_some(), likely_online);
+    drop(guard);
     pool.give_back(&candidate.address, candidate.port, cert_der, pool_gen, client);
     result
 }
@@ -185,6 +296,19 @@ pub fn parallel_poll_direct(
     cert_der: Option<&[u8]>,
     likely_online: bool,
 ) -> DirectPollOutcome {
+    parallel_poll_direct_cancellable(pool, candidates, expected_uuid, cert_der, likely_online, None)
+}
+
+/// Cancellable variant of [`parallel_poll_direct`], aborting all in-flight candidate sockets when
+/// `cancel` triggers.
+pub fn parallel_poll_direct_cancellable(
+    pool: &Arc<HostClientPool>,
+    candidates: &[ProbeCandidate],
+    expected_uuid: Option<&str>,
+    cert_der: Option<&[u8]>,
+    likely_online: bool,
+    cancel: Option<&PollCancel>,
+) -> DirectPollOutcome {
     let mut outcome = DirectPollOutcome::default();
     if candidates.is_empty() {
         return outcome;
@@ -194,7 +318,7 @@ pub fn parallel_poll_direct(
     }
     if candidates.len() == 1 {
         let cand = &candidates[0];
-        match try_poll_ip(pool, cand, expected_uuid, cert_der, likely_online) {
+        match try_poll_ip_cancellable(pool, cand, expected_uuid, cert_der, likely_online, cancel) {
             Ok(win) => outcome.winner = Some(win),
             Err(err) => {
                 outcome.another_certificate = matches!(err.kind, PollErrorKind::CertificateMismatch);
@@ -210,28 +334,63 @@ pub fn parallel_poll_direct(
     let mut cancellers: Vec<Option<HostClientCanceller>> = Vec::with_capacity(n);
 
     for (idx, cand) in candidates.iter().enumerate() {
+        if cancel.is_some_and(PollCancel::is_cancelled) {
+            cancellers.push(None);
+            results[idx] = Some(Err(PollIpError {
+                candidate: cand.clone(),
+                kind: PollErrorKind::Cancelled,
+                message: Some("cancelled".into()),
+            }));
+            continue;
+        }
         let taken = pool.take(&cand.address, cand.port, cand.https_port, cert_der);
         match taken {
             Ok((client, pool_gen)) => {
+                let guard = if let Some(scope) = cancel {
+                    match scope.register(client.canceller()) {
+                        Some(g) => Some(g),
+                        None => {
+                            pool.give_back(&cand.address, cand.port, cert_der, pool_gen, client);
+                            cancellers.push(None);
+                            results[idx] = Some(Err(PollIpError {
+                                candidate: cand.clone(),
+                                kind: PollErrorKind::Cancelled,
+                                message: Some("cancelled".into()),
+                            }));
+                            continue;
+                        }
+                    }
+                } else {
+                    None
+                };
                 cancellers.push(Some(client.canceller()));
                 let pool = Arc::clone(pool);
-                let cand = cand.clone();
+                let cand_bg = cand.clone();
                 let expected = expected_uuid.map(ToOwned::to_owned);
                 let cert = cert_der.map(ToOwned::to_owned);
                 let tx = tx.clone();
-                let _ = std::thread::Builder::new()
+                if let Err(err) = std::thread::Builder::new()
                     .name(format!("nj-poll-{idx}"))
                     .spawn(move || {
+                        let _cancel_guard = guard;
                         let res = try_poll_ip_with_client(
                             &client,
-                            &cand,
+                            &cand_bg,
                             expected.as_deref(),
                             cert.is_some(),
                             likely_online,
                         );
-                        pool.give_back(&cand.address, cand.port, cert.as_deref(), pool_gen, client);
+                        drop(_cancel_guard);
+                        pool.give_back(&cand_bg.address, cand_bg.port, cert.as_deref(), pool_gen, client);
                         let _ = tx.send((idx, res));
-                    });
+                    })
+                {
+                    results[idx] = Some(Err(PollIpError {
+                        candidate: cand.clone(),
+                        kind: PollErrorKind::Unreachable,
+                        message: Some(err.to_string()),
+                    }));
+                }
             }
             Err(err) => {
                 cancellers.push(None);
@@ -303,10 +462,45 @@ pub fn poll_over_the_internet(
     expected_uuid: Option<&str>,
     cert_der: Option<&[u8]>,
     direct_candidates: &[ProbeCandidate],
-    mut tried: Tried,
+    tried: Tried,
     likely_online: bool,
     allow_punch: bool,
 ) -> Result<(SocketAddr, PollIpSuccess), InternetPollFailure> {
+    poll_over_the_internet_cancellable(
+        pool,
+        uuid,
+        internet_play_json,
+        expected_uuid,
+        cert_der,
+        direct_candidates,
+        tried,
+        likely_online,
+        allow_punch,
+        None,
+    )
+}
+
+/// Cancellable variant of [`poll_over_the_internet`].
+#[allow(clippy::too_many_arguments)]
+pub fn poll_over_the_internet_cancellable(
+    pool: &HostClientPool,
+    uuid: &str,
+    internet_play_json: &str,
+    expected_uuid: Option<&str>,
+    cert_der: Option<&[u8]>,
+    direct_candidates: &[ProbeCandidate],
+    mut tried: Tried,
+    likely_online: bool,
+    allow_punch: bool,
+    cancel: Option<&PollCancel>,
+) -> Result<(SocketAddr, PollIpSuccess), InternetPollFailure> {
+    let is_cancelled = || cancel.is_some_and(PollCancel::is_cancelled);
+    if is_cancelled() {
+        return Err(InternetPollFailure {
+            reason: "cancelled".into(),
+            another_certificate: false,
+        });
+    }
     let reply = InternetPlay::parse(internet_play_json).map_err(|e| InternetPollFailure {
         reason: e.to_string(),
         another_certificate: false,
@@ -314,6 +508,12 @@ pub fn poll_over_the_internet(
     let mut another_certificate = false;
 
     for ip in &reply.ipv6 {
+        if is_cancelled() {
+            return Err(InternetPollFailure {
+                reason: "cancelled".into(),
+                another_certificate,
+            });
+        }
         let addr_str = ip.to_string();
         tried.ipv6 = true;
         if direct_candidates
@@ -328,7 +528,7 @@ pub fn poll_over_the_internet(
             port: reply.ports.http,
             https_port: reply.ports.https,
         };
-        match try_poll_ip(pool, &candidate, expected_uuid, cert_der, likely_online) {
+        match try_poll_ip_cancellable(pool, &candidate, expected_uuid, cert_der, likely_online, cancel) {
             Ok(win) => return Ok((SocketAddr::new(IpAddr::V6(*ip), candidate.port), win)),
             Err(err) => {
                 if matches!(err.kind, PollErrorKind::CertificateMismatch) {
@@ -338,6 +538,12 @@ pub fn poll_over_the_internet(
         }
     }
 
+    if is_cancelled() {
+        return Err(InternetPollFailure {
+            reason: "cancelled".into(),
+            another_certificate,
+        });
+    }
     if reply.mapped_ports
         && let Some(ip) = reply.external_ipv4
     {
@@ -353,7 +559,7 @@ pub fn poll_over_the_internet(
                 port: reply.ports.http,
                 https_port: reply.ports.https,
             };
-            match try_poll_ip(pool, &candidate, expected_uuid, cert_der, likely_online) {
+            match try_poll_ip_cancellable(pool, &candidate, expected_uuid, cert_der, likely_online, cancel) {
                 Ok(win) => return Ok((SocketAddr::new(IpAddr::V4(ip), candidate.port), win)),
                 Err(err) => {
                     if matches!(err.kind, PollErrorKind::CertificateMismatch) {
@@ -364,6 +570,12 @@ pub fn poll_over_the_internet(
         }
     }
 
+    if is_cancelled() {
+        return Err(InternetPollFailure {
+            reason: "cancelled".into(),
+            another_certificate,
+        });
+    }
     if !allow_punch {
         return Err(InternetPollFailure {
             reason: internet::unreachable(&reply, tried, None),
@@ -371,9 +583,11 @@ pub fn poll_over_the_internet(
         });
     }
 
-    let addr = internet::punch(uuid, &reply, tried).map_err(|reason| InternetPollFailure {
-        reason,
-        another_certificate,
+    let addr = internet::punch_cancellable(uuid, &reply, tried, is_cancelled).map_err(|reason| {
+        InternetPollFailure {
+            reason,
+            another_certificate,
+        }
     })?;
     let candidate = ProbeCandidate {
         slot: CandidateSlot::Remote,
@@ -381,7 +595,7 @@ pub fn poll_over_the_internet(
         port: addr.port(),
         https_port: reply.ports.https,
     };
-    match try_poll_ip(pool, &candidate, expected_uuid, cert_der, likely_online) {
+    match try_poll_ip_cancellable(pool, &candidate, expected_uuid, cert_der, likely_online, cancel) {
         Ok(win) => Ok((addr, win)),
         Err(err) => {
             if matches!(err.kind, PollErrorKind::CertificateMismatch) {
@@ -424,8 +638,36 @@ pub fn refresh_internet_play(
     cert_der: &[u8],
     capabilities: &HostCapabilities,
 ) -> Result<String, HostApiError> {
+    refresh_internet_play_cancellable(pool, address, http_port, https_port, cert_der, capabilities, None)
+}
+
+/// Cancellable variant of [`refresh_internet_play`].
+pub fn refresh_internet_play_cancellable(
+    pool: &HostClientPool,
+    address: &str,
+    http_port: u16,
+    https_port: u16,
+    cert_der: &[u8],
+    capabilities: &HostCapabilities,
+    cancel: Option<&PollCancel>,
+) -> Result<String, HostApiError> {
+    if cancel.is_some_and(PollCancel::is_cancelled) {
+        return Err(HostApiError::Host(Error::Cancelled));
+    }
     let (client, pool_gen) = pool.take(address, http_port, https_port, Some(cert_der))?;
+    let guard = if let Some(scope) = cancel {
+        match scope.register(client.canceller()) {
+            Some(g) => Some(g),
+            None => {
+                pool.give_back(address, http_port, Some(cert_der), pool_gen, client);
+                return Err(HostApiError::Host(Error::Cancelled));
+            }
+        }
+    } else {
+        None
+    };
     let res = client.internet_play(capabilities).map(|(raw, _)| raw);
+    drop(guard);
     pool.give_back(address, http_port, Some(cert_der), pool_gen, client);
     res
 }
@@ -491,100 +733,4 @@ pub fn away_address(
         IpAddr::V6(ip6) => r.ipv6.contains(&ip6),
         IpAddr::V4(ip4) => r.external_ipv4 == Some(ip4),
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::http::identity::tests::fixture;
-    use std::io::{Read, Write};
-    use std::net::TcpListener;
-    use std::time::Duration;
-
-    #[test]
-    fn site_local_host_detects_private_literals_without_dns() {
-        assert!(is_site_local_host("192.168.1.50"));
-        assert!(is_site_local_host("10.0.0.5"));
-        assert!(is_site_local_host("172.16.4.1"));
-        assert!(is_site_local_host("[fd00::1]"));
-        assert!(!is_site_local_host("203.0.113.10"));
-        assert!(!is_site_local_host("definitely-invalid.invalid"));
-    }
-
-    #[test]
-    fn parallel_poll_direct_prefers_higher_precedence_winner_and_cancels_loser() {
-        let local_listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let local_port = local_listener.local_addr().unwrap().port();
-        // Second listener accepts and intentionally stalls until cancelled.
-        let manual_listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let manual_port = manual_listener.local_addr().unwrap().port();
-
-        let local_srv = std::thread::spawn(move || {
-            let (mut sock, _) = local_listener.accept().unwrap();
-            let mut buf = [0u8; 2048];
-            let _ = sock.read(&mut buf);
-            let body = r#"<root status_code="200"><hostname>LocalPC</hostname><uniqueid>pc-1</uniqueid><state>MJ_SERVER_FREE</state><PairStatus>0</PairStatus><HttpsPort>47984</HttpsPort><ExternalPort>47989</ExternalPort></root>"#;
-            let reply = format!(
-                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                body.len(),
-                body
-            );
-            sock.write_all(reply.as_bytes()).unwrap();
-        });
-
-        let (accepted_tx, accepted_rx) = mpsc::channel();
-        let manual_srv = std::thread::spawn(move || {
-            let (mut sock, _) = manual_listener.accept().unwrap();
-            let _ = accepted_tx.send(());
-            let mut buf = [0u8; 64];
-            // Blocks until client closes socket via cancel_pending_requests.
-            let _ = sock.read(&mut buf);
-        });
-
-        let pool = Arc::new(HostClientPool::new(Arc::new(fixture())));
-        let candidates = vec![
-            ProbeCandidate {
-                slot: CandidateSlot::Local,
-                address: "127.0.0.1".into(),
-                port: local_port,
-                https_port: 0,
-            },
-            ProbeCandidate {
-                slot: CandidateSlot::Manual,
-                address: "127.0.0.1".into(),
-                port: manual_port,
-                https_port: 0,
-            },
-        ];
-        let outcome = parallel_poll_direct(&pool, &candidates, Some("pc-1"), None, true);
-        let winner = outcome.winner.expect("expected local winner");
-        assert_eq!(winner.candidate.slot, CandidateSlot::Local);
-        assert_eq!(winner.info.hostname, "LocalPC");
-        assert!(accepted_rx.recv_timeout(Duration::from_secs(2)).is_ok());
-
-        local_srv.join().unwrap();
-        manual_srv.join().unwrap();
-    }
-
-    #[test]
-    fn desktop_poll_addresses_and_away_address_preserve_order_and_internet_paths() {
-        let shared = SharedHostFields {
-            address: "192.168.1.5".into(),
-            remote_address: Some("203.0.113.10".into()),
-            other_addresses: vec!["203.0.113.10".into(), "10.0.0.5".into()],
-            ..Default::default()
-        };
-        let reply = InternetPlay::parse(
-            r#"{"version":1,"enabled":true,"mappedPorts":true,"externalIpv4":"198.51.100.7","ipv6":["2001:db8::9"],"ports":{"http":47989,"https":47984,"rtsp":48010,"video":47998,"audio":48000,"control":47999,"mic":48002},"endpoints":[],"nat":"unknown"}"#,
-        )
-        .unwrap();
-        assert_eq!(
-            desktop_poll_addresses(&shared, Some(&reply)),
-            vec!["192.168.1.5", "10.0.0.5", "2001:db8::9", "203.0.113.10", "198.51.100.7"]
-        );
-        assert!(away_address(&shared, Some(&reply), "203.0.113.10"));
-        assert!(away_address(&shared, Some(&reply), "2001:db8::9"));
-        assert!(away_address(&shared, Some(&reply), "127.78.0.5"));
-        assert!(!away_address(&shared, Some(&reply), "192.168.1.5"));
-    }
 }

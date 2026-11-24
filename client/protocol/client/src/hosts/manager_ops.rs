@@ -7,13 +7,13 @@ use std::sync::atomic::Ordering;
 
 use nightjar_policy::hosts::{EndpointSlot, HostReachState, probe_plan, punches_now};
 
-use crate::http::{certificate_sha256_der, pem_decode_certificate};
+use crate::http::{ServerInfo, certificate_sha256_der, pem_decode_certificate};
 use crate::internet;
 
-use super::manager::{HostManager, HostSnapshot, LinkAddOutcome, apply_server_info};
+use super::manager::{HostManager, HostSnapshot, LinkAddOutcome, ManagedTuple};
 use super::poll::{
-    compute_internet_path, is_site_local_host, parallel_poll_direct, parse_internet_reply,
-    poll_over_the_internet, PollIpSuccess,
+    PollIpSuccess, compute_internet_path, is_site_local_host, parallel_poll_direct_cancellable,
+    parse_internet_reply, poll_over_the_internet_cancellable,
 };
 use super::store::HostEntry;
 
@@ -25,6 +25,15 @@ pub struct EphemeralPollOutcome {
     pub should_clear_cert: bool,
 }
 
+pub(super) struct PollCommitOutcome {
+    pub(super) winner: Option<PollIpSuccess>,
+    pub(super) resolved_stun_remote: Option<EndpointSlot>,
+    pub(super) needs_vpn_stun: bool,
+    pub(super) internet_play_update: Option<Option<String>>,
+    pub(super) another_certificate: bool,
+    pub(super) unreachable_msg: Option<String>,
+}
+
 impl HostManager {
     /// Probes a user-entered/discovered candidate entry, verifies it, persists it, and begins polling.
     pub fn add_computer_blocking(&self, mut candidate: HostEntry) -> Option<HostSnapshot> {
@@ -33,7 +42,14 @@ impl HostManager {
         }
         let slots = candidate.slots();
         let probes = probe_plan(&slots, true, None, 0);
-        let direct = parallel_poll_direct(&self.inner.pool, &probes, None, None, true);
+        let direct = parallel_poll_direct_cancellable(
+            &self.inner.pool,
+            &probes,
+            None,
+            None,
+            true,
+            Some(&self.inner.shutdown_cancel),
+        );
         let win = direct.winner?;
         let uuid = win.info.unique_id.clone();
 
@@ -43,12 +59,13 @@ impl HostManager {
         if existing_cert.is_some() {
             let mut updated_cand = win.candidate.clone();
             updated_cand.https_port = win.info.https_port;
-            let pinned_direct = parallel_poll_direct(
+            let pinned_direct = parallel_poll_direct_cancellable(
                 &self.inner.pool,
                 &[updated_cand],
                 Some(&uuid),
                 existing_cert.as_deref(),
                 true,
+                Some(&self.inner.shutdown_cancel),
             );
             if let Some(pwin) = pinned_direct.winner {
                 return Some(self.finish_adding(candidate, existing_cert, pwin));
@@ -69,7 +86,14 @@ impl HostManager {
         }
         let slots = candidate.slots();
         let probes = probe_plan(&slots, true, None, 0);
-        let direct = parallel_poll_direct(&self.inner.pool, &probes, None, None, true);
+        let direct = parallel_poll_direct_cancellable(
+            &self.inner.pool,
+            &probes,
+            None,
+            None,
+            true,
+            Some(&self.inner.shutdown_cancel),
+        );
         let Some(win) = direct.winner else {
             return (LinkAddOutcome::Unreachable, None);
         };
@@ -85,12 +109,13 @@ impl HostManager {
         let final_win = if existing_cert.is_some() {
             let mut updated_cand = win.candidate.clone();
             updated_cand.https_port = win.info.https_port;
-            let pinned_direct = parallel_poll_direct(
+            let pinned_direct = parallel_poll_direct_cancellable(
                 &self.inner.pool,
                 &[updated_cand],
                 Some(&uuid),
                 existing_cert.as_deref(),
                 true,
+                Some(&self.inner.shutdown_cancel),
             );
             pinned_direct.winner.unwrap_or(win)
         } else {
@@ -221,25 +246,34 @@ impl HostManager {
         nightjar_policy::hosts::invite_claims_known_pc(existing_sha, link_fp_sha256)
     }
 
-    /// Stops polling, marks tombstone, deletes host from stores, and clears pool entries.
+    /// Signals stop, cancels active poll sockets, marks tombstone, and deletes host from stores.
     pub fn remove_computer(&self, uuid: &str) -> io::Result<()> {
         let removed_tuple = {
             let mut tuples = self.inner.tuples.lock().unwrap_or_else(|e| e.into_inner());
             tuples.remove(uuid)
         };
         if let Some(arc) = removed_tuple {
-            let handle = {
+            let (handle, cancel) = {
                 let mut t = arc.lock().unwrap_or_else(|e| e.into_inner());
                 t.removal_tombstone = true;
                 t.poll_state.removed = true;
                 let (lock, cvar) = &*t.stop_signal;
                 *lock.lock().unwrap_or_else(|e| e.into_inner()) = true;
                 cvar.notify_all();
-                t.poll_thread.take()
+                (t.poll_thread.take(), t.active_cancel.take())
             };
+            if let Some(c) = cancel {
+                c.cancel();
+            }
             self.inner.pool.clear();
             if let Some(h) = handle {
-                let _ = h.join();
+                let mut stopping = self
+                    .inner
+                    .stopping_threads
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner());
+                stopping.retain(|existing| !existing.is_finished());
+                stopping.push(h);
             }
         }
         let _rem_guard = self.inner.removal_lock.lock().unwrap_or_else(|e| e.into_inner());
@@ -511,12 +545,13 @@ impl HostManager {
         );
         let expected_uuid = (!uuid.is_empty()).then_some(uuid.as_str());
         let likely_online = initial_state == HostReachState::Online;
-        let direct = parallel_poll_direct(
+        let direct = parallel_poll_direct_cancellable(
             &self.inner.pool,
             &probes,
             expected_uuid,
             cert_der.as_deref(),
             likely_online,
+            Some(&self.inner.shutdown_cancel),
         );
         let mut winner = direct.winner;
         let mut unreachable_msg = None;
@@ -534,7 +569,7 @@ impl HostManager {
                 initial_state == HostReachState::Offline,
                 active_is_tunnel,
             );
-            match poll_over_the_internet(
+            match poll_over_the_internet_cancellable(
                 &self.inner.pool,
                 &uuid,
                 reply_json,
@@ -544,6 +579,7 @@ impl HostManager {
                 direct.tried,
                 likely_online,
                 allow_punch,
+                Some(&self.inner.shutdown_cancel),
             ) {
                 Ok((_, win)) => winner = Some(win),
                 Err(fail) => {
@@ -605,79 +641,152 @@ impl HostManager {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::http::identity::tests::fixture;
-    use std::io::{Read, Write};
-    use std::net::TcpListener;
-    use std::sync::Arc;
-
-    fn temp_dir(label: &str) -> std::path::PathBuf {
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let dir = std::env::temp_dir().join(format!("nightjar-hm-{label}-{nanos}"));
-        std::fs::create_dir_all(&dir).unwrap();
-        dir
+pub(super) fn apply_server_info(
+    snap: &mut HostSnapshot,
+    info: &ServerInfo,
+    answered_port: u16,
+    candidate: &nightjar_policy::hosts::ProbeCandidate,
+) {
+    if !info.hostname.is_empty() && info.hostname != "UNKNOWN" {
+        snap.entry.shared.name = info.hostname.clone();
     }
+    if let Some(ref mac) = info.mac_address {
+        snap.entry.shared.mac = Some(mac.clone());
+    }
+    if info.https_port != 0 {
+        snap.entry.shared.https_port = info.https_port;
+    }
+    snap.external_port = info.external_port;
+    snap.running_game_id = info.current_game;
+    snap.running_game_uuid = info.current_game_uuid.clone();
+    snap.active_endpoint = Some(EndpointSlot {
+        address: candidate.address.clone(),
+        port: answered_port,
+    });
+    if let Some(ref local_ip) = info.local_ip
+        && !local_ip.is_empty()
+        && !local_ip.starts_with("127.")
+    {
+        snap.entry.local_endpoint = EndpointSlot::new(local_ip, answered_port);
+    }
+    if let Some(ref external_ip) = info.external_ip
+        && !external_ip.is_empty()
+    {
+        let ext_port = if info.external_port != 0 {
+            info.external_port
+        } else {
+            answered_port
+        };
+        snap.entry.remote_endpoint = EndpointSlot::new(external_ip, ext_port);
+    }
+    snap.server_info = Some(info.clone());
+}
 
-    #[test]
-    fn poll_saves_only_changes_and_remove_tombstones_cleanly() {
-        let dir = temp_dir("saves");
-        let mgr = HostManager::open(&dir, Some(Arc::new(fixture()))).unwrap();
-        mgr.set_stun_resolver(Arc::new(|_| None));
+pub(super) fn merge_entry_in_memory(dst: &mut HostEntry, src: HostEntry) {
+    if !src.shared.name.is_empty() {
+        dst.shared.name = src.shared.name;
+    }
+    if src.shared.mac.is_some() {
+        dst.shared.mac = src.shared.mac;
+    }
+    if src.local_endpoint.is_some() {
+        dst.local_endpoint = src.local_endpoint;
+    }
+    if src.manual_endpoint.is_some() {
+        dst.manual_endpoint = src.manual_endpoint;
+    }
+    if src.ipv6_endpoint.is_some() {
+        dst.ipv6_endpoint = src.ipv6_endpoint;
+    }
+    if src.remote_endpoint.is_some() {
+        dst.remote_endpoint = src.remote_endpoint;
+    }
+    if src.pinned_endpoint.is_some() {
+        dst.pinned_endpoint = src.pinned_endpoint;
+    }
+    if src.shared.server_certificate.is_some() {
+        dst.shared.server_certificate = src.shared.server_certificate;
+    }
+    dst.sync_shared_from_slots();
+}
 
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let port = listener.local_addr().unwrap().port();
-        let srv = std::thread::spawn(move || {
-            for _ in 0..2 {
-                let (mut sock, _) = listener.accept().unwrap();
-                let mut buf = [0u8; 2048];
-                let _ = sock.read(&mut buf);
-                let body = r#"<root status_code="200"><hostname>StudioPC</hostname><uniqueid>pc-save</uniqueid><state>MJ_SERVER_FREE</state><PairStatus>0</PairStatus><HttpsPort>47984</HttpsPort><ExternalPort>47989</ExternalPort></root>"#;
-                let reply = format!(
-                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                    body.len(),
-                    body
+impl HostManager {
+    pub(super) fn commit_poll_outcome(
+        &self,
+        t: &mut ManagedTuple,
+        uuid: &str,
+        now_ms: u64,
+        initial_state: HostReachState,
+        outcome: PollCommitOutcome,
+    ) -> bool {
+        match outcome.winner {
+            Some(win) => {
+                t.poll_state.record_poll_success(now_ms);
+                let prev = t.snapshot.clone();
+                apply_server_info(&mut t.snapshot, &win.info, win.candidate.port, &win.candidate);
+                t.snapshot.state = HostReachState::Online;
+                t.snapshot.another_certificate = false;
+                t.snapshot.unreachable = None;
+                t.snapshot.needs_vpn_stun = outcome.needs_vpn_stun;
+                if win.should_clear_cert {
+                    t.snapshot.entry.shared.server_certificate = None;
+                    t.snapshot.entry.shared.internet_play = None;
+                    t.snapshot.paired = false;
+                    internet::stop(uuid);
+                    self.inner.pool.clear();
+                } else {
+                    t.snapshot.paired = win.info.paired;
+                }
+                if let Some(remote) = outcome.resolved_stun_remote {
+                    t.snapshot.entry.remote_endpoint = Some(remote);
+                    t.snapshot.needs_vpn_stun = false;
+                }
+                if !win.should_clear_cert
+                    && let Some(ref raw_update) = outcome.internet_play_update
+                {
+                    t.snapshot.entry.shared.internet_play = raw_update.clone();
+                    t.last_internet_read_ms = Some(now_ms);
+                }
+                if let Some(caps_json) = win.info.capabilities.to_versioned_json() {
+                    let _ = self.inner.meta.save_capabilities(uuid, &caps_json);
+                    t.snapshot.capabilities_json = Some(caps_json);
+                }
+                let reply = parse_internet_reply(t.snapshot.entry.shared.internet_play.as_deref());
+                t.snapshot.internet_path = compute_internet_path(
+                    t.snapshot.active_endpoint.as_ref(),
+                    t.snapshot.entry.local_endpoint.as_ref(),
+                    t.snapshot.entry.manual_endpoint.as_ref(),
+                    reply.as_ref(),
                 );
-                sock.write_all(reply.as_bytes()).unwrap();
+                t.snapshot.entry.sync_shared_from_slots();
+                let _ = self.inner.store.upsert(t.snapshot.entry.clone());
+                t.snapshot != prev
             }
-        });
-
-        let mut initial = HostEntry::default();
-        initial.shared.unique_id = "pc-save".into();
-        initial.shared.name = "Initial".into();
-        initial.local_endpoint = EndpointSlot::new("127.0.0.1", port);
-        initial.sync_shared_from_slots();
-        mgr.store().upsert(initial.clone()).unwrap();
-        mgr.reload_from_store();
-
-        assert!(mgr.poll_host("pc-save", true), "first poll updates name + online state");
-        assert!(!mgr.poll_host("pc-save", true), "identical second poll reports no change");
-
-        mgr.remove_computer("pc-save").unwrap();
-        assert!(mgr.get_snapshot("pc-save").is_none());
-        assert!(mgr.store().get_by_uuid("pc-save").is_none());
-        assert!(!mgr.poll_host("pc-save", true));
-
-        srv.join().unwrap();
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn start_and_stop_polling_join_worker_threads_cleanly() {
-        let dir = temp_dir("lifecycle");
-        let mgr = HostManager::open(&dir, Some(Arc::new(fixture()))).unwrap();
-        mgr.set_stun_resolver(Arc::new(|_| None));
-        let mut entry = HostEntry::default();
-        entry.shared.unique_id = "pc-bg".into();
-        entry.local_endpoint = EndpointSlot::new("127.0.0.1", 1);
-        mgr.upsert_tuple(entry);
-
-        mgr.start_polling();
-        mgr.stop_polling();
-        let _ = std::fs::remove_dir_all(&dir);
+            None => {
+                let offline_now =
+                    t.poll_state
+                        .record_poll_failure(initial_state == HostReachState::Unknown);
+                let prev_state = t.snapshot.state;
+                let prev_cert_flag = t.snapshot.another_certificate;
+                let prev_unreach = t.snapshot.unreachable.clone();
+                let prev_path = t.snapshot.internet_path.clone();
+                let prev_vpn_stun = t.snapshot.needs_vpn_stun;
+                if offline_now {
+                    t.snapshot.state = HostReachState::Offline;
+                }
+                t.snapshot.server_info = None;
+                t.snapshot.another_certificate = outcome.another_certificate;
+                t.snapshot.internet_path = None;
+                t.snapshot.needs_vpn_stun = false;
+                if let Some(msg) = outcome.unreachable_msg {
+                    t.snapshot.unreachable = Some(msg);
+                }
+                t.snapshot.state != prev_state
+                    || t.snapshot.another_certificate != prev_cert_flag
+                    || t.snapshot.unreachable != prev_unreach
+                    || t.snapshot.internet_path != prev_path
+                    || t.snapshot.needs_vpn_stun != prev_vpn_stun
+            }
+        }
     }
 }

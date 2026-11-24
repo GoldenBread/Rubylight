@@ -81,6 +81,7 @@ public class ComputerManagerLifecycleTest {
 
     @After
     public void cleanup() {
+        NightjarHostsJni.hostManagerResetForTests();
         HostMetaStores.resetForTests();
         ComputerDatabaseManager.resetForTests();
     }
@@ -605,5 +606,80 @@ public class ComputerManagerLifecycleTest {
         controller.destroy();
 
         assertFalse(service.pollComputer(details));
+    }
+
+    @Test
+    public void stopPollingAndOnDestroyReturnUnder500msWhenHostStallsRead() throws Exception {
+        CountDownLatch[] entered = {new CountDownLatch(1), new CountDownLatch(1)};
+        CountDownLatch[] disconnected = {new CountDownLatch(1), new CountDownLatch(1)};
+        java.util.concurrent.atomic.AtomicInteger round = new java.util.concurrent.atomic.AtomicInteger(0);
+        try (ServerSocket stalled = new ServerSocket(0, 8, InetAddress.getByName("127.0.0.1"))) {
+            int stalledPort = stalled.getLocalPort();
+            Thread srv = new Thread(() -> {
+                while (!stalled.isClosed()) {
+                    int idx = round.getAndIncrement();
+                    if (idx >= 2) break;
+                    try (Socket sock = stalled.accept()) {
+                        sock.setSoTimeout(5000);
+                        InputStream in = sock.getInputStream();
+                        StringBuilder head = new StringBuilder();
+                        int b;
+                        while (head.length() < 8192 && (b = in.read()) >= 0) {
+                            head.append((char) b);
+                            if (head.length() >= 4 && head.substring(head.length() - 4).equals("\r\n\r\n")) {
+                                break;
+                            }
+                        }
+                        entered[idx].countDown();
+                        byte[] buf = new byte[64];
+                        while (in.read(buf) >= 0) {
+                            // Block until the client cancels and closes the socket.
+                        }
+                    } catch (IOException ignored) {
+                    } finally {
+                        disconnected[idx].countDown();
+                    }
+                }
+            }, "stalled-host-test");
+            srv.start();
+
+            ComputerDetails stored = new ComputerDetails();
+            stored.uuid = "stalled-host";
+            stored.name = "StalledPC";
+            stored.localAddress = new ComputerDetails.AddressTuple("127.0.0.1", stalledPort);
+            seedHost(stored);
+
+            ServiceController<Manager> controller = Robolectric.buildService(Manager.class).create();
+            Manager service = controller.get();
+            ComputerManagerService.ComputerManagerBinder binder =
+                    (ComputerManagerService.ComputerManagerBinder) service.onBind(null);
+            try {
+                binder.startPolling(details -> { });
+                assertTrue("round 1 request never arrived", entered[0].await(5, TimeUnit.SECONDS));
+
+                long stopStartMs = System.nanoTime();
+                binder.stopPolling();
+                long stopElapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - stopStartMs);
+                assertTrue("stopPolling blocked for " + stopElapsedMs + "ms", stopElapsedMs < 500);
+
+                long waitStartMs = System.nanoTime();
+                binder.waitForPollingStopped();
+                long waitElapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - waitStartMs);
+                assertTrue("waitForPollingStopped blocked for " + waitElapsedMs + "ms", waitElapsedMs < 500);
+                assertTrue("round 1 socket did not disconnect", disconnected[0].await(2, TimeUnit.SECONDS));
+
+                binder.startPolling(details -> { });
+                assertTrue("round 2 request never arrived", entered[1].await(5, TimeUnit.SECONDS));
+
+                long destroyStartMs = System.nanoTime();
+                controller.destroy();
+                long destroyElapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - destroyStartMs);
+                assertTrue("onDestroy blocked for " + destroyElapsedMs + "ms", destroyElapsedMs < 500);
+                assertTrue("round 2 socket did not disconnect", disconnected[1].await(2, TimeUnit.SECONDS));
+            } finally {
+                stalled.close();
+                srv.join(2000);
+            }
+        }
     }
 }

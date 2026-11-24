@@ -143,16 +143,15 @@ pub fn execute_pair_checked(
     };
 
     let (info, _) = client.server_info_with_cert_check(true).map_err(map_err)?;
-    if already_paired(info.paired, from_link, has_pinned_cert) {
-        if let PairSecret::Link(link) = secret {
-            let matches = client
-                .server_certificate_der()
-                .is_some_and(|der| certificate_sha256_der(&der) == link.cert_sha256);
-            if !matches {
-                return Err(PairFailureKind::LinkCertMismatch);
-            }
+    if already_paired(info.paired, from_link, has_pinned_cert)
+        && let Some(cert_der) = client.server_certificate_der()
+    {
+        if let PairSecret::Link(link) = secret
+            && certificate_sha256_der(&cert_der) != link.cert_sha256
+        {
+            return Err(PairFailureKind::LinkCertMismatch);
         }
-        return Ok(client.server_certificate_der().unwrap_or_default());
+        return Ok(cert_der);
     }
     if from_link && known_otherwise.contains(&info.unique_id) {
         return Err(PairFailureKind::LinkCertMismatch);

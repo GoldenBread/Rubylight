@@ -18,6 +18,36 @@ fn temp_dir(tag: &str) -> std::path::PathBuf {
     dir
 }
 
+pub(super) fn read_http_head(sock: &mut std::net::TcpStream) -> Vec<u8> {
+    use std::io::Read;
+    let _ = sock.set_read_timeout(Some(std::time::Duration::from_secs(5)));
+    let mut head = Vec::new();
+    let mut byte = [0u8; 1];
+    while head.len() < 8192 && !head.ends_with(b"\r\n\r\n") {
+        match sock.read(&mut byte) {
+            Ok(0) | Err(_) => break,
+            Ok(_) => head.push(byte[0]),
+        }
+    }
+    head
+}
+
+pub(super) fn reply_http_xml(sock: &mut std::net::TcpStream, body: &str) {
+    use std::io::{Read, Write};
+    let head = read_http_head(sock);
+    assert!(head.ends_with(b"\r\n\r\n"), "incomplete HTTP request head");
+    let reply = format!(
+        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        body.len(),
+        body
+    );
+    sock.write_all(reply.as_bytes()).unwrap();
+    sock.flush().unwrap();
+    let _ = sock.shutdown(std::net::Shutdown::Write);
+    let mut drain = [0u8; 64];
+    while matches!(sock.read(&mut drain), Ok(n) if n > 0) {}
+}
+
 #[test]
 fn host_store_upsert_detects_changes_preserves_extra_and_does_not_resurrect_deleted() {
     let dir = temp_dir("store");
@@ -200,7 +230,6 @@ fn identity_store_protects_corrupt_files_and_imports_legacy_credentials() {
 fn poll_host_tries_internet_play_mapped_ipv4_while_state_is_unknown_without_punching() {
     use super::manager::HostManager;
     use nightjar_policy::hosts::HostReachState;
-    use std::io::{Read, Write};
     use std::net::TcpListener;
     use std::sync::Arc;
 
@@ -212,15 +241,10 @@ fn poll_host_tries_internet_play_mapped_ipv4_while_state_is_unknown_without_punc
     let port = listener.local_addr().unwrap().port();
     let srv = std::thread::spawn(move || {
         let (mut sock, _) = listener.accept().unwrap();
-        let mut buf = [0u8; 2048];
-        let _ = sock.read(&mut buf);
-        let body = r#"<root status_code="200"><hostname>WanPC</hostname><uniqueid>pc-mapped</uniqueid><state>MJ_SERVER_FREE</state><PairStatus>0</PairStatus><HttpsPort>47984</HttpsPort><ExternalPort>47989</ExternalPort></root>"#;
-        let reply = format!(
-            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-            body.len(),
-            body
+        reply_http_xml(
+            &mut sock,
+            r#"<root status_code="200"><hostname>WanPC</hostname><uniqueid>pc-mapped</uniqueid><state>MJ_SERVER_FREE</state><PairStatus>0</PairStatus><HttpsPort>47984</HttpsPort><ExternalPort>47989</ExternalPort></root>"#,
         );
-        sock.write_all(reply.as_bytes()).unwrap();
     });
 
     let mut entry = HostEntry::default();
@@ -253,7 +277,6 @@ fn poll_host_sets_another_certificate_on_cert_mismatch_and_plain_http_does_not_c
     use crate::http::{Error, HostClient};
     use nightjar_policy::hosts::{CandidateSlot, ProbeCandidate};
     use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
-    use std::io::Write;
     use std::net::TcpListener;
     use std::sync::Arc;
 
@@ -278,15 +301,15 @@ fn poll_host_sets_another_certificate_on_cert_mismatch_and_plain_http_does_not_c
     let tls_listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let https_port = tls_listener.local_addr().unwrap().port();
     let tls_srv = std::thread::spawn(move || {
-        if let Ok((sock, _)) = tls_listener.accept() {
-            let mut tls = rustls::StreamOwned::new(
-                rustls::ServerConnection::new(server_cfg).unwrap(),
-                sock,
-            );
-            while tls.conn.is_handshaking() {
-                if tls.conn.complete_io(&mut tls.sock).is_err() {
-                    break;
-                }
+        let (sock, _) = tls_listener.accept().unwrap();
+        let _ = sock.set_read_timeout(Some(std::time::Duration::from_secs(5)));
+        let mut tls = rustls::StreamOwned::new(
+            rustls::ServerConnection::new(server_cfg).unwrap(),
+            sock,
+        );
+        while tls.conn.is_handshaking() {
+            if tls.conn.complete_io(&mut tls.sock).is_err() {
+                break;
             }
         }
     });
@@ -294,20 +317,13 @@ fn poll_host_sets_another_certificate_on_cert_mismatch_and_plain_http_does_not_c
     let http_disc_listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let http_disc_port = http_disc_listener.local_addr().unwrap().port();
     let http_disc_srv = std::thread::spawn(move || {
-        use std::io::Read;
-        if let Ok((mut sock, _)) = http_disc_listener.accept() {
-            let mut buf = [0u8; 2048];
-            let _ = sock.read(&mut buf);
-            let body = format!(
+        let (mut sock, _) = http_disc_listener.accept().unwrap();
+        reply_http_xml(
+            &mut sock,
+            &format!(
                 r#"<root status_code="200"><hostname>OtherPC</hostname><uniqueid>pc-cert</uniqueid><state>MJ_SERVER_FREE</state><PairStatus>0</PairStatus><HttpsPort>{https_port}</HttpsPort></root>"#
-            );
-            let reply = format!(
-                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                body.len(),
-                body
-            );
-            let _ = sock.write_all(reply.as_bytes());
-        }
+            ),
+        );
     });
 
     let dir = temp_dir("cert-mismatch");
@@ -333,13 +349,10 @@ fn poll_host_sets_another_certificate_on_cert_mismatch_and_plain_http_does_not_c
     let http_port = http_listener.local_addr().unwrap().port();
     let http_srv = std::thread::spawn(move || {
         let (mut sock, _) = http_listener.accept().unwrap();
-        let body = r#"<root status_code="200"><hostname>PlainPC</hostname><uniqueid>pc-plain</uniqueid><state>MJ_SERVER_FREE</state><PairStatus>0</PairStatus></root>"#;
-        let reply = format!(
-            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-            body.len(),
-            body
+        reply_http_xml(
+            &mut sock,
+            r#"<root status_code="200"><hostname>PlainPC</hostname><uniqueid>pc-plain</uniqueid><state>MJ_SERVER_FREE</state><PairStatus>0</PairStatus></root>"#,
         );
-        sock.write_all(reply.as_bytes()).unwrap();
     });
     let unpinned = HostClient::new("127.0.0.1", http_port, Arc::new(fixture())).unwrap();
     let cand = ProbeCandidate {
@@ -411,7 +424,6 @@ fn apply_server_info_sets_local_ip_and_external_ip_preserving_127_guard() {
 fn reset_network_state_respects_at_ms_guard_and_emits_snapshot() {
     use super::manager::HostManager;
     use nightjar_policy::hosts::HostReachState;
-    use std::io::{Read, Write};
     use std::net::TcpListener;
     use std::sync::{Arc, Mutex};
 
@@ -428,15 +440,10 @@ fn reset_network_state_respects_at_ms_guard_and_emits_snapshot() {
     let port = listener.local_addr().unwrap().port();
     let srv = std::thread::spawn(move || {
         let (mut sock, _) = listener.accept().unwrap();
-        let mut buf = [0u8; 2048];
-        let _ = sock.read(&mut buf);
-        let body = r#"<root status_code="200"><hostname>NetPC</hostname><uniqueid>pc-net</uniqueid><state>MJ_SERVER_FREE</state><PairStatus>0</PairStatus></root>"#;
-        let reply = format!(
-            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-            body.len(),
-            body
+        reply_http_xml(
+            &mut sock,
+            r#"<root status_code="200"><hostname>NetPC</hostname><uniqueid>pc-net</uniqueid><state>MJ_SERVER_FREE</state><PairStatus>0</PairStatus></root>"#,
         );
-        sock.write_all(reply.as_bytes()).unwrap();
     });
 
     let mut entry = HostEntry::default();
@@ -459,5 +466,306 @@ fn reset_network_state_respects_at_ms_guard_and_emits_snapshot() {
     mgr.reset_network_state(false, after_poll_ms);
     assert_eq!(mgr.get_snapshot("pc-net").unwrap().state, HostReachState::Offline);
     assert_eq!(*emitted.lock().unwrap(), vec![HostReachState::Offline]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+fn spawn_stalled_http_server(
+    count: usize,
+) -> (
+    u16,
+    std::sync::mpsc::Receiver<()>,
+    std::thread::JoinHandle<()>,
+) {
+    use std::io::Read;
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+    let handle = std::thread::spawn(move || {
+        for _ in 0..count {
+            let (mut sock, _) = listener.accept().unwrap();
+            let _ = read_http_head(&mut sock);
+            let _ = entered_tx.send(());
+            let mut buf = [0u8; 64];
+            while matches!(sock.read(&mut buf), Ok(n) if n > 0) {}
+        }
+    });
+    (port, entered_rx, handle)
+}
+
+#[test]
+fn stop_polling_and_wait_cancel_stalled_single_and_parallel_polls_under_500ms() {
+    use super::manager::HostManager;
+    use nightjar_policy::hosts::HostReachState;
+    use std::sync::Arc;
+    use std::time::{Duration, Instant};
+
+    let dir = temp_dir("stop-cancel");
+    let mgr = HostManager::open(&dir, Some(Arc::new(fixture()))).unwrap();
+    mgr.set_stun_resolver(Arc::new(|_| None));
+
+    let (single_port, single_rx, single_srv) = spawn_stalled_http_server(1);
+    let (local_port, local_rx, local_srv) = spawn_stalled_http_server(1);
+    let (manual_port, manual_rx, manual_srv) = spawn_stalled_http_server(1);
+
+    let mut single = HostEntry::default();
+    single.shared.unique_id = "pc-single".into();
+    single.local_endpoint = EndpointSlot::new("127.0.0.1", single_port);
+    mgr.upsert_tuple(single);
+
+    let mut multi = HostEntry::default();
+    multi.shared.unique_id = "pc-multi".into();
+    multi.local_endpoint = EndpointSlot::new("127.0.0.1", local_port);
+    multi.manual_endpoint = EndpointSlot::new("127.0.0.1", manual_port);
+    mgr.upsert_tuple(multi);
+
+    mgr.start_polling();
+    assert!(single_rx.recv_timeout(Duration::from_secs(5)).is_ok());
+    assert!(local_rx.recv_timeout(Duration::from_secs(5)).is_ok());
+    assert!(manual_rx.recv_timeout(Duration::from_secs(5)).is_ok());
+
+    let t0 = Instant::now();
+    mgr.stop_polling();
+    assert!(
+        t0.elapsed() < Duration::from_millis(500),
+        "stop_polling blocked for {:?}",
+        t0.elapsed()
+    );
+
+    let t1 = Instant::now();
+    mgr.wait_for_polling_stopped();
+    assert!(
+        t1.elapsed() < Duration::from_millis(500),
+        "wait_for_polling_stopped blocked for {:?}",
+        t1.elapsed()
+    );
+
+    assert_ne!(
+        mgr.get_snapshot("pc-single").unwrap().state,
+        HostReachState::Offline
+    );
+    assert_ne!(
+        mgr.get_snapshot("pc-multi").unwrap().state,
+        HostReachState::Offline
+    );
+
+    single_srv.join().unwrap();
+    local_srv.join().unwrap();
+    manual_srv.join().unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn stop_polling_followed_by_restart_and_remove_computer_do_not_stall_or_leak() {
+    use super::manager::HostManager;
+    use std::sync::Arc;
+    use std::time::{Duration, Instant};
+
+    let dir = temp_dir("restart-remove");
+    let mgr = HostManager::open(&dir, Some(Arc::new(fixture()))).unwrap();
+    mgr.set_stun_resolver(Arc::new(|_| None));
+
+    let (restart_port, restart_rx, restart_srv) = spawn_stalled_http_server(2);
+    let mut e1 = HostEntry::default();
+    e1.shared.unique_id = "pc-restart".into();
+    e1.local_endpoint = EndpointSlot::new("127.0.0.1", restart_port);
+    mgr.upsert_tuple(e1);
+
+    mgr.start_polling();
+    assert!(restart_rx.recv_timeout(Duration::from_secs(5)).is_ok());
+    let t0 = Instant::now();
+    mgr.stop_polling();
+    assert!(t0.elapsed() < Duration::from_millis(500));
+
+    mgr.start_polling();
+    assert!(restart_rx.recv_timeout(Duration::from_secs(5)).is_ok());
+    let t1 = Instant::now();
+    mgr.stop_polling();
+    assert!(t1.elapsed() < Duration::from_millis(500));
+    let t2 = Instant::now();
+    mgr.wait_for_polling_stopped();
+    assert!(t2.elapsed() < Duration::from_millis(500));
+    restart_srv.join().unwrap();
+
+    let (remove_port, remove_rx, remove_srv) = spawn_stalled_http_server(1);
+    let mgr2 = HostManager::open(&dir, Some(Arc::new(fixture()))).unwrap();
+    mgr2.set_stun_resolver(Arc::new(|_| None));
+    let mut e2 = HostEntry::default();
+    e2.shared.unique_id = "pc-remove".into();
+    e2.local_endpoint = EndpointSlot::new("127.0.0.1", remove_port);
+    mgr2.upsert_tuple(e2);
+
+    mgr2.start_polling();
+    assert!(remove_rx.recv_timeout(Duration::from_secs(5)).is_ok());
+    let t3 = Instant::now();
+    mgr2.remove_computer("pc-remove").unwrap();
+    assert!(
+        t3.elapsed() < Duration::from_millis(500),
+        "remove_computer blocked for {:?}",
+        t3.elapsed()
+    );
+    let t4 = Instant::now();
+    mgr2.wait_for_polling_stopped();
+    assert!(
+        t4.elapsed() < Duration::from_millis(500),
+        "wait_for_polling_stopped after remove_computer blocked for {:?}",
+        t4.elapsed()
+    );
+    assert!(mgr2.get_snapshot("pc-remove").is_none());
+
+    remove_srv.join().unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn site_local_host_detects_private_literals_without_dns() {
+    use super::poll::is_site_local_host;
+    assert!(is_site_local_host("192.168.1.50"));
+    assert!(is_site_local_host("10.0.0.5"));
+    assert!(is_site_local_host("172.16.4.1"));
+    assert!(is_site_local_host("[fd00::1]"));
+    assert!(!is_site_local_host("203.0.113.10"));
+    assert!(!is_site_local_host("definitely-invalid.invalid"));
+}
+
+#[test]
+fn parallel_poll_direct_prefers_higher_precedence_winner_and_cancels_loser() {
+    use super::client_pool::HostClientPool;
+    use super::poll::parallel_poll_direct;
+    use nightjar_policy::hosts::{CandidateSlot, ProbeCandidate};
+    use std::io::Read;
+    use std::net::TcpListener;
+    use std::sync::{Arc, mpsc};
+    use std::time::Duration;
+
+    let local_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let local_port = local_listener.local_addr().unwrap().port();
+    let manual_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let manual_port = manual_listener.local_addr().unwrap().port();
+
+    let local_srv = std::thread::spawn(move || {
+        let (mut sock, _) = local_listener.accept().unwrap();
+        reply_http_xml(
+            &mut sock,
+            r#"<root status_code="200"><hostname>LocalPC</hostname><uniqueid>pc-1</uniqueid><state>MJ_SERVER_FREE</state><PairStatus>0</PairStatus><HttpsPort>47984</HttpsPort><ExternalPort>47989</ExternalPort></root>"#,
+        );
+    });
+
+    let (accepted_tx, accepted_rx) = mpsc::channel();
+    let manual_srv = std::thread::spawn(move || {
+        let (mut sock, _) = manual_listener.accept().unwrap();
+        let _ = accepted_tx.send(());
+        let _ = read_http_head(&mut sock);
+        let mut buf = [0u8; 64];
+        while matches!(sock.read(&mut buf), Ok(n) if n > 0) {}
+    });
+
+    let pool = Arc::new(HostClientPool::new(Arc::new(fixture())));
+    let candidates = vec![
+        ProbeCandidate {
+            slot: CandidateSlot::Local,
+            address: "127.0.0.1".into(),
+            port: local_port,
+            https_port: 0,
+        },
+        ProbeCandidate {
+            slot: CandidateSlot::Manual,
+            address: "127.0.0.1".into(),
+            port: manual_port,
+            https_port: 0,
+        },
+    ];
+    let outcome = parallel_poll_direct(&pool, &candidates, Some("pc-1"), None, true);
+    let winner = outcome.winner.expect("expected local winner");
+    assert_eq!(winner.candidate.slot, CandidateSlot::Local);
+    assert_eq!(winner.info.hostname, "LocalPC");
+    assert!(accepted_rx.recv_timeout(Duration::from_secs(2)).is_ok());
+
+    local_srv.join().unwrap();
+    manual_srv.join().unwrap();
+}
+
+#[test]
+fn desktop_poll_addresses_and_away_address_preserve_order_and_internet_paths() {
+    use super::poll::{away_address, desktop_poll_addresses};
+    use crate::http::InternetPlay;
+    let shared = SharedHostFields {
+        address: "192.168.1.5".into(),
+        remote_address: Some("203.0.113.10".into()),
+        other_addresses: vec!["203.0.113.10".into(), "10.0.0.5".into()],
+        ..Default::default()
+    };
+    let reply = InternetPlay::parse(
+        r#"{"version":1,"enabled":true,"mappedPorts":true,"externalIpv4":"198.51.100.7","ipv6":["2001:db8::9"],"ports":{"http":47989,"https":47984,"rtsp":48010,"video":47998,"audio":48000,"control":47999,"mic":48002},"endpoints":[],"nat":"unknown"}"#,
+    )
+    .unwrap();
+    assert_eq!(
+        desktop_poll_addresses(&shared, Some(&reply)),
+        vec!["192.168.1.5", "10.0.0.5", "2001:db8::9", "203.0.113.10", "198.51.100.7"]
+    );
+    assert!(away_address(&shared, Some(&reply), "203.0.113.10"));
+    assert!(away_address(&shared, Some(&reply), "2001:db8::9"));
+    assert!(away_address(&shared, Some(&reply), "127.78.0.5"));
+    assert!(!away_address(&shared, Some(&reply), "192.168.1.5"));
+}
+
+#[test]
+fn poll_saves_only_changes_and_remove_tombstones_cleanly() {
+    use super::manager::HostManager;
+    use std::net::TcpListener;
+    use std::sync::Arc;
+
+    let dir = temp_dir("saves");
+    let mgr = HostManager::open(&dir, Some(Arc::new(fixture()))).unwrap();
+    mgr.set_stun_resolver(Arc::new(|_| None));
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let srv = std::thread::spawn(move || {
+        for _ in 0..2 {
+            let (mut sock, _) = listener.accept().unwrap();
+            reply_http_xml(
+                &mut sock,
+                r#"<root status_code="200"><hostname>StudioPC</hostname><uniqueid>pc-save</uniqueid><state>MJ_SERVER_FREE</state><PairStatus>0</PairStatus><HttpsPort>47984</HttpsPort><ExternalPort>47989</ExternalPort></root>"#,
+            );
+        }
+    });
+
+    let mut initial = HostEntry::default();
+    initial.shared.unique_id = "pc-save".into();
+    initial.shared.name = "Initial".into();
+    initial.local_endpoint = EndpointSlot::new("127.0.0.1", port);
+    initial.sync_shared_from_slots();
+    mgr.store().upsert(initial.clone()).unwrap();
+    mgr.reload_from_store();
+
+    assert!(mgr.poll_host("pc-save", true), "first poll updates name + online state");
+    assert!(!mgr.poll_host("pc-save", true), "identical second poll reports no change");
+
+    mgr.remove_computer("pc-save").unwrap();
+    mgr.wait_for_polling_stopped();
+    assert!(mgr.get_snapshot("pc-save").is_none());
+    assert!(mgr.store().get_by_uuid("pc-save").is_none());
+    assert!(!mgr.poll_host("pc-save", true));
+
+    srv.join().unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn start_and_stop_polling_join_worker_threads_cleanly() {
+    use super::manager::HostManager;
+    use std::sync::Arc;
+
+    let dir = temp_dir("lifecycle");
+    let mgr = HostManager::open(&dir, Some(Arc::new(fixture()))).unwrap();
+    mgr.set_stun_resolver(Arc::new(|_| None));
+    let mut entry = HostEntry::default();
+    entry.shared.unique_id = "pc-bg".into();
+    entry.local_endpoint = EndpointSlot::new("127.0.0.1", 1);
+    mgr.upsert_tuple(entry);
+
+    mgr.start_polling();
+    mgr.stop_polling();
+    mgr.wait_for_polling_stopped();
     let _ = std::fs::remove_dir_all(&dir);
 }
