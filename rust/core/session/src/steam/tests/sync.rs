@@ -325,6 +325,34 @@ fn a_wine_program_read_before_it_takes_its_name_is_read_again() {
     assert_eq!(tracker.update(&renamed, game), Tracked::Running);
 }
 #[test]
+fn a_runtime_installer_from_the_games_folder_is_not_the_game() {
+    let process = |pid, name: &str| Process {
+        pid,
+        parent: 1,
+        started: pid as u64 * 10,
+        name: name.into(),
+    };
+    let mut tracker = Tracker::new(&[], "/games/ff7r", std::time::Duration::from_secs(15));
+    tracker.grace = std::time::Duration::ZERO;
+    let image = |pid| {
+        Some(match pid {
+            3 => "/games/ff7r/Prereq/VC_redist.x64.exe".to_owned(),
+            4 => "/games/ff7r/_CommonRedist/DirectX/DXSETUP.exe".to_owned(),
+            _ => "/games/ff7r/End/Binaries/Win64/ff7remake_.exe".to_owned(),
+        })
+    };
+    // A launcher's first start runs the game's prerequisites from its folder.
+    let installing = [process(3, "VC_redist.x64.exe"), process(4, "DXSETUP.exe")];
+    assert!(tracker.unchecked(&installing).is_empty());
+    assert_eq!(tracker.update(&installing, image), Tracked::Waiting);
+    // They finish; that is not the game ending.
+    assert_eq!(tracker.update(&[], image), Tracked::Waiting);
+    // The game starts and is tracked.
+    let playing = [process(5, "ff7remake_.exe")];
+    assert_eq!(tracker.update(&playing, image), Tracked::Running);
+    assert_eq!(tracker.update(&[], image), Tracked::Exited);
+}
+#[test]
 fn the_paths_an_update_asks_for_are_the_ones_listed_before_it() {
     let process = |pid, parent, started, name: &str| Process {
         pid,

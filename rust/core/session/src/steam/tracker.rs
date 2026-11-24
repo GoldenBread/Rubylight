@@ -66,6 +66,33 @@ const NOT_THE_GAME: &[&str] = &[
     "galaxyclient.exe",
     "werfault.exe",
 ];
+/// The starts of the names of the runtime installers a launcher runs from a game's folder
+/// before its first start (Steam's `_CommonRedist`, Epic's and Heroic's `prereq_info`): Visual
+/// C++, DirectX, .NET, OpenAL, PhysX, XNA, Unreal's prerequisites and anti-cheat services. One
+/// counted as the game ended the stream when it finished, before the game had started.
+const INSTALLERS: &[&str] = &[
+    "vc_redist",
+    "vcredist",
+    "dxsetup",
+    "dxwebsetup",
+    "dotnetfx",
+    "ndp4",
+    "windowsdesktop-runtime",
+    "dotnet-runtime",
+    "oalinst",
+    "physx",
+    "xnafx",
+    "ue4prereqsetup",
+    "ueprereqsetup",
+    "easyanticheat_setup",
+    "easyanticheat_eos_setup",
+    "battleye_setup",
+];
+/// Whether a process named `name` (lowercase) is one the game starts or needs that is not the
+/// game.
+fn not_the_game(name: &str) -> bool {
+    NOT_THE_GAME.contains(&name) || INSTALLERS.iter().any(|start| name.starts_with(start))
+}
 const STEAM_PROCESSES: &[&str] = &[
     "steam.exe",
     "steamwebhelper.exe",
@@ -104,7 +131,7 @@ impl Tracker {
                 self.tracked.get(&process.pid) != Some(&process.started)
                     && self.baseline.get(&process.pid) != Some(&process.started)
                     && !STEAM_PROCESSES.contains(&name.as_str())
-                    && !NOT_THE_GAME.contains(&name.as_str())
+                    && !not_the_game(&name)
                     && !self.checked.contains(&checked_key(process))
             })
             .map(|process| process.pid)
@@ -127,7 +154,7 @@ impl Tracker {
                 if self.tracked.contains_key(&process.pid)
                     || self.baseline.get(&process.pid) == Some(&process.started)
                     || STEAM_PROCESSES.contains(&process.name.to_ascii_lowercase().as_str())
-                    || NOT_THE_GAME.contains(&process.name.to_ascii_lowercase().as_str())
+                    || not_the_game(&process.name.to_ascii_lowercase())
                 {
                     continue;
                 }

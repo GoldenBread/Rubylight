@@ -33,6 +33,8 @@ ${HOST_CONF:-}
 EOF
 # APP=desktop streams the desktop through the ScreenCast portal (an app without a command).
 # APP=steam:APPID starts that Steam game as an imported library game, on the desktop it streams.
+# APP=import:SOURCE:ID imports a game through the console's library import (/api/library/import,
+# as "Add games" does; SOURCE and ID as /api/library/discovery lists them) and streams it.
 [ "${APP:-}" = desktop ] && APP=" "
 APP=${APP:-"ffplay -hide_banner -loglevel warning -fs -f lavfi -i 'testsrc2=size=${W}x${H}:rate=${FPS}[out0];sine=frequency=440:sample_rate=48000[out1]'"}
 python3 - "$P" "$APP" <<'EOF'
@@ -57,7 +59,7 @@ if app.startswith('steam:'):
                   'launcher-command': command, 'steam-id': appid, 'launcher-install-dir': install,
                   'steam-install-dir': install,
                   'launcher-launch': {'kind': 'uri', 'uri': f'steam://rungameid/{appid}'}})
-json.dump({'apps': [entry]}, open(p + '/apps.json', 'w'))
+json.dump({'apps': [] if app.startswith('import:') else [entry]}, open(p + '/apps.json', 'w'))
 salt = os.urandom(8).hex()
 json.dump({'username': 'test', 'salt': salt,
            'password': hashlib.sha256(('rust-smoke-only' + salt).encode()).digest()[::-1].hex().upper()},
@@ -82,6 +84,20 @@ for i in $(seq 30); do
   [ "${m:-0}" != 0 ] && break; sleep 1
 done
 echo "ServerCodecModeSupport=$m"
+case "${APP:-}" in import:*)
+  python3 - "$((PORT + 1))" "${APP#import:}" <<'IMPORT'
+import json, ssl, sys, urllib.request
+web, (source, game) = f'https://127.0.0.1:{sys.argv[1]}', sys.argv[2].split(':', 1)
+context = ssl.create_default_context(); context.check_hostname = False; context.verify_mode = ssl.CERT_NONE
+opener = urllib.request.build_opener(urllib.request.HTTPSHandler(context=context), urllib.request.HTTPCookieProcessor())
+def post(path, body, headers={}):
+    request = urllib.request.Request(web + path, json.dumps(body).encode(), {'Content-Type': 'application/json', **headers})
+    return json.load(opener.open(request, timeout=120))
+token = post('/api/auth/login', {'username': 'test', 'password': 'rust-smoke-only'})['csrf_token']
+result = post('/api/library/import', {'games': [{'source': source, 'id': game}]}, {'X-CSRF-Token': token})
+print('IMPORT', json.dumps(result['results']))
+IMPORT
+esac
 cd "$WORK"
 BUTTERPOLLO_TEST_MATCH_DISPLAY=1 BUTTERPOLLO_TEST_PORT=$PORT BUTTERPOLLO_TEST_CLIENT_EXE="$CLIENT" \
   python3 "$REPO/rust/tests/interop.py" "$WORK" "$CODEC" "$W" "$H" "$FPS" "$SECS" "$KBPS" 2>&1 | tee "$WORK/client.log"

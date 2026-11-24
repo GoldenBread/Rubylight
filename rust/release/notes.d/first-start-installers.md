@@ -1,0 +1,2 @@
+# Game tracking
+- **A game's first start no longer ends the stream before the game appears.** Steam, Heroic and Epic run a game's runtime installers (Visual C++, DirectX, .NET, PhysX, Unreal's prerequisites, anti-cheat setup) from its folder before its first start; the host took the installer for the game, and when it finished it ended the stream and closed the app while the game was still on its way. The host now waits through them for the game itself. Checked on the Linux host with FINAL FANTASY VII REMAKE INTERGRADE through Heroic; not yet on Windows.
