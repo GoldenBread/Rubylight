@@ -429,6 +429,13 @@ fn socket(address: SocketAddr, kind: Type) -> Result<Socket> {
     if address.is_ipv6() {
         socket.set_only_v6(false)?;
     }
+    // Outside Windows a listener's port stays taken while its closed connections wait out
+    // TIME-WAIT, a minute after a restart, unless it may be reused. There the option lets no
+    // other listener share the port; on Windows it would, so it stays off.
+    #[cfg(not(windows))]
+    if kind == Type::STREAM {
+        socket.set_reuse_address(true)?;
+    }
     socket.bind(&address.into())?;
     socket.set_nonblocking(true)?;
     Ok(socket)
