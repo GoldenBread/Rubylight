@@ -1,3 +1,4 @@
+//! Process listing, start, wait and stop on Linux, against real child processes.
 use super::*;
 use std::{
     io::{Read, Write},
@@ -80,12 +81,16 @@ fn dropping_a_command_ends_its_tree_unless_it_was_left_running() {
     assert!(eventually(|| command.active_processes().unwrap() == 2));
     let ids = command.process_ids().unwrap();
     drop(command);
-    assert!(eventually(|| ids.iter().all(|pid| creation_time(*pid) == 0)));
+    assert!(eventually(|| ids
+        .iter()
+        .all(|pid| creation_time(*pid) == 0)));
 
-    let leaving = Process::shell_leaving_children("sleep 30 &", None, false, &BTreeMap::new())
-        .unwrap();
+    let leaving =
+        Process::shell_leaving_children("sleep 30 &", None, false, &BTreeMap::new()).unwrap();
     assert_eq!(
-        leaving.wait_leaving_children(Duration::from_secs(5)).unwrap(),
+        leaving
+            .wait_leaving_children(Duration::from_secs(5))
+            .unwrap(),
         0
     );
     let left = leaving.process_ids().unwrap();
@@ -93,13 +98,24 @@ fn dropping_a_command_ends_its_tree_unless_it_was_left_running() {
     let left: BTreeMap<u32, u64> = left.iter().map(|pid| (*pid, creation_time(*pid))).collect();
     drop(leaving);
     std::thread::sleep(Duration::from_millis(100));
-    assert!(left.iter().all(|(pid, started)| creation_time(*pid) == *started));
+    assert!(
+        left.iter()
+            .all(|(pid, started)| creation_time(*pid) == *started)
+    );
     // An ID with another start time is another process, and is left alone.
-    let other: BTreeMap<u32, u64> = left.iter().map(|(pid, started)| (*pid, started + 1)).collect();
+    let other: BTreeMap<u32, u64> = left
+        .iter()
+        .map(|(pid, started)| (*pid, started + 1))
+        .collect();
     stop_processes(&other, Duration::ZERO);
-    assert!(left.iter().all(|(pid, started)| creation_time(*pid) == *started));
+    assert!(
+        left.iter()
+            .all(|(pid, started)| creation_time(*pid) == *started)
+    );
     stop_processes(&left, Duration::from_secs(5));
-    assert!(eventually(|| left.keys().all(|pid| creation_time(*pid) == 0)));
+    assert!(eventually(|| left
+        .keys()
+        .all(|pid| creation_time(*pid) == 0)));
 }
 
 #[test]
@@ -173,11 +189,9 @@ fn a_piped_program_talks_over_its_standard_streams() {
         // A sandbox may forbid looking into another process, a child too.
         Err(error) => {
             let denied = error.chain().any(|cause| {
-                cause
-                    .downcast_ref::<std::io::Error>()
-                    .is_some_and(|error| {
-                        matches!(error.raw_os_error(), Some(libc::EPERM) | Some(libc::ENOSYS))
-                    })
+                cause.downcast_ref::<std::io::Error>().is_some_and(|error| {
+                    matches!(error.raw_os_error(), Some(libc::EPERM) | Some(libc::ENOSYS))
+                })
             });
             assert!(denied, "{error:#}");
         }
@@ -305,7 +319,10 @@ fn command_lines_are_split_into_program_and_arguments() {
         command_arguments("\"/opt/My Game/run.sh\"  --fullscreen"),
         "--fullscreen"
     );
-    assert_eq!(command_target("'/opt/My Game/run.sh' -x"), "/opt/My Game/run.sh");
+    assert_eq!(
+        command_target("'/opt/My Game/run.sh' -x"),
+        "/opt/My Game/run.sh"
+    );
     assert_eq!(command_arguments("'/opt/My Game/run.sh' -x"), "-x");
     assert_eq!(command_target(""), "");
     assert_eq!(command_arguments("game"), "");
@@ -380,7 +397,9 @@ fn links_are_not_followed_and_folders_are_made_with_their_permissions() {
         .unwrap();
     assert_eq!(mode(&record), 0o644);
     assert_eq!(
-        create_file_administrators_readable(&link).unwrap_err().kind(),
+        create_file_administrators_readable(&link)
+            .unwrap_err()
+            .kind(),
         std::io::ErrorKind::AlreadyExists
     );
 

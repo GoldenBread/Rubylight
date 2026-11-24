@@ -500,7 +500,7 @@ dependencies = [
 
 [[package]]
 name = "butterpollo-linux-display"
-version = "6.3.2"
+version = "6.4.1"
 dependencies = [
  "anyhow",
  "butterpollo-config",
@@ -517,7 +517,7 @@ dependencies = [
 
 [[package]]
 name = "butterpollo-linux-graphics"
-version = "6.3.2"
+version = "6.4.1"
 dependencies = [
  "anyhow",
  "butterpollo-config",
@@ -534,7 +534,7 @@ dependencies = [
 
 [[package]]
 name = "butterpollo-linux-io"
-version = "6.3.2"
+version = "6.4.1"
 dependencies = [
  "anyhow",
  "butterpollo-config",

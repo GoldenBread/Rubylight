@@ -15,7 +15,8 @@ mod commands;
 mod focus;
 mod launch;
 mod lifecycle;
-#[cfg(test)]
+// These tests drive cmd.exe command lines and Windows process handles.
+#[cfg(all(test, windows))]
 mod parity_tests;
 
 pub use commands::{ClientCommands, MenuRun, app_bool, exit_timeout, pc_command, pc_command_names};

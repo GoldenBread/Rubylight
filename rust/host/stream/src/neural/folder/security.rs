@@ -2,7 +2,6 @@
 //! checks for Neural Rendering game and cache folders.
 use super::{Failure, LINK, Outcome, PROBE, Rights, Security, Writer, is_clean_path};
 use crate::os_ext::MetadataExt;
-use crate::os_ext::MetadataExt;
 use butterpollo_session::neural;
 use std::path::Path;
 

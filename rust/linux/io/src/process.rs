@@ -48,9 +48,7 @@ pub fn own_sid() -> Result<String> {
 pub enum Target {
     /// The signed-in user, who is the user this host runs as. `elevated` asks for
     /// administrator rights, which only a host running as root has.
-    User {
-        elevated: bool,
-    },
+    User { elevated: bool },
     /// The signed-in user, only while they are the account of this ID ([`user_sid`]): the
     /// one whose files a launch checked.
     Account(String),
@@ -93,9 +91,9 @@ fn check_target(target: &Target) -> Result<()> {
             );
             Ok(())
         }
-        Target::SystemSession(_) => Err(crate::unsupported(
-            "Starting a program in another session",
-        )),
+        Target::SystemSession(_) => {
+            Err(crate::unsupported("Starting a program in another session"))
+        }
     }
 }
 
@@ -291,7 +289,13 @@ impl Process {
         let mut command = Command::new(program);
         command.args(args);
         let directory = program.parent().filter(|folder| folder.is_dir());
-        let mut child = start(command, directory, &target, &BTreeMap::new(), Streams::Piped)?;
+        let mut child = start(
+            command,
+            directory,
+            &target,
+            &BTreeMap::new(),
+            Streams::Piped,
+        )?;
         let stdin = child.stdin.take().map(|end| OwnedFd::from(end).into());
         let stdout = child.stdout.take().map(|end| OwnedFd::from(end).into());
         let stderr = child.stderr.take().map(|end| OwnedFd::from(end).into());
@@ -369,11 +373,13 @@ impl Process {
     fn wait_for(&self, timeout: Duration, cancel: Option<&CommandCancellation>) -> Result<Waited> {
         if let Some(held) = &self.held {
             return Ok(match cancel {
-                Some(cancel) => match signal::readable([cancel.0.as_fd(), held.as_fd()], timeout)? {
-                    [true, _] => Waited::Cancelled,
-                    [false, true] => Waited::Ended,
-                    [false, false] => Waited::TimedOut,
-                },
+                Some(cancel) => {
+                    match signal::readable([cancel.0.as_fd(), held.as_fd()], timeout)? {
+                        [true, _] => Waited::Cancelled,
+                        [false, true] => Waited::Ended,
+                        [false, false] => Waited::TimedOut,
+                    }
+                }
                 None => match signal::readable([held.as_fd()], timeout)? {
                     [true] => Waited::Ended,
                     [false] => Waited::TimedOut,

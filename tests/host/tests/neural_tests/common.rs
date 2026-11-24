@@ -206,6 +206,7 @@ pub(crate) fn prepare(exe: &Path, package: Option<&Path>) -> Response {
     )
 }
 
+#[cfg(windows)]
 /// `path` open without delete sharing, as a running game or a scanner may
 /// hold a DLL: it can be neither replaced nor deleted until dropped.
 pub(crate) fn hold(path: &Path) -> std::fs::File {

@@ -1,11 +1,6 @@
 //! The kernel's routing socket (rtnetlink) as far as the host asks it: the route to one address,
 //! and a socket that becomes readable when an interface or an address changes.
-use std::{
-    io::Read,
-    net::IpAddr,
-    os::fd::AsRawFd,
-    time::Duration,
-};
+use std::{io::Read, net::IpAddr, os::fd::AsRawFd, time::Duration};
 
 const NLMSG_ERROR: u16 = 2;
 const RTM_NEWROUTE: u16 = 24;

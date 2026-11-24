@@ -238,7 +238,10 @@ mod tests {
         assert_eq!(client.receive_bytes()?.as_deref(), Some(&b"two"[..]));
         assert_eq!(client.receive_bytes()?, None);
         client.send_bytes(&vec![b'x'; MESSAGE_LIMIT])?;
-        assert_eq!(server.receive_bytes()?.map(|bytes| bytes.len()), Some(MESSAGE_LIMIT));
+        assert_eq!(
+            server.receive_bytes()?.map(|bytes| bytes.len()),
+            Some(MESSAGE_LIMIT)
+        );
         assert!(client.send_bytes(&vec![b'x'; MESSAGE_LIMIT + 1]).is_err());
         assert!(client.send_bytes(b"").is_err());
         assert_eq!(server.receive::<Request>()?, None);

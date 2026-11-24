@@ -152,6 +152,7 @@ fn a_failed_automatic_install_warns_once_also_after_setup_restarted_the_host() -
     assert!(f.host.aliases.lock().unwrap()["root"][AUTOMATIC_ATTEMPT].is_null());
     Ok(())
 }
+#[cfg(windows)]
 #[test]
 fn a_setup_that_stops_early_reports_its_recorded_reason() -> Result<()> {
     use std::os::windows::process::ExitStatusExt;
@@ -446,6 +447,7 @@ fn the_installer_is_downloaded_into_the_installation_folder() -> Result<()> {
     assert!(install.exists());
     Ok(())
 }
+#[cfg(windows)]
 #[test]
 fn a_link_at_or_in_the_staging_folder_is_refused_not_followed() -> Result<()> {
     if !elevated() {
@@ -473,6 +475,7 @@ fn a_link_at_or_in_the_staging_folder_is_refused_not_followed() -> Result<()> {
     }
     Ok(())
 }
+#[cfg(windows)]
 #[test]
 fn a_download_a_setup_still_runs_from_is_left_for_later() -> Result<()> {
     use std::os::windows::fs::OpenOptionsExt;
@@ -503,6 +506,7 @@ fn a_download_a_setup_still_runs_from_is_left_for_later() -> Result<()> {
     assert_eq!(left, ["download-not-a-uuid", "package", "transaction-1-2"]);
     Ok(())
 }
+#[cfg(windows)]
 #[test]
 fn downloads_left_in_the_profile_are_removed() -> Result<()> {
     let profile = Temporary::new();

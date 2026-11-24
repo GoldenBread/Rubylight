@@ -294,6 +294,7 @@ fn without_a_record_setups_traces_are_checked_once() {
     std::fs::remove_dir_all(directory).unwrap();
 }
 
+#[cfg(windows)]
 #[test]
 fn the_saved_passwords_go_from_every_profile() {
     let directory = scratch();

@@ -66,10 +66,7 @@ pub fn set_dont_fragment(socket: &UdpSocket, enabled: bool) -> Result<()> {
                 if matches!(
                     error.raw_os_error(),
                     Some(
-                        libc::ENOPROTOOPT
-                            | libc::EINVAL
-                            | libc::EOPNOTSUPP
-                            | libc::EPROTONOSUPPORT
+                        libc::ENOPROTOOPT | libc::EINVAL | libc::EOPNOTSUPP | libc::EPROTONOSUPPORT
                     )
                 ) =>
             {

@@ -131,7 +131,17 @@ pub(super) fn parse_routes4(text: &str) -> Vec<Route4> {
         .skip(1)
         .filter_map(|line| {
             let fields: Vec<&str> = line.split_whitespace().collect();
-            let [interface, destination, gateway, flags, _, _, metric, mask, ..] = fields[..]
+            let [
+                interface,
+                destination,
+                gateway,
+                flags,
+                _,
+                _,
+                metric,
+                mask,
+                ..,
+            ] = fields[..]
             else {
                 return None;
             };
@@ -250,7 +260,10 @@ fn over_hardware(name: &str) -> bool {
 pub(super) fn routed(routes: &[Route4], interface: &str) -> (u32, Vec<Ipv4Addr>) {
     let own = || routes.iter().filter(|route| route.interface == interface);
     let mut gateways: Vec<Ipv4Addr> = Vec::new();
-    for gateway in own().filter(|route| route.default).filter_map(|route| route.gateway) {
+    for gateway in own()
+        .filter(|route| route.default)
+        .filter_map(|route| route.gateway)
+    {
         if !gateways.contains(&gateway) {
             gateways.push(gateway);
         }

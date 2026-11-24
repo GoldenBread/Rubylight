@@ -487,6 +487,7 @@ fn a_data_root_administrators_do_not_own_is_never_saved_into() {
     std::fs::remove_dir_all(directory).unwrap();
 }
 
+#[cfg(windows)]
 #[test]
 fn a_temporary_record_a_cut_short_setup_left_is_replaced() {
     // A setup cut short between making and renaming it left one: it is never written into

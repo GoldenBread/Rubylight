@@ -3,9 +3,7 @@
 use super::{
     reply::ReplySocket,
     sys::{Ancillary, Errno, send_from, send_message},
-    wait::{
-        DatagramPass, WaitBudget, WritableWaits, buffer_available, send_with_retry, transient,
-    },
+    wait::{DatagramPass, WaitBudget, WritableWaits, buffer_available, send_with_retry, transient},
 };
 use anyhow::Result;
 use std::{

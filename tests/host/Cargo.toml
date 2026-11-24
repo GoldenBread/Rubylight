@@ -42,6 +42,9 @@ xmltree = "=0.10.3"
 zip = { version = "4.6", default-features = false, features = ["deflate"] }
 str0m = { version = "=0.24.1", default-features = false, features = ["rust-crypto"] }
 proptest = { version = "1", default-features = false, features = ["std"] }
+
+# Tests of Windows-only behaviour.
+[target.'cfg(windows)'.dev-dependencies]
 windows = { version = "0.62.2", features = ["Win32_Foundation", "Win32_Security", "Win32_System_Threading"] }
 
 [lints]

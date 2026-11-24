@@ -310,6 +310,7 @@ fn a_launch_holds_the_switch_while_it_checks() {
     assert_eq!(h.neural.lock().jobs["game"].action, "remove");
 }
 
+#[cfg(windows)]
 /// A launch's failed check and an app delete's failed removal reach the
 /// client and the console without the provider's folder, whose name is the
 /// mod's.

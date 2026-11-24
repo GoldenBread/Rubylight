@@ -1,3 +1,6 @@
+//! The Playnite extension install through the user-session helper. Playnite runs on
+//! Windows only, so these tests do too.
+#![cfg(windows)]
 use butterpollo_win_io::process::{Process, Target};
 use std::{collections::BTreeMap, ffi::OsStr, path::Path, time::Duration};
 

@@ -13,9 +13,7 @@ mod socket;
 mod sys;
 mod wait;
 
-pub use batch::{
-    Batch, DatagramWait, send_datagram, send_datagram_pass, send_datagram_with_wait,
-};
+pub use batch::{Batch, DatagramWait, send_datagram, send_datagram_pass, send_datagram_with_wait};
 pub use changes::InterfaceChanges;
 pub use interfaces::{
     LanInterface, default_gateways, host_name, lan_addresses, lan_interfaces, local_mac,

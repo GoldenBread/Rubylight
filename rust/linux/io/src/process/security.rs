@@ -44,7 +44,10 @@ pub fn open_unfollowed(path: &Path, folder: bool) -> io::Result<File> {
             if link {
                 io::Error::new(
                     error.kind(),
-                    format!("{} is a link to elsewhere, which is not followed", path.display()),
+                    format!(
+                        "{} is a link to elsewhere, which is not followed",
+                        path.display()
+                    ),
                 )
             } else {
                 error
@@ -144,7 +147,8 @@ pub fn restrict_to_administrators(folder: &Path) -> Result<()> {
             .with_context(|| format!("restricting {}", path.display()))
     };
     private(folder, 0o700)?;
-    for entry in std::fs::read_dir(folder).with_context(|| format!("listing {}", folder.display()))?
+    for entry in
+        std::fs::read_dir(folder).with_context(|| format!("listing {}", folder.display()))?
     {
         let entry = entry?;
         // From the listing itself: a link is left alone, as its target is not in the folder.

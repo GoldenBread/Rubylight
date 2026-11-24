@@ -119,6 +119,7 @@ async fn a_download_the_client_stops_taking_ends_and_closes_its_file() {
     assert!(body.is_err(), "the body ends short");
 }
 
+#[cfg(windows)]
 #[tokio::test]
 async fn a_file_another_program_holds_is_busy() {
     use std::os::windows::fs::OpenOptionsExt;

@@ -375,6 +375,7 @@ fn a_journal_that_survived_a_crash_is_cleared_once_at_the_next_start() {
     assert!(!directory.join(JOURNAL).exists());
 }
 
+#[cfg(windows)]
 #[test]
 fn a_journal_recovery_could_not_delete_is_deleted_by_the_writer_later() {
     use std::os::windows::fs::OpenOptionsExt;
@@ -437,6 +438,7 @@ fn a_clean_shutdown_leaves_no_journal_to_recover() {
     assert_eq!(setup.state(), State::Idle);
 }
 
+#[cfg(windows)]
 #[test]
 fn a_journal_that_could_not_be_deleted_is_deleted_by_a_later_try() {
     use std::os::windows::fs::OpenOptionsExt;

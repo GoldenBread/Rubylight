@@ -55,6 +55,9 @@ test-support = ["butterpollo-win-io/test-folder", "butterpollo-win-io/test-route
 [dev-dependencies]
 butterpollo-win-io = { path = "../../windows/io", features = ["test-folder", "test-route"] }
 proptest = { version = "1", default-features = false, features = ["std"] }
+
+# Tests of Windows-only behaviour.
+[target.'cfg(windows)'.dev-dependencies]
 windows = { version = "0.62.2", features = ["Win32_Foundation", "Win32_System_Threading"] }
 
 [lints]

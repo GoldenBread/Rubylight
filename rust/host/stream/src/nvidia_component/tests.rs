@@ -556,6 +556,7 @@ fn a_checked_component_holds_its_folders_in_place() {
     std::fs::rename(&root, h.directory.join("elsewhere-root")).unwrap();
 }
 
+#[cfg(windows)]
 /// A folder an earlier install left with a file still in use is passed over
 /// for the next free name, so a download after a removal still installs.
 #[tokio::test(flavor = "multi_thread")]

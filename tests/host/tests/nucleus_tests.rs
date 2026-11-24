@@ -1,4 +1,6 @@
 //! Nucleus Co-op registry, elevation, and stream admission tests extracted from `butterpollo_stream::nucleus`.
+//! Nucleus Co-op runs on Windows only, and so do these tests.
+#![cfg(windows)]
 
 #[path = "nucleus_tests/background_stream_tests.rs"]
 mod background_stream_tests;

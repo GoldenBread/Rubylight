@@ -1,11 +1,7 @@
 //! The running processes as `/proc` shows them: the list, a process's program, start time and usage, and the tree a started command grew. Nothing here is unavailable on Linux.
 
 use anyhow::{Context, Result};
-use std::{
-    collections::BTreeSet,
-    sync::OnceLock,
-    time::Duration,
-};
+use std::{collections::BTreeSet, sync::OnceLock, time::Duration};
 
 /// The clock's units in a second: process times are in 100 ns units, as the host keeps them.
 const UNITS_PER_SECOND: u128 = 10_000_000;

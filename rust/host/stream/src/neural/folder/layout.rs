@@ -2,7 +2,6 @@
 //! adoption, and legacy AMDNR removal simulation for Neural Rendering folders.
 use super::{ENTRIES, Failure, LINK, Outcome, PARTIAL, Writer, guard, manifest, state};
 use crate::os_ext::MetadataExt;
-use crate::os_ext::MetadataExt;
 use butterpollo_session::neural::{
     self, LEGACY_MANIFEST, Manifest, Mode, Now, Occupant, SETTINGS, in_the_way,
 };
