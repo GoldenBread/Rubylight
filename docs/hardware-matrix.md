@@ -302,3 +302,33 @@ The installed host runs as SYSTEM in the console session; a development host run
 - A predicted partner (a setting the driver is expected to switch when another is written) stays in the journal even when the read-back shows it unchanged; restore then reports it as already original instead of forgetting it.
 - A helper that hangs inside the driver is killed, and abandoned if it still does not exit 3 s later. While an abandoned helper is alive no new one starts (the request fails with "previous helper still hung"), so a hung driver cannot pile up processes or race the next write. `Worker::apply` and `restore_session` give up after 150 s (an apply that has not started by then is dropped, so it cannot land after its caller was told it failed). Each write costs about 600 ms (helper start, read, write, verify), so applying must stay off the stream-start path.
 - Telemetry keeps its ADLX system handle across a driver reset (the shared owner never re-initialises); settings IO is unaffected because it runs in fresh helper processes.
+
+## 6. Linux host (preview)
+
+A Linux host is being ported on a fork ([plan and measurements](linux-host-spike.md)); it is not a release. The labels mean what they mean above, with a Linux PC in place of the Windows build.
+
+Test PC: an RX 7800 XT (Navi 32, RDNA 3, VCN 4) with a Ryzen 7 5700X3D, CachyOS with kernel 7.3.5, Mesa 26.3.1 (radeonsi, VA-API through libva 2.24.1), KDE Plasma 6.8.3 on Wayland (KWin 6.8.3, xdg-desktop-portal-kde 6.8.3), PipeWire 1.6.11 and gamescope 3.17.0. Clients: Nightjar's headless client (`nightjar-cli`) and moonlight-qt 6.2.0 on the same PC, over loopback. No other GPU, distribution, desktop or network path has run.
+
+| Feature | Label | Evidence |
+|---|---|---|
+| H.264 High, HEVC Main, 1080p60 | Tested | Release builds: a 30-minute HEVC stream, 107,983 of 107,983 frames, steady 60 fps; moonlight-qt streamed H.264 and HEVC with no dropped frame. |
+| AV1 profile 0, 1080p60 | Tested | moonlight-qt, 20 s, no dropped frame, host p95 4.1 ms. VCN 4 codes 1080 rows as 1082. |
+| HEVC Main10, AV1 10-bit | Supported | Encode and decode tests with HDR10 metadata; no client stream. |
+| HDR | Unsupported | No capture gives an HDR picture: gamescope 3.17's PipeWire stream and KWin 6.8's screen sharing are 8-bit SDR. |
+| 4:4:4, packed 4:4:4 | Unsupported | VA-API on this GPU encodes 4:2:0 only. |
+| PyroWave 4:2:0 and 4:4:4 | Supported | The host advertises both; the SDK's decoder reads the encoder's output. No client stream: the headless client does not decode PyroWave. |
+| Loss recovery (reference invalidation) | Supported | A test drops reported pictures and the rest decodes bit-identical. |
+| GPU clocks held up while streaming (`vaapi_latency_over_power`) | Tested | 1080p60 HEVC host time p95 7.0 to 1.7 ms, 2160p60 output 55.9 to 60 fps, GPU 18.9 to 58.5 W. Needs `rust/linux/packaging/udev/70-rubylight-encoder-clock.rules`. |
+| The game's own gamescope session | Tested | Every stream above. |
+| The user's desktop (ScreenCast portal) | Tested | 1080p HEVC, 1,500 of 1,500 frames at 60 fps with a 60 fps picture on the desktop; the portal asked once. |
+| A Steam game started through the library | Tested | DISSIDIA FINAL FANTASY NT Free Edition under Proton: 3 minutes streamed; the stream ends when the game does, and the client's quit ends the game. |
+| Heroic and Lutris games | Supported | Library import tests; none started. |
+| Keyboard and mouse (gamescope session, desktop) | Tested | The headless client's input reached an X client in the session; desktop input by device tests. |
+| Xbox 360 pad (uinput) with rumble | Tested | Device tests and a stream (`tools/hw/linux-host/pad-stream.sh`). |
+| DualSense, DualShock 4, Switch Pro, Steam Deck, Steam Controller (uhid) | Tested | A stream each: the client's button and stick reached the game, the game's rumble reached the client. Motion and touchpad devices open to the user with `71-rubylight-pads.rules`. |
+| Switch 2 Pro Controller | Unsupported | No Linux driver; it becomes a Switch Pro Controller with a warning. |
+| Native touch and pen | Unsupported | Not built on Linux. |
+| Microphone | Supported | Device tests of the PipeWire source; no client sent a microphone. |
+| Clipboard | Supported | Tests; gamescope's X selections and, on the desktop, wl-clipboard. |
+| Sleep inhibit, power actions | Supported | Tests against logind. |
+| NVIDIA, Intel, GNOME, wlroots, X11 desktops | Unsupported | Not built or not run. |
