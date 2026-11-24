@@ -84,10 +84,14 @@ pub fn shape(level: u16, feel: RumbleFeel) -> u16 {
 
 /// A 0-255 vibration amplitude after the feel's curve.
 pub fn shape_amplitude(amplitude: i32, feel: RumbleFeel) -> i32 {
-    if amplitude <= 0 || feel == RumbleFeel::Standard {
-        return amplitude;
+    if amplitude <= 0 {
+        return 0;
     }
-    let level = (amplitude as u32).wrapping_mul(257) as u16;
+    let clamped = amplitude.min(255);
+    if feel == RumbleFeel::Standard {
+        return clamped;
+    }
+    let level = (clamped as u32 * 257) as u16;
     i32::from(shape(level, feel) >> 8).min(255)
 }
 
@@ -114,8 +118,9 @@ pub fn single_motor_amplitude(
 
 /// `{on, off}` milliseconds for a vibrator without amplitude control.
 pub fn pwm_timings(amplitude: i32, feel: RumbleFeel) -> (i64, i64) {
-    let mut on = ((f64::from(amplitude) / 255.0) * (PWM_PERIOD_MS as f64)) as i64;
-    if feel != RumbleFeel::Standard && amplitude > 0 {
+    let clamped = amplitude.clamp(0, 255);
+    let mut on = ((f64::from(clamped) / 255.0) * (PWM_PERIOD_MS as f64)) as i64;
+    if feel != RumbleFeel::Standard && clamped > 0 {
         on = on.max(1);
     }
     (on, PWM_PERIOD_MS - on)
@@ -255,10 +260,22 @@ mod tests {
         }
         assert!(shape_amplitude(20, RumbleFeel::Strong) >= 64);
         assert_eq!(shape_amplitude(255, RumbleFeel::Strong), 255);
+        assert_eq!(shape_amplitude(256, RumbleFeel::Strong), 255);
+        assert_eq!(shape_amplitude(300, RumbleFeel::Strong), 255);
+        assert_eq!(shape_amplitude(300, RumbleFeel::Standard), 255);
+        assert_eq!(shape_amplitude(-10, RumbleFeel::Standard), 0);
+        assert_eq!(shape_amplitude(-10, RumbleFeel::Strong), 0);
         assert!(shape_amplitude(255, RumbleFeel::Subtle) <= 153);
+        assert_eq!(
+            shape_amplitude(300, RumbleFeel::Subtle),
+            shape_amplitude(255, RumbleFeel::Subtle)
+        );
 
         assert_eq!(pwm_timings(128, RumbleFeel::Standard), (10, 10));
         assert_eq!(pwm_timings(255, RumbleFeel::Standard), (20, 0));
+        assert_eq!(pwm_timings(300, RumbleFeel::Standard), (20, 0));
+        assert_eq!(pwm_timings(-10, RumbleFeel::Standard), (0, 20));
+        assert_eq!(pwm_timings(-255, RumbleFeel::Strong), (0, 20));
         assert_eq!(pwm_timings(5, RumbleFeel::Standard).0, 0);
         assert_eq!(pwm_timings(5, RumbleFeel::Strong).0, 1);
         assert_eq!(pwm_timings(0, RumbleFeel::Strong).0, 0);

@@ -153,6 +153,32 @@ public class ControllerInputReleaseTest {
     }
 
     @Test
+    public void invalidOrDestroyedUsbHandlesZeroOutputsAndPickMenuMouseBoundsAreChecked() {
+        int[] steerOut = new int[11];
+        steerOut[0] = 1;
+        assertEquals(0, com.limelight.nvstream.jni.NightjarInputJni.usbSteerMenuStep(0L, 1, ControllerPacket.A_FLAG, steerOut));
+        assertEquals(0, steerOut[0]);
+
+        int[] captureOut = {1, 2, 3, 4};
+        com.limelight.nvstream.jni.NightjarInputJni.usbCapturePadStep(0L, 1, ControllerPacket.A_FLAG, 0.9f, 0f, 1, captureOut);
+        assertArrayEquals(new int[] {0, 0, 0, 0}, captureOut);
+
+        long handle = com.limelight.nvstream.jni.NightjarInputJni.usbInputStateCreate();
+        com.limelight.nvstream.jni.NightjarInputJni.usbInputStateDestroy(handle);
+        steerOut[0] = 1;
+        assertEquals(0, com.limelight.nvstream.jni.NightjarInputJni.usbSteerMenuStep(handle, 1, ControllerPacket.A_FLAG, steerOut));
+        assertEquals(0, steerOut[0]);
+        captureOut = new int[] {1, 2, 3, 4};
+        com.limelight.nvstream.jni.NightjarInputJni.usbCapturePadStep(handle, 1, ControllerPacket.A_FLAG, 0.9f, 0f, 1, captureOut);
+        assertArrayEquals(new int[] {0, 0, 0, 0}, captureOut);
+
+        assertEquals(-2, com.limelight.nvstream.jni.NightjarInputJni.pickMenuMouseTarget(
+                new boolean[] {true}, new short[] {0}, new boolean[] {false}, 5));
+        assertEquals(-2, com.limelight.nvstream.jni.NightjarInputJni.pickMenuMouseTarget(
+                new boolean[] {true}, new short[] {0}, new boolean[] {false}, -1));
+    }
+
+    @Test
     public void theAndroidMappedQuitComboLeavesToo() {
         MenuGame activity = Robolectric.buildActivity(MenuGame.class).get();
         PreferenceConfiguration prefs = new PreferenceConfiguration();

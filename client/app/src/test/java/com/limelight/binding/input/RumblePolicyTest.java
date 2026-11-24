@@ -102,7 +102,24 @@ public class RumblePolicyTest {
     public void strongLiftsWeakAmplitudeAboveAMotorStartAndSubtleCapsIt() {
         assertTrue(RumblePolicy.shapeAmplitude(20, RumblePolicy.Feel.STRONG) >= 64);
         assertEquals(255, RumblePolicy.shapeAmplitude(255, RumblePolicy.Feel.STRONG));
+        assertEquals(255, RumblePolicy.shapeAmplitude(256, RumblePolicy.Feel.STRONG));
+        assertEquals(255, RumblePolicy.shapeAmplitude(300, RumblePolicy.Feel.STRONG));
+        assertEquals(0, RumblePolicy.shapeAmplitude(-10, RumblePolicy.Feel.STANDARD));
         assertTrue(RumblePolicy.shapeAmplitude(255, RumblePolicy.Feel.SUBTLE) <= 153);
+    }
+
+    @Test
+    public void rumbleSetPausedZerosOutBufferOnInvalidOrDestroyedHandle() {
+        int[] out = new int[81];
+        out[0] = 1;
+        assertEquals(0, com.limelight.nvstream.jni.NightjarInputJni.rumbleSetPaused(0L, true, false, out));
+        assertEquals(0, out[0]);
+
+        long handle = com.limelight.nvstream.jni.NightjarInputJni.rumbleStateCreate(true, 0, (short) 0);
+        com.limelight.nvstream.jni.NightjarInputJni.rumbleStateDestroy(handle);
+        out[0] = 2;
+        assertEquals(0, com.limelight.nvstream.jni.NightjarInputJni.rumbleSetPaused(handle, true, false, out));
+        assertEquals(0, out[0]);
     }
 
     @Test
@@ -122,6 +139,12 @@ public class RumblePolicyTest {
         long[] full = RumblePolicy.pwmTimings(255, RumblePolicy.Feel.STANDARD);
         assertEquals(20, full[0]);
         assertEquals(0, full[1]);
+        long[] over = RumblePolicy.pwmTimings(300, RumblePolicy.Feel.STANDARD);
+        assertEquals(20, over[0]);
+        assertEquals(0, over[1]);
+        long[] under = RumblePolicy.pwmTimings(-10, RumblePolicy.Feel.STANDARD);
+        assertEquals(0, under[0]);
+        assertEquals(20, under[1]);
         // Standard keeps today's rounding down; another feel keeps a weak level audible at 1 ms.
         assertEquals(0, RumblePolicy.pwmTimings(5, RumblePolicy.Feel.STANDARD)[0]);
         assertEquals(1, RumblePolicy.pwmTimings(5, RumblePolicy.Feel.STRONG)[0]);

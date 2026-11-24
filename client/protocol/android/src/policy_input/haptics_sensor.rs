@@ -154,36 +154,29 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarInputJni_rumbleRe
     i32::from(res.allowed_to_record) | (i32::from(res.active) << 1)
 }
 
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarInputJni_rumbleSetPaused(
-    mut env: JNIEnv,
-    _: JClass,
+fn rumble_set_paused(
     handle: jlong,
-    paused: jboolean,
-    stopped: jboolean,
-    out: JIntArray,
-) -> jint {
-    let Some(transition) = RUMBLE_SLAB.with(handle, |s| {
-        s.set_paused(paused != JNI_FALSE, stopped != JNI_FALSE)
-    }) else {
-        return 0;
+    paused: bool,
+    stopped: bool,
+    buf: &mut [i32; 81],
+) -> (jint, usize) {
+    let Some(transition) = RUMBLE_SLAB.with(handle, |s| s.set_paused(paused, stopped)) else {
+        buf[0] = 0;
+        return (0, 1);
     };
     match transition {
         PauseTransition::NoChange => {
-            write_ints(&mut env, &out, &[0]);
-            0
+            buf[0] = 0;
+            (0, 1)
         }
         PauseTransition::Pause { slots, len } => {
-            let mut buf = [0i32; 17];
             buf[0] = 1;
             for (i, &slot) in slots.iter().enumerate().take(len) {
                 buf[1 + i] = i32::from(slot);
             }
-            write_ints(&mut env, &out, &buf[..=len]);
-            len as jint
+            (len as jint, 1 + len)
         }
         PauseTransition::Resume { entries, len } => {
-            let mut buf = [0i32; 81];
             buf[0] = 2;
             for (i, &(slot, low, high, lt, rt)) in entries.iter().enumerate().take(len) {
                 let base = 1 + i * 5;
@@ -193,10 +186,25 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarInputJni_rumbleSe
                 buf[base + 3] = i32::from(lt as i16);
                 buf[base + 4] = i32::from(rt as i16);
             }
-            write_ints(&mut env, &out, &buf[..1 + len * 5]);
-            len as jint
+            (len as jint, 1 + len * 5)
         }
     }
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarInputJni_rumbleSetPaused(
+    mut env: JNIEnv,
+    _: JClass,
+    handle: jlong,
+    paused: jboolean,
+    stopped: jboolean,
+    out: JIntArray,
+) -> jint {
+    let mut buf = [0i32; 81];
+    let (ret, written) =
+        rumble_set_paused(handle, paused != JNI_FALSE, stopped != JNI_FALSE, &mut buf);
+    write_ints(&mut env, &out, &buf[..written]);
+    ret
 }
 
 #[unsafe(no_mangle)]
@@ -306,6 +314,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarInputJni_rumbleDe
             fallback_strength,
         )
     }) else {
+        write_longs(&mut env, &out, &[0, 0, 0]);
         return 0;
     };
     match action {
@@ -581,6 +590,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarInputJni_motionSa
             flydigi_forced != JNI_FALSE,
         )
     }) else {
+        write_floats(&mut env, &out, &[0.0, 0.0, 0.0]);
         return 0;
     };
     let mut flags = i32::from(outcome.tripped_liveness);
@@ -627,4 +637,26 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarInputJni_evaluate
     };
     write_ints(&mut env, &out, &[i32::from(li_state), i32::from(li_pct)]);
     jbool(true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn invalid_and_destroyed_rumble_handles_zero_pause_output() {
+        let mut out = [99i32; 81];
+        assert_eq!(rumble_set_paused(0, true, false, &mut out), (0, 1));
+        assert_eq!(out[0], 0);
+
+        let handle = RUMBLE_SLAB.insert(RumbleState::new(true, RumbleFeel::Standard, 0));
+        assert!(RUMBLE_SLAB.remove(handle));
+
+        let mut destroyed_out = [55i32; 81];
+        assert_eq!(
+            rumble_set_paused(handle, true, false, &mut destroyed_out),
+            (0, 1)
+        );
+        assert_eq!(destroyed_out[0], 0);
+    }
 }

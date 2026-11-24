@@ -104,8 +104,6 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
     private final int[] remapOut = new int[1];
     private final int[] buttonStepOut = new int[5];
     private final int[] comboOut = new int[2];
-    private final int[] stateOut = new int[7];
-    private final int[] steerKeysOut = new int[11];
     private final int[] rumblePauseOut = new int[81];
     private final int[] rumbleAmpOut = new int[4];
     private final long[] rumbleSingleOut = new long[3];
@@ -2081,21 +2079,31 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
 
         short activeControllerMask = getActiveControllerMask();
         if (originalContext.mouseEmulationActive) {
-            NightjarInputJni.mousePacketStep(
-                    inputMap, originalContext.mouseEmulationLastInputMap,
-                    prefConfig.mouseEmulationFixedStep, originalContext.mouseEmulationStep, stateOut);
-            originalContext.mouseEmulationLastInputMap = stateOut[0];
-            originalContext.mouseEmulationStep = stateOut[1];
-            int flags = stateOut[2];
-            originalContext.mouseEmulationFixedStepHeld = (flags & 1) != 0;
+            int flags;
+            int mouseStep;
+            int leftBtn;
+            int rightBtn;
+            synchronized (originalContext) {
+                NightjarInputJni.mousePacketStep(
+                        inputMap, originalContext.mouseEmulationLastInputMap,
+                        prefConfig.mouseEmulationFixedStep, originalContext.mouseEmulationStep,
+                        originalContext.mousePacketOut);
+                originalContext.mouseEmulationLastInputMap = originalContext.mousePacketOut[0];
+                mouseStep = originalContext.mousePacketOut[1];
+                originalContext.mouseEmulationStep = mouseStep;
+                flags = originalContext.mousePacketOut[2];
+                originalContext.mouseEmulationFixedStepHeld = (flags & 1) != 0;
+                leftBtn = originalContext.mousePacketOut[3];
+                rightBtn = originalContext.mousePacketOut[4];
+            }
             if ((flags & (1 << 1)) != 0) {
                 Toast.makeText(activityContext, activityContext.getString(R.string.stream_mouse_step,
-                        originalContext.mouseEmulationStep), Toast.LENGTH_SHORT).show();
+                        mouseStep), Toast.LENGTH_SHORT).show();
             }
-            if (stateOut[3] > 0) conn.sendMouseButtonDown(MouseButtonPacket.BUTTON_LEFT);
-            else if (stateOut[3] < 0) conn.sendMouseButtonUp(MouseButtonPacket.BUTTON_LEFT);
-            if (stateOut[4] > 0) conn.sendMouseButtonDown(MouseButtonPacket.BUTTON_RIGHT);
-            else if (stateOut[4] < 0) conn.sendMouseButtonUp(MouseButtonPacket.BUTTON_RIGHT);
+            if (leftBtn > 0) conn.sendMouseButtonDown(MouseButtonPacket.BUTTON_LEFT);
+            else if (leftBtn < 0) conn.sendMouseButtonUp(MouseButtonPacket.BUTTON_LEFT);
+            if (rightBtn > 0) conn.sendMouseButtonDown(MouseButtonPacket.BUTTON_RIGHT);
+            else if (rightBtn < 0) conn.sendMouseButtonUp(MouseButtonPacket.BUTTON_RIGHT);
             if ((flags & (1 << 2)) != 0) conn.sendMouseScroll((byte) 1);
             if ((flags & (1 << 3)) != 0) conn.sendMouseScroll((byte) -1);
             if ((flags & (1 << 4)) != 0) conn.sendMouseHScroll((byte) 1);
@@ -2939,7 +2947,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         private final boolean needsDeviceOrientationCorrection;
         private final InputDeviceContext livenessContext;
         private final float[] motionOut = new float[3];
-        private long filterHandle;
+        private volatile long filterHandle;
         // Set by closeMotionListener() on the thread that unregisters this listener.
         volatile boolean closed;
         // Whether this listener holds the display rotation; guarded by the DeviceRotation monitor.
@@ -3361,13 +3369,19 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
      * the stream menu or a capture has the pad: there Guide does what it always did.
      */
     private int guideHoldButtons(UsbDeviceContext context, int buttonFlags) {
-        NightjarInputJni.usbGuideHoldStep(
-                context.guideDown, context.guideHold.stateBits(), context.guideTapping,
-                buttonFlags, prefConfig.guideMenuHoldMs, inputEnabled && padCapture == null, stateOut);
-        context.guideDown = stateOut[0] != 0;
-        context.guideHold.setStateBits(stateOut[1]);
-        context.guideTapping = stateOut[2] != 0;
-        int actionBits = stateOut[4];
+        int actionBits;
+        int outButtons;
+        synchronized (context) {
+            NightjarInputJni.usbGuideHoldStep(
+                    context.guideDown, context.guideHold.stateBits(), context.guideTapping,
+                    buttonFlags, prefConfig.guideMenuHoldMs, inputEnabled && padCapture == null,
+                    context.guideHoldOut);
+            context.guideDown = context.guideHoldOut[0] != 0;
+            context.guideHold.setStateBits(context.guideHoldOut[1]);
+            context.guideTapping = context.guideHoldOut[2] != 0;
+            outButtons = context.guideHoldOut[3];
+            actionBits = context.guideHoldOut[4];
+        }
         if ((actionBits & 2) != 0) {
             mainThreadHandler.removeCallbacks(context.guideHoldRunnable);
         }
@@ -3375,7 +3389,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
             mainThreadHandler.removeCallbacks(context.guideHoldRunnable);
             mainThreadHandler.postDelayed(context.guideHoldRunnable, prefConfig.guideMenuHoldMs);
         }
-        return stateOut[3];
+        return outButtons;
     }
 
     public boolean handleButtonDown(KeyEvent event) {
@@ -3741,22 +3755,30 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
     }
 
     private void capturePad(int controllerId, UsbDeviceContext context, PadCapture capture, int buttons, float stickX, float stickY) {
-        NightjarInputJni.usbCapturePadStep(
-                usbInputStateHandle, controllerId, buttons, stickX, stickY,
-                captureGeneration.get(), stateOut);
-        if (stateOut[0] != 0) {
+        int entered;
+        int changed;
+        int newButtons;
+        int stickChanged;
+        synchronized (context) {
+            NightjarInputJni.usbCapturePadStep(
+                    usbInputStateHandle, controllerId, buttons, stickX, stickY,
+                    captureGeneration.get(), context.captureOut);
+            entered = context.captureOut[0];
+            changed = context.captureOut[1];
+            newButtons = context.captureOut[2];
+            stickChanged = context.captureOut[3];
+        }
+        if (entered != 0) {
             context.menuComboPending = false;
             context.quitComboPending = false;
             // The game's last state is cleared here, on the thread that sends this pad's reports.
             releaseUsbInput(context);
         }
-        int changed = stateOut[1];
-        int newButtons = stateOut[2];
         for (int flag : capturedButtonFlags()) {
             if ((changed & flag) != 0) capture.button(flag, (newButtons & flag) != 0);
         }
         // The stick is reported on every report; the keyboard only needs to hear when its direction changes.
-        if (stateOut[3] != 0) {
+        if (stickChanged != 0) {
             capture.stick(context.id, stickX, stickY);
         }
     }
@@ -3764,18 +3786,20 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
     // While the stream menu or one of its dialogs has focus, a newly pressed D-pad direction, A or B
     // of a USB-driver pad moves, chooses or goes back there.
     private void steerMenu(int controllerId, UsbDeviceContext context, int buttons) {
-        int count = NightjarInputJni.usbSteerMenuStep(
-                usbInputStateHandle, controllerId, buttons, steerKeysOut);
-        if (steerKeysOut[0] != 0) {
-            context.menuComboPending = false;
-            context.quitComboPending = false;
-        }
-        if (count <= 0 || !(activityContext instanceof Game)) {
-            return;
-        }
-        Game game = (Game) activityContext;
-        for (int i = 1; i <= count; i++) {
-            game.steerStreamMenu(steerKeysOut[i]);
+        synchronized (context) {
+            int count = NightjarInputJni.usbSteerMenuStep(
+                    usbInputStateHandle, controllerId, buttons, context.steerKeysOut);
+            if (context.steerKeysOut[0] != 0) {
+                context.menuComboPending = false;
+                context.quitComboPending = false;
+            }
+            if (count <= 0 || !(activityContext instanceof Game)) {
+                return;
+            }
+            Game game = (Game) activityContext;
+            for (int i = 1; i <= count; i++) {
+                game.steerStreamMenu(context.steerKeysOut[i]);
+            }
         }
     }
 
@@ -3828,14 +3852,15 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         if (context != null) {
             LimeLog.info("Removed controller: "+controller.getControllerId());
             // Unplugged while the PC keyboard was open: nothing will report what it held being let go.
-            NightjarInputJni.usbRemovePadCapture(usbInputStateHandle, controller.getControllerId(), stateOut);
+            int[] removeOut = new int[3];
+            NightjarInputJni.usbRemovePadCapture(usbInputStateHandle, controller.getControllerId(), removeOut);
             PadCapture capture = padCapture;
-            if (capture != null && stateOut[0] != 0) {
-                int heldMenuButtons = stateOut[1];
+            if (capture != null && removeOut[0] != 0) {
+                int heldMenuButtons = removeOut[1];
                 for (int flag : capturedButtonFlags()) {
                     if ((heldMenuButtons & flag) != 0) capture.button(flag, false);
                 }
-                if (stateOut[2] != 0) {
+                if (removeOut[2] != 0) {
                     capture.stick(context.id, 0f, 0f);
                 }
             }
@@ -3918,6 +3943,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         public int mouseEmulationStep = FixedStepMouse.MIN_STEP;
         public final int mouseEmulationReportPeriod = 50;
         private final int[] mouseTickOut = new int[7];
+        private final int[] mousePacketOut = new int[5];
 
         public final Runnable mouseEmulationRunnable = new Runnable() {
             @Override
@@ -4449,6 +4475,9 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         int clickpadSwallowed;
         final int[] usbAxesOut = new int[6];
         final int[] clickpadOut = new int[2];
+        final int[] guideHoldOut = new int[5];
+        final int[] captureOut = new int[4];
+        final int[] steerKeysOut = new int[11];
         // Last raw driver report, used when a deferred Guide tap release fires after MINIMUM_BUTTON_DOWN_TIME_MS.
         int lastRawButtons;
         float lastRawLeftStickX, lastRawLeftStickY, lastRawRightStickX, lastRawRightStickY;

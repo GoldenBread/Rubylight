@@ -256,7 +256,7 @@ pub fn fixed_step_next(step: i32) -> i32 {
 
 /// Fixed-step movement delta along one axis (`Integer.signum((int) component) * step`).
 pub fn fixed_step_delta(component: f64, step: i32) -> i32 {
-    (component as i32).signum() * step
+    (component as i32).signum().saturating_mul(step)
 }
 
 #[cfg(test)]
@@ -350,6 +350,8 @@ mod tests {
         assert_eq!(fixed_step_delta(3.7, 16), 16);
         assert_eq!(fixed_step_delta(-1.0, 16), -16);
         assert_eq!(fixed_step_delta(0.99, 64), 0);
+        assert_eq!(fixed_step_delta(-1.0, i32::MIN), i32::MAX);
+        assert_eq!(fixed_step_delta(1.0, i32::MIN), i32::MIN);
 
         assert_eq!(mouse_stick_curve(0, 0), (0.0, 0.0));
         let (mx, my) = mouse_stick_curve(0x7FFE, 0);

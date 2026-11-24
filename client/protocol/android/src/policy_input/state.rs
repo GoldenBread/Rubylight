@@ -41,6 +41,23 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarInputJni_usbInput
     let _ = USB_STATE_SLAB.remove(handle);
 }
 
+fn usb_steer_menu_step(
+    handle: jlong,
+    controller_id: jint,
+    buttons: jint,
+    out_keys: &mut [i32; 11],
+) -> (jint, usize) {
+    let Some((clear_combos, keys, count)) =
+        USB_STATE_SLAB.with(handle, |s| s.steer_menu(controller_id, buttons as u32))
+    else {
+        out_keys[0] = 0;
+        return (0, 1);
+    };
+    out_keys[0] = i32::from(clear_combos);
+    out_keys[1..=count].copy_from_slice(&keys[..count]);
+    (count as jint, 1 + count)
+}
+
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarInputJni_usbSteerMenuStep(
     mut env: JNIEnv,
@@ -50,16 +67,31 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarInputJni_usbSteer
     buttons: jint,
     out_keys: JIntArray,
 ) -> jint {
-    let Some((clear_combos, keys, count)) =
-        USB_STATE_SLAB.with(handle, |s| s.steer_menu(controller_id, buttons as u32))
-    else {
-        return 0;
-    };
     let mut buf = [0i32; 11];
-    buf[0] = i32::from(clear_combos);
-    buf[1..=count].copy_from_slice(&keys[..count]);
-    write_ints(&mut env, &out_keys, &buf[..=count]);
-    count as jint
+    let (ret, len) = usb_steer_menu_step(handle, controller_id, buttons, &mut buf);
+    write_ints(&mut env, &out_keys, &buf[..len]);
+    ret
+}
+
+fn usb_capture_pad_step(
+    handle: jlong,
+    controller_id: jint,
+    buttons: jint,
+    stick_x: jfloat,
+    stick_y: jfloat,
+    generation: jint,
+) -> [i32; 4] {
+    let Some(res) = USB_STATE_SLAB.with(handle, |s| {
+        s.capture_pad(controller_id, buttons as u32, stick_x, stick_y, generation)
+    }) else {
+        return [0, 0, 0, 0];
+    };
+    [
+        i32::from(res.entered),
+        res.changed_mask as i32,
+        res.new_buttons as i32,
+        i32::from(res.stick_changed),
+    ]
 }
 
 #[unsafe(no_mangle)]
@@ -74,21 +106,8 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarInputJni_usbCaptu
     generation: jint,
     out: JIntArray,
 ) {
-    let Some(res) = USB_STATE_SLAB.with(handle, |s| {
-        s.capture_pad(controller_id, buttons as u32, stick_x, stick_y, generation)
-    }) else {
-        return;
-    };
-    write_ints(
-        &mut env,
-        &out,
-        &[
-            i32::from(res.entered),
-            res.changed_mask as i32,
-            res.new_buttons as i32,
-            i32::from(res.stick_changed),
-        ],
-    );
+    let vals = usb_capture_pad_step(handle, controller_id, buttons, stick_x, stick_y, generation);
+    write_ints(&mut env, &out, &vals);
 }
 
 #[unsafe(no_mangle)]
@@ -314,10 +333,20 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarInputJni_pickMenu
     active: JBooleanArray,
     count: jint,
 ) -> jint {
-    let n = count.max(0) as usize;
-    if n == 0 || eligible.is_null() || numbers.is_null() || active.is_null() {
+    if count <= 0 || eligible.is_null() || numbers.is_null() || active.is_null() {
         return -2;
     }
+    let (Ok(e_len), Ok(n_len), Ok(a_len)) = (
+        env.get_array_length(&eligible),
+        env.get_array_length(&numbers),
+        env.get_array_length(&active),
+    ) else {
+        return -2;
+    };
+    if count > e_len || count > n_len || count > a_len {
+        return -2;
+    }
+    let n = count as usize;
     let mut e_buf = vec![0u8; n];
     let mut n_buf = vec![0i16; n];
     let mut a_buf = vec![0u8; n];
@@ -414,4 +443,42 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarInputJni_mouseTic
             i32::from(plan.scroll_h),
         ],
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn invalid_and_destroyed_usb_state_handles_zero_outputs() {
+        let mut steer_out = [99i32; 11];
+        assert_eq!(usb_steer_menu_step(0, 1, 0x10, &mut steer_out), (0, 1));
+        assert_eq!(steer_out[0], 0);
+        assert_eq!(usb_capture_pad_step(0, 1, 0x10, 0.9, 0.0, 1), [0, 0, 0, 0]);
+
+        let handle = USB_STATE_SLAB.insert(UsbInputStates::default());
+        let mut active_steer = [0i32; 11];
+        assert_eq!(usb_steer_menu_step(handle, 3, 0, &mut active_steer), (0, 1));
+        assert_eq!(active_steer[0], 1);
+        assert_eq!(
+            usb_steer_menu_step(handle, 3, 0x1000, &mut active_steer),
+            (1, 2)
+        );
+        assert_ne!(
+            usb_capture_pad_step(handle, 3, 0x1000, 0.9, 0.0, 1),
+            [0, 0, 0, 0]
+        );
+        assert!(USB_STATE_SLAB.remove(handle));
+
+        let mut destroyed_steer = [77i32; 11];
+        assert_eq!(
+            usb_steer_menu_step(handle, 3, 0x1000, &mut destroyed_steer),
+            (0, 1)
+        );
+        assert_eq!(destroyed_steer[0], 0);
+        assert_eq!(
+            usb_capture_pad_step(handle, 3, 0x1000, 0.9, 0.0, 2),
+            [0, 0, 0, 0]
+        );
+    }
 }
