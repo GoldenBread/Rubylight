@@ -569,3 +569,115 @@ fn live_a_private_display_comes_and_goes() {
     assert_eq!(shown(&after), shown(&before));
     assert!(after.output(&name).is_none_or(|o| !o.enabled));
 }
+
+fn live_request(stable_id: &str, width: u32, arrangement: Arrangement) -> PrivateRequest {
+    PrivateRequest {
+        stable_id: stable_id.into(),
+        width,
+        height: 720,
+        refresh_millihz: 60_000,
+        arrangement,
+        scale_percent: None,
+    }
+}
+
+/// On this PC: two private displays at once. The second asks for exclusive but joins the first
+/// beside it; dropping the first leaves the second, and dropping the second brings the
+/// monitors back. It changes the desktop: run it only on a PC whose user agreed.
+#[test]
+#[ignore = "changes this PC's monitors"]
+fn live_two_private_displays_at_once() {
+    assert!(virtual_display_available(), "{}", virtual_display_status());
+    let before = kscreen::query().unwrap();
+    let first = VirtualDisplay::create_with(&live_request(
+        "rubylight-live-one",
+        1280,
+        Arrangement::Extended,
+    ))
+    .unwrap();
+    let second = VirtualDisplay::create_with(&live_request(
+        "rubylight-live-two",
+        1024,
+        Arrangement::Exclusive,
+    ))
+    .unwrap();
+    assert_ne!(first.name, second.name);
+    let both = kscreen::query().unwrap();
+    eprintln!("both {:#?}", shown(&both));
+    for name in [&first.name, &second.name] {
+        assert!(both.output(name).is_some_and(|o| o.enabled), "{name} is on");
+    }
+    // The physical monitor stays: the second display joined instead of taking the desktop.
+    assert!(both.output("DP-1").is_some_and(|o| o.enabled));
+    std::thread::sleep(Duration::from_secs(3));
+    let (first_name, second_name) = (first.name.clone(), second.name.clone());
+    drop(first);
+    let one = kscreen::query().unwrap();
+    eprintln!("one {:#?}", shown(&one));
+    assert!(one.output(&first_name).is_none_or(|o| !o.enabled));
+    assert!(one.output(&second_name).is_some_and(|o| o.enabled));
+    assert_eq!(joinable_mode("rubylight-live-one"), None);
+    std::thread::sleep(Duration::from_secs(2));
+    drop(second);
+    let mut after = kscreen::query().unwrap();
+    for _ in 0..30 {
+        if shown(&after) == shown(&before) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+        after = kscreen::query().unwrap();
+    }
+    eprintln!("after {:#?}", shown(&after));
+    assert_eq!(shown(&after), shown(&before));
+}
+
+/// On this PC, half of a crash: an exclusive private display, held until the process is
+/// killed (`kill -9`), so nothing restores the monitors. [`live_recovery_after_a_crash`] is
+/// the other half. It changes the desktop: run it only on a PC whose user agreed.
+#[test]
+#[ignore = "changes this PC's monitors and waits to be killed"]
+fn live_hold_until_killed() {
+    assert!(virtual_display_available(), "{}", virtual_display_status());
+    let display = VirtualDisplay::create_with(&live_request(
+        "rubylight-live-crash",
+        1280,
+        Arrangement::Exclusive,
+    ))
+    .unwrap();
+    eprintln!("HOLDING {}", display.name);
+    std::thread::sleep(Duration::from_secs(120));
+    // Not reached when killed; a run that is not killed restores as usual.
+    drop(display);
+}
+
+/// On this PC, after [`live_hold_until_killed`] was killed: the host's start-up recovery
+/// brings the monitors back, gives the connector back and clears the state file.
+#[test]
+#[ignore = "changes this PC's monitors"]
+fn live_recovery_after_a_crash() {
+    let file = private::state_path().expect("a state folder");
+    assert!(file.exists(), "a killed hold leaves {}", file.display());
+    let pending = kscreen::query().unwrap();
+    eprintln!("left by the crash {:#?}", shown(&pending));
+    recover_after_restart().unwrap();
+    let mut after = kscreen::query().unwrap();
+    for _ in 0..30 {
+        if after.output("DP-1").is_some_and(|o| o.enabled) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+        after = kscreen::query().unwrap();
+    }
+    eprintln!("recovered {:#?}", shown(&after));
+    assert!(after.output("DP-1").is_some_and(|o| o.enabled));
+    assert!(
+        after
+            .outputs
+            .iter()
+            .all(|o| !broker::managed_name(&o.name) || !o.enabled)
+    );
+    assert!(!file.exists(), "the state file is cleared");
+    for connector in pool::scan(Path::new(pool::DRM_ROOT)) {
+        assert_eq!(connector.status, "disconnected", "{}", connector.name);
+    }
+}
