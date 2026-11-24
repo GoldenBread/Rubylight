@@ -169,7 +169,7 @@ Controllers, haptics, keyboard, mouse, touch and the microphone. Start with the 
 
 Working documents from the project's development: plans, designs, investigations and audits. Each records the state on the date it was written and is not maintained as user documentation; where a note and a guide disagree, the guide is current.
 
-- Status: [the status table](status.md), the living record of each feature. History: [Rubylight 3.0 plan](rubylight-3.0-plan.md).
+- Status: [the status table](status.md), the living record of each feature. History: [Rubylight 3.0 plan](rubylight-3.0-plan.md). Linux host: [plan and spike](linux-host-spike.md), on a fork.
 - Designs: [couch menu](couch-menu-design.md), [encoder focus](encoder-focus-design.md), [Wake-on-LAN, sleep and couch audio](wake-and-audio-design.md), [WebRTC server](webrtc-design.md), [slice delivery](b2-slice-delivery.md).
 - Audits: [streaming stability, October 18](stability-audit-2026-10-18.md), [PyroWave and D3D12, October 18](pyrowave-d3d12-audit-2026-10-18.md), [bug hunt, October 28](bug-hunt-2026-10-28.md).
 - Work log: [Windows performance work, October 2](../rust/PERFORMANCE_WORK.md).
