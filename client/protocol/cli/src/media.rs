@@ -457,7 +457,7 @@ impl Listener for Events {
                 }
                 return;
             }
-            _ => return,
+            other => return crate::input_script::feedback(&other),
         };
         let c = &self.state.counters;
         let valid = metadata.as_ref().is_some_and(hdr_metadata_valid);

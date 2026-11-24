@@ -1,6 +1,13 @@
-# Gives the signed-in user's games the input devices of the controllers Rubylight emulates
-# (rust/linux/io/src/input/hid_pad.rs and uhid_pad.rs name each `rubylight-<pid>/<kind><slot>`):
-# the kernel's PlayStation, Nintendo and Steam drivers make a motion-sensor device (and a
-# touchpad) beside the gamepad, and only the gamepad gets the seat's access by default. Install with
+# Gives the signed-in user's games the devices of the controllers Rubylight emulates
+# (rust/linux/io/src/input/hid_pad.rs and uhid_pad.rs name each HID device
+# `rubylight-<pid>/<kind><slot>`): the kernel's PlayStation, Nintendo and Steam drivers make a
+# motion-sensor device (and a touchpad) beside the gamepad, and only the gamepad gets the seat's
+# access by default; games that drive the pad through SDL or Steam open its hidraw device.
+# The name is the HID device's (HID_PHYS); its input devices' own `phys` is empty, so each
+# level imports it from its parent: input device from the HID device, event node from the input
+# device. Install with
 #   sudo install -m 644 71-rubylight-pads.rules /etc/udev/rules.d/ && sudo udevadm control --reload
-SUBSYSTEM=="input", ATTRS{phys}=="rubylight-*", TAG+="uaccess"
+SUBSYSTEM=="input", KERNEL=="input*", IMPORT{parent}="HID_PHYS"
+SUBSYSTEM=="input", KERNEL=="event*|js*|mouse*", IMPORT{parent}="HID_PHYS"
+SUBSYSTEM=="hidraw", IMPORT{parent}="HID_PHYS"
+SUBSYSTEM=="input|hidraw", ENV{HID_PHYS}=="rubylight-*", TAG+="uaccess"
