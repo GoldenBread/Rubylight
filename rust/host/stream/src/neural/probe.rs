@@ -137,6 +137,10 @@ fn probe_gpu(h: &Shared, setting: GpuSetting) -> Result<neural::Capable, String>
 /// the switch says why. Asked again once the GPU or display a stream uses
 /// is set otherwise. Blocks.
 pub fn offered(h: &Shared) -> bool {
+    // Frame generation loads into a Windows game's graphics API; a Linux host has none.
+    if crate::extensions::on_linux() {
+        return false;
+    }
     let setting = gpu_setting(h);
     if let Some((held, offered)) = &h.neural.lock().offered
         && *held == setting

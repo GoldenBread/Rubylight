@@ -17,6 +17,16 @@ impl ServerInfoCache {
     }
 }
 
+/// Whether devices are offered a virtual display: the setting allows one and the platform
+/// has one. A Linux host streams the gamescope session it starts and has no virtual display.
+pub fn virtual_display_offered(
+    config: &butterpollo_config::config::Config,
+    windows_11: bool,
+    linux: bool,
+) -> bool {
+    !linux && config.virtual_display_mode(windows_11) != "disabled"
+}
+
 pub(super) async fn network_path(
     State(h): State<Shared>,
     Extension(c): Extension<Connection>,
@@ -198,10 +208,15 @@ pub fn serverinfo_response(
 ) -> Response {
     let ports = config.ports().unwrap();
     let paired = client.is_some();
-    let (limiter, virtual_limiter, limit) = butterpollo_media_policy::framegen::advertised(
-        config,
-        config.virtual_display_mode(windows_11) != "disabled",
-    );
+    let virtual_display =
+        virtual_display_offered(config, windows_11, crate::extensions::on_linux());
+    let frame_limiter = !crate::extensions::on_linux();
+    let (limiter, virtual_limiter, limit) = if frame_limiter {
+        butterpollo_media_policy::framegen::advertised(config, virtual_display)
+    } else {
+        // No limiter provider exists on Linux (`limiter::provider_usable`).
+        (false, false, 0)
+    };
     let permission = client.as_ref().map_or(0, |client| client.perm);
     // Artemis lists these commands; a client runs one by its index: the
     // host-wide ones, then the running app's own (`menu_commands`).
@@ -394,7 +409,7 @@ pub fn serverinfo_response(
             },
         ),
         ("Permission", permission.to_string()),
-        ("FrameLimiterSupported", "1".into()),
+        ("FrameLimiterSupported", u8::from(frame_limiter).to_string()),
         ("FrameLimiterEnabled", u8::from(limiter).to_string()),
         (
             "VirtualDisplayFrameLimiterEnabled",
@@ -402,15 +417,12 @@ pub fn serverinfo_response(
         ),
         ("FrameLimiterFpsLimitMilliHz", limit.to_string()),
         // Artemis offers virtual-display launches only when capable.
-        (
-            "VirtualDisplayCapable",
-            (config.virtual_display_mode(windows_11) != "disabled").to_string(),
-        ),
+        ("VirtualDisplayCapable", virtual_display.to_string()),
         ("VirtualDisplayDriverReady", driver_ready.to_string()),
         ("ControllerPreparation", "1".into()),
         (
             "VirtualDisplayHDRCapable",
-            (config.virtual_display_mode(windows_11) != "disabled"
+            (virtual_display
                 && h.codecs.load(std::sync::atomic::Ordering::Acquire)
                     & (0x200 | 0x20000 | 0x2000000 | 0x4000000)
                     != 0)
@@ -471,6 +483,34 @@ pub fn serverinfo_response(
     fields.extend(crate::extensions::offered(h, offered_config).serverinfo_fields());
     fields.extend(commands.into_iter().map(|name| ("ServerCommand", name)));
     xml(200, &fields, None)
+}
+
+#[cfg(test)]
+mod platform_tests {
+    use super::*;
+
+    /// A Linux host offers no virtual display whatever the setting says; Windows follows it.
+    #[test]
+    fn linux_offers_no_virtual_display() {
+        for (text, windows_11, windows, linux) in [
+            ("", true, true, false),
+            ("", false, false, false),
+            ("virtual_display_mode = per_client\n", false, true, false),
+            ("virtual_display_mode = disabled\n", true, false, false),
+        ] {
+            let config = butterpollo_config::config::Config::parse(text).unwrap();
+            assert_eq!(
+                virtual_display_offered(&config, windows_11, false),
+                windows,
+                "{text}"
+            );
+            assert_eq!(
+                virtual_display_offered(&config, windows_11, true),
+                linux,
+                "{text}"
+            );
+        }
+    }
 }
 
 #[cfg(test)]

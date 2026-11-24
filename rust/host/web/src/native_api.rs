@@ -425,10 +425,9 @@ async fn capabilities(State(h): State<Shared>, Extension(c): Extension<Connectio
             // answer, which the first time of a host start asks.
             .chain(neural.then_some(feature::NEURAL_FRAME_GENERATION))
             // The Radeon endpoints answer only where the host started its Radeon worker.
+            // Not on Linux, where the worker runs with no driver behind it.
             .chain(
-                h.radeon
-                    .worker()
-                    .is_some()
+                (h.radeon.worker().is_some() && !extensions::on_linux())
                     .then_some([
                         feature::RADEON_READ,
                         feature::RADEON_WRITE,

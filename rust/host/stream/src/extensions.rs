@@ -112,6 +112,44 @@ pub fn launch_curtain_stream(config: &Config, launch: &Launch) -> bool {
 }
 
 fn offer(h: &Shared, config: &Config, dolby: u8) -> Offered {
+    for_platform(offer_configured(h, config, dolby), on_linux())
+}
+
+/// Whether this is the Linux host that clients are offered only what it can do. False under
+/// the tests' fakes (`test`, `test-support`), which pin the Windows offers on any machine
+/// that runs them; the Linux offers are pinned through [`for_platform`] and its siblings.
+pub fn on_linux() -> bool {
+    cfg!(all(
+        target_os = "linux",
+        not(any(test, feature = "test-support"))
+    ))
+}
+
+/// Takes from `offered` what the Linux host cannot do, so a client never offers a player
+/// something that then fails. Each is a feature whose code answers "not available on a Linux
+/// host yet": HDR (no capture gives an HDR picture), text focus and keyboard layouts, native
+/// pen and touch (pen barrel roll), the client-drawn cursor (Desktop Duplication), Frame Warp's
+/// GPU passes, the virtual display's scale, the NVIDIA component's RTX HDR and RTX Video, and
+/// USB forwarding. Windows offers are returned as they are.
+pub fn for_platform(offered: Offered, linux: bool) -> Offered {
+    if !linux {
+        return offered;
+    }
+    Offered {
+        hdr_formats: 0,
+        usb: false,
+        text_input: false,
+        keyboard_layout: false,
+        pen_barrel_roll: false,
+        cursor_shape: false,
+        display_scale: false,
+        frame_warp: false,
+        nvidia_enhancements: 0,
+        ..offered
+    }
+}
+
+fn offer_configured(h: &Shared, config: &Config, dolby: u8) -> Offered {
     Offered {
         hdr_formats: hdr_formats(h, config),
         client_fec: client_fec(h, config),
@@ -348,6 +386,50 @@ fn folders_features(_h: &Shared, config: &Config) -> Vec<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A Linux host offers none of what its code refuses, and nothing else changes; a
+    /// Windows host's offer is untouched.
+    #[test]
+    fn linux_offers_only_what_it_can_do() {
+        let everything = Offered {
+            hdr_formats: 0xFF,
+            client_fec: true,
+            bandwidth_probe: true,
+            usb: true,
+            audio_codecs: 7,
+            surround_714: true,
+            text_input: true,
+            keyboard_layout: true,
+            pen_barrel_roll: true,
+            cursor_shape: true,
+            pipeline_rates: true,
+            display_scale: true,
+            second_screen: true,
+            frame_warp: true,
+            controller_identity: true,
+            rate_change: true,
+            clipboard_sync: true,
+            transport_feedback: true,
+            nvidia_enhancements: 3,
+            max_video_packet: 1424,
+        };
+        assert_eq!(for_platform(everything, false), everything);
+        assert_eq!(
+            for_platform(everything, true),
+            Offered {
+                hdr_formats: 0,
+                usb: false,
+                text_input: false,
+                keyboard_layout: false,
+                pen_barrel_roll: false,
+                cursor_shape: false,
+                display_scale: false,
+                frame_warp: false,
+                nvidia_enhancements: 0,
+                ..everything
+            }
+        );
+    }
 
     /// Pen barrel roll is offered while the setting and native pen input are on.
     #[test]
