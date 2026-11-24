@@ -31,10 +31,12 @@ pyrowave = false
 sunshine_name = linux-test
 ${HOST_CONF:-}
 EOF
+# APP=desktop streams the desktop through the ScreenCast portal (an app without a command).
+[ "${APP:-}" = desktop ] && APP=" "
 APP=${APP:-"ffplay -hide_banner -loglevel warning -fs -f lavfi -i 'testsrc2=size=${W}x${H}:rate=${FPS}[out0];sine=frequency=440:sample_rate=48000[out1]'"}
 python3 - "$P" "$APP" <<'EOF'
 import hashlib, json, os, sys
-p, app = sys.argv[1], sys.argv[2]
+p, app = sys.argv[1], sys.argv[2].strip()
 json.dump({'apps': [{'name': 'Test', 'cmd': app, 'prep-cmd': [], 'working-dir': ''}]}, open(p + '/apps.json', 'w'))
 salt = os.urandom(8).hex()
 json.dump({'username': 'test', 'salt': salt,
