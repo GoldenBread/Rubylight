@@ -17,14 +17,14 @@ impl ServerInfoCache {
     }
 }
 
-/// Whether devices are offered a virtual display: the setting allows one and the platform
-/// has one. A Linux host streams the gamescope session it starts and has no virtual display.
+/// Whether devices are offered a virtual display: the setting allows one, and unset it
+/// defaults on where the system can serve one (`virtual_os`: Windows 11 23H2 or later; on
+/// Linux, a virtual display pool this host may use).
 pub fn virtual_display_offered(
     config: &butterpollo_config::config::Config,
-    windows_11: bool,
-    linux: bool,
+    virtual_os: bool,
 ) -> bool {
-    !linux && config.virtual_display_mode(windows_11) != "disabled"
+    config.virtual_display_mode(virtual_os) != "disabled"
 }
 
 pub(super) async fn network_path(
@@ -208,8 +208,7 @@ pub fn serverinfo_response(
 ) -> Response {
     let ports = config.ports().unwrap();
     let paired = client.is_some();
-    let virtual_display =
-        virtual_display_offered(config, windows_11, crate::extensions::on_linux());
+    let virtual_display = virtual_display_offered(config, windows_11);
     let frame_limiter = !crate::extensions::on_linux();
     let (limiter, virtual_limiter, limit) = if frame_limiter {
         butterpollo_media_policy::framegen::advertised(config, virtual_display)
@@ -489,24 +488,20 @@ pub fn serverinfo_response(
 mod platform_tests {
     use super::*;
 
-    /// A Linux host offers no virtual display whatever the setting says; Windows follows it.
+    /// The setting decides, and unset it follows whether the system can serve a virtual
+    /// display, on Windows and Linux alike.
     #[test]
-    fn linux_offers_no_virtual_display() {
-        for (text, windows_11, windows, linux) in [
-            ("", true, true, false),
-            ("", false, false, false),
-            ("virtual_display_mode = per_client\n", false, true, false),
-            ("virtual_display_mode = disabled\n", true, false, false),
+    fn the_virtual_display_follows_the_setting_and_the_system() {
+        for (text, virtual_os, offered) in [
+            ("", true, true),
+            ("", false, false),
+            ("virtual_display_mode = per_client\n", false, true),
+            ("virtual_display_mode = disabled\n", true, false),
         ] {
             let config = butterpollo_config::config::Config::parse(text).unwrap();
             assert_eq!(
-                virtual_display_offered(&config, windows_11, false),
-                windows,
-                "{text}"
-            );
-            assert_eq!(
-                virtual_display_offered(&config, windows_11, true),
-                linux,
+                virtual_display_offered(&config, virtual_os),
+                offered,
                 "{text}"
             );
         }

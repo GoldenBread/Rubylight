@@ -120,6 +120,22 @@ pub fn prepare_stream(
                 .and_then(serde_json::Value::as_str);
             app.cmd.trim().is_empty() || imported == Some(app.cmd.as_str())
         });
+        // A desktop stream shows a virtual display of its own where one is asked for and the
+        // PC has one: a monitor at the device's mode that KWin captures by name.
+        #[cfg(target_os = "linux")]
+        if desktop && let Some(private) = super::linux_private::prepare(h, launch, stream, config)? {
+            let target = private.target.clone();
+            tracing::info!(target = %target, "streaming a virtual display on Linux");
+            return Ready::window_holding(
+                h,
+                stream,
+                config,
+                target.clone(),
+                Box::new(move || Ok(target.clone())),
+                launch.warnings.clone(),
+                Some(Box::new(private.display)),
+            );
+        }
         let target = if desktop {
             DESKTOP_TARGET
         } else {
@@ -237,7 +253,6 @@ impl Prepared {
             launch,
             app.as_ref(),
             config,
-            client_display,
             background,
             output_override,
             output,

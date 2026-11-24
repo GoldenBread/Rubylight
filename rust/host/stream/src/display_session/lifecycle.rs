@@ -118,6 +118,10 @@ pub struct Ready {
     pub(super) active: Arc<AtomicUsize>,
     retained: Option<Arc<Retained>>,
     worker: Option<std::thread::JoinHandle<()>>,
+    /// What the stream's display needs kept until the stream ends, dropped after the worker
+    /// has joined: a Linux stream's virtual display, which its drop takes away and restores
+    /// the monitors from.
+    _held: Option<Box<dyn Send + Sync>>,
 }
 
 impl Ready {
@@ -204,6 +208,7 @@ impl Ready {
             active,
             retained,
             worker: Some(worker),
+            _held: None,
         });
         Ok(StreamPreparation {
             display,
@@ -218,8 +223,21 @@ impl Ready {
         stream: &Negotiated,
         config: &Config,
         first: String,
+        follow: Box<dyn FnMut() -> Result<String> + Send>,
+        warnings: Arc<Warnings>,
+    ) -> Result<StreamPreparation> {
+        Self::window_holding(h, stream, config, first, follow, warnings, None)
+    }
+
+    /// [`Self::window`], keeping `held` until the stream ends.
+    pub fn window_holding(
+        h: &Shared,
+        stream: &Negotiated,
+        config: &Config,
+        first: String,
         mut follow: Box<dyn FnMut() -> Result<String> + Send>,
         warnings: Arc<Warnings>,
+        held: Option<Box<dyn Send + Sync>>,
     ) -> Result<StreamPreparation> {
         let mut framegen = Policy::resolve(
             config,
@@ -285,6 +303,7 @@ impl Ready {
             active: Arc::new(AtomicUsize::new(1)),
             retained: None,
             worker: Some(worker),
+            _held: held,
         });
         Ok(StreamPreparation {
             display,

@@ -83,6 +83,46 @@ pub(super) fn virtual_display_mode<'a>(
         .unwrap_or(config.virtual_display_mode(windows_11))
 }
 
+/// Whether the client, its device's settings, the app or the host ask this stream for a
+/// virtual display, and which output they name ([`VirtualDisplayRequest::uses_virtual`]).
+pub(super) fn virtual_display_request<'a>(
+    launch: &Launch,
+    app: Option<&butterpollo_session::state::App>,
+    config: &'a Config,
+    mode: &str,
+    output_override: Option<&'a str>,
+) -> butterpollo_media_policy::display_policy::VirtualDisplayRequest<'a> {
+    let client_virtual = launch
+        .options
+        .get("virtualDisplay")
+        .map(|value| value != "0");
+    let client_display = client_display(launch);
+    let background = butterpollo_session::background::enabled(config);
+    butterpollo_media_policy::display_policy::VirtualDisplayRequest {
+        client_requested: client_virtual == Some(true)
+            || matches!(client_display, Some(HostDisplay::Virtual(_))),
+        // Streaming the PC's own monitor would show the device whatever
+        // the person at the PC is doing.
+        client_physical: client_display == Some(HostDisplay::Physical) && !background,
+        client_forced: background
+            || launch
+                .client
+                .extra
+                .get("always_use_virtual_display")
+                .is_some_and(|v| v == true || v == "true"),
+        app_requested: app.is_some_and(|a| {
+            crate::process::app_bool(a, "virtual-display", false)
+                // Apollo's earlier name, which loading the library also
+                // moves (`migrate_app`).
+                || crate::process::app_bool(a, "virtual-screen", false)
+        }),
+        configured: mode != "disabled" || config.boolean("dd_activate_virtual_display", false),
+        output_override,
+        configured_output: config.get("output_name", ""),
+        headless: false,
+    }
+}
+
 /// What deciding on a join needs of the stream ([`joined_display`]).
 pub(super) struct JoinAsk<'a> {
     pub(super) client: &'a str,

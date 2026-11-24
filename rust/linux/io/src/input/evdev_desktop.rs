@@ -7,7 +7,10 @@ use super::{
     Event,
     evdev_keys::{SHIFT, evdev, typed},
 };
-use crate::portal::layout::{self, Rect};
+use crate::portal::{
+    DesktopMonitor,
+    layout::{self, Rect},
+};
 use anyhow::{Context, Result, bail};
 use butterpollo_input_policy::input_policy::Policy;
 use std::{
@@ -269,8 +272,8 @@ impl Devices {
 
 /// The desktop input of one stream.
 pub(super) struct DesktopInput {
-    /// The monitor streamed: `None` is the primary.
-    monitor: Option<usize>,
+    /// The monitor streamed.
+    monitor: DesktopMonitor,
     pub(super) devices: Option<Devices>,
     /// Why the devices could not be made, so the error is raised once.
     failed: bool,
@@ -285,7 +288,7 @@ pub(super) struct DesktopInput {
 }
 
 impl DesktopInput {
-    pub(super) fn new(monitor: Option<usize>) -> Self {
+    pub(super) fn new(monitor: DesktopMonitor) -> Self {
         let mut input = Self {
             monitor,
             devices: None,
@@ -305,8 +308,13 @@ impl DesktopInput {
     pub(super) fn refresh_layout(&mut self) {
         let monitors = layout::monitors();
         let rects: Vec<Rect> = monitors.iter().map(|(_, rect)| *rect).collect();
-        self.area = rects
-            .get(self.monitor.unwrap_or(0))
+        let index = match &self.monitor {
+            DesktopMonitor::Primary => Some(0),
+            DesktopMonitor::Index(index) => Some(*index),
+            DesktopMonitor::Named(name) => monitors.iter().position(|(found, _)| found == name),
+        };
+        self.area = index
+            .and_then(|index| rects.get(index))
             .zip(layout::bounds(&rects))
             .map(|(monitor, all)| (*monitor, all));
     }
@@ -557,7 +565,7 @@ mod tests {
 
     fn idle(area: Option<(Rect, Rect)>) -> DesktopInput {
         DesktopInput {
-            monitor: None,
+            monitor: DesktopMonitor::Primary,
             devices: None,
             failed: true,
             area,
@@ -718,7 +726,7 @@ mod tests {
             eprintln!("skipped: RUBYLIGHT_ABS_AT=x,y names where the pointer is now");
             return;
         };
-        let mut input = DesktopInput::new(None);
+        let mut input = DesktopInput::new(DesktopMonitor::Primary);
         assert!(input.devices.is_some(), "no virtual devices");
         let (monitor, all) = input.area.expect("the desktop layout");
         eprintln!("monitor {monitor:?} of {all:?}");

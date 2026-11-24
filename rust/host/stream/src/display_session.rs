@@ -16,6 +16,8 @@ use std::sync::Arc;
 mod apply;
 mod baseline;
 mod lifecycle;
+#[cfg(target_os = "linux")]
+mod linux_private;
 mod mode_report;
 mod policy;
 mod remembered;

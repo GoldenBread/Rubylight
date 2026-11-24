@@ -67,13 +67,31 @@ pub fn desktop_session_present() -> bool {
                 .is_some_and(|dir| std::path::Path::new(&dir).join("bus").exists()))
 }
 
-/// The monitor a capture target names: `Some(None)` for `desktop` (the primary),
-/// `Some(Some(n))` for `desktop:<n>`, `None` for any other target.
-pub fn desktop_target(target: &str) -> Option<Option<usize>> {
+/// The desktop's monitor a capture target shows, which its input goes to.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DesktopMonitor {
+    /// `desktop`: the primary.
+    Primary,
+    /// `desktop:<n>`: the n-th in [`layout::monitors`] order.
+    Index(usize),
+    /// `kwin-output:<name>`: the output of that name, such as a virtual display.
+    Named(String),
+}
+
+/// The monitor a desktop capture target names; `None` for any other target (a gamescope
+/// session's).
+pub fn desktop_target(target: &str) -> Option<DesktopMonitor> {
     if target == "desktop" {
-        return Some(None);
+        return Some(DesktopMonitor::Primary);
     }
-    target.strip_prefix("desktop:")?.parse().ok().map(Some)
+    if let Some(name) = target.strip_prefix("kwin-output:") {
+        return Some(DesktopMonitor::Named(name.to_owned()));
+    }
+    target
+        .strip_prefix("desktop:")?
+        .parse()
+        .ok()
+        .map(DesktopMonitor::Index)
 }
 
 /// The folder the restore tokens are kept in.

@@ -3,6 +3,7 @@
 use super::policy::{
     REMEMBERED_RESOLUTION, asked_game_display, browser_keeps_monitors, is_second_screen,
     second_monitor, virtual_display_identity, virtual_display_layout, virtual_display_mode,
+    virtual_display_request,
 };
 use crate::state::{Launch, Shared};
 use anyhow::Result;
@@ -26,7 +27,6 @@ pub(super) fn select_virtual_mode<'a>(
     launch: &'a Launch,
     app: Option<&'a butterpollo_session::state::App>,
     config: &'a Config,
-    client_display: Option<HostDisplay>,
     background: bool,
     output_override: Option<&'a str>,
     output: &str,
@@ -37,29 +37,8 @@ pub(super) fn select_virtual_mode<'a>(
         .options
         .get("virtualDisplay")
         .map(|value| value != "0");
-    let mut display_request = butterpollo_media_policy::display_policy::VirtualDisplayRequest {
-        client_requested: client_virtual == Some(true)
-            || matches!(client_display, Some(HostDisplay::Virtual(_))),
-        // Streaming the PC's own monitor would show the device whatever
-        // the person at the PC is doing.
-        client_physical: client_display == Some(HostDisplay::Physical) && !background,
-        client_forced: background
-            || launch
-                .client
-                .extra
-                .get("always_use_virtual_display")
-                .is_some_and(|v| v == true || v == "true"),
-        app_requested: app.is_some_and(|a| {
-            crate::process::app_bool(a, "virtual-display", false)
-                // Apollo's earlier name, which loading the library also
-                // moves (`migrate_app`).
-                || crate::process::app_bool(a, "virtual-screen", false)
-        }),
-        configured: mode != "disabled" || config.boolean("dd_activate_virtual_display", false),
-        output_override,
-        configured_output: config.get("output_name", ""),
-        headless: false,
-    };
+    let mut display_request =
+        virtual_display_request(launch, app, config, mode, output_override);
     if !physical_only && !display_request.requested() {
         display_request.headless =
             butterpollo_win_graphics::capture::displays().is_ok_and(|displays| displays.is_empty());

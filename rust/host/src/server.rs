@@ -290,6 +290,11 @@ async fn run_logged(
     // A video encoder clock an interrupted Linux stream left raised goes back to automatic.
     #[cfg(target_os = "linux")]
     butterpollo_win_graphics::encoder_clock::recover();
+    // An interrupted stream's virtual display goes, and the monitors it changed come back.
+    #[cfg(target_os = "linux")]
+    if let Err(error) = butterpollo_win_display::display::recover_after_restart() {
+        tracing::error!(error = %format!("{error:#}"), "the monitors an interrupted stream's virtual display changed were not restored");
+    }
     if let Some(journal) = h.recover_session() {
         tracing::warn!(
             state = ?journal.state,
