@@ -42,6 +42,7 @@ pub use session::*;
 pub use spawn::{PipedChild, user_environment};
 #[allow(unused_imports)]
 use tokens::token;
+#[cfg(test)]
 pub(crate) use tokens::token_elevated;
 pub use tokens::{
     NoShell, Target, elevated, is_system, own_sid, standard_user_token, user_account,

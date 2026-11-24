@@ -50,12 +50,12 @@ pub(crate) use handle::{
 };
 use handle::{final_name, mark_of_the_web, rename_open, unmark};
 use impersonation::downloads;
-#[cfg(test)]
-use impersonation::standard_user;
 pub(crate) use impersonation::{
-    Impersonation, as_token, known_folder, no_signed_in_user, os_error, user_token,
+    Impersonation, known_folder, no_signed_in_user, os_error, user_token,
 };
 pub use impersonation::{as_session_user, as_user, roaming_app_data};
+#[cfg(test)]
+use impersonation::{as_token, standard_user};
 
 /// The subfolder of the user's Downloads folder transfers use by default.
 pub const DEFAULT_SUBFOLDER: &str = "Rubylight";

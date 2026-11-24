@@ -20,9 +20,9 @@ use feedback::FeedbackFailure;
 #[cfg(test)]
 use feedback::{FEEDBACK_DRAIN, poll_feedback};
 pub use slots::open_interface;
+use slots::{SLOTS, device_removed, plug_in_free_slot, reclaim_until_lost};
 #[cfg(test)]
-use slots::reclaim;
-use slots::{SLOTS, STRANDED, device_removed, plug_in_free_slot, reclaim_until_lost};
+use slots::{STRANDED, reclaim};
 pub(super) use slots::{Slot, interface_present, request};
 #[cfg(test)]
 use submit::profile_button_word;
