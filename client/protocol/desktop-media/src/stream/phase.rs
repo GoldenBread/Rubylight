@@ -1,6 +1,15 @@
 use rubylight_protocol::phase_lock::{Report, SlackWindow};
 use sdl3_sys::everything::*;
 
+#[path = "phase/linux.rs"]
+mod linux;
+#[cfg(target_os = "linux")]
+pub(crate) use linux::{
+    egl_swap_check, egl_swap_presented, egl_sync_sample, glass_phase_timing, note_external_present,
+    timing_with_source, TimingSource,
+};
+pub use linux::reset_display_timing;
+
 /// Windows in a row a new place of the frames takes to reach the host of a stream with no refreshes
 /// to spare (`SteadyReports`): 2 s.
 pub const STEADY_WINDOWS: u32 = 4;
@@ -541,39 +550,22 @@ pub fn present_stats(renderer: *mut SDL_Renderer) -> crate::timing_csv::Flip {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
+pub fn present_stats(renderer: *mut SDL_Renderer) -> crate::timing_csv::Flip {
+    linux::present_stats(renderer)
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
 pub fn present_stats(_: *mut SDL_Renderer) -> crate::timing_csv::Flip { Default::default() }
 
-#[cfg(not(windows))]
-pub fn timing(renderer: *mut SDL_Renderer, _: f32, _held: u32, _anchor: &mut HeldAnchor) -> Option<(i64, i64)> {
-    type Sync = unsafe extern "C" fn(*mut std::ffi::c_void, libc::c_ulong, *mut i64, *mut i64, *mut i64) -> i32;
-    type Rate = unsafe extern "C" fn(*mut std::ffi::c_void, libc::c_ulong, *mut i32, *mut i32) -> i32;
-    // Looked up once, when a context has them; a missing one is looked up again next time.
-    static PROCS: std::sync::OnceLock<(Sync, Rate)> = std::sync::OnceLock::new();
-    unsafe {
-        if SDL_GL_GetCurrentContext().is_null() { return None; }
-        let props = SDL_GetWindowProperties(SDL_GetRenderWindow(renderer));
-        let display = SDL_GetPointerProperty(props, SDL_PROP_WINDOW_X11_DISPLAY_POINTER, std::ptr::null_mut());
-        let drawable = SDL_GetNumberProperty(props, SDL_PROP_WINDOW_X11_WINDOW_NUMBER, 0) as libc::c_ulong;
-        if display.is_null() || drawable == 0 { return None; }
-        let (sync, rate) = match PROCS.get() {
-            Some(&procs) => procs,
-            None => {
-                let sync: Sync = std::mem::transmute(SDL_GL_GetProcAddress(c"glXGetSyncValuesOML".as_ptr())?);
-                let rate: Rate = std::mem::transmute(SDL_GL_GetProcAddress(c"glXGetMscRateOML".as_ptr())?);
-                *PROCS.get_or_init(|| (sync, rate))
-            }
-        };
-        let (mut ust, mut msc, mut sbc, mut numerator, mut denominator) = (0, 0, 0, 0, 0);
-        if sync(display, drawable, &mut ust, &mut msc, &mut sbc) == 0
-            || rate(display, drawable, &mut numerator, &mut denominator) == 0 || numerator <= 0 || denominator <= 0 { return None; }
-        // Mesa's UST uses CLOCK_MONOTONIC. Reject other epochs instead of inventing a phase.
-        let mut now: libc::timespec = std::mem::zeroed();
-        if libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut now) != 0 { return None; }
-        let age_us = now.tv_sec * 1_000_000 + now.tv_nsec / 1000 - ust;
-        if !(0..100_000).contains(&age_us) { return None; }
-        Some((nightjar_core::session::now_us() as i64 - age_us, 1_000_000_000 * i64::from(denominator) / i64::from(numerator)))
-    }
+#[cfg(target_os = "linux")]
+pub fn timing(renderer: *mut SDL_Renderer, refresh_hz: f32, _held: u32, _anchor: &mut HeldAnchor) -> Option<(i64, i64)> {
+    linux::timing_with_source(renderer, refresh_hz).map(|(timing, _)| timing)
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
+pub fn timing(_: *mut SDL_Renderer, _: f32, _: u32, _: &mut HeldAnchor) -> Option<(i64, i64)> {
+    None
 }
 
 #[cfg(test)]

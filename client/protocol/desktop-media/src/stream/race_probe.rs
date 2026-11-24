@@ -634,7 +634,7 @@ impl RaceProbe {
 
     fn after_unavailable(&mut self, window: *mut SDL_Window, around: Surroundings) {
         #[cfg(target_os = "linux")]
-        self.fold_unavailable(around, display_of(window), Instant::now(), describe_display);
+        self.fold_unavailable(around, display_of(window), Instant::now(), super::drm_vrr::describe_display);
         #[cfg(not(target_os = "linux"))]
         { let _ = window; self.fold_unavailable(around) }
     }
@@ -676,17 +676,17 @@ impl RaceProbe {
 #[cfg(target_os = "linux")]
 type DrmReader = fn(&super::drm_vrr::Display) -> super::drm_vrr::Reading;
 
-/// The DRM reader for a probe, none under gamescope. Neither Steam Deck panel has VRR, so gamescope
-/// leaves VRR_ENABLED at 0, and "no VRR" would turn the Deck's immediate presents to V-Sync, a
-/// latency change nobody has measured there: gamescope keeps the pacing it had.
+/// The DRM reader for a probe, including under gamescope: fixed-refresh handheld panels (such as
+/// the Steam Deck OLED's 89.89 Hz eDP-1) fall back from Real VRR (`HostTimes`) to V-Sync where
+/// phase lock can engage, while docked VRR displays (`VRR_ENABLED == 1`) keep Real VRR.
 #[cfg(target_os = "linux")]
 fn drm_reader(topic: &str, gamescope: bool) -> Option<DrmReader> {
-    if gamescope {
-        eprintln!("nightjar: {topic}: gamescope paces the display, the pacing stays");
-        return None;
-    }
     eprintln!("nightjar: {topic}: no scan line here, reading VRR from DRM once the window is fullscreen and focused");
-    let reader: DrmReader = |display| super::drm_vrr::Reading::of(super::drm_vrr::outputs(), display);
+    let reader: DrmReader = if gamescope {
+        |display| super::drm_vrr::Reading::of_for(super::drm_vrr::outputs(), display, true)
+    } else {
+        |display| super::drm_vrr::Reading::of_for(super::drm_vrr::outputs(), display, false)
+    };
     Some(reader)
 }
 
@@ -734,26 +734,6 @@ fn display_of(window: *mut SDL_Window) -> u32 {
     if window.is_null() { return 0; }
     // SAFETY: a live window.
     unsafe { SDL_GetDisplayForWindow(window) }.0
-}
-
-/// A display's name and current mode in pixels, for finding its output in DRM.
-#[cfg(target_os = "linux")]
-fn describe_display(id: u32) -> super::drm_vrr::Display {
-    let id = SDL_DisplayID(id);
-    // SAFETY: SDL owns the name and the mode, which are read here at once.
-    unsafe {
-        let name = SDL_GetDisplayName(id);
-        let name = (!name.is_null()).then(|| std::ffi::CStr::from_ptr(name).to_string_lossy().into_owned()).filter(|name| !name.is_empty());
-        match SDL_GetCurrentDisplayMode(id).as_ref() {
-            Some(mode) => super::drm_vrr::Display {
-                name,
-                width: (mode.w as f32 * mode.pixel_density).round() as u32,
-                height: (mode.h as f32 * mode.pixel_density).round() as u32,
-                refresh_hz: f64::from(mode.refresh_rate),
-            },
-            None => super::drm_vrr::Display { name, width: 0, height: 0, refresh_hz: 0.0 },
-        }
-    }
 }
 
 /// The window and what it presents on, as the presenter sees them now.

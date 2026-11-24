@@ -745,7 +745,7 @@ impl Streaming {
             self.present_deadline_us.unwrap_or_else(|| present::deadline_before_refresh(refresh_hz))
         };
         // The refresh grid itself: a hold of 1 never reads the anchor.
-        let grid = phase::timing(renderer, refresh_hz, 1, &mut self.held_anchor).map(|(refresh_us, period_ns)| present::refresh_grid(refresh_us, period_ns));
+        let grid = self.display_timing(renderer, session::now_us(), refresh_hz, 1, false).map(|(refresh_us, period_ns)| present::refresh_grid(refresh_us, period_ns));
         self.pacer.set_grid(grid, deadline_us);
     }
 
@@ -1185,7 +1185,7 @@ impl Streaming {
             (done == present::NoWait::Refused, failed)
         };
         let device_lost = crate::render_device::after_present_lost(present_failed, &self.plan.device);
-        if device_lost { self.note_render_device_lost(crate::render_device::lost_reason().into()); } else if !refused { self.texture.mark_d3d11_flushed(); }
+        if device_lost { self.note_render_device_lost(crate::render_device::lost_reason().into()); } else if !refused { self.texture.mark_d3d11_flushed(); #[cfg(target_os = "linux")] if !skips || !self.no_wait_present { phase::note_external_present(); } }
         self.flip_guard.last_flip_us = Some(issued_us);
         self.flip_guard.last_flip_latched = latched;
         if latched { self.scan_tally.latched += 1; }
@@ -1269,7 +1269,7 @@ impl Streaming {
                 let clocked = if !cfg!(windows) && report_held > 1 { self.held_clock.timing(begin, report_held, refresh_us) } else { None };
                 let unclocked = !cfg!(windows) && held > 1 && clocked.is_none();
                 if unclocked { report_held = 1; }
-                let timing = clocked.or_else(|| phase::timing(renderer, refresh_hz, report_held, &mut self.held_anchor));
+                let timing = clocked.or_else(|| self.display_timing(renderer, begin, refresh_hz, report_held, true));
                 // Fractional V-Sync: the lock aims at the hold's own target, the present lead
                 // (`phase::held_present_lead_us`, the guard `held_guard_us` into the refresh), not at
                 // the deadline the turn must make: aimed at the deadline, the host delivered the
@@ -1362,6 +1362,8 @@ impl Streaming {
         self.needs_redraw = false;
         if flipped.device_lost { return true; }
         if !flipped.refused && let Some(frame) = picture.as_ref().and_then(|p| p.decoded.picture.frame()) { frame.mark_d3d11_flushed(); }
+        #[cfg(target_os = "linux")]
+        if by_kms && !flipped.refused { self.kms_last_flip_us = Some(flipped.returned_us); }
         // The draw after the hold, which the hold's margin has to leave time for.
         if held_before_draw && !flipped.refused {
             self.held_draw.record(flipped.issued_us.saturating_sub(draw_begin_us));

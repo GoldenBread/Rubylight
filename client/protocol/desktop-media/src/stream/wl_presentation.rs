@@ -39,6 +39,7 @@ pub struct Shown {
     pub frame: u32,
     pub ready_us: u64,
     pub requested_us: u64,
+    pub refresh_ns: u32,
     pub outcome: Outcome,
 }
 
@@ -142,6 +143,10 @@ pub struct Glass {
     stats: Stats,
     /// When the last picture was reported on the glass with a time (session clock, µs).
     last_timed_us: Option<u64>,
+    /// The actual glass presentation timestamp of the last shown picture (session clock, µs).
+    last_glass_us: Option<u64>,
+    /// The compositor's reported display refresh period (ns) from the last presented event.
+    last_refresh_ns: Option<u32>,
     /// When the first picture's feedback was asked for (session clock, µs).
     first_request_us: Option<u64>,
     /// What the compositor says about direct scanout, opened with the feedback; None while
@@ -196,9 +201,18 @@ impl Glass {
         let shown = feedback.poll(now_us);
         for answer in shown {
             self.stats.add(answer.outcome);
-            if answer.glass_us().is_some() { self.last_timed_us = Some(now_us); }
+            if let Some(glass_us) = answer.glass_us() {
+                self.last_timed_us = Some(now_us);
+                self.last_glass_us = Some(glass_us);
+                if answer.refresh_ns > 0 { self.last_refresh_ns = Some(answer.refresh_ns); }
+            }
         }
         shown
+    }
+
+    /// Latest Wayland presentation timestamp and refresh period for 1:1 phase lock (`held == 1`).
+    pub fn phase_timing(&self, now_us: u64, refresh_hz: f32) -> Option<(i64, i64)> {
+        super::phase::glass_phase_timing(self.last_glass_us, self.last_refresh_ns, now_us, refresh_hz)
     }
 
     /// Whether the glass times stand in for the present call's return (a timed answer within
@@ -393,7 +407,7 @@ pub(crate) mod wayland {
 
     #[derive(Clone, Copy)]
     enum Answer {
-        Presented { ns: Option<u64>, flags: u32 },
+        Presented { ns: Option<u64>, refresh_ns: u32, flags: u32 },
         Discarded,
     }
 
@@ -446,9 +460,9 @@ pub(crate) mod wayland {
     unsafe extern "C" fn sync_output(_data: *mut c_void, _feedback: *mut Proxy, _output: *mut Proxy) {}
 
     #[allow(clippy::too_many_arguments)]
-    unsafe extern "C" fn presented(data: *mut c_void, _feedback: *mut Proxy, hi: u32, lo: u32, ns: u32, _refresh: u32, _seq_hi: u32, _seq_lo: u32, flags: u32) {
+    unsafe extern "C" fn presented(data: *mut c_void, _feedback: *mut Proxy, hi: u32, lo: u32, ns: u32, refresh: u32, _seq_hi: u32, _seq_lo: u32, flags: u32) {
         // SAFETY: the Pending slot the feedback was given; the slot outlives the proxy.
-        unsafe { (*data.cast::<Pending>()).answer = Some(Answer::Presented { ns: timestamp_ns(hi, lo, ns), flags }) };
+        unsafe { (*data.cast::<Pending>()).answer = Some(Answer::Presented { ns: timestamp_ns(hi, lo, ns), refresh_ns: refresh, flags }) };
     }
 
     unsafe extern "C" fn discarded(data: *mut c_void, _feedback: *mut Proxy) {
@@ -623,12 +637,13 @@ pub(crate) mod wayland {
             let pending = self.slots[slot];
             // SAFETY: the feedback proxy, destroyed once; later events for it are dropped.
             unsafe { (self.api.destroy)(pending.proxy) };
-            let outcome = outcome.unwrap_or(match pending.answer {
-                Some(Answer::Presented { ns, flags }) => Outcome::Presented { to_glass_ns: ns.and_then(|ns| to_glass_ns(self.monotonic, pending.requested_ns, ns)), flags },
-                Some(Answer::Discarded) => Outcome::Discarded,
-                None => Outcome::Unanswered,
-            });
-            self.done.push(Shown { frame: pending.frame, ready_us: pending.ready_us, requested_us: pending.requested_us, outcome });
+            let (refresh_ns, default_outcome) = match pending.answer {
+                Some(Answer::Presented { ns, refresh_ns, flags }) => (refresh_ns, Outcome::Presented { to_glass_ns: ns.and_then(|ns| to_glass_ns(self.monotonic, pending.requested_ns, ns)), flags }),
+                Some(Answer::Discarded) => (0, Outcome::Discarded),
+                None => (0, Outcome::Unanswered),
+            };
+            let outcome = outcome.unwrap_or(default_outcome);
+            self.done.push(Shown { frame: pending.frame, ready_us: pending.ready_us, requested_us: pending.requested_us, refresh_ns, outcome });
             self.free.push(slot);
         }
     }
@@ -698,7 +713,7 @@ mod tests {
 
     #[test]
     fn shown_puts_the_glass_on_the_session_clock() {
-        let shown = Shown { frame: 7, ready_us: 900, requested_us: 1_000, outcome: Outcome::Presented { to_glass_ns: Some(6_500_000), flags: VSYNC } };
+        let shown = Shown { frame: 7, ready_us: 900, requested_us: 1_000, refresh_ns: 0, outcome: Outcome::Presented { to_glass_ns: Some(6_500_000), flags: VSYNC } };
         assert_eq!(shown.glass_us(), Some(7_500));
         assert_eq!(Shown { outcome: Outcome::Discarded, ..shown }.glass_us(), None);
         assert_eq!(Shown { outcome: Outcome::Presented { to_glass_ns: None, flags: 0 }, ..shown }.glass_us(), None);

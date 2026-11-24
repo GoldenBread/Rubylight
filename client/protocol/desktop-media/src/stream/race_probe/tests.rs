@@ -417,16 +417,9 @@ fn linux_reads_drm_a_second_after_the_window_settles_again_when_it_moves_and_on_
 
 #[cfg(target_os = "linux")]
 #[test]
-fn gamescope_keeps_the_pacing_and_reads_no_drm() {
-    assert!(drm_reader("display check", true).is_none(), "a Steam Deck panel has no VRR: V-Sync there is unmeasured");
+fn gamescope_reads_drm_vrr_for_fixed_and_vrr_displays() {
+    assert!(drm_reader("display check", true).is_some(), "gamescope checks DRM so non-VRR Deck panels leave HostTimes while docked VRR keeps it");
     assert!(drm_reader("display check", false).is_some());
-    let start = Instant::now();
-    let mut probe = RaceProbe::new(false, "display check");
-    for ms in [0, 1500, 3000, 10_000] {
-        probe.fold_unavailable(around(), 1, start + std::time::Duration::from_millis(ms), |_| unreachable!("no read under gamescope"));
-        assert_eq!(probe.line(), "off (no scanline)");
-    }
-    assert!(probe.drm_slot.lock().unwrap().is_none());
 }
 
 #[cfg(target_os = "linux")]

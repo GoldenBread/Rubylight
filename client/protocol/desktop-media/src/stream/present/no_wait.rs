@@ -1,10 +1,11 @@
-//! Non-blocking Windows V-Sync present (`DXGI_PRESENT_DO_NOT_WAIT`) with targeted VBlank sleeps.
+//! Non-blocking V-Sync presents (`DXGI_PRESENT_DO_NOT_WAIT` on Windows, `EGL_CHROMIUM_sync_control`
+//! SBC tracking on Linux X11) with targeted VBlank sleeps.
 
 use sdl3_sys::everything::*;
 
 /// What a present that never waits behind the last picture did.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(not(windows), allow(dead_code))] // Only Windows has this present.
+#[cfg_attr(not(any(windows, target_os = "linux")), allow(dead_code))]
 pub enum NoWait {
     Shown,
     /// The last picture has not reached the display: this one was not presented, and the back
@@ -19,7 +20,7 @@ pub enum NoWait {
 /// and the current QPC counter/frequency. Sleeping straight to `next_vblank - 500 us` turns
 /// 16-34 half-millisecond wakeups per frame into 1-2 wakeups without adding latency past the
 /// vblank that frees the swap chain.
-#[cfg_attr(not(windows), allow(dead_code))]
+#[cfg_attr(not(any(windows, target_os = "linux")), allow(dead_code))]
 pub(crate) fn no_wait_sleep_ns(
     remaining: std::time::Duration,
     refresh_hz: f32,
@@ -142,11 +143,67 @@ pub unsafe fn present_without_waiting(
     }
 }
 
-/// Only Windows has this present: SDL's own takes over elsewhere.
+/// Non-blocking V-Sync present on Linux X11 EGL: uses `EGL_CHROMIUM_sync_control`'s completed
+/// swap buffer counter (`sbc`) to avoid queuing a second frame behind an unfinished swap in Mesa
+/// DRI3 / Xwayland / gamescope. Falls back to `NoWait::Failed` (normal `SDL_RenderPresent`) on
+/// Wayland, Vulkan, or drivers without live `sbc` progression.
+///
+/// # Safety
+/// `renderer` is the live SDL renderer of this thread.
+#[cfg(target_os = "linux")]
+pub unsafe fn present_without_waiting(
+    renderer: *mut SDL_Renderer,
+    hold: std::time::Duration,
+    refresh_hz: f32,
+) -> NoWait {
+    use crate::stream::phase;
+    let Some(sample) = phase::egl_sync_sample(renderer, refresh_hz) else {
+        return NoWait::Failed;
+    };
+    let Some(mut in_flight) = phase::egl_swap_check(sample.surface, sample.sbc) else {
+        return NoWait::Failed;
+    };
+    // SAFETY: caller guarantees `renderer` is the live renderer of this thread.
+    if !unsafe { SDL_FlushRenderer(renderer) } {
+        return NoWait::Failed;
+    }
+    let begun = std::time::Instant::now();
+    let mut last = sample;
+    while in_flight {
+        let remaining = hold.saturating_sub(begun.elapsed());
+        if remaining.is_zero() {
+            return NoWait::Refused;
+        }
+        let now_us = nightjar_core::session::now_us();
+        let sync_us = last.ust_session_us.max(1);
+        let sleep_ns = no_wait_sleep_ns(remaining, refresh_hz, Some(sync_us), now_us, 1_000_000);
+        if sleep_ns > 0 {
+            // SAFETY: plain timer sleep on the render thread.
+            unsafe { SDL_DelayNS(sleep_ns) };
+        }
+        let Some(next) = phase::egl_sync_sample(renderer, refresh_hz) else {
+            return NoWait::Failed;
+        };
+        last = next;
+        let Some(busy) = phase::egl_swap_check(last.surface, last.sbc) else {
+            return NoWait::Failed;
+        };
+        in_flight = busy;
+    }
+    // SAFETY: caller guarantees `renderer` is the live renderer of this thread.
+    if unsafe { SDL_RenderPresent(renderer) } {
+        phase::egl_swap_presented(last.surface, last.sbc);
+        NoWait::Shown
+    } else {
+        NoWait::Failed
+    }
+}
+
+/// Only Windows and Linux X11 EGL have this present: SDL's own takes over elsewhere.
 ///
 /// # Safety
 /// Nothing to uphold here; the signature is the Windows one's.
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 pub unsafe fn present_without_waiting(
     _renderer: *mut SDL_Renderer,
     _hold: std::time::Duration,

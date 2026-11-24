@@ -584,6 +584,15 @@ pub struct Streaming {
     #[cfg(windows)]
     enhancer: Option<enhance::Enhancer>,
     upscale_failed: bool,
+    /// The swapchain as of the last pictures, logged once on a change.
+    #[cfg(target_os = "linux")]
+    kms_last_flip_us: Option<u64>,
+    #[cfg(target_os = "linux")]
+    phase_source_logged: Option<&'static str>,
+    #[cfg(target_os = "linux")]
+    phase_missing_logged: bool,
+    #[cfg(target_os = "linux")]
+    phase_first_miss_us: Option<u64>,
     phase: phase::Phase,
     /// Whether racing the display's beam can work here, once the beam race is on and a picture is
     /// shown; on a VRR stream that tears, whether the display refreshes on present (`sync_vrr`).
@@ -1093,6 +1102,7 @@ impl Streaming {
         doctor.receive_buffer = session.video_receive_buffer();
         let direct_motion = direct_motion::DirectMotion::new(session.input_handle(), facts.touch);
         let warp_presenter = facts.frame_warp.clone().map(frame_warp::Presenter::new);
+        phase::reset_display_timing();
         let mut streaming = Self {
             usb,
             usb_refused,
@@ -1113,6 +1123,14 @@ impl Streaming {
             #[cfg(windows)]
             enhancer: None,
             upscale_failed: false,
+            #[cfg(target_os = "linux")]
+            kms_last_flip_us: None,
+            #[cfg(target_os = "linux")]
+            phase_source_logged: None,
+            #[cfg(target_os = "linux")]
+            phase_missing_logged: false,
+            #[cfg(target_os = "linux")]
+            phase_first_miss_us: None,
             phase: phase::Phase::default(),
             race_probe: None,
             // The sync interval as `App::begin_stream` set it.
@@ -1452,6 +1470,14 @@ impl Streaming {
         // The swapchain's HDR answer may have changed with the display: ask SDL again.
         crate::sdl::forget_swapchain_answers();
         self.phase.reset();
+        phase::reset_display_timing();
+        #[cfg(target_os = "linux")]
+        {
+            self.kms_last_flip_us = None;
+            self.phase_source_logged = None;
+            self.phase_missing_logged = false;
+            self.phase_first_miss_us = None;
+        }
         // The landing is the display's: the wait's budget measures it afresh on another one.
         self.scan_tally.forget_landing();
         // Fractional V-Sync's turns count on the old display's refreshes: they start over.
@@ -1459,6 +1485,50 @@ impl Streaming {
         self.display_change = Some(Instant::now());
         if self.facts.display_caps && self.facts.role != AppRole::InputOnly {
             let _ = self.session.send(ClientMessage::DisplayCaps(crate::sdl::display_caps(renderer)));
+        }
+    }
+
+    /// Display vblank anchor and refresh period for phase lock and the V-Sync host-time grid. On
+    /// Linux, resolves KMS flip timestamps and Wayland `wp_presentation` feedback for 1:1 streams
+    /// before falling back to EGL/GLX sync control and unprivileged DRM vblank queries, logging
+    /// the active source once per stream (or once after 1 s when none is available).
+    pub(super) fn display_timing(&mut self, renderer: *mut SDL_Renderer, now_us: u64, refresh_hz: f32, report_held: u32, log_phase: bool) -> Option<(i64, i64)> {
+        #[cfg(target_os = "linux")]
+        {
+            let resolved = if report_held == 1 {
+                phase::glass_phase_timing(self.kms_last_flip_us, None, now_us, refresh_hz)
+                    .map(|timing| (timing, phase::TimingSource::KmsFlip))
+                    .or_else(|| self.glass.phase_timing(now_us, refresh_hz).map(|timing| (timing, phase::TimingSource::WaylandGlass)))
+                    .or_else(|| phase::timing_with_source(renderer, refresh_hz))
+            } else {
+                phase::timing_with_source(renderer, refresh_hz)
+            };
+            if log_phase {
+                match resolved {
+                    Some(((_, period_ns), source)) => {
+                        self.phase_first_miss_us = None;
+                        if self.phase_source_logged != Some(source.label()) {
+                            self.phase_source_logged = Some(source.label());
+                            self.phase_missing_logged = false;
+                            eprintln!("nightjar: phase lock: display timing from {} ({:.2} ms refresh)", source.label(), period_ns as f64 / 1e6);
+                        }
+                    }
+                    None if self.phase_source_logged.is_none() && !self.phase_missing_logged => {
+                        let first = *self.phase_first_miss_us.get_or_insert(now_us);
+                        if now_us.saturating_sub(first) >= 1_000_000 {
+                            self.phase_missing_logged = true;
+                            eprintln!("nightjar: phase lock: no display timing available on this renderer/display");
+                        }
+                    }
+                    None => {}
+                }
+            }
+            resolved.map(|(timing, _)| timing)
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = (now_us, log_phase);
+            phase::timing(renderer, refresh_hz, report_held, &mut self.held_anchor)
         }
     }
 

@@ -27,6 +27,8 @@ const SIZE_TOLERANCE_PX: u32 = 2;
 pub struct Output {
     /// The card node, `card0`.
     pub card: String,
+    /// The CRTC object id driving this output (`DRM_IOCTL_CRTC_GET_SEQUENCE`).
+    pub crtc_id: u32,
     /// The connector's kernel name, `DP-1`.
     pub name: String,
     /// The CRTC's mode.
@@ -92,6 +94,23 @@ pub fn select<'a>(outputs: &'a [Output], display: &Display) -> Result<&'a Output
     }
 }
 
+/// Selects the output for `display`, and under gamescope falls back to the sole active CRTC when
+/// its refresh rate matches (covering Steam Deck Game Mode when Steam supersamples a virtual X11
+/// resolution such as 2560x1600 onto the 800x1280 panel).
+pub fn select_for_vblank<'a>(outputs: &'a [Output], display: &Display, gamescope: bool) -> Result<&'a Output, String> {
+    select(outputs, display).or_else(|why| {
+        if gamescope
+            && let [only] = outputs
+            && display.refresh_hz > 1.0
+            && (only.refresh_hz - display.refresh_hz).abs() <= REFRESH_TOLERANCE_HZ
+        {
+            Ok(only)
+        } else {
+            Err(why)
+        }
+    })
+}
+
 /// What a read found.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Reading {
@@ -104,11 +123,17 @@ pub enum Reading {
 impl Reading {
     /// The reading of the window's output from the outputs read (`outputs`).
     pub fn of(outputs: Result<Vec<Output>, String>, display: &Display) -> Self {
+        Self::of_for(outputs, display, false)
+    }
+
+    /// The reading of the window's output, allowing gamescope's single physical panel when its
+    /// refresh rate matches a supersampled virtual display mode.
+    pub fn of_for(outputs: Result<Vec<Output>, String>, display: &Display, gamescope: bool) -> Self {
         let outputs = match outputs {
             Ok(outputs) => outputs,
             Err(why) => return Self::Unknown(why),
         };
-        let output = match select(&outputs, display) {
+        let output = match select_for_vblank(&outputs, display, gamescope) {
             Ok(output) => output,
             Err(why) => return Self::Unknown(why),
         };
@@ -219,6 +244,36 @@ pub fn outputs() -> Result<Vec<Output>, String> {
     }
     if read == 0 { return Err(format!("no card could be read ({})", failed.join(", "))); }
     Ok(found)
+}
+
+/// Opens `/dev/dri/{card}` without holding DRM master (dropping master immediately if no
+/// compositor held it).
+#[cfg(target_os = "linux")]
+pub(crate) fn open_card_non_master(card: &str) -> std::io::Result<std::fs::File> {
+    sys::open_card_non_master(card)
+}
+
+/// A display's name and current mode in pixels, for finding its output in DRM.
+#[cfg(target_os = "linux")]
+pub(crate) fn describe_display(id: u32) -> Display {
+    use sdl3_sys::everything::*;
+    let id = SDL_DisplayID(id);
+    // SAFETY: SDL owns the name and the mode, which are read here at once.
+    unsafe {
+        let name = SDL_GetDisplayName(id);
+        let name = (!name.is_null())
+            .then(|| std::ffi::CStr::from_ptr(name).to_string_lossy().into_owned())
+            .filter(|name| !name.is_empty());
+        match SDL_GetCurrentDisplayMode(id).as_ref() {
+            Some(mode) => Display {
+                name,
+                width: (mode.w as f32 * mode.pixel_density).round() as u32,
+                height: (mode.h as f32 * mode.pixel_density).round() as u32,
+                refresh_hz: f64::from(mode.refresh_rate),
+            },
+            None => Display { name, width: 0, height: 0, refresh_hz: 0.0 },
+        }
+    }
 }
 
 /// DRM is Linux's.
@@ -428,13 +483,30 @@ mod sys {
         Ok(found)
     }
 
-    pub(super) fn read_card(card: &str) -> std::io::Result<Vec<Output>> {
-        let file = std::fs::OpenOptions::new().read(true).write(true).custom_flags(libc::O_CLOEXEC).open(format!("/dev/dri/{card}"))?;
-        let fd = file.as_raw_fd();
+    pub(super) fn open_card_non_master(card: &str) -> std::io::Result<std::fs::File> {
+        let path = format!("/dev/dri/{card}");
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .custom_flags(libc::O_CLOEXEC)
+            .open(&path)
+            .or_else(|error| {
+                if error.kind() == std::io::ErrorKind::PermissionDenied {
+                    std::fs::OpenOptions::new().read(true).custom_flags(libc::O_CLOEXEC).open(&path)
+                } else {
+                    Err(error)
+                }
+            })?;
         // Opening a card no one is master of (no compositor on it) makes this the master, which
         // a compositor starting now would be refused. Nothing here needs it: give it up at once.
         // SAFETY: DROP_MASTER takes no argument; refused when not master, which is fine.
-        unsafe { libc::ioctl(fd, DROP_MASTER as _, 0) };
+        unsafe { libc::ioctl(file.as_raw_fd(), DROP_MASTER as _, 0) };
+        Ok(file)
+    }
+
+    pub(super) fn read_card(card: &str) -> std::io::Result<Vec<Output>> {
+        let file = open_card_non_master(card)?;
+        let fd = file.as_raw_fd();
         let mut res = CardRes::default();
         ioctl(fd, GETRESOURCES, &mut res)?;
         let mut connectors = vec![0u32; res.count_connectors as usize];
@@ -458,6 +530,7 @@ mod sys {
             let crtc_props = properties(fd, crtc.crtc_id, OBJECT_CRTC, &mut names).unwrap_or_default();
             outputs.push(Output {
                 card: card.to_string(),
+                crtc_id: crtc.crtc_id,
                 name: format!("{}-{}", connector_type_name(connector.connector_type), connector.connector_type_id),
                 width: u32::from(mode.hdisplay),
                 height: u32::from(mode.vdisplay),
@@ -475,7 +548,7 @@ mod tests {
     use super::*;
 
     fn output(card: &str, name: &str, size: (u32, u32), hz: f64, enabled: Option<u64>) -> Output {
-        Output { card: card.into(), name: name.into(), width: size.0, height: size.1, refresh_hz: hz, vrr_capable: Some(1), vrr_enabled: enabled }
+        Output { card: card.into(), crtc_id: 42, name: name.into(), width: size.0, height: size.1, refresh_hz: hz, vrr_capable: Some(1), vrr_enabled: enabled }
     }
 
     fn display(name: Option<&str>, size: (u32, u32), hz: f64) -> Display {
@@ -608,5 +681,22 @@ mod tests {
         assert!((mode_refresh_hz(74_250, 2200, 1125, 0, 1 << 4, 30) - 60.0).abs() < 0.01, "interlaced");
         assert_eq!(connector_type_name(14), "eDP");
         assert_eq!(connector_type_name(11), "HDMI-A");
+    }
+
+    #[test]
+    fn gamescope_select_for_vblank_matches_rotated_and_supersampled_deck_panel() {
+        let deck = [output("card0", "eDP-1", (800, 1280), 89.89, Some(0))];
+        // Native rotated Steam Deck OLED panel matches directly.
+        let native = display(Some("XWAYLAND0"), (1280, 800), 89.89);
+        assert_eq!(select_for_vblank(&deck, &native, true).unwrap().name, "eDP-1");
+        assert_eq!(select_for_vblank(&deck, &native, false).unwrap().name, "eDP-1");
+        // Supersampled Game Resolution (2560x1600) under gamescope matches the sole active panel at the same refresh.
+        let supersampled = display(Some("XWAYLAND0"), (2560, 1600), 89.89);
+        assert_eq!(select_for_vblank(&deck, &supersampled, true).unwrap().name, "eDP-1");
+        assert!(select_for_vblank(&deck, &supersampled, false).is_err());
+        // Mismatched refresh or multiple outputs are still refused.
+        assert!(select_for_vblank(&deck, &display(Some("XWAYLAND0"), (2560, 1600), 60.0), true).is_err());
+        let two = [deck[0].clone(), output("card0", "DP-1", (1920, 1080), 89.89, Some(0))];
+        assert!(select_for_vblank(&two, &supersampled, true).is_err());
     }
 }
