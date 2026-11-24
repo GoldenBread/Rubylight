@@ -742,17 +742,17 @@ def load_android_dir(directory, require_translatable_only=False):
     return entries, issues
 
 
-def validate_android_text(where, value, raw_xml=False):
+def android_xml_text(escaped_xml):
+    """Return decoded XML text content (matching Android DOM getTextContent / itertext)."""
+    return ''.join(ET.fromstring(f'<string>{escaped_xml}</string>').itertext())
+
+
+def validate_android_text(where, decoded_text):
+    """Validate already-decoded XML text content (matching TranslationResourcesTest.java)."""
     errs = []
-    check_text = value
-    if raw_xml:
-        try:
-            check_text = ''.join(ET.fromstring(f'<string>{value}</string>').itertext())
-        except ET.ParseError as exc:
-            return [f'{where}: invalid inline XML ({exc})']
-    if ANDROID_BARE_APOS_RE.search(check_text):
+    if ANDROID_BARE_APOS_RE.search(decoded_text):
         errs.append(f'{where}: unescaped apostrophe (use \\\' or ’)')
-    if ANDROID_BARE_QUOTE_RE.search(check_text):
+    if ANDROID_BARE_QUOTE_RE.search(decoded_text):
         errs.append(f'{where}: unescaped double quote (use \\" or typographic quotes)')
     return errs
 
@@ -1034,12 +1034,26 @@ def build_cross_fill_index(root, glossary, spec):
     # 1. Same-batch Desktop & Android entries (highest priority for cross-fill!)
     for item in spec.get('desktop') or []:
         en = item.get('key', '')
-        tr = normalize_translations_map(item.get('translations'))
+        try:
+            tr = normalize_translations_map(item.get('translations'))
+        except ValueError:
+            continue
         add_source(en, tr, 'desktop')
     for sec in ('android', 'android_tv'):
         for item in spec.get(sec) or []:
-            en = android_unescape(item.get('en', ''))
-            tr = {k: android_unescape(v) for k, v in normalize_translations_map(item.get('translations')).items()}
+            raw_xml = bool(item.get('raw_xml', False))
+            en_raw = item.get('en', '')
+            try:
+                en = android_unescape(android_xml_text(android_escape_value(en_raw, raw_xml=raw_xml))) if en_raw else ''
+                raw_tr = normalize_translations_map(item.get('translations'))
+            except (ValueError, ET.ParseError):
+                continue
+            tr = {}
+            for k, v in raw_tr.items():
+                try:
+                    tr[k] = android_unescape(android_xml_text(android_escape_value(v, raw_xml=raw_xml)))
+                except ET.ParseError:
+                    tr[k] = android_unescape(v)
             add_source(en, tr, 'android')
 
     # 2. Shared glossary entries
@@ -1172,7 +1186,14 @@ def load_spec(spec_arg):
 def cmd_apply(args):
     root = pathlib.Path(args.root).resolve()
     glossary = load_glossary(args.glossary)
-    spec = load_spec(args.spec)
+    try:
+        spec = load_spec(args.spec)
+    except (OSError, ValueError, json.JSONDecodeError, tomllib.TOMLDecodeError) as exc:
+        print(f'ERROR: failed to load spec: {exc}', file=sys.stderr)
+        return 1
+    if not isinstance(spec, dict):
+        print('ERROR: spec root must be a JSON/TOML object', file=sys.stderr)
+        return 1
     exact_index, norm_entries = (({}, {}), []) if args.no_cross_fill else build_cross_fill_index(root, glossary, spec)
 
     errors = []
@@ -1198,7 +1219,11 @@ def cmd_apply(args):
             if not key:
                 errors.append('host: entry missing non-empty "key"')
                 continue
-            tr_map = normalize_translations_map(item.get('translations'))
+            try:
+                tr_map = normalize_translations_map(item.get('translations'))
+            except ValueError as exc:
+                errors.append(f'host/{key}: {exc}')
+                continue
             en_val = item.get('en', tr_map.get('en', ''))
             if not en_val or not en_val.strip():
                 errors.append(f'host/{key}: missing English text ("en")')
@@ -1218,18 +1243,26 @@ def cmd_apply(args):
                 errors.append(f'host/{key}: missing translations for {", ".join(missing)}')
                 continue
             en_ph = sorted(HOST_PH_RE.findall(en_val))
+            item_ok = True
             for loc in locales:
                 val = tr_map[loc]
                 if not val.strip():
                     errors.append(f'host/{key}/{loc}: empty translation')
+                    item_ok = False
                     continue
                 if sorted(HOST_PH_RE.findall(val)) != en_ph:
                     errors.append(f'host/{key}/{loc}: placeholder mismatch vs en')
+                    item_ok = False
                     continue
                 if loc in host_docs:
-                    set_nested(host_docs[loc], key, val)
-            stats['host'] += 1
-            glossary_updates.setdefault(en_val, {}).update({k: v for k, v in tr_map.items() if k != 'en'})
+                    try:
+                        set_nested(host_docs[loc], key, val)
+                    except ValueError as exc:
+                        errors.append(f'host/{loc}.json/{key}: {exc}')
+                        item_ok = False
+            if item_ok:
+                stats['host'] += 1
+                glossary_updates.setdefault(en_val, {}).update({k: v for k, v in tr_map.items() if k != 'en'})
 
         if not errors:
             for loc, doc in host_docs.items():
@@ -1248,7 +1281,11 @@ def cmd_apply(args):
             if not en_key or not en_key.strip():
                 errors.append('desktop: entry missing non-empty "key"')
                 continue
-            tr_map = normalize_translations_map(item.get('translations'))
+            try:
+                tr_map = normalize_translations_map(item.get('translations'))
+            except ValueError as exc:
+                errors.append(f'desktop/{en_key!r}: {exc}')
+                continue
             if not args.no_cross_fill:
                 tr_map, cf = cross_fill_for(en_key, 'desktop', needed_canon, tr_map, exact_index, norm_entries)
                 stats['cross_filled'] += cf
@@ -1311,9 +1348,22 @@ def cmd_apply(args):
             raw_xml = bool(item.get('raw_xml', False))
             formatted = bool(item.get('formatted', True))
             en_escaped = android_escape_value(en_raw, raw_xml=raw_xml)
-            en_plain = android_unescape(en_escaped)
+            try:
+                en_xml_text = android_xml_text(en_escaped)
+            except ET.ParseError as exc:
+                errors.append(f'{sec}/values/{key}: invalid XML ({exc})')
+                continue
+            en_errs = validate_android_text(f'{sec}/values/{key}', en_xml_text)
+            if en_errs:
+                errors.extend(en_errs)
+                continue
+            en_plain = android_unescape(en_xml_text)
 
-            tr_map = normalize_translations_map(item.get('translations'))
+            try:
+                tr_map = normalize_translations_map(item.get('translations'))
+            except ValueError as exc:
+                errors.append(f'{sec}/{key}: {exc}')
+                continue
             if not args.no_cross_fill:
                 tr_map, cf = cross_fill_for(en_plain, 'android', needed_and_canon, tr_map, exact_index, norm_entries)
                 stats['cross_filled'] += cf
@@ -1322,14 +1372,10 @@ def cmd_apply(args):
                 errors.append(f'{sec}/{key}: missing translations for {", ".join(missing)}')
                 continue
 
-            item_errs = validate_android_text(f'{sec}/values/{key}', en_escaped, raw_xml=raw_xml)
-            en_text_for_check = (
-                ''.join(ET.fromstring(f'<string>{en_escaped}</string>').itertext())
-                if raw_xml and not item_errs
-                else en_escaped
-            )
-            en_ph = android_placeholders(en_text_for_check) if formatted else []
+            item_errs = []
+            en_ph = android_placeholders(en_xml_text) if formatted else []
             escaped_by_loc = {}
+            plain_by_canon = {}
             for loc in ANDROID_LOCALES:
                 canon = ANDROID_TO_CANON[loc]
                 val_esc = android_escape_value(tr_map[canon], raw_xml=raw_xml)
@@ -1337,20 +1383,23 @@ def cmd_apply(args):
                 if not val_esc.strip():
                     item_errs.append(f'{where}: empty translation')
                     continue
-                loc_errs = validate_android_text(where, val_esc, raw_xml=raw_xml)
-                item_errs.extend(loc_errs)
-                val_text_for_check = (
-                    ''.join(ET.fromstring(f'<string>{val_esc}</string>').itertext())
-                    if raw_xml and not loc_errs
-                    else val_esc
-                )
-                if formatted and android_placeholders(val_text_for_check) != en_ph:
+                try:
+                    val_xml_text = android_xml_text(val_esc)
+                except ET.ParseError as exc:
+                    item_errs.append(f'{where}: invalid XML ({exc})')
+                    continue
+                loc_errs = validate_android_text(where, val_xml_text)
+                if loc_errs:
+                    item_errs.extend(loc_errs)
+                    continue
+                if formatted and android_placeholders(val_xml_text) != en_ph:
                     item_errs.append(
-                        f'{where}: placeholders {android_placeholders(val_text_for_check)} differ from {en_ph}'
+                        f'{where}: placeholders {android_placeholders(val_xml_text)} differ from {en_ph}'
                     )
-                if key in tight_labels and not fits_tight_label(en_text_for_check, val_text_for_check):
-                    item_errs.append(f'{where}: "{val_text_for_check}" exceeds tight label width for "{en_text_for_check}"')
+                if key in tight_labels and not fits_tight_label(en_xml_text, val_xml_text):
+                    item_errs.append(f'{where}: "{val_xml_text}" exceeds tight label width for "{en_xml_text}"')
                 escaped_by_loc[loc] = val_esc
+                plain_by_canon[canon] = android_unescape(val_xml_text)
 
             if item_errs:
                 errors.extend(item_errs)
@@ -1369,9 +1418,7 @@ def cmd_apply(args):
                     read_xml_buf(target), key, val_esc, formatted=formatted
                 )
             stats[sec] += 1
-            glossary_updates.setdefault(en_plain, {}).update(
-                {c: android_unescape(tr_map[c]) for c in needed_and_canon}
-            )
+            glossary_updates.setdefault(en_plain, {}).update(plain_by_canon)
 
         if not errors:
             planned_writes.update(xml_buffers)
@@ -1427,7 +1474,11 @@ def cmd_rename(args):
                 print(f'ERROR: host/{p.name} already contains {new_key!r}', file=sys.stderr)
                 return 1
             delete_nested(doc, old_key)
-            set_nested(doc, new_key, val)
+            try:
+                set_nested(doc, new_key, val)
+            except ValueError as exc:
+                print(f'ERROR: host/{p.name}: {exc}', file=sys.stderr)
+                return 1
             planned[p] = json.dumps(doc, indent=2, ensure_ascii=False) + '\n'
 
     elif surface == 'desktop':

@@ -431,6 +431,64 @@ class AndroidAndCrossFillTests(unittest.TestCase):
         rc, out, err = run_cli(['--root', str(self.root), 'check'])
         self.assertEqual(rc, 0, out + err)
 
+    def test_android_xml_entities_cross_fill_glossary_and_tight_label_width(self):
+        # #1a: Desktop "Save & exit" cross-fills Android "Save & exit" (XML &amp;) and --update-glossary stays unescaped
+        tmp_glossary = self.root / 'glossary_amp.json'
+        shutil.copyfile(i18n.DEFAULT_GLOSSARY, tmp_glossary)
+        tr_amp = {lang: f'Save & exit ({lang})' for lang in i18n.DESKTOP_LOCALES}
+        spec = self.root / 'amp.json'
+        write_lf(spec, json.dumps({
+            'desktop': [{'key': 'Save & exit', 'translations': tr_amp}],
+            'android': [{'key': 'save_and_exit', 'en': 'Save & exit', 'translations': {}}],
+        }))
+        rc, out, err = run_cli([
+            '--root', str(self.root), '--glossary', str(tmp_glossary),
+            'apply', str(spec), '--update-glossary',
+        ])
+        self.assertEqual(rc, 0, out + err)
+        de_xml = (self.root / i18n.ANDROID_REL / 'values-de/strings.xml').read_text(encoding='utf-8')
+        self.assertIn('<string name="save_and_exit">Save &amp; exit (de)</string>', de_xml)
+        g = json.loads(tmp_glossary.read_text(encoding='utf-8'))
+        self.assertIn('Save & exit', g['entries'])
+        self.assertNotIn('Save &amp; exit', g['entries'])
+        self.assertEqual(g['entries']['Save & exit']['de'], 'Save & exit (de)')
+
+        # #1b: Tight label width counts decoded '&' as 1 col (not '&amp;' as 5 cols)
+        # "Help" (4 cols) allows max(8, 14) = 14 cols. "A & B & C & D" is 13 cols decoded,
+        # but 25 chars as "A &amp; B &amp; C &amp; D" — must pass BOTH apply and check_android!
+        tr_tight = {loc: 'A & B & C & D' for loc in i18n.ANDROID_LOCALES}
+        write_lf(spec, json.dumps({
+            'android': [{'key': 'help', 'en': 'Help', 'translations': tr_tight}],
+        }))
+        rc, out, err = run_cli(['--root', str(self.root), 'apply', str(spec)])
+        self.assertEqual(rc, 0, out + err)
+        rc, out, err = run_cli(['--root', str(self.root), 'check', '--surface', 'android'])
+        self.assertEqual(rc, 0, out + err)
+
+    def test_apply_handles_unknown_locale_and_host_scalar_conflict_cleanly(self):
+        # #2a: Unknown locale code across surfaces exits 1 with clean error (no ValueError traceback)
+        before_host = (self.root / i18n.HOST_REL / 'en.json').read_text(encoding='utf-8')
+        spec = self.root / 'bad_loc.json'
+        for payload in (
+            {'host': [{'key': 'config.x', 'en': 'X', 'translations': {'zz-ZZ': 'Bad'}}]},
+            {'desktop': [{'key': 'X', 'translations': {'zz-ZZ': 'Bad'}}]},
+            {'android': [{'key': 'x_key', 'en': 'X', 'translations': {'zz-ZZ': 'Bad'}}]},
+        ):
+            write_lf(spec, json.dumps(payload))
+            rc, _, err = run_cli(['--root', str(self.root), 'apply', str(spec)])
+            self.assertEqual(rc, 1)
+            self.assertIn('unknown locale code', err)
+
+        # #2b: Host nested key conflict under existing scalar (_common.save.nested) exits 1 cleanly
+        all_tr = {loc: f'Val_{loc}' for loc in i18n.HOST_LOCALES if loc != 'en'}
+        write_lf(spec, json.dumps({
+            'host': [{'key': '_common.save.nested', 'en': 'Nested', 'translations': all_tr}],
+        }))
+        rc, _, err = run_cli(['--root', str(self.root), 'apply', str(spec)])
+        self.assertEqual(rc, 1)
+        self.assertIn('key conflict', err)
+        self.assertEqual((self.root / i18n.HOST_REL / 'en.json').read_text(encoding='utf-8'), before_host)
+
 
 if __name__ == '__main__':
     unittest.main()

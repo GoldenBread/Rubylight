@@ -245,10 +245,13 @@ pub async fn read(State(h): State<Shared>, Extension(c): Extension<Connection>) 
 """
     else:
         handler_rs = f"""//! `{method.upper()} {path}` handler (`docs/native-api.md`).
-use super::{{Reply, caller, json, parse_body, {super_perm}}};
+use super::{{Failure, Reply, caller, json, read_body, {super_perm}}};
 use axum::{{Extension, extract::{{Request, State}}, http::StatusCode}};
 {native_perm_use}use butterpollo_stream::{{state::Shared, tls::Connection}};
-use rubylight_native_api::{name}::{{{pascal}Request, {pascal}Response, {pascal}State}};
+use rubylight_native_api::{{
+    error::ErrorCode,
+    {name}::{{{pascal}Request, {pascal}Response, {pascal}State}},
+}};
 
 pub async fn write(
     State(h): State<Shared>,
@@ -257,8 +260,14 @@ pub async fn write(
 ) -> Reply {{
     let client = caller(&h, &c)?;
     {perm_check}
-    let req: {pascal}Request = parse_body(request).await?;
-    let body = {pascal}Response {{
+    let body = read_body(request).await?;
+    let req: {pascal}Request = serde_json::from_slice(&body).map_err(|error| {{
+        Failure::new(
+            ErrorCode::InvalidRequest,
+            format!("The body is not a valid {name} request: {{error}}."),
+        )
+    }})?;
+    let response = {pascal}Response {{
         revision: 1,
         state: if req.enabled {{
             {pascal}State::Ready
@@ -266,16 +275,31 @@ pub async fn write(
             {pascal}State::Unavailable
         }},
     }};
-    Ok(json(StatusCode::OK, &body))
+    Ok(json(StatusCode::OK, &response))
 }}
 """
 
-    call_expr = (
-        f's.get("{path}").await'
-        if method == 'get'
-        else f's.post_json("{path}", &serde_json::json!({{"enabled": true}})).await'
-    )
-    denied_expr = f's.get("{path}").await' if method == 'get' else f's.post("{path}").await'
+    if method == 'get':
+        call_expr = f's.get("{path}").await'
+        denied_expr = f's.get("{path}").await'
+    else:
+        call_expr = (
+            f'send(&s.f, true, &s.connection, "POST", &format!("{{PREFIX}}{path}"), '
+            f'Some("application/json"), &serde_json::json!({{"enabled": true}}).to_string()).await'
+        )
+        denied_expr = (
+            f'send(&s.f, true, &s.connection, "POST", &format!("{{PREFIX}}{path}"), '
+            f'Some("application/json"), &serde_json::json!({{"enabled": true}}).to_string()).await'
+        )
+
+    if permission == 'host_control':
+        fixture_setup = f'    let s = Setup::with({test_perm});\n    s.host_control(true);'
+        denied_setup = '    // Paired with List, but without Host control.\n    let s = Setup::with(LIST);'
+        denied_code = 'host_control_required'
+    else:
+        fixture_setup = f'    let s = Setup::with({test_perm});'
+        denied_setup = '    // Paired with input-only bit (no List/View/Launch).\n    let s = Setup::with(1);'
+        denied_code = 'permission_required'
 
     test_rs = f"""//! `{method.upper()} {path}` parity and permission checks against the documented fixture.
 use super::*;
@@ -286,7 +310,7 @@ const FIXTURE: &str =
 
 #[tokio::test]
 async fn {name}_matches_documented_fixture() {{
-    let s = Setup::with({test_perm});
+{fixture_setup}
     let reply = {call_expr};
     assert_eq!(reply.status, StatusCode::OK, "{{}}", reply.text());
     assert_eq!(reply.headers[header::CACHE_CONTROL], "no-store");
@@ -298,10 +322,9 @@ async fn {name}_matches_documented_fixture() {{
 
 #[tokio::test]
 async fn {name}_enforces_caller_permissions() {{
-    // Paired with input-only bit (no List/View/Launch/Host control).
-    let s = Setup::with(1);
+{denied_setup}
     {denied_expr}
-        .assert_error(403, "permission_required");
+        .assert_error(403, "{denied_code}");
 }}
 """
 
@@ -313,7 +336,7 @@ async fn {name}_enforces_caller_permissions() {{
     }
     checklist = [
         f'1. Export `pub mod {name};` and `feature::{upper}` in client/protocol/native-api/src/lib.rs',
-        f'2. Register `mod {name};` and `.route("{path}", {method}({name}::{"read" if method == "get" else "write"}))` in rust/host/web/src/native_api.rs',
+        f'2. Register `mod {name};` and `.route(&path("{path}"), {method}({name}::{"read" if method == "get" else "write"}).fallback(unknown))` in rust/host/web/src/native_api.rs',
         f'3. Add `mod {name};` in tests/host/tests/nvhttp_parity/native_tests.rs (or parity module)',
         '4. Document the endpoint contract in docs/native-api.md',
         '5. Wire capability + HTTP client in Nightjar (capabilities.rs, http/native.rs, Android + Desktop)',
@@ -323,8 +346,33 @@ async fn {name}_enforces_caller_permissions() {{
 
 # ---- 3. Host setting stub generator ----
 
-def generate_setting_stub(key, kind, default, label, description, category='video', group='General', choices=(), min_val=None, max_val=None):
+# Valid `CategoryId` values from `rust/web/src/lib/settings-types.ts`, mapped to their schema file.
+CATEGORY_TO_SCHEMA_FILE = {
+    'general': 'basics.ts',
+    'network': 'basics.ts',
+    'audio': 'basics.ts',
+    'input': 'basics.ts',
+    'commands': 'basics.ts',
+    'advanced': 'basics.ts',
+    'video': 'video.ts',
+    'encoders': 'video.ts',
+    'hdr': 'video.ts',
+    'display': 'display.ts',
+    'frame-limiting': 'display.ts',
+    'library': 'library.ts',
+}
+
+
+def generate_setting_stub(
+    key, kind, default, label, description, category='video', group='General',
+    choices=(), min_val=None, max_val=None, extension=False,
+):
     validate_snake(key, 'setting key')
+    if category not in CATEGORY_TO_SCHEMA_FILE:
+        raise ValueError(
+            f'invalid CategoryId {category!r}; expected one of: {", ".join(CATEGORY_TO_SCHEMA_FILE)}'
+        )
+    schema_file = 'extensions.ts' if extension else CATEGORY_TO_SCHEMA_FILE[category]
     if kind == 'bool':
         if default.lower() not in ('true', 'false'):
             raise ValueError(f'bool setting default must be true or false, got {default!r}')
@@ -400,7 +448,7 @@ def generate_setting_stub(key, kind, default, label, description, category='vide
 
     rendered = (
         f'=== 1. Rust accessor (rust/core/config/src/config.rs) ===\n{rust_snippet}\n\n'
-        f'=== 2. Web schema (rust/web/src/lib/schema/{category}.ts) ===\n{ts_snippet}\n\n'
+        f'=== 2. Web schema (rust/web/src/lib/schema/{schema_file}) ===\n{ts_snippet}\n\n'
         f'=== 3. No-JS console (rust/host/web/src/console/settings.rs) ===\n{console_snippet}\n\n'
         f'=== 4. Host i18n batch spec (tools/i18n.py apply) ===\n{json.dumps(i18n_spec, indent=2, ensure_ascii=False)}\n\n'
         f'=== 5. docs/configuration.md row ===\n{doc_row}\n\n'
@@ -531,6 +579,7 @@ def cmd_setting(args):
             choices=choices,
             min_val=args.min,
             max_val=args.max,
+            extension=args.extension,
         )
         files = {}
         if args.with_note:
@@ -600,7 +649,8 @@ def build_parser():
     p_set.add_argument('--default', required=True, help='default value')
     p_set.add_argument('--label', required=True, help='UI label')
     p_set.add_argument('--description', required=True, help='UI description')
-    p_set.add_argument('--category', default='video', choices=('basics', 'display', 'video', 'library', 'extensions'))
+    p_set.add_argument('--category', default='video', choices=tuple(CATEGORY_TO_SCHEMA_FILE.keys()))
+    p_set.add_argument('--extension', action='store_true', help='target rust/web/src/lib/schema/extensions.ts')
     p_set.add_argument('--group', default='General')
     p_set.add_argument('--choices', default='', help='comma-separated values for --type choice')
     p_set.add_argument('--min', type=int, default=None)

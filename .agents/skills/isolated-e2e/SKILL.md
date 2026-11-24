@@ -30,7 +30,7 @@ Machine settings (`$BUTTERPOLLO_TEST_PYTHON`, fixtures in `C:\src\butterpollo-re
   ```
   Useful flags: `--vrr`, `--recovery 16`, `--motion-at-rate`, `--hw-decoder d3d11va`, `--config key=value`, `--content <clip.y4m>`, `--port 48523`.
 - **Pairing, launch & web API checks:**
-  - `python rust/release/protocol.py` (isolated pairing & launch protocol)
+  - `python rust/release/protocol.py --package <pkg-dir> --work <work-dir>` (isolated pairing & launch protocol)
   - `python rust/tests/interop.py <artifact-dir> [codec]`
   - `python rust/tests/web_api.py`
 - **Shaped slow-link test (`bottleneck.py`):**
@@ -41,7 +41,7 @@ Machine settings (`$BUTTERPOLLO_TEST_PYTHON`, fixtures in `C:\src\butterpollo-re
       --codec av1 --mode 2560x1440x60 --bitrate 40000 --rate-kbps 100000 --queue-kib 64 --rfi
   ```
 - **Bounded soak & fault injection:** `pwsh rust/release/soak.ps1` (or `rust/release/soak.py`).
-- **Stage timing report:** `python rust/release/timing_report.py <host-record> <frames.csv>`.
+- **Stage timing report:** `python rust/release/timing_report.py <frames.csv> --host-record <host-record>`.
 - **Hardware batch / laptop host:** `tools\hw\run.ps1 -Batch <device>` (`tools/hw/catalog.yaml`), `pwsh tools\hw\laptop-host.ps1 -Out <dir>`.
 
 ## Reading results

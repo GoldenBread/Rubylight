@@ -126,33 +126,60 @@ class ScaffoldTests(unittest.TestCase):
         self.assertEqual(fixture['state'], 'ready')
         handler = (self.root / expected_files[2]).read_text(encoding='utf-8')
         self.assertIn('require_host_control(&client)?;', handler)
+        self.assertIn('read_body(request).await?', handler)
+        self.assertIn('ErrorCode::InvalidRequest', handler)
+        self.assertNotIn('parse_body', handler)
+        parity = (self.root / expected_files[3]).read_text(encoding='utf-8')
+        self.assertIn('s.host_control(true);', parity)
+        self.assertIn('send(&s.f, true, &s.connection, "POST", &format!("{PREFIX}/audio-boost")', parity)
+        self.assertIn('.assert_error(403, "host_control_required");', parity)
+        self.assertNotIn('post_json', parity)
+        self.assertIn('.route(&path("/audio-boost"), post(audio_boost::write).fallback(unknown))', out)
 
     def test_setting_types_validation_and_note(self):
-        # Bool + note dry-run
+        # Bool + note dry-run with valid CategoryId mapped to basics.ts
         rc, out, err = run_cli([
             '--root', str(self.root), 'setting', 'fast_resume',
-            '--type', 'bool', '--default', 'true',
+            '--type', 'bool', '--default', 'true', '--category', 'general',
             '--label', 'Fast resume', '--description', 'Resumes streams without resetting capture.',
             '--with-note', '--dry-run',
         ])
         self.assertEqual(rc, 0, out + err)
         self.assertIn('pub fn fast_resume(&self) -> bool', out)
+        self.assertIn('rust/web/src/lib/schema/basics.ts', out)
+        self.assertIn('category: "general"', out)
         self.assertFalse((self.root / 'rust/release/notes.d/fast_resume.md').exists())
 
-        # Choice + real note write
+        # Choice + real note write with frame-limiting -> display.ts and --extension -> extensions.ts
         rc, out, err = run_cli([
             '--root', str(self.root), 'setting', 'capture_mode',
             '--type', 'choice', '--choices', 'auto,wgc,dd', '--default', 'auto',
+            '--category', 'frame-limiting',
             '--label', 'Capture mode', '--description', 'Selects capture API.',
             '--with-note',
         ])
         self.assertEqual(rc, 0, out + err)
         self.assertIn('Choice(&["auto", "wgc", "dd"])', out)
+        self.assertIn('rust/web/src/lib/schema/display.ts', out)
+        self.assertIn('category: "frame-limiting"', out)
         note = self.root / 'rust/release/notes.d/capture_mode.md'
         self.assertTrue(note.is_file())
         self.assertNotIn(b'\r\n', note.read_bytes())
 
-        # Validation failures
+        rc, out, err = run_cli([
+            '--root', str(self.root), 'setting', 'ext_flag',
+            '--type', 'bool', '--default', 'false', '--category', 'input', '--extension',
+            '--label', 'Ext flag', '--description', 'Extension option.', '--dry-run',
+        ])
+        self.assertEqual(rc, 0, out + err)
+        self.assertIn('rust/web/src/lib/schema/extensions.ts', out)
+        self.assertIn('category: "input"', out)
+
+        # Validation failures (including invalid CategoryId like schema filenames 'basics'/'extensions')
+        with self.assertRaises(ValueError):
+            scaffold.generate_setting_stub('x', 'bool', 'true', 'X', 'Y', category='basics')
+        with self.assertRaises(ValueError):
+            scaffold.generate_setting_stub('x', 'bool', 'true', 'X', 'Y', category='extensions')
         rc, _, _ = run_cli([
             '--root', str(self.root), 'setting', 'BadKey',
             '--type', 'bool', '--default', 'true', '--label', 'X', '--description', 'Y',
@@ -180,10 +207,21 @@ class ScaffoldTests(unittest.TestCase):
             self._assert_rust_conventions(p)
 
 
+def expand_braces(ref):
+    m = re.search(r'\{([^{}]+)\}', ref)
+    if not m:
+        return [ref]
+    head, tail = ref[:m.start()], ref[m.end():]
+    expanded = []
+    for part in m.group(1).split(','):
+        expanded.extend(expand_braces(head + part.strip() + tail))
+    return expanded
+
+
 class SkillsIntegrityTests(unittest.TestCase):
     def test_all_skills_exist_with_valid_frontmatter_lf_and_grounded_paths(self):
         skills_dir = ROOT / '.agents/skills'
-        path_re = re.compile(r'`((?:rust|client|docs|tools|tests|\.agents)/[\w./-]+)`')
+        path_re = re.compile(r'`((?:rust|client|docs|tools|tests|\.agents)/[\w./{},-]+)`')
         for name in EXPECTED_SKILLS:
             path = skills_dir / name / 'SKILL.md'
             self.assertTrue(path.is_file(), f'missing skill {path}')
@@ -196,12 +234,18 @@ class SkillsIntegrityTests(unittest.TestCase):
             fm = m.group(1)
             self.assertIn(f'name: {name}', fm)
             self.assertIn('description:', fm)
-            # Every concrete repo path cited in backticks (excluding wildcards/templates) must exist!
+            # Expand {a,b} brace groups and verify every concrete cited repo path exists!
             for ref in path_re.findall(text):
-                if any(tok in ref for tok in ('*', '<', '>', '{', '}', 'spec.json')):
+                if any(tok in ref for tok in ('*', '<', '>', 'spec.json')):
                     continue
-                target = ROOT / ref.rstrip('/')
-                self.assertTrue(target.exists(), f'{path}: cited path does not exist: {ref}')
+                for candidate in expand_braces(ref):
+                    target = ROOT / candidate.rstrip('/')
+                    self.assertTrue(target.exists(), f'{path}: cited path does not exist: {candidate} (from {ref})')
+
+        # Spot-check isolated-e2e CLI invocations match real scripts
+        e2e_skill = (skills_dir / 'isolated-e2e/SKILL.md').read_text(encoding='utf-8')
+        self.assertIn('python rust/release/protocol.py --package <pkg-dir> --work <work-dir>', e2e_skill)
+        self.assertIn('python rust/release/timing_report.py <frames.csv> --host-record <host-record>', e2e_skill)
 
 
 if __name__ == '__main__':
