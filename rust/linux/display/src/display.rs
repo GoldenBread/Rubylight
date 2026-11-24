@@ -21,7 +21,8 @@ pub use topology::{
     Monitor, Topology, active_device_ids, active_displays, edid_refresh, monitors, shown_primary,
 };
 pub use virtual_display::{
-    RenderAdapter, VirtualDisplay, VirtualOptions, configured_render_adapter_with,
-    ensure_virtual_display_available, joinable_mode, virtual_display_available,
-    virtual_display_installed, virtual_display_os, virtual_display_status, windows_build,
+    PrivateRequest, RenderAdapter, VirtualDisplay, VirtualOptions, configured_render_adapter_with,
+    ensure_virtual_display_available, joinable_mode, recover_after_restart,
+    virtual_display_available, virtual_display_installed, virtual_display_os,
+    virtual_display_status, windows_build,
 };
