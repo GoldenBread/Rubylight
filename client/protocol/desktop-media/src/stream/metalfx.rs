@@ -3,6 +3,8 @@ use crate::media::FrameInfo;
 use sdl3_sys::everything::*;
 use std::{ffi::c_void, ptr};
 
+const RING: usize = 4;
+
 unsafe extern "C" {
     fn nj_metalfx_supported() -> bool;
     fn nj_metalfx_new(layer: *mut c_void, iw: i32, ih: i32, ow: i32, oh: i32) -> *mut c_void;
@@ -11,9 +13,9 @@ unsafe extern "C" {
         input: *mut c_void,
         parameters: *const f32,
         gpu_ms: *mut f64,
-    ) -> *mut c_void;
+    ) -> i32;
+    fn nj_metalfx_slot_buffer(context: *mut c_void, slot: i32) -> *mut c_void;
     fn nj_metalfx_free(context: *mut c_void);
-    fn nj_metalfx_buffer_free(buffer: *mut c_void);
 }
 
 pub fn supported() -> bool {
@@ -57,8 +59,8 @@ pub fn blocker(c: &Conditions) -> Option<&'static str> {
 
 pub struct Spatial {
     context: *mut c_void,
-    texture: *mut SDL_Texture,
-    buffer: *mut c_void,
+    slots: [*mut SDL_Texture; RING],
+    current: Option<usize>,
     input: (i32, i32),
     output: (i32, i32),
     pub gpu_ms: f64,
@@ -76,8 +78,8 @@ impl Spatial {
             );
             (!context.is_null()).then_some(Self {
                 context,
-                texture: ptr::null_mut(),
-                buffer: ptr::null_mut(),
+                slots: [ptr::null_mut(); RING],
+                current: None,
                 input,
                 output,
                 gpu_ms: 0.0,
@@ -92,7 +94,9 @@ impl Spatial {
     /// false): the pass and its wait for the GPU would cost about five milliseconds and draw the
     /// same picture.
     pub fn output(&self) -> Option<*mut SDL_Texture> {
-        (!self.texture.is_null()).then_some(self.texture)
+        self.current
+            .map(|slot| self.slots[slot])
+            .filter(|texture| !texture.is_null())
     }
 
     /// The caller keeps the decoded picture alive until this synchronous GPU submission completes.
@@ -105,59 +109,65 @@ impl Spatial {
         let parameters = conversion(info);
         // SAFETY: Caller keeps the decoded picture `buffer` alive until this synchronous GPU submission completes.
         unsafe {
-            let output = nj_metalfx_draw(self.context, buffer, parameters.as_ptr(), &mut self.gpu_ms);
-            if output.is_null() {
+            let slot = nj_metalfx_draw(self.context, buffer, parameters.as_ptr(), &mut self.gpu_ms);
+            if slot < 0 || slot as usize >= RING {
                 return None;
             }
-            let props = SDL_CreateProperties();
-            SDL_SetNumberProperty(
-                props,
-                SDL_PROP_TEXTURE_CREATE_FORMAT_NUMBER,
-                SDL_PIXELFORMAT_BGRA32.0.into(),
-            );
-            SDL_SetNumberProperty(
-                props,
-                SDL_PROP_TEXTURE_CREATE_WIDTH_NUMBER,
-                self.output.0.into(),
-            );
-            SDL_SetNumberProperty(
-                props,
-                SDL_PROP_TEXTURE_CREATE_HEIGHT_NUMBER,
-                self.output.1.into(),
-            );
-            SDL_SetNumberProperty(
-                props,
-                SDL_PROP_TEXTURE_CREATE_COLORSPACE_NUMBER,
-                SDL_COLORSPACE_SRGB.0.into(),
-            );
-            SDL_SetPointerProperty(
-                props,
-                SDL_PROP_TEXTURE_CREATE_METAL_PIXELBUFFER_POINTER,
-                output,
-            );
-            let texture = SDL_CreateTextureWithProperties(renderer, props);
-            SDL_DestroyProperties(props);
-            if texture.is_null() {
-                nj_metalfx_buffer_free(output);
-                return None;
+            let index = slot as usize;
+            if self.slots[index].is_null() {
+                let output = nj_metalfx_slot_buffer(self.context, slot);
+                if output.is_null() {
+                    return None;
+                }
+                let props = SDL_CreateProperties();
+                SDL_SetNumberProperty(
+                    props,
+                    SDL_PROP_TEXTURE_CREATE_FORMAT_NUMBER,
+                    SDL_PIXELFORMAT_BGRA32.0.into(),
+                );
+                SDL_SetNumberProperty(
+                    props,
+                    SDL_PROP_TEXTURE_CREATE_WIDTH_NUMBER,
+                    self.output.0.into(),
+                );
+                SDL_SetNumberProperty(
+                    props,
+                    SDL_PROP_TEXTURE_CREATE_HEIGHT_NUMBER,
+                    self.output.1.into(),
+                );
+                SDL_SetNumberProperty(
+                    props,
+                    SDL_PROP_TEXTURE_CREATE_COLORSPACE_NUMBER,
+                    SDL_COLORSPACE_SRGB.0.into(),
+                );
+                SDL_SetPointerProperty(
+                    props,
+                    SDL_PROP_TEXTURE_CREATE_METAL_PIXELBUFFER_POINTER,
+                    output,
+                );
+                let texture = SDL_CreateTextureWithProperties(renderer, props);
+                SDL_DestroyProperties(props);
+                if texture.is_null() {
+                    return None;
+                }
+                SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_NONE);
+                self.slots[index] = texture;
             }
-            SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_NONE);
-            SDL_DestroyTexture(self.texture);
-            nj_metalfx_buffer_free(self.buffer);
-            self.texture = texture;
-            self.buffer = output;
-            Some(texture)
+            self.current = Some(index);
+            Some(self.slots[index])
         }
     }
 }
 
 impl Drop for Spatial {
     fn drop(&mut self) {
+        // Destroy pooled SDL textures before freeing `self.context`, whose ring owns their CVPixelBuffers.
         unsafe {
-            if !self.texture.is_null() {
-                SDL_DestroyTexture(self.texture);
+            for texture in self.slots {
+                if !texture.is_null() {
+                    SDL_DestroyTexture(texture);
+                }
             }
-            nj_metalfx_buffer_free(self.buffer);
             nj_metalfx_free(self.context);
         }
     }

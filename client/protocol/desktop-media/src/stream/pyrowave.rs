@@ -13,6 +13,12 @@ use super::stage_times::Stages;
 use super::pyrowave_sdk::GpuDecoder;
 use super::pyrowave_sdk::GpuConfig;
 
+mod pack;
+#[cfg(test)]
+use pack::half;
+#[cfg(all(test, target_arch = "x86_64"))]
+use pack::pack_half_row;
+
 struct Band {
     component: usize,
     width: usize,
@@ -134,6 +140,14 @@ impl Decoder {
             #[cfg(test)] scratch: vec![0.0; stride * rows], #[cfg(test)] line: vec![0.0; stride.max(rows)] })
     }
 
+    /// Zeroes luma and only the active chroma rows (`rows / 2` for 4:2:0, full `rows` for 4:4:4).
+    fn clear_planes(&mut self) {
+        self.planes[0].fill(0.0);
+        let chroma = self.stride * if self.chroma444 { self.rows } else { self.rows / 2 };
+        self.planes[1][..chroma].fill(0.0);
+        self.planes[2][..chroma].fill(0.0);
+    }
+
     /// The stream starts over on this decoder (a reconnect that reuses it): drops any frame in
     /// flight, so no picture of the last stream can come out.
     pub fn flush(&mut self) {
@@ -147,7 +161,7 @@ impl Decoder {
         self.loss_percent = 0.0;
         self.packet.clear();
         self.records = Records::with_geometry(self.width as u32, self.height as u32, self.chroma444);
-        for plane in &mut self.planes { plane.fill(0.0); }
+        self.clear_planes();
         self.seen.fill(false);
     }
 
@@ -166,7 +180,7 @@ impl Decoder {
             let step = Instant::now();
             self.stages.get_mut().reset();
             self.records.begin_frame();
-            for plane in &mut self.planes { plane.fill(0.0); }
+            self.clear_planes();
             self.seen.fill(false);
             self.early = Early::Active;
             self.early_bytes = 4;
@@ -245,7 +259,7 @@ impl Decoder {
             // The clear starts where the assembly ended: one clock reading for both.
             let step = self.stages.get_mut().lap(ASSEMBLE, step);
             if !valid { return Err("Malformed PyroWave frame container"); }
-            for plane in &mut self.planes { plane.fill(0.0); }
+            self.clear_planes();
             self.seen.fill(false);
             self.stages.get_mut().add(CLEAR, step);
         }
@@ -297,18 +311,19 @@ impl Decoder {
         let info = frame.info();
         #[cfg(target_arch = "x86_64")]
         let fast_half = std::is_x86_feature_detected!("f16c");
+        #[cfg(not(target_arch = "x86_64"))]
+        let fast_half = false;
+        let chroma_rows = if self.chroma444 { self.rows } else { self.rows / 2 };
+        // SAFETY: `frame` holds `self.rows` rows of `self.stride` RGBA16F pixels.
         unsafe {
             for y in 0..self.rows {
                 let row = std::slice::from_raw_parts_mut(info.data[0].add(y * info.linesize[0] as usize).cast::<[u16; 4]>(), self.stride);
-                #[cfg(target_arch = "x86_64")]
-                if fast_half {
-                    let start = y * self.stride;
-                    pack_half_row(row, std::array::from_fn(|p| &self.planes[p][start..start + self.stride]));
-                    continue;
-                }
-                for (x, pixel) in row.iter_mut().enumerate() {
-                    let at = y * self.stride + x;
-                    *pixel = [half(self.planes[0][at]), half(self.planes[1][at]), half(self.planes[2][at]), 0x3c00];
+                let start = y * self.stride;
+                let end = start + self.stride;
+                if y < chroma_rows {
+                    pack::pack_row(row, [&self.planes[0][start..end], &self.planes[1][start..end], &self.planes[2][start..end]], fast_half);
+                } else {
+                    pack::pack_luma_row(row, &self.planes[0][start..end], fast_half);
                 }
             }
         }
@@ -339,7 +354,9 @@ fn place_block(bands: &[Band], stride: usize, planes: &mut [Vec<f32>; 3], seen: 
     if index >= seen.len() { return Err("PyroWave block index exceeds the picture"); }
     if seen[index] { return Ok(false); }
     seen[index] = true;
-    let band = bands.iter().find(|band| index >= band.first && index < band.first + band.count).unwrap();
+    // `bands` is strictly sorted by `first` (`bands[0].first == 0`, contiguous ranges covering `0..seen.len()`).
+    let band = &bands[bands.partition_point(|band| band.first <= index) - 1];
+    if index >= band.first + band.count { return Err("PyroWave block index exceeds the picture"); }
     let mut values = [0.0; 1024];
     decode_block(record, &mut values)?;
     let block = index - band.first;
@@ -352,17 +369,6 @@ fn place_block(bands: &[Band], stride: usize, planes: &mut [Vec<f32>; 3], seen: 
     Ok(true)
 }
 
-#[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "f16c")]
-unsafe fn pack_half_row(row: &mut [[u16; 4]], planes: [&[f32]; 3]) {
-    use std::arch::x86_64::*;
-    for (x, pixel) in row.iter_mut().enumerate() {
-        let values = _mm_set_ps(1.0, planes[2][x], planes[1][x], planes[0][x]);
-        // SAFETY: caller guarantees F16C is supported and `pixel` is an 8-byte buffer.
-        unsafe { _mm_storel_epi64(pixel.as_mut_ptr().cast(), _mm_cvtps_ph::<0>(values)) };
-    }
-}
-
 fn decode_block(data: &[u8], output: &mut [f32; 1024]) -> Result<(), &'static str> {
     let ballot = word(data, 0) & 0xffff;
     let count = ballot.count_ones() as usize;
@@ -373,11 +379,15 @@ fn decode_block(data: &[u8], output: &mut [f32; 1024]) -> Result<(), &'static st
     let mut magnitudes = [0u32; 1024];
     let mut scales = [0.0; 16];
     let mut compact = 0;
-    for (block, scale) in scales.iter_mut().enumerate() {
-        if ballot & (1 << block) == 0 { continue; }
+    let mut nonzero_blocks = 0u32;
+    let mut significant = 0usize;
+    let mut active = ballot;
+    while active != 0 {
+        let block = active.trailing_zeros() as usize;
+        active &= active - 1;
         let code = u16::from_le_bytes([data[8 + compact * 2], data[9 + compact * 2]]);
         let q = data[8 + count * 2 + compact];
-        *scale = scale32 * (f32::from(q >> 4) / 8.0 + 0.25);
+        scales[block] = scale32 * (f32::from(q >> 4) / 8.0 + 0.25);
         for sub in 0..8 {
             let bits = ((code >> (sub * 2)) & 3) as usize + usize::from(q & 15);
             if offset + bits > data.len() { return Err("Truncated PyroWave coefficient planes"); }
@@ -392,39 +402,32 @@ fn decode_block(data: &[u8], output: &mut [f32; 1024]) -> Result<(), &'static st
             }
             offset += bits;
         }
+        if code != 0 {
+            nonzero_blocks |= 1 << block;
+            significant += magnitudes[block * 64..block * 64 + 64].iter().filter(|&&m| m != 0).count();
+        }
         compact += 1;
     }
-    let significant = magnitudes.iter().filter(|m| **m != 0).count();
     if offset + significant.div_ceil(8) > data.len() { return Err("Truncated PyroWave coefficient signs"); }
     let mut sign = 0;
-    for (index, magnitude) in magnitudes.into_iter().enumerate() {
-        if magnitude == 0 { continue; }
-        let block = index / 64;
-        let local = index % 64;
-        let x = (block % 4) * 8 + ((local >> 1) & 3) + ((local >> 5) << 2);
-        let y = (block / 4) * 8 + (local & 1) + (((local >> 3) & 3) << 1);
-        let negative = (data[offset + sign / 8] >> (sign % 8)) & 1 != 0;
-        let value = (magnitude as f32 + 0.5) * scales[block];
-        if value > 65504.0 { return Err("PyroWave coefficient exceeds FP16 storage"); }
-        output[y * 32 + x] = if negative { -value } else { value };
-        sign += 1;
+    let mut active = nonzero_blocks;
+    while active != 0 {
+        let block = active.trailing_zeros() as usize;
+        active &= active - 1;
+        let scale = scales[block];
+        let (base_x, base_y) = ((block % 4) * 8, (block / 4) * 8);
+        for (local, &magnitude) in magnitudes[block * 64..block * 64 + 64].iter().enumerate() {
+            if magnitude == 0 { continue; }
+            let x = base_x + ((local >> 1) & 3) + ((local >> 5) << 2);
+            let y = base_y + (local & 1) + (((local >> 3) & 3) << 1);
+            let negative = (data[offset + sign / 8] >> (sign % 8)) & 1 != 0;
+            let value = (magnitude as f32 + 0.5) * scale;
+            if value > 65504.0 { return Err("PyroWave coefficient exceeds FP16 storage"); }
+            output[y * 32 + x] = if negative { -value } else { value };
+            sign += 1;
+        }
     }
     Ok(())
-}
-
-fn half(value: f32) -> u16 {
-    let bits = value.to_bits();
-    let sign = (bits >> 16) as u16 & 0x8000;
-    let exponent = ((bits >> 23) & 255) as i32 - 112;
-    let mantissa = bits & 0x7f_ffff;
-    if exponent <= 0 {
-        if exponent < -10 { return sign; }
-        let mantissa = mantissa | 0x80_0000;
-        let shift = 14 - exponent;
-        return sign | ((mantissa + (1 << (shift - 1)) - 1 + ((mantissa >> shift) & 1)) >> shift) as u16;
-    }
-    let rounded = mantissa + 0xfff + ((mantissa >> 13) & 1);
-    sign | (((exponent as u32) << 10) + (rounded >> 13)) as u16
 }
 
 #[cfg(test)]
@@ -786,6 +789,7 @@ const GPU_STAGE_NAMES: [&str; 5] = ["clear", "push", "submit", "gpu", "slices"];
 const GPU_CLEAR: usize = 0;
 const GPU_PUSH: usize = 1;
 const GPU_SUBMIT: usize = 2;
+#[cfg_attr(windows, allow(dead_code))]
 const GPU_WAIT: usize = 3;
 /// The slice decodes made while the frame arrives (beam race), submit and wait together.
 #[cfg_attr(not(windows), allow(dead_code))]
@@ -1221,33 +1225,35 @@ impl GpuStream {
             // The set of a sliced frame holds its slices (see `decode_due_slice`); a set that holds nothing is overwritten.
             let decoded = if sliced { self.gpu.decode_again(lease.set(), after) } else { self.gpu.decode(lease.set(), after) };
             let fence_value = decoded.map_err(|e| Failure::Device(e.to_string()))?;
-            let step = self.stages.lap(GPU_SUBMIT, step);
-            self.gpu.wait(fence_value, GPU_DECODE_TIMEOUT).map_err(|e| Failure::Device(e.to_string()))?;
-            self.stages.add(GPU_WAIT, step);
+            self.stages.add(GPU_SUBMIT, step);
             fence_value
         };
-        // The decode blocks until the GPU is done and the planes are final (in the set's images on
-        // the renderer's device, or read back into its CPU buffers). Up to the submit's return
-        // (on the wait thread) it is the "submit" stage, as on Windows, which holds the wait for
-        // the renderer's queue lock; the rest is the "gpu" stage.
+        // Zero-copy Vulkan hands `(lease, decode_value)` directly to the presenter (GPU timeline
+        // semaphore orders sampling); CPU readback blocks until the readback buffer is filled.
         #[cfg(unix)]
-        {
+        let fence_value = {
             let decoded = if self.gpu.images().is_some() {
                 self.gpu.decode_into(lease.set(), after)
             } else {
                 let gpu = &mut self.gpu;
-                lease.with_buffers(|[y, cb, cr]| gpu.decode([y, cb, cr])).unwrap_or_else(|| Err("the plane set has no CPU buffers".into()))
+                lease.with_buffers(|[y, cb, cr]| gpu.decode([y, cb, cr]))
+                    .unwrap_or_else(|| Err("the plane set has no CPU buffers".into()))
+                    .map(|()| 0)
             };
-            if let Err(e) = decoded {
-                // A decode that missed its deadline may still write into this set once the
-                // device comes back: the set is never given back, so nothing reads or reuses it.
-                if self.gpu.stalled() { std::mem::forget(lease); }
-                return Err(Failure::Device(e.to_string()));
-            }
+            let fence_value = match decoded {
+                Ok(value) => value,
+                Err(e) => {
+                    // A decode that missed its deadline may still write into this set once the
+                    // device comes back: the set is never given back, so nothing reads or reuses it.
+                    if self.gpu.stalled() { std::mem::forget(lease); }
+                    return Err(Failure::Device(e.to_string()));
+                }
+            };
             let submitted = submit_split(step, self.gpu.submitted_at());
             self.stages.add_between(GPU_SUBMIT, step, submitted);
             self.stages.add(GPU_WAIT, submitted);
-        }
+            fence_value
+        };
         self.stages.commit();
         let first_block_us = if source == Source::Early { self.first_block_us } else { 0 };
         #[cfg(windows)]
@@ -1259,16 +1265,8 @@ impl GpuStream {
         let (race, bands) = (RaceReport::default(), Vec::new());
         let race_seq = if race.slices > 0 { self.race.as_ref().map_or(0, |race| race.seq) } else { 0 };
         Ok(Output {
-            picture: Picture::GpuPlanes {
-                lease,
-                #[cfg(windows)]
-                fence_value,
-            },
-            loss_percent,
-            first_block_us,
-            bands,
-            race,
-            race_seq,
+            picture: Picture::GpuPlanes { lease, fence_value },
+            loss_percent, first_block_us, bands, race, race_seq,
         })
     }
 

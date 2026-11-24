@@ -35,8 +35,8 @@ impl VideoTexture {
     /// converts the planes (only `rows` of them when given) into the texture and gives the plane
     /// set back.
     #[cfg(windows)]
-    pub(super) fn upload_planes(&mut self, renderer: *mut SDL_Renderer, decoded: &Decoded, lease: &super::super::gpu_planes::Lease, fence_value: u64, rows: Option<(u32, u32)>) -> bool {
-        let Some(parameters) = self.prepare_planes(renderer, decoded.setup) else { return false };
+    pub(super) fn upload_planes(&mut self, renderer: *mut SDL_Renderer, setup: nightjar_core::session::VideoSetup, lease: &super::super::gpu_planes::Lease, fence_value: u64, rows: Option<(u32, u32)>) -> bool {
+        let Some(parameters) = self.prepare_planes(renderer, setup) else { return false };
         // The picture's set stays with the presenter while the planes wait for the back buffer.
         if self.goes_direct(renderer, rows.is_some())
             && let Some(held) = lease.hand_over() {
@@ -80,8 +80,7 @@ impl VideoTexture {
     /// plane buffers, uploaded; converted into the texture, or at present time into the back
     /// buffer (`draw_direct`).
     #[cfg(unix)]
-    pub(super) fn upload_planes(&mut self, renderer: *mut SDL_Renderer, decoded: &Decoded, lease: &super::super::gpu_planes::Lease) -> bool {
-        let setup = decoded.setup;
+    pub(super) fn upload_planes(&mut self, renderer: *mut SDL_Renderer, setup: nightjar_core::session::VideoSetup, lease: &super::super::gpu_planes::Lease, fence_value: u64) -> bool {
         let ten = setup.format & nightjar_core::sdp::VIDEO_FORMAT_MASK_10BIT != 0;
         let hdr = self.hdr_mode.unwrap_or(ten);
         // SAFETY: The live renderer belongs to the presenting thread.
@@ -104,7 +103,7 @@ impl VideoTexture {
         let texture = self.planes_target();
         let stages = &mut self.pyrowave_stages;
         let failure = &mut self.failure;
-        let drawn = self.planes.as_mut().is_some_and(|pass| match unsafe { pass.draw(renderer, texture, lease, &parameters, stages) } {
+        let drawn = self.planes.as_mut().is_some_and(|pass| match unsafe { pass.draw(renderer, texture, lease, fence_value, &parameters, stages) } {
             Ok(()) => true,
             Err(error) => { *failure = Some(format!("PyroWave GPU decoding failed: {error}")); false }
         });
@@ -124,7 +123,7 @@ impl VideoTexture {
     /// software-decoded 4:4:4 one is drawn (same constants: range, matrix, 10-bit SDR, HDR10, HLG):
     /// the plane pass copies the decoder's surface and its surface entry converts it.
     #[cfg(windows)]
-    pub(super) fn upload_d3d11_444(&mut self, renderer: *mut SDL_Renderer, frame: &media::Frame, info: &FrameInfo, white_level: f32) -> bool {
+    pub(super) fn upload_d3d11_444(&mut self, renderer: *mut SDL_Renderer, source: &mut upload::FrameSource<'_>, info: &FrameInfo, white_level: f32) -> bool {
         let Some(layout) = media::PlanarLayout::of_d3d11(info) else {
             self.fail(format!("a {}x{} 4:4:4 decoder picture has no size", info.width, info.height), "the 4:4:4 picture cannot be drawn".into());
             return false;
@@ -143,13 +142,13 @@ impl VideoTexture {
         }
         if self.goes_direct(renderer, false) {
             // A readable decoder texture is read in place, its frame held until the next picture.
-            let bound = self.planes.as_mut().unwrap().bind_surface(frame, info, &parameters, true);
+            let bound = self.planes.as_mut().unwrap().bind_surface(source.frame(), info, &parameters, true);
             match bound {
                 Ok(in_place) => {
-                    let held = if in_place { frame.reference() } else { None };
+                    let held = if in_place { source.take_or_ref() } else { None };
                     let held = if in_place && held.is_none() {
                         // No second reference to the frame: the slice is copied instead.
-                        match self.planes.as_mut().unwrap().bind_surface(frame, info, &parameters, false) {
+                        match self.planes.as_mut().unwrap().bind_surface(source.frame(), info, &parameters, false) {
                             Ok(_) => None,
                             Err(error) => { self.fail(format!("binding a {}x{} 4:4:4 decoder picture failed: {error}", layout.width, layout.height), error); return false; }
                         }
@@ -162,7 +161,7 @@ impl VideoTexture {
         }
         self.finish_direct();
         self.say_planes_path(false, "4:4:4");
-        match self.planes.as_mut().unwrap().draw_surface(frame, info, &parameters) {
+        match self.planes.as_mut().unwrap().draw_surface(source.frame(), info, &parameters) {
             Ok(()) => true,
             Err(error) => { self.fail(format!("drawing a {}x{} 4:4:4 decoder picture failed: {error}", layout.width, layout.height), error); false }
         }
@@ -171,7 +170,9 @@ impl VideoTexture {
     /// Draws a software-decoded planar picture (4:4:4, or 10-bit) with the plane shader into an
     /// RGBA64F texture, as the GPU decoder's planes are drawn: SDL has no texture formats for them.
     pub(super) fn upload_planar(&mut self, renderer: *mut SDL_Renderer, info: &FrameInfo, layout: media::PlanarLayout, white_level: f32) -> bool {
-        let Some(parameters) = self.planar_target(renderer, info, layout, white_level, false) else { return false };
+        let semi = (cfg!(target_os = "linux") || cfg!(target_os = "macos"))
+            && matches!(info.kind, media::FRAME_NV12 | media::FRAME_P010);
+        let Some(parameters) = self.planar_target(renderer, info, layout, white_level, semi) else { return false };
         #[cfg(windows)]
         let drawn = {
             if self.planes.is_none() {
@@ -205,7 +206,12 @@ impl VideoTexture {
         let drawn = {
             if self.planes.is_none() {
                 // SAFETY: The live renderer belongs to the presenting thread.
-                match unsafe { super::super::planes_gpu::PlanesPass::for_frames(renderer, layout) } {
+                let pass = if semi {
+                    unsafe { super::super::planes_gpu::PlanesPass::for_semi_planar(renderer, layout) }
+                } else {
+                    unsafe { super::super::planes_gpu::PlanesPass::for_frames(renderer, layout) }
+                };
+                match pass {
                     Ok(pass) => { self.planes = Some(pass); self.pyrowave_format = Some(parameters); }
                     Err(error) => { self.fail(format!("the plane shader pass cannot be made: {error}"), format!("the plane shader pass cannot be made: {error}")); return false; }
                 }

@@ -844,31 +844,30 @@ impl Streaming {
                 Err(error) => return self.enhance_failed(error),
             }
         }
-        match self.enhancer.as_mut()?.draw(renderer) {
+        let direct = self.enhancer.as_ref().is_some_and(|e| self.texture.enhance_held_frame().is_some_and(|f| e.can_read_held(f)));
+        if !direct { self.texture.copy_held(); }
+        let held = if direct { self.texture.enhance_held_frame() } else { None };
+        match self.enhancer.as_mut()?.draw_frame(renderer, held) {
             Ok(texture) => Some(texture),
-            Err(error) => self.enhance_failed(error),
+            Err(error) => { self.texture.copy_held(); self.enhance_failed(error) }
         }
     }
 
     #[cfg(not(windows))]
-    pub(super) fn enhanced(&mut self, _renderer: *mut SDL_Renderer, _output: (i32, i32)) -> Option<*mut SDL_Texture> {
-        None
-    }
+    pub(super) fn enhanced(&mut self, _: *mut SDL_Renderer, _: (i32, i32)) -> Option<*mut SDL_Texture> { None }
 
-    /// Whether AI enhancement draws the current picture (`ai_in_effect`); where it does not, its
-    /// enhancer goes.
+    /// Whether AI enhancement draws the current picture (`ai_in_effect`); where it does not, its enhancer goes.
     #[cfg(windows)]
-    fn ai_enhances(&mut self) -> bool {
-        let ai = ai_in_effect(self.settings.upscaling, self.upscale_failed, self.texture.enhance_source().is_some());
+    fn ai_enhances(&mut self, renderer: *mut SDL_Renderer, output: (i32, i32)) -> bool {
+        let source = self.texture.enhance_source();
+        let ai = ai_in_effect(self.settings.upscaling, self.upscale_failed, source.is_some())
+            && source.is_some_and(|s| enhance::should_enhance(renderer, s, output));
         if !ai { self.enhancer = None; }
         ai
     }
 
-    /// AI enhancement runs on Direct3D 11 only.
     #[cfg(not(windows))]
-    fn ai_enhances(&mut self) -> bool {
-        ai_in_effect(self.settings.upscaling, self.upscale_failed, false)
-    }
+    fn ai_enhances(&mut self, _: *mut SDL_Renderer, _: (i32, i32)) -> bool { ai_in_effect(self.settings.upscaling, self.upscale_failed, false) }
 
     #[cfg(windows)]
     fn enhance_failed(&mut self, error: String) -> Option<*mut SDL_Texture> {
@@ -1018,7 +1017,7 @@ impl Streaming {
                 && output.0 <= 16384 && output.1 <= 16384;
             // AI enhancement only where it runs: a picture it does not read, or a failed
             // enhancer, costs what bilinear scaling costs.
-            let ai = self.ai_enhances();
+            let ai = self.ai_enhances(renderer, output);
             // The video texture's picture goes into the window's target as it is, by the plane
             // pass or SDL, not through an upscaler or AI enhancement.
             let unscaled = !self.texture.texture.is_null() && !use_upscaler && !ai;
@@ -1029,8 +1028,6 @@ impl Streaming {
             if !self.texture.texture.is_null() {
                 let mut texture = self.texture.texture;
                 if ai {
-                    // AI enhancement reads the YUV picture in the video texture.
-                    self.texture.copy_held();
                     self.upscaler = None;
                     if let Some(enhanced) = self.enhanced(renderer, output) { texture = enhanced; }
                 } else if self.settings.upscaling == config::Upscaling::MetalFx {
@@ -1237,7 +1234,7 @@ impl Streaming {
             dropped += u32::from(older);
             !older
         });
-        let (picture, replaced) = present::take_over_kept(picture, &mut self.skipped_picture, overdue);
+        let (mut picture, replaced) = present::take_over_kept(picture, &mut self.skipped_picture, overdue);
         dropped += replaced;
         self.window.dropped_pacing += dropped;
         self.shared.counters.replaced.fetch_add(u64::from(dropped), Ordering::Relaxed);
@@ -1252,7 +1249,7 @@ impl Streaming {
         // Whether the frame is under the racer, and which rows of it are left to draw.
         let mut raced = false;
         let mut rows = None;
-        if let Some(p) = &picture {
+        if let Some(p) = &mut picture {
             if self.facts.phase_lock && self.pacer.mode == PacingMode::Vsync && self.focused && !self.menu_visible {
                 // With no refreshes to spare a picture has to make the desktop's deadline, which comes before the refresh.
                 let refresh_hz = self.plan.display.refresh_hz;
@@ -1299,7 +1296,7 @@ impl Streaming {
             }
             // Only a picture on the screen counts as the stream's video (`has_picture`, the
             // no-video watchdog, `video_started`).
-            if self.scan_out(&p.decoded) || self.texture.upload(renderer, &p.decoded, rows) {
+            if self.scan_out(&p.decoded) || self.texture.upload_take(renderer, &mut p.decoded, rows) {
                 self.unshown.shown();
                 self.first_frame = true;
             } else if p.decoded.setup.format & VIDEO_FORMAT_MASK_PYROWAVE != 0 {

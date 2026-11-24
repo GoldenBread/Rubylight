@@ -68,8 +68,13 @@ impl Sampling {
 /// The barrier that hands `image` of a kept import to the renderer for sampling.
 fn sampled_acquire(source: &FrameNow, index: usize, family: u32) -> vk::ImageMemoryBarrier2<'static> {
     let (old_layout, from, to) = acquire(source.queue_family[index], source.layout[index], family);
+    let src_stage = if source.access[index].is_empty() {
+        vk::PipelineStageFlags2::FRAGMENT_SHADER
+    } else {
+        vk::PipelineStageFlags2::ALL_COMMANDS
+    };
     vk::ImageMemoryBarrier2::default()
-        .src_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
+        .src_stage_mask(src_stage)
         .src_access_mask(source.access[index])
         .dst_stage_mask(vk::PipelineStageFlags2::FRAGMENT_SHADER)
         .dst_access_mask(vk::AccessFlags2::SHADER_SAMPLED_READ)
@@ -175,7 +180,7 @@ impl SampleGpu for Queue<'_> {
             let source = &frame_now(self.incoming);
             let barriers: [_; 2] = std::array::from_fn(|index| sampled_acquire(source, index, self.family));
             let waits: [_; 2] = std::array::from_fn(|index| {
-                vk::SemaphoreSubmitInfo::default().semaphore(source.sem[index]).value(source.sem_value[index]).stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
+                vk::SemaphoreSubmitInfo::default().semaphore(source.sem[index]).value(source.sem_value[index]).stage_mask(vk::PipelineStageFlags2::FRAGMENT_SHADER)
             });
             let result = self.submit(self.slots[slot].acquire, &barriers, &waits, &[], vk::Fence::null());
             (self.unlock_frame)(self.frames, self.incoming);
@@ -197,6 +202,8 @@ impl SampleGpu for Queue<'_> {
             let mut source = frame_fields(frame);
             let barriers: [_; 2] = std::array::from_fn(|index| sampled_release(source.img[index], self.family));
             let signals: [_; 2] = std::array::from_fn(|index| {
+                // `sampled_release` uses `dst_stage_mask = NONE` for the QFOT/layout release;
+                // signal at `ALL_COMMANDS` so the release transition finishes before VA-API unblocks.
                 vk::SemaphoreSubmitInfo::default().semaphore(source.sem[index]).value(source.sem_value[index] + 1).stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
             });
             let result = self.submit(self.slots[slot].release, &barriers, &[], &signals, self.slots[slot].fence);
@@ -210,6 +217,58 @@ impl SampleGpu for Queue<'_> {
             }
             (self.unlock_frame)(self.frames, frame);
             self.slots[slot].frame = ptr::null_mut();
+            result
+        }
+    }
+
+    fn swap(&mut self, acquire_slot: usize, release_slot: usize) -> Result<(), String> {
+        let old_frame = self.slots[release_slot].frame;
+        if old_frame.is_null() {
+            return Err("the picture to release was never acquired".into());
+        }
+        if old_frame == self.incoming {
+            self.acquire(acquire_slot)?;
+            return self.release(release_slot);
+        }
+        // SAFETY: Both `incoming` and `old_frame` are live frames held by the presenter; lock in
+        // pointer order to avoid any AB-BA inversion.
+        unsafe {
+            let (first, second) = if (old_frame as usize) < (self.incoming as usize) {
+                (old_frame, self.incoming)
+            } else {
+                (self.incoming, old_frame)
+            };
+            (self.lock_frame)(self.frames, first);
+            (self.lock_frame)(self.frames, second);
+            let incoming = frame_now(self.incoming);
+            let mut old = frame_fields(old_frame);
+            let barriers = [
+                sampled_acquire(&incoming, 0, self.family),
+                sampled_acquire(&incoming, 1, self.family),
+                sampled_release(old.img[0], self.family),
+                sampled_release(old.img[1], self.family),
+            ];
+            let waits: [_; 2] = std::array::from_fn(|index| {
+                vk::SemaphoreSubmitInfo::default().semaphore(incoming.sem[index]).value(incoming.sem_value[index]).stage_mask(vk::PipelineStageFlags2::FRAGMENT_SHADER)
+            });
+            let signals: [_; 2] = std::array::from_fn(|index| {
+                // `sampled_release` uses `dst_stage_mask = NONE` for the QFOT/layout release;
+                // signal at `ALL_COMMANDS` so the release transition finishes before VA-API unblocks.
+                vk::SemaphoreSubmitInfo::default().semaphore(old.sem[index]).value(old.sem_value[index] + 1).stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
+            });
+            let result = self.submit(self.slots[release_slot].release, &barriers, &waits, &signals, self.slots[release_slot].fence);
+            if result.is_ok() {
+                for index in 0..2 {
+                    old.sem_value[index] += 1;
+                    old.layout[index] = vk::ImageLayout::GENERAL;
+                    old.queue_family[index] = vk::QUEUE_FAMILY_EXTERNAL;
+                    old.access.set(index, vk::AccessFlags::empty());
+                }
+                self.slots[acquire_slot].frame = self.incoming;
+            }
+            (self.unlock_frame)(self.frames, second);
+            (self.unlock_frame)(self.frames, first);
+            self.slots[release_slot].frame = ptr::null_mut();
             result
         }
     }
@@ -299,8 +358,7 @@ impl Planes {
                 unlock_frame,
             };
             match sampling.state.show(&mut gpu, held) {
-                Ok(done) => {
-                    drop(done);
+                Ok(()) => {
                     if !sampling.said_sample {
                         sampling.said_sample = true;
                         note(&describe_route(Route::Sample));
@@ -419,10 +477,7 @@ impl Planes {
             unlock_frame,
         };
         match sampling.state.finish(&mut gpu) {
-            Ok(done) => {
-                drop(done);
-                true
-            }
+            Ok(()) => true,
             Err(error) => {
                 note(&format!("the sampled VA-API pictures could not be given back: {error}"));
                 false

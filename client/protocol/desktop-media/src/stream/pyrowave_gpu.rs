@@ -34,6 +34,8 @@ pub fn probe(renderer: *mut SDL_Renderer, ten_bit: bool) -> Result<(), String> {
 }
 
 pub struct Reconstruction {
+    #[cfg(windows)]
+    native: Option<super::d3d11::Filter>,
     passes: Vec<Pass>,
     textures: [*mut SDL_Texture; 2],
     parameters: [u32; 8],
@@ -44,7 +46,15 @@ pub struct Reconstruction {
 
 impl Reconstruction {
     pub fn new(renderer: *mut SDL_Renderer, target: *mut SDL_Texture, parameters: [u32; 8]) -> Option<Self> {
-        let mut result = Self { passes: Vec::new(), textures: [ptr::null_mut(); 2], parameters, #[cfg(test)] upload_both: false };
+        let mut result = Self {
+            #[cfg(windows)]
+            native: None,
+            passes: Vec::new(),
+            textures: [ptr::null_mut(); 2],
+            parameters,
+            #[cfg(test)]
+            upload_both: false,
+        };
         unsafe {
             for texture in &mut result.textures {
                 *texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA64_FLOAT, SDL_TEXTUREACCESS_TARGET, parameters[2] as i32, parameters[3] as i32);
@@ -52,7 +62,24 @@ impl Reconstruction {
                 SDL_SetTextureBlendMode(*texture, SDL_BLENDMODE_NONE);
                 SDL_SetTextureScaleMode(*texture, SDL_SCALEMODE_LINEAR);
             }
-            for (input, output) in [(result.textures[0], result.textures[1]), (result.textures[1], result.textures[0]), (result.textures[0], target)] {
+            let pairs = [(result.textures[0], result.textures[1]), (result.textures[1], result.textures[0]), (result.textures[0], target)];
+            #[cfg(windows)]
+            {
+                let d3d = |t: *mut SDL_Texture| SDL_GetPointerProperty(SDL_GetTextureProperties(t), SDL_PROP_TEXTURE_D3D11_TEXTURE_POINTER, ptr::null_mut());
+                let raw = [d3d(result.textures[0]), d3d(result.textures[1]), d3d(target)];
+                if raw.iter().all(|p| !p.is_null()) {
+                    let built = (|| -> windows::core::Result<super::d3d11::Filter> {
+                        let mut filter = super::d3d11::Filter::compiled(raw[2], super::shader::Shader::Wavelet.filter_hlsl())?;
+                        filter.bind(&[raw[0]], raw[1])?;
+                        filter.bind(&[raw[1]], raw[0])?;
+                        filter.bind(&[raw[0]], raw[2])?;
+                        Ok(filter)
+                    })();
+                    result.native = built.map_err(|e| eprintln!("nightjar: GPU wavelet filter: {e}")).ok();
+                    return result.native.is_some().then_some(result);
+                }
+            }
+            for (input, output) in pairs {
                 result.passes.push(Pass::new(renderer, input, output, super::shader::Shader::Wavelet)?);
             }
         }
@@ -82,16 +109,35 @@ impl Reconstruction {
                 if !SDL_UpdateTexture(*texture, ptr::null(), info.data[0].cast(), info.linesize[0]) { return false; }
             }
             let step = stages.lap(UPLOAD, step);
+            if !SDL_FlushRenderer(renderer) { return false; }
+            #[cfg(windows)]
+            if let Some(native) = &self.native {
+                let mut steps = [(0usize, [0u32; 8], None); 11];
+                let mut i = 0;
+                for level in (0..5).rev() {
+                    parameters[4] = level;
+                    for pass in 0..2 {
+                        parameters[5] = pass as u32;
+                        steps[i] = (pass, parameters, Some((parameters[2] >> level, parameters[3] >> level)));
+                        i += 1;
+                    }
+                }
+                parameters[5] = 2;
+                steps[10] = (2, parameters, None);
+                let ok = native.draw_batch(&steps);
+                stages.add(PASSES, step);
+                return ok;
+            }
             for level in (0..5).rev() {
                 parameters[4] = level;
                 for pass in 0..2 {
                     parameters[5] = pass as u32;
-                    if !self.passes[pass].draw(renderer, self.textures[pass], self.textures[1 - pass], &parameters,
+                    if !self.passes[pass].draw_flushed(renderer, self.textures[pass], self.textures[1 - pass], &parameters,
                         Some((parameters[2] >> level, parameters[3] >> level))) { return false; }
                 }
             }
             parameters[5] = 2;
-            let ok = self.passes[2].draw(renderer, self.textures[0], target, &parameters, None);
+            let ok = self.passes[2].draw_flushed(renderer, self.textures[0], target, &parameters, None);
             stages.add(PASSES, step);
             ok
         }
@@ -100,6 +146,8 @@ impl Reconstruction {
 
 impl Drop for Reconstruction {
     fn drop(&mut self) {
+        #[cfg(windows)]
+        { self.native = None; }
         self.passes.clear();
         for texture in self.textures { if !texture.is_null() { unsafe { SDL_DestroyTexture(texture) }; } }
     }

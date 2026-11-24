@@ -5,25 +5,23 @@
 use std::collections::VecDeque;
 use std::ffi::c_void;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex};
+
+mod audio_list;
+pub use audio_list::{GuardedList, Lockable};
 
 use nightjar_core::control::ControlEvent;
 use nightjar_core::sdp::{VIDEO_FORMAT_MASK_10BIT, VIDEO_FORMAT_MASK_AV1, VIDEO_FORMAT_MASK_H265, VIDEO_FORMAT_MASK_PYROWAVE, VIDEO_FORMAT_MASK_YUV444};
-use nightjar_core::session::{
-    self, AudioRenderer, AudioSetup, DecodeStatus, Listener, Stage, VideoDecoder, VideoSetup,
-};
+use nightjar_core::session::{self, AudioRenderer, AudioSetup, DecodeStatus, Listener, Stage, VideoDecoder, VideoSetup};
 use nightjar_core::video::Frame;
 use sdl3_sys::everything::*;
-
 use crate::hosts::Waker;
 use crate::media::{self, Codec, Hardware, Picture, Received};
 use crate::strings::trf;
 use super::playout::{Fed, Playout};
 use super::pyrowave::Failure;
 
-pub fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(|p| p.into_inner())
-}
+pub fn lock<L: Lockable>(mutex: &L) -> L::Guard<'_> { mutex.lock_inner() }
 
 /// A decoded picture waiting to be shown.
 pub struct Decoded {
@@ -177,7 +175,7 @@ pub struct Shared {
     /// The coded size of a packed full chroma stream whose pictures are rebuilt from memory
     /// (`packed_from_memory`), for the stream doctor.
     pub packed_from_memory: Mutex<Option<(i32, i32)>>,
-    pub controller_audio: Mutex<Vec<std::sync::Weak<Mutex<crate::controller_audio::Playback>>>>,
+    pub controller_audio: GuardedList<std::sync::Weak<Mutex<crate::controller_audio::Playback>>>,
     pub counters: Counters,
     /// Most pictures held before the oldest is dropped.
     pub queue_limit: usize,
@@ -226,7 +224,7 @@ impl Shared {
             attempt: AtomicU32::new(0),
             decoder_name: Mutex::new(String::new()),
             packed_from_memory: Mutex::new(None),
-            controller_audio: Mutex::new(Vec::new()),
+            controller_audio: GuardedList::new(),
             counters: Counters::default(),
             queue_limit,
             host_times: std::sync::atomic::AtomicBool::new(false),
@@ -1730,7 +1728,7 @@ enum Sink<'a> {
     None,
     Sdl { stream: *mut SDL_AudioStream, _locked: StreamLock },
     #[cfg(windows)]
-    Wasapi(MutexGuard<'a, super::wasapi::Queue>),
+    Wasapi(std::sync::MutexGuard<'a, super::wasapi::Queue>),
     #[cfg(not(windows))]
     #[allow(dead_code)]
     Unused(std::marker::PhantomData<&'a ()>),
@@ -1938,15 +1936,12 @@ impl AudioRenderer for Audio {
         };
         let pcm = playout.pcm();
         let mut routed = false;
-        for headphones in lock(&self.shared.controller_audio).iter().filter_map(std::sync::Weak::upgrade) {
-            routed |= lock(&headphones).headphones(&pcm[lead * channels..], channels);
+        if self.shared.controller_audio.has_any() {
+            for headphones in lock(&self.shared.controller_audio).iter().filter_map(std::sync::Weak::upgrade) {
+                routed |= lock(&headphones).headphones(&pcm[lead * channels..], channels);
+            }
         }
-        if routed {
-            playout.stop();
-            sink.clear();
-            counters.audio_queued_us.store(0, Ordering::Relaxed);
-            return;
-        }
+        if routed { playout.stop(); sink.clear(); counters.audio_queued_us.store(0, Ordering::Relaxed); return; }
         if sink.is_none() { return; }
         sink.put(pcm);
     }

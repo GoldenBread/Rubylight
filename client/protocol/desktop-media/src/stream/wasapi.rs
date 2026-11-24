@@ -146,8 +146,15 @@ pub(super) fn fill(queue: &mut Queue, out: &mut [f32]) {
             queue.pcm.extend(lock(&playout).starve(needed - queued));
         }
     let n = out.len().min(queue.pcm.len());
-    for (sample, queued) in out.iter_mut().zip(queue.pcm.drain(..n)) {
-        *sample = queued;
+    if n > 0 {
+        let (front, back) = queue.pcm.as_slices();
+        let first = n.min(front.len());
+        out[..first].copy_from_slice(&front[..first]);
+        let rest = n - first;
+        if rest > 0 {
+            out[first..n].copy_from_slice(&back[..rest]);
+        }
+        queue.pcm.drain(..n);
     }
     out[n..].fill(0.0);
 }
@@ -366,6 +373,16 @@ mod tests {
         fill(&mut queue, &mut one);
         assert_eq!(one, (0..CHANNELS).map(|i| i as f32).collect::<Vec<_>>());
         assert_eq!(queue.pcm.front(), Some(&(CHANNELS as f32)));
+        // Wrapped VecDeque (both front and back slices non-empty) copies in exact order.
+        let mut wrapped = Queue { pcm: VecDeque::with_capacity(4 * CHANNELS), playout: None };
+        wrapped.pcm.extend((0..3 * CHANNELS).map(|i| i as f32));
+        wrapped.pcm.drain(..2 * CHANNELS);
+        wrapped.pcm.extend((100..100 + 3 * CHANNELS).map(|i| i as f32));
+        let mut buf = vec![-1.0; 4 * CHANNELS];
+        fill(&mut wrapped, &mut buf);
+        let expected: Vec<f32> = (2 * CHANNELS..3 * CHANNELS).chain(100..100 + 3 * CHANNELS).map(|i| i as f32).collect();
+        assert_eq!(buf, expected);
+        assert!(wrapped.pcm.is_empty());
     }
 
     #[test]

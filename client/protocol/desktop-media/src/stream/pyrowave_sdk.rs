@@ -32,7 +32,7 @@ use ash::vk;
 #[cfg(windows)]
 use windows::core::{Interface, PCWSTR};
 #[cfg(windows)]
-use windows::Win32::Foundation::{CloseHandle, GENERIC_ALL, HMODULE, WAIT_OBJECT_0};
+use windows::Win32::Foundation::{CloseHandle, GENERIC_ALL, HMODULE};
 #[cfg(windows)]
 use windows::Win32::Graphics::Direct3D::{D3D_DRIVER_TYPE_HARDWARE, D3D_FEATURE_LEVEL_11_0};
 #[cfg(windows)]
@@ -41,8 +41,9 @@ use windows::Win32::Graphics::Direct3D11::*;
 use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_R16_UNORM, DXGI_FORMAT_R8_UNORM, DXGI_SAMPLE_DESC};
 #[cfg(windows)]
 use windows::Win32::Graphics::Dxgi::{IDXGIDevice, IDXGIResource1, DXGI_SHARED_RESOURCE_READ, DXGI_SHARED_RESOURCE_WRITE};
+
 #[cfg(windows)]
-use windows::Win32::System::Threading::{CreateEventW, WaitForSingleObject};
+mod event;
 
 #[cfg(unix)]
 mod unix;
@@ -803,27 +804,7 @@ fn decoder_refused(result: PyroResult, why: &str) -> String {
 /// device was removed reads as `u64::MAX`, which is an error too, not "done".
 #[cfg(windows)]
 pub fn fence_ready_within(fence: &ID3D11Fence, value: u64, deadline: Duration) -> Result<(), String> {
-    // SAFETY: Plain fence calls; the event is closed on every path.
-    unsafe {
-        let mut completed = fence.GetCompletedValue();
-        if completed < value {
-            let event = CreateEventW(None, false, false, PCWSTR::null()).map_err(|e| format!("cannot wait for the PyroWave decode: {e}"))?;
-            let armed = fence.SetEventOnCompletion(value, event);
-            let waited = armed.is_ok().then(|| WaitForSingleObject(event, deadline.as_millis().min(u128::from(u32::MAX - 1)) as u32));
-            let _ = CloseHandle(event);
-            armed.map_err(|e| format!("cannot wait for the PyroWave decode: {e}"))?;
-            completed = fence.GetCompletedValue();
-            if waited != Some(WAIT_OBJECT_0) && completed < value {
-                return Err(format!(
-                    "the PyroWave decode (fence value {value}) was not done within {deadline:?} and the fence stands at {completed}: the Vulkan device may be hung or lost, so the D3D11 queue must not wait on it"
-                ));
-            }
-        }
-        if completed == u64::MAX {
-            return Err(format!("the D3D11 device holding the PyroWave fence was removed while waiting for value {value}"));
-        }
-    }
-    Ok(())
+    event::wait_fence_within(fence, value, deadline)
 }
 
 /// What a probe found, kept per adapter and plane format: the driver does not change under a

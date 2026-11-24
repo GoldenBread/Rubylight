@@ -103,13 +103,28 @@ float4 draw(float4 position : SV_Position, float2 uv : TEXCOORD0) : SV_Target {
     return float4(rgb * fade, 1);
 }
 
-// A histogram of the PQ-coded maxRGB of every 4th pixel each way, 256 bins, for the peak the
-// tone map follows when the stream carries no HDR10+.
+// A histogram of the PQ-coded maxRGB of every 4th pixel each way, 256 bins, reduced in
+// groupshared memory per 64-thread group for the peak the tone map follows without HDR10+.
+groupshared uint localHist[256];
+
 [numthreads(8, 8, 1)]
-void peak(uint3 id : SV_DispatchThreadID) {
+void peak(uint3 id : SV_DispatchThreadID, uint flat : SV_GroupIndex) {
+    [unroll]
+    for (uint i = 0; i < 4; ++i) {
+        localHist[flat * 4 + i] = 0;
+    }
+    GroupMemoryBarrierWithGroupSync();
     uint2 p = id.xy * 4 + 1;
-    if (p.x >= (uint)picture.x || p.y >= (uint)picture.y) return;
-    float3 rgb = saturate(rgbOf(luma.Load(int4(p, slice, 0)), chroma.Load(int4(p / 2, slice, 0))));
-    uint bin = min(uint(max(rgb.r, max(rgb.g, rgb.b)) * 256), 255);
-    histogram.InterlockedAdd(bin * 4, 1);
+    if (p.x < (uint)picture.x && p.y < (uint)picture.y) {
+        float3 rgb = saturate(rgbOf(luma.Load(int4(p, slice, 0)), chroma.Load(int4(p / 2, slice, 0))));
+        uint bin = min(uint(max(rgb.r, max(rgb.g, rgb.b)) * 256), 255);
+        InterlockedAdd(localHist[bin], 1);
+    }
+    GroupMemoryBarrierWithGroupSync();
+    [unroll]
+    for (uint j = 0; j < 4; ++j) {
+        uint idx = flat * 4 + j;
+        uint count = localHist[idx];
+        if (count > 0) histogram.InterlockedAdd(idx * 4, count);
+    }
 }

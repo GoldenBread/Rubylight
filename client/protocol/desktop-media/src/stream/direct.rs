@@ -328,8 +328,9 @@ impl Direct {
                 ComparisonFunc: D3D11_COMPARISON_NEVER, MaxLOD: f32::MAX, ..Default::default()
             }, Some(&mut sampler)).map_err(fail("CreateSamplerState"))?;
             let mut constants = None;
-            device.CreateBuffer(&D3D11_BUFFER_DESC { ByteWidth: std::mem::size_of::<Constants>() as u32, Usage: D3D11_USAGE_DEFAULT,
-                BindFlags: D3D11_BIND_CONSTANT_BUFFER.0 as u32, ..Default::default() }, None, Some(&mut constants)).map_err(fail("the constant buffer"))?;
+            device.CreateBuffer(&D3D11_BUFFER_DESC { ByteWidth: std::mem::size_of::<Constants>() as u32, Usage: D3D11_USAGE_DYNAMIC,
+                BindFlags: D3D11_BIND_CONSTANT_BUFFER.0 as u32, CPUAccessFlags: D3D11_CPU_ACCESS_WRITE.0 as u32, ..Default::default() },
+                None, Some(&mut constants)).map_err(fail("the constant buffer"))?;
             let bytes = (BINS * 4) as u32;
             let mut histogram = None;
             device.CreateBuffer(&D3D11_BUFFER_DESC { ByteWidth: bytes, Usage: D3D11_USAGE_DEFAULT, BindFlags: D3D11_BIND_UNORDERED_ACCESS.0 as u32,
@@ -489,7 +490,8 @@ impl Direct {
             let texture_size = (desc.Width, desc.Height);
             self.collect();
             let pq = picture.transfer == Transfer::Pq;
-            let measure = pq && tone.dolby_vision.is_none() && tone.hdr10_plus.is_none();
+            let measure = pq && tone.dolby_vision.is_none() && tone.hdr10_plus.is_none()
+                && tone.static_peak.is_none_or(|s| tonemap_factors(s, tone.white_nits, output.headroom).is_some());
             let hlg = hlg_display(output.headroom, tone.white_nits);
             let (peak, white, source) = match picture.transfer {
                 Transfer::Pq => {
@@ -520,7 +522,11 @@ impl Direct {
             };
             let c = &self.deferred;
             c.ClearState();
-            c.UpdateSubresource(self.constants[0].as_ref().unwrap(), 0, None, std::ptr::from_ref(&constants).cast(), 0, 0);
+            let cb = self.constants[0].as_ref().unwrap();
+            let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
+            c.Map(cb, 0, D3D11_MAP_WRITE_DISCARD, 0, Some(&mut mapped)).map_err(|e| format!("Map constants: {e}"))?;
+            std::ptr::copy_nonoverlapping(std::ptr::from_ref(&constants).cast::<u8>(), mapped.pData.cast::<u8>(), std::mem::size_of::<Constants>());
+            c.Unmap(cb, 0);
             let free = (0..self.staging.len()).find(|slot| !self.pending.contains(slot));
             if let (true, Some(slot)) = (measure, free) {
                 c.ClearUnorderedAccessViewUint(&self.histogram_view, &[0; 4]);

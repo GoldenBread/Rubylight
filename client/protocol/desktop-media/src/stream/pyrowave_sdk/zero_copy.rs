@@ -816,9 +816,9 @@ impl SharedImages {
                             .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED).dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
                             .image(self.image(set, plane)).subresource_range(range);
                         if to_sampled {
-                            // After the decode's writes (on any queue: `sampled` waits for its
-                            // timeline), before the draws' reads.
-                            barrier.src_access_mask(decode_writes).dst_access_mask(vk::AccessFlags::SHADER_READ)
+                            // Semaphore wait at `FRAGMENT_SHADER` makes the decode's writes
+                            // available; chain the layout transition off that wait before reads.
+                            barrier.src_access_mask(vk::AccessFlags::empty()).dst_access_mask(vk::AccessFlags::SHADER_READ)
                                 .old_layout(vk::ImageLayout::GENERAL).new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
                         } else {
                             // After the draws' reads (an execution dependency suffices), before the
@@ -828,7 +828,7 @@ impl SharedImages {
                         }
                     }).collect();
                     let (from, to) = if to_sampled {
-                        (decode_stages, vk::PipelineStageFlags::FRAGMENT_SHADER | vk::PipelineStageFlags::COMPUTE_SHADER)
+                        (vk::PipelineStageFlags::FRAGMENT_SHADER, vk::PipelineStageFlags::FRAGMENT_SHADER)
                     } else {
                         (vk::PipelineStageFlags::FRAGMENT_SHADER | vk::PipelineStageFlags::COMPUTE_SHADER, decode_stages)
                     };
@@ -858,22 +858,17 @@ impl SharedImages {
         self.transitions.clear();
     }
 
-    /// Makes `set` readable by the draws SDL submits after this: moves its images to
-    /// SHADER_READ_ONLY_OPTIMAL on SDL's queue, after the decodes so far (the picture's decoder
-    /// waited for its decode on the CPU before handing it on, so the timeline's current value
-    /// covers it and the wait is met at once; on a compute queue of its own it orders the change
-    /// and makes the decode's writes visible).
-    pub fn sampled(&self, set: usize) -> Result<(), String> {
+    /// Makes `set` readable by the draws SDL submits after this: waits on `decode_value` on the
+    /// decode timeline at `FRAGMENT_SHADER` and moves its images to `SHADER_READ_ONLY_OPTIMAL`.
+    pub fn sampled(&self, set: usize, decode_value: u64) -> Result<(), String> {
         let commands = self.transitions.get(set).ok_or_else(|| format!("plane set {set} has no layout change for sampling in place"))?[0];
-        // SAFETY: The semaphore lives as long as self.
-        let decoded = unsafe { self.device.get_semaphore_counter_value(self.decode) }.map_err(|e| format!("the decode timeline cannot be read ({e})"))?;
         let semaphores = [self.decode];
-        let values = [decoded];
-        let stages = [vk::PipelineStageFlags::ALL_COMMANDS];
+        let values = [decode_value];
+        let stages = [vk::PipelineStageFlags::FRAGMENT_SHADER];
         let buffers = [commands];
         let mut timeline = vk::TimelineSemaphoreSubmitInfo::default().wait_semaphore_values(&values);
         let mut submit = vk::SubmitInfo::default().command_buffers(&buffers);
-        if decoded > 0 {
+        if decode_value > 0 {
             submit = submit.wait_semaphores(&semaphores).wait_dst_stage_mask(&stages).push_next(&mut timeline);
         }
         // SAFETY: The queue is used under SDL's lock; the structs outlive the call.

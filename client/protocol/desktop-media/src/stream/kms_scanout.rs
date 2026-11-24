@@ -162,8 +162,8 @@ struct Engaged {
     layout: Layout,
     format: (u32, u64),
     generation: Option<crate::dmabuf::Generation>,
-    /// Framebuffers by VA surface; the ones of an old pool wait in `retired` for the next commit.
-    fbs: Vec<(u32, Framebuffer)>,
+    /// Framebuffers and cached layouts by VA surface; old pool's wait in `retired` for the next commit.
+    fbs: Vec<(u32, Framebuffer, plan::FbLayout)>,
     retired: Vec<Framebuffer>,
     /// The framebuffer the next commit shows, and the one on the screen.
     next_fb: u32,
@@ -272,48 +272,53 @@ impl Scanout {
         result
     }
 
+    fn export_layout(export: &crate::dmabuf::Export) -> Result<(plan::FbLayout, [i32; 4], usize), String> {
+        let descriptor = export.descriptor()?;
+        let layout = plan::fb_layout(descriptor)?;
+        let count = (descriptor.num_objects as usize).min(4);
+        let mut fds = [0i32; 4];
+        for (dst, obj) in fds[..count].iter_mut().zip(&descriptor.objects[..count]) {
+            *dst = obj.fd;
+        }
+        Ok((layout, fds, count))
+    }
+
     fn prepare_inner(&mut self, decoded: &Decoded, hdr: Option<HdrMetadata>, viewport: &Viewport<'_>) -> Result<(), String> {
         let frame = decoded.picture.frame().ok_or("the picture is not a decoded frame")?;
         let export = frame.dmabuf().ok_or("the picture is not a VA-API DMA-BUF export")?;
         let info = frame.info();
         let visible = decoded.visible.unwrap_or((info.width, info.height));
-        let descriptor = export.descriptor()?;
-        let layout = plan::fb_layout(descriptor)?;
-        let fds: Vec<i32> = descriptor.objects[..(descriptor.num_objects as usize).min(4)].iter().map(|o| o.fd).collect();
         let (surface, generation) = (export.surface(), export.generation());
         let color = (decoded.setup.color_space, decoded.setup.color_range);
         if self.engaged.is_none() {
+            let (layout, fds, n) = Self::export_layout(export)?;
             if !(layout.modifier == plan::MOD_INVALID || layout.modifier == plan::MOD_LINEAR || self.card.modifiers()) {
                 return Err("the card takes no framebuffer modifiers".into());
             }
-            let fb = self.card.add_dmabuf_fb(&layout, &fds).map_err(|e| format!("the first picture's framebuffer cannot be made: {e}"))?;
-            return self.engage(&layout, fb, (surface, generation), visible, (hdr, color), viewport);
+            let fb = self.card.add_dmabuf_fb(&layout, &fds[..n]).map_err(|e| format!("the first picture's framebuffer cannot be made: {e}"))?;
+            return self.engage(layout, fb, (surface, generation), visible, (hdr, color), viewport);
         }
         let card = &self.card;
         let engaged = self.engaged.as_mut().expect("engaged");
-        if engaged.format != (layout.format, layout.modifier) {
-            return Err(format!(
-                "the pictures changed to {} with modifier {:#x}, which the plane was not chosen for",
-                plan::fourcc_name(layout.format),
-                layout.modifier
-            ));
-        }
         // A new pool: its surfaces are other buffers.
         if engaged.generation != Some(generation) {
-            engaged.retired.extend(engaged.fbs.drain(..).map(|(_, fb)| fb));
+            engaged.retired.extend(engaged.fbs.drain(..).map(|(_, fb, _)| fb));
             engaged.generation = Some(generation);
         }
-        let fb = match engaged.fbs.iter().find(|(s, _)| *s == surface) {
-            Some((_, fb)) => fb.id,
-            None => {
-                let fb = card.add_dmabuf_fb(&layout, &fds).map_err(|e| format!("a picture's framebuffer cannot be made: {e}"))?;
-                let id = fb.id;
-                engaged.fbs.push((surface, fb));
-                id
+        let (fb, rect) = if let Some((_, fb, layout)) = engaged.fbs.iter().find(|(s, ..)| *s == surface) {
+            (fb.id, picture_rect(&engaged.snapshot.mode, layout, visible, viewport))
+        } else {
+            let (layout, fds, n) = Self::export_layout(export)?;
+            if engaged.format != (layout.format, layout.modifier) {
+                return Err(format!("the pictures changed to {} with modifier {:#x}, which the plane was not chosen for", plan::fourcc_name(layout.format), layout.modifier));
             }
+            let fb = card.add_dmabuf_fb(&layout, &fds[..n]).map_err(|e| format!("a picture's framebuffer cannot be made: {e}"))?;
+            let (id, rect) = (fb.id, picture_rect(&engaged.snapshot.mode, &layout, visible, viewport));
+            engaged.fbs.push((surface, fb, layout));
+            (id, rect)
         };
         engaged.next_fb = fb;
-        engaged.rect = picture_rect(&engaged.snapshot.mode, &layout, visible, viewport);
+        engaged.rect = rect;
         if (engaged.hdr, engaged.color) != (hdr, color) {
             (engaged.hdr, engaged.color) = (hdr, color);
             engaged.props_dirty = true;
@@ -341,7 +346,7 @@ impl Scanout {
     /// that shows the picture.
     fn engage(
         &mut self,
-        layout: &plan::FbLayout,
+        layout: plan::FbLayout,
         fb: Framebuffer,
         (surface, generation): (u32, crate::dmabuf::Generation),
         visible: (i32, i32),
@@ -378,29 +383,16 @@ impl Scanout {
                 return Err(format!("no overlay buffers: {e}"));
             }
         };
-        let rect = picture_rect(&snapshot.mode, layout, visible, viewport);
+        let rect = picture_rect(&snapshot.mode, &layout, visible, viewport);
         let next_fb = fb.id;
         let vrr_on = plan::vrr_engaged(&caps_of(&snapshot.connector, &snapshot.crtc), self.wishes.vrr);
+        let (fmt, modifier) = (layout.format, layout.modifier);
         let mut engaged = Engaged {
-            snapshot,
-            layout: layouts[0].clone(),
-            format: (layout.format, layout.modifier),
-            generation: Some(generation),
-            fbs: vec![(surface, fb)],
-            retired: Vec::new(),
-            next_fb,
-            shown_fb: 0,
-            rect,
-            shown_rect: None,
+            snapshot, layout: layouts[0].clone(), format: (fmt, modifier), generation: Some(generation),
+            fbs: vec![(surface, fb, layout)], retired: Vec::new(), next_fb, shown_fb: 0, rect, shown_rect: None,
             on_screen: None,
             overlay: OverlayPlane { plane: 0, buffers: overlay_buffers, front: 0, shown: false, change: None, last_canvas: Vec::new() },
-            background: None,
-            hdr,
-            color,
-            blobs: Vec::new(),
-            restore: Vec::new(),
-            props_dirty: true,
-            vrr_on,
+            background: None, hdr, color, blobs: Vec::new(), restore: Vec::new(), props_dirty: true, vrr_on,
         };
         // The display mode for the stream's rate (or top refresh when VRR is engaged), of the size in use.
         let plan_modes: Vec<plan::Mode> = engaged.snapshot.modes.iter().map(ModeInfo::plan).collect();
@@ -484,8 +476,8 @@ impl Scanout {
             engaged.layout.video,
             engaged.layout.background.map_or(String::new(), |b| format!(" over a black plane {b}")),
             engaged.overlay.plane,
-            plan::fourcc_name(layout.format),
-            if layout.modifier == plan::MOD_INVALID { "implicit".to_owned() } else { format!("modifier {:#x}", layout.modifier) },
+            plan::fourcc_name(engaged.format.0),
+            if engaged.format.1 == plan::MOD_INVALID { "implicit".to_owned() } else { format!("modifier {:#x}", engaged.format.1) },
             if hdr.is_some() { "on" } else { "off" },
             match (self.wishes.vrr, engaged.vrr_on) {
                 (false, _) => "off",
@@ -780,7 +772,7 @@ impl Scanout {
 
     /// Frees what an engagement made, without a commit (nothing of it was shown).
     fn release(card: &Card, engaged: Engaged) {
-        for (_, fb) in engaged.fbs {
+        for (_, fb, _) in engaged.fbs {
             card.remove_fb(fb);
         }
         for fb in engaged.retired {

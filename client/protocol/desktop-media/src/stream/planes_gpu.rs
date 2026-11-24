@@ -24,12 +24,21 @@ use super::pyrowave_sdk::zero_copy::{PlaneHandoff, SharedImages, TEXTURE_IMAGE_P
 use super::pyrowave_sdk::GpuConfig;
 use super::stage_times::Stages;
 
+mod fill;
+use fill::{fill_planes, fill_semi_planar, semi_planar};
+#[cfg(test)]
+use fill::high_bit_planes;
+
 fn device_of(renderer: *mut SDL_Renderer) -> *mut SDL_GPUDevice {
     crate::sdl::renderer_pointer(renderer, SDL_PROP_RENDERER_GPU_DEVICE_POINTER).cast()
 }
 
 fn plane_format(ten_bit: bool) -> SDL_GPUTextureFormat {
     if ten_bit { SDL_GPU_TEXTUREFORMAT_R16_UNORM } else { SDL_GPU_TEXTUREFORMAT_R8_UNORM }
+}
+
+fn chroma_format(ten_bit: bool) -> SDL_GPUTextureFormat {
+    if ten_bit { SDL_GPU_TEXTUREFORMAT_R16G16_UNORM } else { SDL_GPU_TEXTUREFORMAT_R8G8_UNORM }
 }
 
 /// # Safety
@@ -53,6 +62,8 @@ pub struct PlanesPass {
     /// The width and height of each plane texture.
     sizes: [(u32, u32); 3],
     sample_bytes: usize,
+    /// Two-plane NV12/P010 upload (`R8`/`R16` luma + `R8G8`/`R16G16` interleaved chroma, shader flag 256).
+    semi_planar: bool,
     /// The decoder's images wrapped as textures of this device, per plane set, for the planes
     /// they belong to.
     wrapped: Option<Wrapped>,
@@ -92,6 +103,7 @@ struct Wrapped {
 struct Sets<'a> {
     renderer: *mut SDL_Renderer,
     images: &'a SharedImages,
+    decode_value: u64,
 }
 
 impl SetGpu for Sets<'_> {
@@ -101,7 +113,7 @@ impl SetGpu for Sets<'_> {
     }
 
     fn sampled(&mut self, set: usize) -> Result<(), String> {
-        self.images.sampled(set)
+        self.images.sampled(set, self.decode_value)
     }
 
     fn returned(&mut self, set: usize) -> Result<u64, String> {
@@ -170,6 +182,38 @@ impl PlanesPass {
     pub unsafe fn for_frames(renderer: *mut SDL_Renderer, layout: crate::media::PlanarLayout) -> Result<Self, String> {
         // SAFETY: Caller guarantees `renderer` is live on the calling thread.
         unsafe { Self::with_planes(renderer, [0, 1, 2].map(|plane| layout.plane_size(plane)), layout.ten_bit) }
+    }
+
+    /// The pass for semi-planar NV12/P010 pictures: uploads luma (`R8`/`R16`) and interleaved
+    /// chroma (`R8G8`/`R16G16`) directly without CPU shifts or UV deinterleaving (shader flag 256).
+    ///
+    /// # Safety
+    /// `renderer` must be the live SDL GPU renderer of the calling thread.
+    pub unsafe fn for_semi_planar(renderer: *mut SDL_Renderer, layout: crate::media::PlanarLayout) -> Result<Self, String> {
+        let sizes = [layout.plane_size(0), layout.plane_size(1), (0, 0)];
+        // SAFETY: Caller guarantees `renderer` is live on the calling thread.
+        unsafe {
+            let mut pass = Self::shader_only(renderer, sizes, if layout.ten_bit { 2 } else { 1 })?;
+            pass.semi_planar = true;
+            let device = pass.device;
+            for (plane, format) in [plane_format(layout.ten_bit), chroma_format(layout.ten_bit)].into_iter().enumerate() {
+                let (width, height) = sizes[plane];
+                pass.textures[plane] = SDL_CreateGPUTexture(device, &SDL_GPUTextureCreateInfo {
+                    r#type: SDL_GPU_TEXTURETYPE_2D, format, usage: SDL_GPU_TEXTUREUSAGE_SAMPLER,
+                    width, height, layer_count_or_depth: 1, num_levels: 1, sample_count: SDL_GPU_SAMPLECOUNT_1, ..Default::default() });
+                if pass.textures[plane].is_null() {
+                    return Err(format!("a {width}x{height} semi-planar texture cannot be created: {}", crate::sdl::error()));
+                }
+            }
+            let bytes = pass.plane_bytes(0) + pass.plane_bytes(1);
+            pass.transfer = SDL_CreateGPUTransferBuffer(device, &SDL_GPUTransferBufferCreateInfo {
+                usage: SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD, size: bytes as u32, ..Default::default() });
+            if pass.transfer.is_null() {
+                return Err(format!("the plane transfer buffer cannot be created: {}", crate::sdl::error()));
+            }
+            pass.bind(renderer, [pass.textures[0], pass.textures[1], pass.textures[1]])?;
+            Ok(pass)
+        }
     }
 
     /// The pass for Vulkan video pictures: it draws `textures`, the luma and the interleaved chroma
@@ -260,8 +304,9 @@ impl PlanesPass {
         }
         let mut pass = Self {
             renderer, device, shader: ptr::null_mut(), sampler: ptr::null_mut(), textures: [ptr::null_mut(); 3],
-            transfer: ptr::null_mut(), state: ptr::null_mut(), bound: [ptr::null_mut(); 3], sizes, sample_bytes, wrapped: None, handover: Handover::default(),
-            sampled_states: Default::default(), sampled_active: ptr::null_mut(), mask: ptr::null_mut(), mask_made: None, mask_failed: false,
+            transfer: ptr::null_mut(), state: ptr::null_mut(), bound: [ptr::null_mut(); 3], sizes, sample_bytes, semi_planar: false,
+            wrapped: None, handover: Handover::default(), sampled_states: Default::default(), sampled_active: ptr::null_mut(),
+            mask: ptr::null_mut(), mask_made: None, mask_failed: false,
         };
         // SAFETY: `device` is the live GPU device of `renderer` on the calling thread.
         unsafe {
@@ -361,7 +406,7 @@ impl PlanesPass {
     ///
     /// # Safety
     /// `renderer` and `target` must be live and the pass the one made on this renderer.
-    pub unsafe fn draw(&mut self, renderer: *mut SDL_Renderer, target: *mut SDL_Texture, lease: &Lease, parameters: &[u32; 8], stages: &mut Stages<2>) -> Result<(), String> {
+    pub unsafe fn draw(&mut self, renderer: *mut SDL_Renderer, target: *mut SDL_Texture, lease: &Lease, decode_value: u64, parameters: &[u32; 8], stages: &mut Stages<2>) -> Result<(), String> {
         if let Some(images) = lease.planes().images() {
             let images = images.clone();
             if !self.suits(lease.planes()) {
@@ -370,9 +415,9 @@ impl PlanesPass {
             // SAFETY: Caller guarantees `renderer` and `target` are live and match this pass.
             return unsafe {
                 if images.handoff() == PlaneHandoff::Sample {
-                    self.draw_sampled(renderer, target, lease, &images, parameters, stages)
+                    self.draw_sampled(renderer, target, lease, decode_value, &images, parameters, stages)
                 } else {
-                    self.draw_shared(renderer, target, lease, &images, parameters, stages)
+                    self.draw_shared(renderer, target, lease, decode_value, &images, parameters, stages)
                 }
             };
         }
@@ -395,10 +440,13 @@ impl PlanesPass {
     /// `draw` for a set in the decoder's images: copies it into the plane textures on the GPU,
     /// signals the reuse timeline behind the copy and gives the set back with that value, so the
     /// decoder can write it again as soon as the copy is done, not after the draw.
-    unsafe fn draw_shared(&mut self, renderer: *mut SDL_Renderer, target: *mut SDL_Texture, lease: &Lease, images: &SharedImages, parameters: &[u32; 8], stages: &mut Stages<2>) -> Result<(), String> {
+    unsafe fn draw_shared(&mut self, renderer: *mut SDL_Renderer, target: *mut SDL_Texture, lease: &Lease, decode_value: u64, images: &SharedImages, parameters: &[u32; 8], stages: &mut Stages<2>) -> Result<(), String> {
         let step = Instant::now();
         // SAFETY: Caller guarantees `renderer` and `target` are live on the calling thread.
         unsafe {
+            if decode_value > 0 {
+                images.wait_decode(decode_value, std::time::Duration::from_secs(2))?;
+            }
             if !SDL_FlushRenderer(renderer) {
                 return Err(format!("the renderer cannot flush: {}", crate::sdl::error()));
             }
@@ -428,13 +476,13 @@ impl PlanesPass {
     /// `draw` for a set sampled in place: takes the picture's lease over, makes the set readable
     /// and gives the set it replaces back behind the draws recorded so far (`Handover::show`),
     /// then draws from it (now, into `target`, or at present time).
-    unsafe fn draw_sampled(&mut self, renderer: *mut SDL_Renderer, target: *mut SDL_Texture, lease: &Lease, images: &Arc<SharedImages>, parameters: &[u32; 8], stages: &mut Stages<2>) -> Result<(), String> {
+    unsafe fn draw_sampled(&mut self, renderer: *mut SDL_Renderer, target: *mut SDL_Texture, lease: &Lease, decode_value: u64, images: &Arc<SharedImages>, parameters: &[u32; 8], stages: &mut Stages<2>) -> Result<(), String> {
         let step = Instant::now();
         // SAFETY: Caller guarantees `renderer` and `target` are live on the calling thread.
         unsafe {
             self.wrap(lease.planes(), images)?;
             let next = lease.hand_over().ok_or("the picture's plane set was given back already")?;
-            self.handover.show(&mut Sets { renderer, images: images.as_ref() }, next)?;
+            self.handover.show(&mut Sets { renderer, images: images.as_ref(), decode_value }, next)?;
             stages.add(super::pyrowave_gpu::UPLOAD, step);
             self.convert(renderer, target, parameters, Some(stages))
         }
@@ -496,7 +544,7 @@ impl PlanesPass {
     /// recorded so far (flushed first).
     unsafe fn give_back_held(&mut self) {
         let Some(images) = self.wrapped.as_ref().and_then(|wrapped| wrapped.planes.images().cloned()) else { return };
-        self.handover.finish(&mut Sets { renderer: self.renderer, images: images.as_ref() });
+        self.handover.finish(&mut Sets { renderer: self.renderer, images: images.as_ref(), decode_value: 0 });
     }
 
     /// Gives the held set back, releases the wrapped textures and their render states and lets
@@ -534,10 +582,16 @@ impl PlanesPass {
         if let Some(plane) = (0..planes).find(|&plane| info.data[plane].is_null() || info.linesize[plane] <= 0) {
             return Err(format!("plane {plane} of the picture is missing"));
         }
-        let (sizes, sample_bytes) = (self.sizes, self.sample_bytes);
-        let fill = |mapped, offsets| {
+        let (sizes, sample_bytes, fast_semi) = (self.sizes, self.sample_bytes, self.semi_planar);
+        let fill = |mapped, offsets: [usize; 3]| {
             // SAFETY: `info` matches `sizes` and `mapped` holds the packed planes at `offsets`.
-            unsafe { fill_planes(info, sizes, sample_bytes, mapped, offsets); }
+            unsafe {
+                if fast_semi {
+                    fill_semi_planar(info, [sizes[0], sizes[1]], sample_bytes, mapped, [offsets[0], offsets[1]]);
+                } else {
+                    fill_planes(info, sizes, sample_bytes, mapped, offsets);
+                }
+            }
         };
         // SAFETY: Caller guarantees `renderer`, `target`, and `info` are live and match `sizes`.
         unsafe { self.draw_with(renderer, target, parameters, None, fill) }
@@ -546,7 +600,8 @@ impl PlanesPass {
     /// The bytes of plane `plane` in the transfer buffer (tightly packed rows).
     fn plane_bytes(&self, plane: usize) -> usize {
         let (width, height) = self.sizes[plane];
-        width as usize * height as usize * self.sample_bytes
+        let channels = if self.semi_planar && plane == 1 { 2 } else { 1 };
+        width as usize * height as usize * self.sample_bytes * channels
     }
 
     /// Fills the transfer buffer with `fill` (given the mapped buffer and each plane's offset in
@@ -573,7 +628,8 @@ impl PlanesPass {
                 return Err(format!("no GPU command buffer for the plane upload: {}", crate::sdl::error()));
             }
             let copy = SDL_BeginGPUCopyPass(commands);
-            for (plane, offset) in offsets.into_iter().enumerate() {
+            let count = if self.semi_planar { 2 } else { 3 };
+            for (plane, offset) in offsets.into_iter().enumerate().take(count) {
                 let (width, height) = self.sizes[plane];
                 SDL_UploadToGPUTexture(copy,
                     &SDL_GPUTextureTransferInfo { transfer_buffer: self.transfer, offset: offset as u32, pixels_per_row: width, rows_per_layer: height },
@@ -860,88 +916,6 @@ pub fn direct_uniforms(parameters: &[u32; 8], destination: &SDL_FRect, origin: (
 /// Whether the presenter samples `planes` in place (images on the renderer's device, not copied).
 fn samples_in_place(planes: &Planes) -> bool {
     planes.images().is_some_and(|images| images.handoff() == PlaneHandoff::Sample)
-}
-
-/// Whether a picture's chroma is one interleaved plane (NV12, P010).
-fn semi_planar(info: &crate::media::FrameInfo) -> bool {
-    matches!(info.kind, crate::media::FRAME_NV12 | crate::media::FRAME_P010)
-}
-
-/// Whether a planar picture's 16-bit samples hold its 10-bit codes in their high bits, as P010's
-/// do: NVDEC's 10-bit 4:4:4 copied to memory (`media::FRAME_YUV444P16`).
-fn high_bit_planes(info: &crate::media::FrameInfo) -> bool {
-    info.kind == crate::media::FRAME_YUV444P16
-}
-
-/// Copies a picture's planes into the transfer buffer as the tightly packed planes `sizes` gives.
-/// A planar picture's rows go as they are. An NV12 or P010 picture's interleaved chroma is split
-/// into its Cb and Cr planes, and P010's samples, in the high 10 bits of each word, move to the low
-/// bits, where the shader reads FFmpeg's 10-bit planes (flag 64); so do the samples of a planar
-/// picture with high-bit planes (`high_bit_planes`).
-///
-/// # Safety
-/// `info` describes a live frame with at least `sizes` samples in each plane, and `mapped` has
-/// room for the planes at `offsets`.
-unsafe fn fill_planes(info: &crate::media::FrameInfo, sizes: [(u32, u32); 3], sample_bytes: usize, mapped: *mut u8, offsets: [usize; 3]) {
-    if !semi_planar(info) {
-        let high_bits = sample_bytes == 2 && high_bit_planes(info);
-        for (plane, &(width, height)) in sizes.iter().enumerate() {
-            let row = width as usize * sample_bytes;
-            for y in 0..height as usize {
-                // SAFETY: Caller guarantees `info.data[plane]` and `mapped` cover `sizes` at `linesize`/`offsets`.
-                unsafe {
-                    let source = info.data[plane].add(y * info.linesize[plane] as usize);
-                    let target = mapped.add(offsets[plane] + y * row);
-                    if high_bits {
-                        let source = std::slice::from_raw_parts(source, row);
-                        let target = std::slice::from_raw_parts_mut(target, row);
-                        for (target, source) in target.as_chunks_mut::<2>().0.iter_mut().zip(source.as_chunks::<2>().0) {
-                            target.copy_from_slice(&(u16::from_le_bytes([source[0], source[1]]) >> 6).to_le_bytes());
-                        }
-                    } else {
-                        ptr::copy_nonoverlapping(source, target, row);
-                    }
-                }
-            }
-        }
-        return;
-    }
-    let p010 = info.kind == crate::media::FRAME_P010;
-    let put = |target: &mut [u8], source: &[u8]| {
-        if p010 {
-            target.copy_from_slice(&(u16::from_le_bytes([source[0], source[1]]) >> 6).to_le_bytes());
-        } else {
-            target.copy_from_slice(source);
-        }
-    };
-    let (width, height) = sizes[0];
-    let row = width as usize * sample_bytes;
-    for y in 0..height as usize {
-        // SAFETY: Caller guarantees `info.data[0]` and `mapped` cover luma `sizes[0]` at `linesize[0]`/`offsets[0]`.
-        let (source, target) = unsafe {
-            (std::slice::from_raw_parts(info.data[0].add(y * info.linesize[0] as usize), row),
-             std::slice::from_raw_parts_mut(mapped.add(offsets[0] + y * row), row))
-        };
-        if p010 {
-            target.as_chunks_mut::<2>().0.iter_mut().zip(source.as_chunks::<2>().0).for_each(|(target, source)| put(target, source));
-        } else {
-            target.copy_from_slice(source);
-        }
-    }
-    let (width, height) = sizes[1];
-    let row = width as usize * sample_bytes;
-    for y in 0..height as usize {
-        // SAFETY: Caller guarantees `info.data[1]` and `mapped` cover chroma `sizes[1]`/`sizes[2]` at `linesize[1]`/`offsets`.
-        let (source, cb, cr) = unsafe {
-            (std::slice::from_raw_parts(info.data[1].add(y * info.linesize[1] as usize), 2 * row),
-             std::slice::from_raw_parts_mut(mapped.add(offsets[1] + y * row), row),
-             std::slice::from_raw_parts_mut(mapped.add(offsets[2] + y * row), row))
-        };
-        for (pair, (cb, cr)) in source.chunks_exact(2 * sample_bytes).zip(cb.chunks_exact_mut(sample_bytes).zip(cr.chunks_exact_mut(sample_bytes))) {
-            put(cb, &pair[..sample_bytes]);
-            put(cr, &pair[sample_bytes..]);
-        }
-    }
 }
 
 impl Drop for PlanesPass {

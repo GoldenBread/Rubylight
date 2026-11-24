@@ -953,10 +953,9 @@ impl VaapiMap {
             #[allow(unused_mut)]
             let mut cached = None;
             #[cfg(target_os = "linux")]
-            if interleaved.is_none()
-                && let Some(imports) = self.imports.as_mut()
-            {
-                match imports.map(source, target, self.frames, shape.2 == AV_PIX_FMT_P010LE) {
+            if let Some(imports) = self.imports.as_mut() {
+                let ten_bit = interleaved.map_or(shape.2 == AV_PIX_FMT_P010LE, |(_, ten)| ten);
+                match imports.map(source, target, self.frames, ten_bit, interleaved.is_some()) {
                     Ok(hit) => cached = Some(hit),
                     Err(why) => {
                         // `target` is empty again; FFmpeg maps this picture and the rest.
@@ -1087,6 +1086,36 @@ fn import_layers(descriptor: &crate::dmabuf::Descriptor, ten_bit: bool) -> Resul
     Ok(formats)
 }
 
+/// The Vulkan format of a single-layer 4:4:4 VAAPI surface (`VUYA`/`VUYX` as R8G8B8A8, `XV30` as
+/// A2R10G10B10), matching `map_interleaved` and FFmpeg's hwcontext_vulkan table.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn import_interleaved_layer(descriptor: &crate::dmabuf::Descriptor, ten_bit: bool) -> Result<vk::Format, String> {
+    let (wanted, vk_format) = if ten_bit {
+        (fourcc(b"XV30"), vk::Format::A2R10G10B10_UNORM_PACK32)
+    } else {
+        (fourcc(b"XYUV"), vk::Format::R8G8B8A8_UNORM)
+    };
+    if descriptor.num_layers != 1 || descriptor.num_objects == 0 || descriptor.num_objects > 4 {
+        return Err(format!(
+            "the export has {} layers in {} objects, not a {}-bit 4:4:4 surface's single plane",
+            descriptor.num_layers,
+            descriptor.num_objects,
+            if ten_bit { 10 } else { 8 }
+        ));
+    }
+    let layer = &descriptor.layers[0];
+    if drm_alias(layer.drm_format) != wanted || layer.num_planes != 1 {
+        return Err(format!(
+            "layer 0 is DRM format {:#010x} with {} planes, not {wanted:#010x} with one",
+            layer.drm_format, layer.num_planes
+        ));
+    }
+    if layer.object_index[0] >= descriptor.num_objects {
+        return Err(format!("layer 0 names object {} of {}", layer.object_index[0], descriptor.num_objects));
+    }
+    Ok(vk_format)
+}
+
 /// Where layer `index` of a checked export (`import_layers`) is: its object, that object's DRM
 /// format modifier, and the plane's explicit layout for `VkImageDrmFormatModifierExplicitCreateInfoEXT`
 /// (offset and row pitch in the object; the sizes 0, as the specification asks).
@@ -1144,497 +1173,7 @@ use imports::SurfaceImports;
 
 /// `VaapiMap`'s imports of a decoder's surfaces, one per surface, kept while the pool lasts.
 #[cfg(target_os = "linux")]
-mod imports {
-    use super::*;
-    use crate::dmabuf::{self, Descriptor, FramesRef, SurfaceCache, CACHE_LIMIT};
-    use std::sync::atomic::AtomicBool;
-    use std::sync::Arc;
-
-    unsafe extern "C" {
-        /// libavutil/hwcontext_vulkan.h: an AVVkFrame with its internal part (the lock FFmpeg's
-        /// default `lock_frame` takes), freed with `av_free`.
-        fn av_vk_frame_alloc() -> *mut VkFrame;
-        fn av_free(pointer: *mut c_void);
-        fn av_buffer_ref(reference: *const AVBufferRef) -> *mut AVBufferRef;
-        /// libavutil/buffer.h (the size a `size_t` since FFmpeg 5); not in the bindings.
-        fn av_buffer_create(
-            data: *mut u8,
-            size: usize,
-            free: Option<unsafe extern "C" fn(*mut c_void, *mut u8)>,
-            opaque: *mut c_void,
-            flags: c_int,
-        ) -> *mut AVBufferRef;
-    }
-
-    /// The renderer's device as the imports use it: its own functions, as `Planes` loads them.
-    struct ImportDevice {
-        instance: ash::Instance,
-        physical_device: vk::PhysicalDevice,
-        device: ash::Device,
-        memory_fd: ash::khr::external_memory_fd::Device,
-        /// The property flags of each of the device's memory types.
-        memory_types: Vec<vk::MemoryPropertyFlags>,
-    }
-
-    impl ImportDevice {
-        /// # Safety
-        /// `gpu` is the renderer's live SDL GPU device, made with `MAP_EXTENSIONS`
-        /// (`map_device_context` checked them).
-        unsafe fn of(gpu: *mut SDL_GPUDevice) -> Result<Self, String> {
-            // SAFETY: Caller guarantees `gpu` is a live SDL GPU device with Vulkan sharing properties.
-            unsafe {
-                let sdl = SdlVulkan::of_device(gpu)?;
-                let instance = ash::Instance::load(
-                    &ash::StaticFn {
-                        get_instance_proc_addr: zero_copy::get_instance_proc_addr()?,
-                    },
-                    sdl.instance,
-                );
-                let device = ash::Device::load(instance.fp_v1_0(), sdl.device);
-                let memory_fd = ash::khr::external_memory_fd::Device::new(&instance, &device);
-                let memory = instance.get_physical_device_memory_properties(sdl.physical_device);
-                let memory_types = memory.memory_types[..memory.memory_type_count as usize]
-                    .iter()
-                    .map(|kind| kind.property_flags)
-                    .collect();
-                Ok(Self { instance, physical_device: sdl.physical_device, device, memory_fd, memory_types })
-            }
-        }
-
-        /// Whether the driver imports a DMA-BUF of `modifier` as a `format` image with `usage` (the
-        /// copy reads it as TRANSFER_SRC; sampling needs SAMPLED), as hwcontext_vulkan asks before
-        /// its own import; creating one it does not would be undefined.
-        unsafe fn check_importable(&self, format: vk::Format, modifier: u64, usage: vk::ImageUsageFlags) -> Result<(), String> {
-            let mut drm = vk::PhysicalDeviceImageDrmFormatModifierInfoEXT::default()
-                .drm_format_modifier(modifier)
-                .sharing_mode(vk::SharingMode::EXCLUSIVE);
-            let mut external = vk::PhysicalDeviceExternalImageFormatInfo::default()
-                .handle_type(vk::ExternalMemoryHandleTypeFlags::DMA_BUF_EXT);
-            let info = vk::PhysicalDeviceImageFormatInfo2::default()
-                .format(format)
-                .ty(vk::ImageType::TYPE_2D)
-                .tiling(vk::ImageTiling::DRM_FORMAT_MODIFIER_EXT)
-                .usage(usage)
-                .push_next(&mut external)
-                .push_next(&mut drm);
-            let mut external_properties = vk::ExternalImageFormatProperties::default();
-            let mut properties = vk::ImageFormatProperties2::default().push_next(&mut external_properties);
-            // SAFETY: `self.instance` and `self.physical_device` are valid Vulkan handles.
-            unsafe {
-                self.instance
-                    .get_physical_device_image_format_properties2(self.physical_device, &info, &mut properties)
-            }
-            .map_err(|e| format!("the driver does not import Vulkan format {} DMA-BUFs of modifier {modifier:#x} ({e})", format.as_raw()))?;
-            if !external_properties
-                .external_memory_properties
-                .external_memory_features
-                .contains(vk::ExternalMemoryFeatureFlags::IMPORTABLE)
-            {
-                return Err(format!("the driver cannot import Vulkan format {} DMA-BUFs of modifier {modifier:#x}", format.as_raw()));
-            }
-            Ok(())
-        }
-
-        /// Waits up to `COPY_WAIT` for each of `frame`'s semaphores to reach its value, the last
-        /// copy's signal: then the GPU no longer reads its images.
-        unsafe fn wait(&self, frame: &FrameNow) -> bool {
-            let (semaphores, values): (Vec<vk::Semaphore>, Vec<u64>) = (0..frame.sem.len())
-                .filter(|&index| frame.sem[index] != vk::Semaphore::null())
-                .map(|index| (frame.sem[index], frame.sem_value[index]))
-                .unzip();
-            // SAFETY: Caller guarantees `frame` holds valid timeline semaphores for `self.device`.
-            semaphores.is_empty()
-                || unsafe {
-                    self.device.wait_semaphores(
-                        &vk::SemaphoreWaitInfo::default().semaphores(&semaphores).values(&values),
-                        COPY_WAIT.as_nanos() as u64,
-                    )
-                }
-                .is_ok()
-        }
-    }
-
-    /// One surface's import: an image per layer, each with its imported memory (a `dup` of the
-    /// layer's DMA-BUF) and a timeline semaphore, in an AVVkFrame FFmpeg's frame lock works on.
-    /// Mapped frames of the surface share it (`Lent`); it goes when the cache and the last of them
-    /// let go, which is when no copy reads it (`Drop`).
-    struct CachedImport {
-        vulkan: Arc<ImportDevice>,
-        frame: *mut VkFrame,
-        /// The images were made to be sampled too (`SAMPLED`), as the driver takes the layers'
-        /// formats and modifiers with that usage; else they are only copied from.
-        sampled: bool,
-        /// The picture's size, for the layers' extents.
-        size: (u32, u32),
-    }
-
-    // SAFETY: The frame is used by one picture at a time: a surface comes back from the decoder,
-    // and its import is handed out again, only once every frame mapped from it was freed (each one
-    // holds the surface, `Lent`); FFmpeg's reference counts order those uses across threads.
-    unsafe impl Send for CachedImport {}
-    unsafe impl Sync for CachedImport {}
-
-    impl CachedImport {
-        /// Imports `descriptor`, an exported two-plane surface (`import_layers`) of a `width` x
-        /// `height` picture, as hwcontext_vulkan's `vulkan_map_from_drm_frame_desc` does: one image
-        /// per layer, in the object's DRM format modifier with the layer's offset and pitch, its
-        /// memory imported from a `dup` of the object's descriptor (once per image, also where both
-        /// layers share one object), dedicated where the driver prefers it, bound at 0 (the offset is
-        /// in the layout).
-        ///
-        /// # Safety
-        /// `descriptor`'s descriptors are open.
-        unsafe fn new(vulkan: &Arc<ImportDevice>, descriptor: &Descriptor, width: u32, height: u32, ten_bit: bool, sample: bool) -> Result<Self, String> {
-            // SAFETY: Caller guarantees `descriptor`'s file descriptors are open and `vulkan` is live.
-            unsafe {
-                let formats = import_layers(descriptor, ten_bit)?;
-                // Sampled in place only when the driver takes every layer with that usage: a surface it
-                // does not is copied from, as before (per surface).
-                let sampled = sample && formats.iter().enumerate().all(|(index, &format)| {
-                    let (_, modifier, _) = layer_layout(descriptor, index);
-                    modifier != DRM_FORMAT_MOD_INVALID
-                        && vulkan.check_importable(format, modifier, vk::ImageUsageFlags::TRANSFER_SRC | vk::ImageUsageFlags::SAMPLED).is_ok()
-                });
-                let usage = if sampled { vk::ImageUsageFlags::TRANSFER_SRC | vk::ImageUsageFlags::SAMPLED } else { vk::ImageUsageFlags::TRANSFER_SRC };
-                let frame = av_vk_frame_alloc();
-                if frame.is_null() {
-                    return Err("FFmpeg cannot allocate a Vulkan frame".into());
-                }
-                // From here on, `Drop` destroys what was made if a later step fails.
-                let import = Self { vulkan: vulkan.clone(), frame, sampled, size: (width, height) };
-                let device = &vulkan.device;
-                let mut vkf = frame_fields(frame);
-                *vkf.tiling = vk::ImageTiling::DRM_FORMAT_MODIFIER_EXT;
-                for (index, &format) in formats.iter().enumerate() {
-                    let (object, modifier, layout) = layer_layout(descriptor, index);
-                    if modifier == DRM_FORMAT_MOD_INVALID {
-                        return Err(format!("the driver named no DRM format modifier for layer {index}"));
-                    }
-                    vulkan.check_importable(format, modifier, vk::ImageUsageFlags::TRANSFER_SRC)?;
-                    let (w, h) = layer_extent(index, width, height);
-                    let layouts = [layout];
-                    let mut explicit = vk::ImageDrmFormatModifierExplicitCreateInfoEXT::default()
-                        .drm_format_modifier(modifier)
-                        .plane_layouts(&layouts);
-                    let mut external = vk::ExternalMemoryImageCreateInfo::default()
-                        .handle_types(vk::ExternalMemoryHandleTypeFlags::DMA_BUF_EXT);
-                    let info = vk::ImageCreateInfo::default()
-                        .image_type(vk::ImageType::TYPE_2D)
-                        .format(format)
-                        .extent(vk::Extent3D { width: w, height: h, depth: 1 })
-                        .mip_levels(1)
-                        .array_layers(1)
-                        .samples(vk::SampleCountFlags::TYPE_1)
-                        .tiling(vk::ImageTiling::DRM_FORMAT_MODIFIER_EXT)
-                        .usage(usage)
-                        .sharing_mode(vk::SharingMode::EXCLUSIVE)
-                        .initial_layout(vk::ImageLayout::UNDEFINED)
-                        .push_next(&mut external)
-                        .push_next(&mut explicit);
-                    let image = device
-                        .create_image(&info, None)
-                        .map_err(|e| format!("layer {index} (Vulkan format {}, modifier {modifier:#x}) cannot be imported as an image ({e})", format.as_raw()))?;
-                    vkf.img[index] = image;
-
-                    let fd = libc::dup(descriptor.objects[object].fd);
-                    if fd < 0 {
-                        return Err(format!("layer {index}'s DMA-BUF cannot be duplicated ({})", std::io::Error::last_os_error()));
-                    }
-                    let mut fd_properties = vk::MemoryFdPropertiesKHR::default();
-                    if let Err(e) = vulkan.memory_fd.get_memory_fd_properties(vk::ExternalMemoryHandleTypeFlags::DMA_BUF_EXT, fd, &mut fd_properties) {
-                        libc::close(fd);
-                        return Err(format!("the driver does not import layer {index}'s DMA-BUF ({e})"));
-                    }
-                    let mut dedicated = vk::MemoryDedicatedRequirements::default();
-                    let mut needs = vk::MemoryRequirements2::default().push_next(&mut dedicated);
-                    device.get_image_memory_requirements2(&vk::ImageMemoryRequirementsInfo2::default().image(image), &mut needs);
-                    let requirements = needs.memory_requirements;
-                    let Some(kind) = import_memory_type(fd_properties.memory_type_bits, requirements.memory_type_bits, &vulkan.memory_types) else {
-                        libc::close(fd);
-                        return Err(format!(
-                            "no memory type takes layer {index}'s DMA-BUF (types {:#x}) and its image (types {:#x})",
-                            fd_properties.memory_type_bits, requirements.memory_type_bits
-                        ));
-                    };
-                    let mut fd_import = vk::ImportMemoryFdInfoKHR::default()
-                        .handle_type(vk::ExternalMemoryHandleTypeFlags::DMA_BUF_EXT)
-                        .fd(fd);
-                    let mut dedicated_to = vk::MemoryDedicatedAllocateInfo::default().image(image);
-                    let allocate = vk::MemoryAllocateInfo::default()
-                        .allocation_size(requirements.size)
-                        .memory_type_index(kind)
-                        .push_next(&mut fd_import);
-                    let allocate = if dedicated.prefers_dedicated_allocation != vk::FALSE || dedicated.requires_dedicated_allocation != vk::FALSE {
-                        allocate.push_next(&mut dedicated_to)
-                    } else {
-                        allocate
-                    };
-                    // A successful import owns the descriptor; a failed one leaves it ours.
-                    let memory = device.allocate_memory(&allocate, None).map_err(|e| {
-                        libc::close(fd);
-                        format!("layer {index}'s DMA-BUF cannot be imported ({} bytes, memory type {kind}: {e})", requirements.size)
-                    })?;
-                    vkf.mem[index] = memory;
-                    vkf.size[index] = requirements.size as usize;
-                    *vkf.flags |= vulkan.memory_types[kind as usize];
-                    device
-                        .bind_image_memory(image, memory, 0)
-                        .map_err(|e| format!("layer {index}'s imported memory cannot be bound ({e})"))?;
-
-                    let mut timeline = vk::SemaphoreTypeCreateInfo::default()
-                        .semaphore_type(vk::SemaphoreType::TIMELINE)
-                        .initial_value(0);
-                    vkf.sem[index] = device
-                        .create_semaphore(&vk::SemaphoreCreateInfo::default().push_next(&mut timeline), None)
-                        .map_err(|e| format!("a timeline semaphore cannot be created ({e})"))?;
-                    vkf.sem_value[index] = 0;
-                    // Owned by VA-API, its contents those of the surface: the copy acquires it.
-                    vkf.layout[index] = vk::ImageLayout::UNDEFINED;
-                    vkf.access.set(index, vk::AccessFlags::empty());
-                    vkf.queue_family[index] = vk::QUEUE_FAMILY_EXTERNAL;
-                }
-                Ok(import)
-            }
-        }
-    }
-
-    impl Drop for CachedImport {
-        fn drop(&mut self) {
-            registry().lock().unwrap_or_else(|e| e.into_inner()).remove(&(self.frame as usize));
-            // SAFETY: Objects this import made on the renderer's device, which outlives the decoder
-            // and the presenter's pictures; the frame is no picture's any more.
-            unsafe {
-                let frame = frame_now(self.frame);
-                if !self.vulkan.wait(&frame) {
-                    note("a kept VAAPI import's last copy did not finish; its Vulkan images stay allocated");
-                    return;
-                }
-                let device = &self.vulkan.device;
-                for index in 0..frame.img.len() {
-                    if frame.img[index] != vk::Image::null() {
-                        device.destroy_image(frame.img[index], None);
-                    }
-                    if frame.mem[index] != vk::DeviceMemory::null() {
-                        device.free_memory(frame.mem[index], None);
-                    }
-                    if frame.sem[index] != vk::Semaphore::null() {
-                        device.destroy_semaphore(frame.sem[index], None);
-                    }
-                }
-                free_frame(self.frame);
-            }
-        }
-    }
-
-    /// Frees an AVVkFrame of `av_vk_frame_alloc` as hwcontext_vulkan's `vulkan_free_internal`
-    /// does: its internal part begins with the `pthread_mutex_t` the default frame lock takes
-    /// (libavutil 59 to 61; the semaphore of 61's DRM export and the CUDA fields after it are never
-    /// set on these frames), which is destroyed, then both are freed.
-    ///
-    /// # Safety
-    /// `frame` is an unused frame of `av_vk_frame_alloc`.
-    unsafe fn free_frame(frame: *mut VkFrame) {
-        // SAFETY: Caller guarantees `frame` is an unused frame allocated by `av_vk_frame_alloc`.
-        unsafe {
-            let internal = frame_now(frame).internal;
-            if !internal.is_null() {
-                libc::pthread_mutex_destroy(internal.cast());
-                av_free(internal);
-            }
-            av_free(frame.cast());
-        }
-    }
-
-    /// The kept imports by their AVVkFrame's address (`AVFrame::data[0]` of a frame mapped from one),
-    /// weakly: a mapped frame holds its import (`Lent`), so a frame that is in use finds it here.
-    fn registry() -> &'static std::sync::Mutex<std::collections::HashMap<usize, std::sync::Weak<CachedImport>>> {
-        static REGISTRY: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<usize, std::sync::Weak<CachedImport>>>> = std::sync::OnceLock::new();
-        REGISTRY.get_or_init(Default::default)
-    }
-
-    /// A kept import the presenter holds on to while it has textures wrapping its images: they go
-    /// (on the decoder's thread, when the last holder lets go) only after the presenter let go.
-    #[derive(Clone)]
-    pub struct ImportRef(Arc<CachedImport>);
-
-    // SAFETY: As `CachedImport`.
-    unsafe impl Send for ImportRef {}
-
-    impl ImportRef {
-        /// The images are SAMPLED too.
-        pub fn sampled(&self) -> bool {
-            self.0.sampled
-        }
-
-        /// The luma and chroma images.
-        pub fn images(&self) -> [vk::Image; 2] {
-            // SAFETY: The frame lives as long as the import.
-            unsafe {
-                let frame = frame_now(self.0.frame);
-                [frame.img[0], frame.img[1]]
-            }
-        }
-
-        /// The picture's size.
-        pub fn size(&self) -> (u32, u32) {
-            self.0.size
-        }
-
-        /// What names the import: its frame's address.
-        pub fn key(&self) -> usize {
-            self.0.frame as usize
-        }
-    }
-
-    /// The kept import `frame`, a Vulkan frame mapped from VAAPI, shows (none for any other frame).
-    ///
-    /// # Safety
-    /// `frame` is a live AVFrame.
-    pub unsafe fn import_of(frame: *const AVFrame) -> Option<ImportRef> {
-        // SAFETY: Caller guarantees `frame` is a live AVFrame.
-        let key = unsafe { (*frame).data[0] as usize };
-        registry().lock().unwrap_or_else(|e| e.into_inner()).get(&key)?.upgrade().map(ImportRef)
-    }
-
-    /// What a mapped frame of a kept import holds (its `buf[0]`'s opaque): its VAAPI picture, so the
-    /// surface is the presenter's until the frame is freed, and the import.
-    struct Lent {
-        source: *mut AVFrame,
-        import: Arc<CachedImport>,
-    }
-
-    impl Drop for Lent {
-        fn drop(&mut self) {
-            // SAFETY: The import's frame and our own reference to the picture.
-            unsafe {
-                // `Planes` keeps a picture until its copy is done, so this does not wait; a picture
-                // freed earlier (its reference could not be kept) waits for the copy, as FFmpeg's
-                // own unmap does, before VA-API may decode into the surface again.
-                if !self.import.vulkan.wait(&frame_now(self.import.frame)) {
-                    note("a mapped VAAPI picture's copy did not finish; its surface goes back to the decoder anyway");
-                }
-                av_frame_free(&mut self.source);
-            }
-        }
-    }
-
-    unsafe extern "C" fn give_back(opaque: *mut c_void, _data: *mut u8) {
-        // SAFETY: `opaque` was created with `Box::into_raw(Box::new(Lent { .. }))` in `lend`.
-        unsafe { drop(Box::from_raw(opaque.cast::<Lent>())) };
-    }
-
-    /// The imports of the surfaces of the pool pictures come from now (`SurfaceCache`), and the
-    /// renderer's device they are made on.
-    pub struct SurfaceImports {
-        vulkan: Arc<ImportDevice>,
-        cache: SurfaceCache<Arc<CachedImport>>,
-        /// The frames context whose surfaces the cache holds imports of, kept alive with it so
-        /// no other pool takes its address (the cache's key).
-        _pool: FramesRef,
-        /// `dmabuf::export`'s, which only the OpenGL import sets.
-        decline: Arc<AtomicBool>,
-        /// New imports are made to be sampled where the driver takes them so (`SAMPLE_ENVIRONMENT`).
-        sample: bool,
-    }
-
-    impl SurfaceImports {
-        /// The imports for VAAPI pictures on the renderer `gpu`, unless `NIGHTJAR_DMABUF_CACHE=0`
-        /// or its device cannot be loaded; which path the pictures take goes to the log.
-        ///
-        /// # Safety
-        /// As `ImportDevice::of`.
-        pub(super) unsafe fn start(gpu: *mut SDL_GPUDevice) -> Option<Self> {
-            if !dmabuf::caching() {
-                note(&format!("VAAPI pictures are imported into Vulkan anew for every picture: {}=0", dmabuf::CACHE_ENVIRONMENT));
-                return None;
-            }
-            // SAFETY: Caller guarantees `gpu` is a live SDL GPU device with Vulkan sharing properties.
-            match unsafe { ImportDevice::of(gpu) } {
-                Ok(vulkan) => {
-                    note("VAAPI 4:2:0 pictures are imported into Vulkan once per decoder surface, kept while the pool lasts");
-                    Some(Self { vulkan: Arc::new(vulkan), cache: SurfaceCache::new(CACHE_LIMIT), _pool: FramesRef::none(), decline: Arc::new(AtomicBool::new(false)),
-                        sample: sample_switched_on(std::env::var_os(SAMPLE_ENVIRONMENT).as_deref()) })
-                }
-                Err(why) => {
-                    note(&format!("VAAPI pictures are imported into Vulkan anew for every picture: {why}"));
-                    None
-                }
-            }
-        }
-
-        /// Maps the two-plane VAAPI picture `source` (`ten_bit`: P010, else NV12) into `target`, an
-        /// empty frame, as a frame of `frames` (`VaapiMap`'s, marked `MAPPED`) whose images are the
-        /// surface's kept import, made now if the surface has none. True when it was kept. On an
-        /// error `target` is empty again.
-        ///
-        /// # Safety
-        /// `source` is a live VAAPI frame, `target` an empty one, `frames` a live Vulkan frames
-        /// context on the renderer's device.
-        pub(super) unsafe fn map(&mut self, source: *const AVFrame, target: *mut AVFrame, frames: *mut AVBufferRef, ten_bit: bool) -> Result<bool, String> {
-            // SAFETY: Caller guarantees `source`, `target`, and `frames` are live FFmpeg objects as documented.
-            unsafe {
-                // Syncs the surface: the decode is done before any copy reads it.
-                let export = dmabuf::export(source, &self.decline)?;
-                let generation = export.generation();
-                // Another pool or size: its surfaces are other buffers. The old imports go once no
-                // mapped frame uses them.
-                let (changed, gone) = self.cache.retarget(generation);
-                drop(gone);
-                if changed {
-                    self._pool = FramesRef::of(export.frames());
-                }
-                let (import, cached) = match self.cache.get(export.surface()) {
-                    Some(import) => (import.clone(), true),
-                    None => {
-                        let import = Arc::new(CachedImport::new(&self.vulkan, export.descriptor()?, generation.width, generation.height, ten_bit, self.sample)?);
-                        registry().lock().unwrap_or_else(|e| e.into_inner()).insert(import.frame as usize, Arc::downgrade(&import));
-                        drop(self.cache.insert(export.surface(), import.clone()));
-                        (import, false)
-                    }
-                };
-                // The exported descriptors close here; the imports hold their own.
-                drop(export);
-                // No other picture uses the import (`CachedImport`'s Send).
-                ready_for_reuse(&mut frame_fields(import.frame));
-                lend(target, source, frames, import)?;
-                Ok(cached)
-            }
-        }
-    }
-
-    /// Makes `target` a Vulkan frame of `frames` showing `import`'s images, holding `source` and
-    /// the import until it is freed (`Lent`).
-    ///
-    /// # Safety
-    /// As `SurfaceImports::map`.
-    unsafe fn lend(target: *mut AVFrame, source: *const AVFrame, frames: *mut AVBufferRef, import: Arc<CachedImport>) -> Result<(), String> {
-        // SAFETY: Caller guarantees `target`, `source`, and `frames` are valid per `SurfaceImports::map`.
-        unsafe {
-            let held = av_frame_clone(source);
-            if held.is_null() {
-                return Err("the VAAPI picture cannot be referenced (out of memory)".into());
-            }
-            let vkf = import.frame;
-            let opaque = Box::into_raw(Box::new(Lent { source: held, import }));
-            let buffer = av_buffer_create(vkf.cast(), StructLayout::linked().frame_size(), Some(give_back), opaque.cast(), 0);
-            if buffer.is_null() {
-                drop(Box::from_raw(opaque));
-                return Err("FFmpeg cannot allocate the mapped picture's buffer".into());
-            }
-            (*target).buf[0] = buffer;
-            (*target).data[0] = vkf.cast();
-            (*target).format = AV_PIX_FMT_VULKAN;
-            (*target).width = (*source).width;
-            (*target).height = (*source).height;
-            (*target).hw_frames_ctx = av_buffer_ref(frames);
-            if (*target).hw_frames_ctx.is_null() {
-                av_frame_unref(target);
-                return Err("FFmpeg cannot reference the Vulkan frames context".into());
-            }
-            Ok(())
-        }
-    }
-}
+mod imports;
 
 /// FFmpeg's `AVDRMFrameDescriptor` (libavutil/hwcontext_drm.h): a DRM PRIME frame's `data[0]`.
 /// Only the layer formats are read; the rest is there for the layout.
@@ -2034,7 +1573,13 @@ impl<T> Held<T> {
         Some(self.items.swap_remove(at).1)
     }
 
+    /// Drops entries whose slots are `done` in place without allocating.
+    fn drop_finished(&mut self, done: impl Fn(usize) -> bool) {
+        self.items.retain_mut(|&mut (slot, _)| !done(slot));
+    }
+
     /// What the slots whose copies are `done` held.
+    #[cfg(test)]
     fn release(&mut self, done: impl Fn(usize) -> bool) -> Vec<T> {
         let mut released = Vec::new();
         let mut index = 0;
@@ -2808,7 +2353,7 @@ impl Planes {
             // Mapped pictures whose copies are done go back to the decoder.
             let device = &self.device;
             let slots = &self.slots;
-            drop(self.held.release(|slot| device.get_fence_status(slots[slot].1) == Ok(true)));
+            self.held.drop_finished(|slot| device.get_fence_status(slots[slot].1) == Ok(true));
             let (commands, fence) = self.slots[self.next];
             match self.device.wait_for_fences(&[fence], true, COPY_WAIT.as_nanos() as u64) {
                 Ok(()) => {}
@@ -2880,9 +2425,15 @@ impl Planes {
                 .map(|index| {
                     let (old_layout, from, to) =
                         acquire(source.queue_family[index], source.layout[index], family);
+                    let src_access = source.access.get(index);
+                    let src_stage = if src_access.is_empty() {
+                        vk::PipelineStageFlags2::COPY
+                    } else {
+                        vk::PipelineStageFlags2::ALL_COMMANDS
+                    };
                     vk::ImageMemoryBarrier2::default()
-                        .src_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
-                        .src_access_mask(source.access.get(index))
+                        .src_stage_mask(src_stage)
+                        .src_access_mask(src_access)
                         .dst_stage_mask(vk::PipelineStageFlags2::COPY)
                         .dst_access_mask(vk::AccessFlags2::TRANSFER_READ)
                         .old_layout(old_layout)
@@ -2895,7 +2446,7 @@ impl Planes {
             // The planes' old contents go; the copy waits for SDL's reads of them before it.
             self.before.extend(self.images.iter().map(|&(image, _)| {
                 vk::ImageMemoryBarrier2::default()
-                    .src_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
+                    .src_stage_mask(vk::PipelineStageFlags2::FRAGMENT_SHADER)
                     .dst_stage_mask(vk::PipelineStageFlags2::COPY)
                     .dst_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
                     .old_layout(vk::ImageLayout::UNDEFINED)
@@ -2957,7 +2508,7 @@ impl Planes {
                     vk::ImageMemoryBarrier2::default()
                         .src_stage_mask(vk::PipelineStageFlags2::COPY)
                         .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
-                        .dst_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
+                        .dst_stage_mask(vk::PipelineStageFlags2::FRAGMENT_SHADER)
                         .dst_access_mask(vk::AccessFlags2::SHADER_SAMPLED_READ)
                         .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
                         .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
@@ -2984,14 +2535,21 @@ impl Planes {
                 vk::SemaphoreSubmitInfo::default()
                     .semaphore(source.sem[index])
                     .value(source.sem_value[index])
-                    .stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
+                    .stage_mask(vk::PipelineStageFlags2::COPY)
             }));
             self.signals.clear();
             self.signals.extend((0..sources).map(|index| {
+                // External imports emit `release()` with `dst_stage_mask = NONE`; signal at
+                // `ALL_COMMANDS` so the QFOT/layout release finishes before VA-API unblocks.
+                let stage = if external[index] {
+                    vk::PipelineStageFlags2::ALL_COMMANDS
+                } else {
+                    vk::PipelineStageFlags2::COPY
+                };
                 vk::SemaphoreSubmitInfo::default()
                     .semaphore(source.sem[index])
                     .value(source.sem_value[index] + 1)
-                    .stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
+                    .stage_mask(stage)
             }));
             let buffers = [vk::CommandBufferSubmitInfo::default().command_buffer(commands)];
             let submit = vk::SubmitInfo2::default()
@@ -3171,6 +2729,12 @@ pub trait SampleGpu {
     /// Queues the barrier that gives the picture of `slot` back to the decoder behind the draws the
     /// last flush submitted, and signals `slot`'s fence once it is done.
     fn release(&mut self, slot: usize) -> Result<(), String>;
+    /// Queues the acquire of `acquire_slot` and release of `release_slot` (signaling
+    /// `release_slot`'s fence) in one submission. Defaults to calling `acquire` then `release`.
+    fn swap(&mut self, acquire_slot: usize, release_slot: usize) -> Result<(), String> {
+        self.acquire(acquire_slot)?;
+        self.release(release_slot)
+    }
 }
 
 /// The pictures the presenter samples in place. The shown one is held until the next picture is
@@ -3197,11 +2761,11 @@ impl<P> Sampled<P> {
     }
 
     /// Shows `picture`: flushes the draws of the picture shown so far, samples `picture` on the next
-    /// slot and queues the release of the one it replaces. Returns the pictures whose release has
-    /// finished, which the decoder may take again. If `picture` cannot be sampled it comes back
+    /// slot and queues the release of the one it replaces (combined in `swap`), then drops released
+    /// pictures whose fence has finished in place. If `picture` cannot be sampled it comes back
     /// unshown with the error; a failed release leaves the replaced picture unreturned (the device
     /// is lost) and the caller stops sampling.
-    pub fn show(&mut self, gpu: &mut impl SampleGpu, picture: P) -> Result<Vec<P>, (P, String)> {
+    pub fn show(&mut self, gpu: &mut impl SampleGpu, picture: P) -> Result<(), (P, String)> {
         if let Err(error) = gpu.flush() {
             return Err((picture, error));
         }
@@ -3209,54 +2773,57 @@ impl<P> Sampled<P> {
         if let Err(error) = gpu.wait(slot) {
             return Err((picture, error));
         }
-        if let Err(error) = gpu.acquire(slot) {
-            return Err((picture, error));
-        }
         if let Some((old, old_slot)) = self.shown.take() {
-            let released = gpu.release(old_slot);
+            let swapped = gpu.swap(slot, old_slot);
             self.returning.push((old, old_slot));
-            if let Err(error) = released {
+            if let Err(error) = swapped {
                 return Err((picture, error));
             }
+        } else if let Err(error) = gpu.acquire(slot) {
+            return Err((picture, error));
         }
         self.shown = Some((picture, slot));
         self.next = (slot + 1) % self.slots;
-        Ok(self.collect(&*gpu))
+        self.collect(&*gpu);
+        Ok(())
     }
 
     /// Ends the stream: releases the shown picture behind the last draws, then waits for every
-    /// picture to come back.
-    pub fn finish(&mut self, gpu: &mut impl SampleGpu) -> Result<Vec<P>, String> {
+    /// picture to come back and drops them in place.
+    pub fn finish(&mut self, gpu: &mut impl SampleGpu) -> Result<(), String> {
         if let Some((old, old_slot)) = self.shown.take() {
             let released = gpu.flush().and_then(|()| gpu.release(old_slot));
             self.returning.push((old, old_slot));
             released?;
         }
-        let slots: Vec<usize> = self.returning.iter().map(|(_, slot)| *slot).collect();
-        for slot in slots {
+        for &(_, slot) in &self.returning {
             gpu.wait(slot)?;
         }
-        Ok(self.returning.drain(..).map(|(picture, _)| picture).collect())
+        self.returning.clear();
+        Ok(())
     }
 
-    /// Takes the released pictures whose fence has finished.
-    fn collect(&mut self, gpu: &impl SampleGpu) -> Vec<P> {
-        let mut done = Vec::new();
-        let mut index = 0;
-        while index < self.returning.len() {
-            if gpu.finished(self.returning[index].1) {
-                done.push(self.returning.remove(index).0);
-            } else {
-                index += 1;
-            }
-        }
-        done
+    /// Drops released pictures whose fence has finished in place without allocating.
+    fn collect(&mut self, gpu: &impl SampleGpu) {
+        self.returning.retain_mut(|&mut (_, slot)| !gpu.finished(slot));
     }
 }
 
 #[cfg(test)]
 mod sample_tests {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
     use super::*;
+
+    /// A picture token that records its id when dropped.
+    #[derive(Debug)]
+    struct Tracked(u32, Rc<RefCell<Vec<u32>>>);
+    impl Drop for Tracked {
+        fn drop(&mut self) {
+            self.1.borrow_mut().push(self.0);
+        }
+    }
 
     /// Records the queue's calls; work is pending on a slot from its release until `complete`.
     #[derive(Default)]
@@ -3264,6 +2831,7 @@ mod sample_tests {
         log: Vec<String>,
         pending: Vec<usize>,
         refuse_release: bool,
+        combine_swap: bool,
     }
 
     impl Mock {
@@ -3297,31 +2865,57 @@ mod sample_tests {
             self.pending.push(slot);
             Ok(())
         }
+        fn swap(&mut self, acquire_slot: usize, release_slot: usize) -> Result<(), String> {
+            if !self.combine_swap {
+                self.acquire(acquire_slot)?;
+                return self.release(release_slot);
+            }
+            if self.refuse_release {
+                return Err("the device is lost".into());
+            }
+            self.log.push(format!("swap {acquire_slot} {release_slot}"));
+            self.pending.push(release_slot);
+            Ok(())
+        }
     }
 
     #[test]
     fn a_picture_is_released_only_after_the_next_draw_is_flushed() {
         let mut gpu = Mock::default();
         let mut sampled = Sampled::new(3);
-        assert_eq!(sampled.show(&mut gpu, 0u32).unwrap(), Vec::<u32>::new());
+        sampled.show(&mut gpu, 0u32).unwrap();
         assert_eq!(gpu.log, ["flush", "wait 0", "acquire 0"], "nothing is released with one picture");
-        assert_eq!(sampled.show(&mut gpu, 1).unwrap(), Vec::<u32>::new());
+        sampled.show(&mut gpu, 1).unwrap();
         assert_eq!(gpu.log[3..], ["flush", "wait 1", "acquire 1", "release 0"], "picture 0's release follows the flush that submits its draws");
         assert_eq!(sampled.held(), 2);
     }
 
     #[test]
-    fn a_released_picture_waits_for_its_fence_before_the_decoder_gets_it_back() {
-        let mut gpu = Mock::default();
+    fn replacing_a_shown_picture_uses_combined_swap() {
+        let mut gpu = Mock { combine_swap: true, ..Mock::default() };
         let mut sampled = Sampled::new(3);
         sampled.show(&mut gpu, 0u32).unwrap();
+        assert_eq!(gpu.log, ["flush", "wait 0", "acquire 0"]);
         sampled.show(&mut gpu, 1).unwrap();
+        assert_eq!(gpu.log[3..], ["flush", "wait 1", "swap 1 0"]);
+        assert_eq!(sampled.held(), 2);
+    }
+
+    #[test]
+    fn a_released_picture_waits_for_its_fence_before_the_decoder_gets_it_back() {
+        let dropped = Rc::new(RefCell::new(Vec::new()));
+        let mut gpu = Mock::default();
+        let mut sampled = Sampled::new(3);
+        sampled.show(&mut gpu, Tracked(0, dropped.clone())).unwrap();
+        sampled.show(&mut gpu, Tracked(1, dropped.clone())).unwrap();
         // The GPU has not finished picture 0's release: it is not handed back.
-        assert_eq!(sampled.show(&mut gpu, 2).unwrap(), Vec::<u32>::new());
+        sampled.show(&mut gpu, Tracked(2, dropped.clone())).unwrap();
+        assert!(dropped.borrow().is_empty());
         assert_eq!(sampled.held(), 3, "shown picture plus two not yet returned");
         gpu.complete(0);
-        // Slot 0's next use waits for it, and then picture 0 is returned.
-        assert_eq!(sampled.show(&mut gpu, 3).unwrap(), vec![0]);
+        // Slot 0's next use waits for it, and then picture 0 is dropped in place.
+        sampled.show(&mut gpu, Tracked(3, dropped.clone())).unwrap();
+        assert_eq!(*dropped.borrow(), vec![0]);
         assert_eq!(sampled.held(), 3);
     }
 
@@ -3364,14 +2958,48 @@ mod sample_tests {
 
     #[test]
     fn finishing_gives_every_picture_back_after_its_release() {
+        let dropped = Rc::new(RefCell::new(Vec::new()));
         let mut gpu = Mock::default();
         let mut sampled = Sampled::new(3);
-        sampled.show(&mut gpu, 0u32).unwrap();
-        sampled.show(&mut gpu, 1).unwrap();
-        assert_eq!(sampled.finish(&mut gpu).unwrap(), vec![0, 1]);
+        sampled.show(&mut gpu, Tracked(0, dropped.clone())).unwrap();
+        sampled.show(&mut gpu, Tracked(1, dropped.clone())).unwrap();
+        sampled.finish(&mut gpu).unwrap();
+        assert_eq!(*dropped.borrow(), vec![0, 1]);
         assert_eq!(gpu.log.last().map(String::as_str), Some("wait 1"));
         assert_eq!(sampled.held(), 0);
         assert!(gpu.log.contains(&"release 1".to_string()), "the shown picture is released, not dropped");
+    }
+
+    #[test]
+    fn held_drop_finished_drops_only_done_slots_in_place() {
+        let dropped = Rc::new(RefCell::new(Vec::new()));
+        let mut held = Held::new();
+        held.hold(0, Tracked(10, dropped.clone()));
+        held.hold(1, Tracked(11, dropped.clone()));
+        held.hold(2, Tracked(12, dropped.clone()));
+        held.drop_finished(|slot| slot != 1);
+        let mut got = dropped.borrow().clone();
+        got.sort_unstable();
+        assert_eq!(got, vec![10, 12]);
+        assert!(held.take(0).is_none());
+        assert!(held.take(1).is_some());
+    }
+
+    #[test]
+    fn interleaved_444_single_layer_imports_accept_ayuv_xyuv_y410_xv30() {
+        let make = |drm_format: u32| {
+            let mut desc = crate::dmabuf::Descriptor { num_objects: 1, num_layers: 1, ..Default::default() };
+            desc.layers[0].drm_format = drm_format;
+            desc.layers[0].num_planes = 1;
+            desc.layers[0].object_index[0] = 0;
+            desc
+        };
+        assert!(import_interleaved_layer(&make(fourcc(b"AYUV")), false).unwrap() == vk::Format::R8G8B8A8_UNORM);
+        assert!(import_interleaved_layer(&make(fourcc(b"XYUV")), false).unwrap() == vk::Format::R8G8B8A8_UNORM);
+        assert!(import_interleaved_layer(&make(fourcc(b"Y410")), true).unwrap() == vk::Format::A2R10G10B10_UNORM_PACK32);
+        assert!(import_interleaved_layer(&make(fourcc(b"XV30")), true).unwrap() == vk::Format::A2R10G10B10_UNORM_PACK32);
+        assert!(import_interleaved_layer(&make(fourcc(b"XYUV")), true).is_err());
+        assert!(import_interleaved_layer(&make(fourcc(b"XV30")), false).is_err());
     }
 
     #[test]

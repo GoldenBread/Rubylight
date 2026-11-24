@@ -6,18 +6,17 @@
 #import <CoreVideo/CoreVideo.h>
 #import <IOSurface/IOSurfaceRef.h>
 
-// Output images SDL draws. One is reused only when nothing but this ring holds it and its
-// IOSurface's use count is back to what the ring's own texture alone gives it: a Metal texture of
-// the surface (SDL's, kept alive by an in-flight command buffer too) raises that count while it
-// exists. Otherwise the next is tried, and a frame with all of them busy gets an image of its own.
+// Output images SDL draws. Rust pools one SDL_Texture per ring slot, so slots rotate round-robin
+// without checking IOSurface use counts (pooled textures keep the IOSurface referenced) and the
+// synchronous wait guarantees the current slot's write finishes before SDL's queue reads it.
 #define NJ_RING 4
 
 @interface NJSpatial : NSObject {
 @public
     CVPixelBufferRef ring[NJ_RING];
-    int32_t idle_use[NJ_RING];
     __strong id<MTLTexture> targets[NJ_RING];
     int next;
+    unsigned int frames;
 }
 @property id<MTLDevice> device;
 @property id<MTLCommandQueue> queue;
@@ -126,62 +125,77 @@ void *nj_metalfx_new(void *layer, int iw, int ih, int ow, int oh) {
     }
 }
 
-// Returns a +1 CVPixelBuffer from the ring (or, with every ring image busy, a new one). There is
+// Writes into the next ring slot and returns its index (0..NJ_RING-1), or -1 on failure. There is
 // no CPU pixel readback; the wait keeps SDL's queue from reading the image before it is written.
-void *nj_metalfx_draw(void *context, void *input, const float *parameters, double *gpu_ms) {
+int nj_metalfx_draw(void *context, void *input, const float *parameters, double *gpu_ms) {
     @autoreleasepool {
-        NJSpatial *s=(__bridge NJSpatial *)context;
-        CVPixelBufferRef buffer=input;
-        if (!buffer || CVPixelBufferGetPlaneCount(buffer)!=2) return NULL;
-        OSType format=CVPixelBufferGetPixelFormatType(buffer);
-        bool ten=format==kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange || format==kCVPixelFormatType_420YpCbCr10BiPlanarFullRange;
-        if (!ten && format!=kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange && format!=kCVPixelFormatType_420YpCbCr8BiPlanarFullRange) return NULL;
-        CVMetalTextureRef planes[2]={NULL,NULL};
-        CVPixelBufferRef output=NULL;
-        id<MTLTexture> target=nil;
-        for (int i=0;i<2;i++) {
-            MTLPixelFormat f=i ? (ten ? MTLPixelFormatRG16Unorm : MTLPixelFormatRG8Unorm) : (ten ? MTLPixelFormatR16Unorm : MTLPixelFormatR8Unorm);
-            if (CVMetalTextureCacheCreateTextureFromImage(NULL,s.cache,buffer,NULL,f,CVPixelBufferGetWidthOfPlane(buffer,i),CVPixelBufferGetHeightOfPlane(buffer,i),i,&planes[i])!=kCVReturnSuccess) goto cleanup;
-        }
-        for (int k=0;k<NJ_RING && !output;k++) {
-            int i=(s->next+k)%NJ_RING;
-            if (!s->ring[i]) {
-                if (!nj_new_output(s,&s->ring[i],&s->targets[i])) break;
-                s->idle_use[i]=IOSurfaceGetUseCount(CVPixelBufferGetIOSurface(s->ring[i]));
-            } else if (CFGetRetainCount(s->ring[i])!=1 || IOSurfaceGetUseCount(CVPixelBufferGetIOSurface(s->ring[i]))!=s->idle_use[i]) {
-                continue;
+        NJSpatial *s = (__bridge NJSpatial *)context;
+        CVPixelBufferRef buffer = input;
+        if (!buffer || CVPixelBufferGetPlaneCount(buffer) != 2) return -1;
+        OSType format = CVPixelBufferGetPixelFormatType(buffer);
+        bool ten = format == kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange
+            || format == kCVPixelFormatType_420YpCbCr10BiPlanarFullRange;
+        if (!ten && format != kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
+            && format != kCVPixelFormatType_420YpCbCr8BiPlanarFullRange) return -1;
+        CVMetalTextureRef planes[2] = {NULL, NULL};
+        int slot = s->next;
+        int result = -1;
+        for (int i = 0; i < 2; i++) {
+            MTLPixelFormat f = i ? (ten ? MTLPixelFormatRG16Unorm : MTLPixelFormatRG8Unorm)
+                : (ten ? MTLPixelFormatR16Unorm : MTLPixelFormatR8Unorm);
+            if (CVMetalTextureCacheCreateTextureFromImage(
+                    NULL, s.cache, buffer, NULL, f,
+                    CVPixelBufferGetWidthOfPlane(buffer, i),
+                    CVPixelBufferGetHeightOfPlane(buffer, i), i, &planes[i]) != kCVReturnSuccess) {
+                goto cleanup;
             }
-            output=(CVPixelBufferRef)CFRetain(s->ring[i]);
-            target=s->targets[i];
-            s->next=(i+1)%NJ_RING;
         }
-        if (!output) {
-            if (!nj_new_output(s,&output,&target)) goto cleanup;
+        if (!s->ring[slot] && !nj_new_output(s, &s->ring[slot], &s->targets[slot])) {
+            goto cleanup;
         }
         {
-            id<MTLCommandBuffer> command=[s.queue commandBuffer];
-            id<MTLComputeCommandEncoder> e=[command computeCommandEncoder];
+            id<MTLCommandBuffer> command = [s.queue commandBuffer];
+            id<MTLComputeCommandEncoder> e = [command computeCommandEncoder];
             [e setComputePipelineState:s.convert];
             [e setTexture:CVMetalTextureGetTexture(planes[0]) atIndex:0];
             [e setTexture:CVMetalTextureGetTexture(planes[1]) atIndex:1];
             [e setTexture:s.rgb atIndex:2];
-            [e setBytes:parameters length:8*sizeof(float) atIndex:0];
-            [e dispatchThreads:MTLSizeMake(s.rgb.width,s.rgb.height,1) threadsPerThreadgroup:MTLSizeMake(8,8,1)];
+            [e setBytes:parameters length:8 * sizeof(float) atIndex:0];
+            [e dispatchThreads:MTLSizeMake(s.rgb.width, s.rgb.height, 1)
+         threadsPerThreadgroup:MTLSizeMake(8, 8, 1)];
             [e endEncoding];
-            s.scaler.colorTexture=s.rgb; s.scaler.outputTexture=s.scaled;
-            s.scaler.inputContentWidth=s.rgb.width; s.scaler.inputContentHeight=s.rgb.height;
+            s.scaler.colorTexture = s.rgb;
+            s.scaler.outputTexture = s.scaled;
+            s.scaler.inputContentWidth = s.rgb.width;
+            s.scaler.inputContentHeight = s.rgb.height;
             [s.scaler encodeToCommandBuffer:command];
-            id<MTLBlitCommandEncoder> blit=[command blitCommandEncoder];
-            [blit copyFromTexture:s.scaled toTexture:target]; [blit endEncoding];
-            [command commit]; [command waitUntilCompleted];
-            if (command.status==MTLCommandBufferStatusError) { NSLog(@"Nightjar MetalFX: %@",command.error); CFRelease(output); output=NULL; }
-            if (gpu_ms) *gpu_ms=(command.GPUEndTime-command.GPUStartTime)*1000;
+            id<MTLBlitCommandEncoder> blit = [command blitCommandEncoder];
+            [blit copyFromTexture:s.scaled toTexture:s->targets[slot]];
+            [blit endEncoding];
+            [command commit];
+            [command waitUntilCompleted];
+            if (command.status == MTLCommandBufferStatusError) {
+                NSLog(@"Nightjar MetalFX: %@", command.error);
+            } else {
+                s->next = (slot + 1) % NJ_RING;
+                result = slot;
+            }
+            if (gpu_ms) *gpu_ms = (command.GPUEndTime - command.GPUStartTime) * 1000;
         }
 cleanup:
-        for (int i=0;i<2;i++) if (planes[i]) CFRelease(planes[i]);
-        CVMetalTextureCacheFlush(s.cache,0);
-        return output;
+        for (int i = 0; i < 2; i++) if (planes[i]) CFRelease(planes[i]);
+        if (++s->frames >= 60) {
+            s->frames = 0;
+            CVMetalTextureCacheFlush(s.cache, 0);
+        }
+        return result;
     }
 }
+
+void *nj_metalfx_slot_buffer(void *context, int slot) {
+    if (!context || slot < 0 || slot >= NJ_RING) return NULL;
+    NJSpatial *s = (__bridge NJSpatial *)context;
+    return s->ring[slot];
+}
+
 void nj_metalfx_free(void *context) { @autoreleasepool { (void)CFBridgingRelease(context); } }
-void nj_metalfx_buffer_free(void *buffer) { if (buffer) CFRelease(buffer); }

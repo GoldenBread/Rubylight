@@ -21,6 +21,7 @@ use ffi::*;
 mod d3d11;
 #[cfg(windows)]
 pub use d3d11::ProbeVideoDevice;
+mod wavelet_pool;
 
 #[cfg(target_os = "linux")]
 use crate::stream::stage_times::Stages;
@@ -1557,7 +1558,10 @@ impl VideoDecoder {
                         }
                     }
                 }
-                return frame.map_to_memory().map_or(Received::Error, Received::Frame);
+                let mapped = frame.map_to_memory();
+                av_frame_unref(raw.as_ptr());
+                self.spare = Some(frame);
+                return mapped.map_or(Received::Error, Received::Frame);
             }
             if format == AV_PIX_FMT_CUDA {
                 #[cfg(unix)]
@@ -1577,15 +1581,16 @@ impl VideoDecoder {
                 }
                 // NVDEC's pictures are in CUDA memory, which only CUDA itself can read: copied out.
                 let Some(memory) = NonNull::new(av_frame_alloc()) else {
+                    av_frame_unref(raw.as_ptr());
+                    self.spare = Some(frame);
                     return Received::Error;
                 };
                 let memory = Frame::new(memory);
-                if av_hwframe_transfer_data(memory.raw.as_ptr(), raw.as_ptr(), 0) < 0
-                    || av_frame_copy_props(memory.raw.as_ptr(), raw.as_ptr()) < 0
-                {
-                    return Received::Error;
-                }
-                return Received::Frame(memory);
+                let ok = av_hwframe_transfer_data(memory.raw.as_ptr(), raw.as_ptr(), 0) >= 0
+                    && av_frame_copy_props(memory.raw.as_ptr(), raw.as_ptr()) >= 0;
+                av_frame_unref(raw.as_ptr());
+                self.spare = Some(frame);
+                return if ok { Received::Frame(memory) } else { Received::Error };
             }
             #[cfg(windows)]
             if format == AV_PIX_FMT_D3D11 && let Some(bridge) = &self.d3d11_bridge {
@@ -1778,16 +1783,7 @@ impl Frame {
     }
 
     pub fn wavelet(width: usize, height: usize) -> Result<Self, String> {
-        unsafe {
-            let mut frame = Self::new(NonNull::new(av_frame_alloc()).ok_or("Could not allocate wavelet frame")?);
-            frame.wavelet = true;
-            let raw = frame.raw.as_mut();
-            raw.width = width as i32;
-            raw.height = height as i32;
-            raw.format = AV_PIX_FMT_RGBA64LE;
-            if av_frame_get_buffer(frame.raw.as_ptr(), 32) < 0 { return Err("Could not allocate wavelet coefficients".into()); }
-            Ok(frame)
-        }
+        wavelet_pool::alloc(width, height)
     }
 
     pub fn info(&self) -> FrameInfo {
@@ -1868,6 +1864,8 @@ impl Frame {
     pub fn wait_d3d11_ready(&self) -> Result<(), String> {
         self.shared.as_ref().map_or(Ok(()), d3d11::SharedFrame::wait_on_renderer)
     }
+
+    pub fn is_d3d11_bridge(&self) -> bool { self.shared.is_some() }
 
     pub fn with_decoder_lock(&self, f: &mut dyn FnMut()) {
         // SAFETY: `self.raw` is a live `AVFrame`.
@@ -1958,30 +1956,33 @@ impl Drop for Frame {
 }
 
 /// What the decoder hands the presenter: an FFmpeg frame, or (PyroWave decoded on the GPU) a set
-/// of planes: D3D11 textures with the decode fence value that says when they are final on
-/// Windows, CPU buffers (already final) on Linux.
+/// of planes with the decode timeline/fence value that says when they are final (0 when already final).
 pub enum Picture {
     Frame(Frame),
-    GpuPlanes {
-        lease: crate::stream::gpu_planes::Lease,
-        #[cfg(windows)]
-        fence_value: u64,
-    },
+    GpuPlanes { lease: crate::stream::gpu_planes::Lease, fence_value: u64 },
+    /// Frame already moved into `VideoTexture::held` without `av_frame_clone`.
+    Taken,
 }
 
 impl Picture {
     /// The FFmpeg frame, for the pictures that are one.
     pub fn frame(&self) -> Option<&Frame> {
-        match self {
-            Self::Frame(frame) => Some(frame),
-            Self::GpuPlanes { .. } => None,
-        }
+        match self { Self::Frame(frame) => Some(frame), _ => None }
+    }
+
+    /// Moves the FFmpeg frame out of `self` without cloning its buffer references.
+    pub fn take_frame(&mut self) -> Option<Frame> {
+        matches!(self, Self::Frame(_)).then(|| match std::mem::replace(self, Self::Taken) {
+            Self::Frame(frame) => frame,
+            _ => unreachable!(),
+        })
     }
 
     pub fn format_name(&self) -> String {
         match self {
             Self::Frame(frame) => frame.format_name(),
             Self::GpuPlanes { .. } => "PyroWave GPU planes".into(),
+            Self::Taken => "taken".into(),
         }
     }
 }

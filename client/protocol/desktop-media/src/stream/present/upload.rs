@@ -3,6 +3,33 @@
 
 use super::*;
 
+#[cfg(target_os = "macos")]
+#[path = "macos_cache.rs"]
+mod macos_cache;
+
+/// Borrowed or movable picture source for `VideoTexture::upload` / `upload_take`.
+pub(super) enum FrameSource<'a> {
+    Ref(&'a media::Frame),
+    Owned(&'a mut media::Picture),
+}
+
+impl FrameSource<'_> {
+    pub(super) fn frame(&self) -> &media::Frame {
+        match self {
+            Self::Ref(frame) => frame,
+            Self::Owned(picture) => picture.frame().expect("checked Frame variant"),
+        }
+    }
+
+    /// Moves the frame out when owned (zero `av_frame_clone`), else clones a reference.
+    pub(super) fn take_or_ref(&mut self) -> Option<media::Frame> {
+        match self {
+            Self::Ref(frame) => frame.reference(),
+            Self::Owned(picture) => picture.take_frame(),
+        }
+    }
+}
+
 impl VideoTexture {
     pub(super) fn ensure(
         &mut self,
@@ -31,9 +58,9 @@ impl VideoTexture {
         pixel_buffer: *mut c_void,
     ) -> bool {
         // Each VideoToolbox picture has its own backing. A later CPU upload must also
-        // replace an imported texture before writing to it.
+        // replace an imported/pooled texture before writing to it.
         #[cfg(target_os = "macos")]
-        let reusable = pixel_buffer.is_null() && self.held.is_none();
+        let reusable = pixel_buffer.is_null() && self.held.is_none() && self.importer.is_none();
         #[cfg(not(target_os = "macos"))]
         let reusable = pixel_buffer.is_null();
         if reusable && !self.texture.is_null()
@@ -122,39 +149,155 @@ impl VideoTexture {
         true
     }
 
+    /// Pools Metal `SDL_Texture` wrappers per VideoToolbox `IOSurfaceID` (up to 16 entries).
+    #[cfg(target_os = "macos")]
+    #[allow(clippy::too_many_arguments)]
+    unsafe fn ensure_videotoolbox(
+        &mut self,
+        renderer: *mut SDL_Renderer,
+        format: SDL_PixelFormat,
+        width: i32,
+        height: i32,
+        space: SDL_Colorspace,
+        white_level: f32,
+        pixel_buffer: *mut c_void,
+    ) -> bool {
+        // SAFETY: Caller passes a live `CVPixelBufferRef` on a live Metal renderer.
+        let Some(surface_id) = (unsafe { macos_cache::surface_id(pixel_buffer) }) else {
+            return self.ensure_with(renderer, format, width, height, space, white_level, None, pixel_buffer);
+        };
+        let metadata = self.hdr_metadata.filter(|_| self.hdr_mode == Some(true));
+        let hdr = hdr_properties(self.hdr_frame && space != SDL_COLORSPACE_SRGB_LINEAR, white_level, metadata);
+        let key = macos_cache::CacheKey {
+            renderer: renderer as usize,
+            format: format.0,
+            width,
+            height,
+            space: space.0,
+            white_level_bits: white_level.to_bits(),
+            white_point_bits: hdr.white_point.map(f32::to_bits),
+            headroom_bits: hdr.headroom.map(f32::to_bits),
+        };
+        let cache_valid = self
+            .importer
+            .as_mut()
+            .and_then(crate::dmabuf::Importer::macos_slot_mut::<macos_cache::TextureCache>)
+            .is_some_and(|cache| cache.matches(key, self.texture));
+        if cache_valid
+            && let Some(texture) = self
+                .importer
+                .as_mut()
+                .and_then(crate::dmabuf::Importer::macos_slot_mut::<macos_cache::TextureCache>)
+                .and_then(|cache| cache.activate(surface_id))
+        {
+            self.texture = texture;
+            return true;
+        }
+        if !cache_valid {
+            self.destroy();
+        }
+        // SAFETY: SDL property and texture calls on a live Metal renderer.
+        let texture = unsafe {
+            let props = SDL_CreateProperties();
+            SDL_SetNumberProperty(props, SDL_PROP_TEXTURE_CREATE_FORMAT_NUMBER, i64::from(format.0));
+            SDL_SetNumberProperty(props, SDL_PROP_TEXTURE_CREATE_ACCESS_NUMBER, i64::from(SDL_TEXTUREACCESS_STATIC.0));
+            SDL_SetNumberProperty(props, SDL_PROP_TEXTURE_CREATE_WIDTH_NUMBER, i64::from(width));
+            SDL_SetNumberProperty(props, SDL_PROP_TEXTURE_CREATE_HEIGHT_NUMBER, i64::from(height));
+            SDL_SetNumberProperty(props, SDL_PROP_TEXTURE_CREATE_COLORSPACE_NUMBER, i64::from(space.0));
+            if let Some(white_point) = hdr.white_point {
+                SDL_SetFloatProperty(props, SDL_PROP_TEXTURE_CREATE_SDR_WHITE_POINT_FLOAT, white_point);
+            }
+            if let Some(headroom) = hdr.headroom {
+                SDL_SetFloatProperty(props, SDL_PROP_TEXTURE_CREATE_HDR_HEADROOM_FLOAT, headroom);
+            }
+            SDL_SetPointerProperty(props, SDL_PROP_TEXTURE_CREATE_METAL_PIXELBUFFER_POINTER, pixel_buffer);
+            let texture = SDL_CreateTextureWithProperties(renderer, props);
+            SDL_DestroyProperties(props);
+            if texture.is_null() {
+                return false;
+            }
+            SDL_SetTextureScaleMode(texture, SDL_SCALEMODE_LINEAR);
+            texture
+        };
+        if let Some(cache) = self
+            .importer
+            .as_mut()
+            .and_then(crate::dmabuf::Importer::macos_slot_mut::<macos_cache::TextureCache>)
+        {
+            // SAFETY: `texture` was created on `renderer` matching `key`.
+            unsafe { cache.insert(surface_id, texture) };
+        } else {
+            self.importer = Some(crate::dmabuf::Importer::macos_slot(macos_cache::TextureCache::new(
+                key, surface_id, texture,
+            )));
+        }
+        self.texture = texture;
+        self.format = format;
+        self.width = width;
+        self.height = height;
+        self.colorspace = space;
+        self.white_level = white_level;
+        self.texture_headroom = None;
+        true
+    }
+
     /// Puts a decoded picture into the texture; `rows` are the only rows of a GPU-decoded picture
     /// to draw when the rows above them are there already (the raced presenter). A decoded H.264,
     /// HEVC or AV1 picture is shown without its alignment padding (`Decoded::visible`): the texture keeps
     /// the whole picture and what draws it samples only the stream's part, so nothing is copied.
     pub fn upload(&mut self, renderer: *mut SDL_Renderer, decoded: &Decoded, rows: Option<(u32, u32)>) -> bool {
+        let (is_plain, visible, setup) = (plain(decoded), decoded.visible, decoded.setup);
+        self.run_upload(visible, is_plain, |this| match &decoded.picture {
+            #[cfg(windows)]
+            media::Picture::GpuPlanes { lease, fence_value } => this.upload_planes(renderer, setup, lease, *fence_value, rows),
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            media::Picture::GpuPlanes { lease, fence_value } => {
+                let _ = rows;
+                this.upload_planes(renderer, setup, lease, *fence_value)
+            }
+            #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
+            media::Picture::GpuPlanes { .. } => { let _ = rows; false }
+            media::Picture::Frame(frame) => this.upload_frame(renderer, setup, FrameSource::Ref(frame)),
+            media::Picture::Taken => false,
+        })
+    }
+
+    /// Like `upload`, but moves hardware frames directly into `self.held` without `av_frame_clone`.
+    pub fn upload_take(&mut self, renderer: *mut SDL_Renderer, decoded: &mut Decoded, rows: Option<(u32, u32)>) -> bool {
+        let (is_plain, visible, setup) = (plain(decoded), decoded.visible, decoded.setup);
+        self.run_upload(visible, is_plain, |this| match &decoded.picture {
+            #[cfg(windows)]
+            media::Picture::GpuPlanes { lease, fence_value } => this.upload_planes(renderer, setup, lease, *fence_value, rows),
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            media::Picture::GpuPlanes { lease, fence_value } => {
+                let _ = rows;
+                this.upload_planes(renderer, setup, lease, *fence_value)
+            }
+            #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
+            media::Picture::GpuPlanes { .. } => { let _ = rows; false }
+            media::Picture::Frame(_) => this.upload_frame(renderer, setup, FrameSource::Owned(&mut decoded.picture)),
+            media::Picture::Taken => false,
+        })
+    }
+
+    fn run_upload(&mut self, visible: Option<(i32, i32)>, is_plain: bool, upload: impl FnOnce(&mut Self) -> bool) -> bool {
         // Planes copied for the last picture are not this one's, unless this one fails: then the
         // last picture stays on screen, from its planes while the pass and texture that hold them
         // do (the texture was never drawn into).
-        #[cfg(unix)]
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         let last_planes = self.planes_pending.take();
-        let uploaded = self.upload_picture(renderer, decoded, rows);
-        #[cfg(unix)]
+        let uploaded = upload(self);
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         { self.planes_pending = planes_after_upload(uploaded, self.planes_pending, last_planes, self.planes.is_some() && !self.texture.is_null(), self.pyrowave_format); }
-        self.visible = decoded.visible.filter(|_| uploaded && plain(decoded)).and_then(|visible| visible_part(visible, (self.width, self.height)));
+        self.visible = visible.filter(|_| uploaded && is_plain).and_then(|visible| visible_part(visible, (self.width, self.height)));
         uploaded
     }
 
-    fn upload_picture(&mut self, renderer: *mut SDL_Renderer, decoded: &Decoded, rows: Option<(u32, u32)>) -> bool {
+    fn upload_frame(&mut self, renderer: *mut SDL_Renderer, setup: nightjar_core::session::VideoSetup, mut source: FrameSource<'_>) -> bool {
         // A picture whose conversion never ran is not counted.
         #[cfg(unix)]
         if std::mem::take(&mut self.pyrowave_stages_open) { self.pyrowave_stages.reset(); }
-        #[cfg(windows)]
-        if let media::Picture::GpuPlanes { lease, fence_value } = &decoded.picture {
-            return self.upload_planes(renderer, decoded, lease, *fence_value, rows);
-        }
-        #[cfg(not(windows))]
-        let _ = rows;
-        #[cfg(unix)]
-        if let media::Picture::GpuPlanes { lease } = &decoded.picture {
-            return self.upload_planes(renderer, decoded, lease);
-        }
-        let Some(frame) = decoded.picture.frame() else { return false };
-        let info = frame.info();
+        let info = source.frame().info();
         // Only a D3D11VA picture (below) is drawn by `stream::direct`.
         #[cfg(windows)]
         {
@@ -177,7 +320,6 @@ impl VideoTexture {
             1.0
         };
         if info.kind == media::FRAME_WAVELET {
-            let setup = decoded.setup;
             let ten = setup.format & nightjar_core::sdp::VIDEO_FORMAT_MASK_10BIT != 0;
             let hdr = self.hdr_mode.unwrap_or(ten);
             let flags = u32::from(setup.color_range != 0) | (u32::from(hdr) << 1) | ((setup.color_space as u32) << 2)
@@ -189,12 +331,11 @@ impl VideoTexture {
                 self.pyrowave = super::super::pyrowave_gpu::Reconstruction::new(renderer, self.texture, parameters);
                 self.pyrowave_format = Some(parameters);
             }
-            let drawn = self.pyrowave.as_ref().is_some_and(|gpu| gpu.draw_timed(renderer, self.texture, frame, &mut self.pyrowave_stages));
+            let drawn = self.pyrowave.as_ref().is_some_and(|gpu| gpu.draw_timed(renderer, self.texture, source.frame(), &mut self.pyrowave_stages));
             if drawn { self.pyrowave_stages.commit(); } else { self.pyrowave_stages.reset(); }
             return drawn;
         }
-        if decoded.setup.chroma_packing != 0 {
-            let setup = decoded.setup;
+        if setup.chroma_packing != 0 {
             let Some(layout) = rubylight_protocol::packed444::Geometry::new(
                 setup.logical_width as u32,
                 setup.logical_height as u32,
@@ -267,7 +408,7 @@ impl VideoTexture {
                 let success = self
                     .packed
                     .as_mut()
-                    .is_some_and(|packed| packed.upload(frame));
+                    .is_some_and(|packed| packed.upload(source.frame()));
                 if success {
                     self.width = setup.logical_width;
                     self.height = setup.logical_height;
@@ -289,7 +430,7 @@ impl VideoTexture {
             }
             #[cfg(unix)]
             if let Some(coded) = coded {
-                return self.draw_packed_planes(renderer, frame, coded, &parameters);
+                return self.draw_packed_planes(renderer, source.frame(), coded, &parameters);
             }
             if self.packed.is_none() {
                 self.packed =
@@ -299,7 +440,7 @@ impl VideoTexture {
             let success = self
                 .packed
                 .as_mut()
-                .is_some_and(|packed| packed.draw(renderer, self.texture, frame, &parameters));
+                .is_some_and(|packed| packed.draw(renderer, self.texture, source.frame(), &parameters));
             if !success {
                 self.destroy();
             }
@@ -307,17 +448,17 @@ impl VideoTexture {
         }
         self.hdr_frame = info.color_trc == TRC_PQ;
         self.hlg_frame = info.color_trc == TRC_HLG;
-        self.centred_chroma = frame.centred_chroma();
+        self.centred_chroma = source.frame().centred_chroma();
         if let Some(layout) = media::PlanarLayout::of(&info) {
             return self.upload_planar(renderer, &info, layout, white_level);
         }
         #[cfg(unix)]
         if let Some(layout) = media::PlanarLayout::of_vulkan(&info) {
-            return self.upload_vulkan(renderer, frame, &info, layout, white_level);
+            return self.upload_vulkan(renderer, source.frame(), &info, layout, white_level);
         }
         #[cfg(unix)]
         if hlg_through_planes(&info) {
-            return self.upload_hlg(renderer, frame, &info, white_level);
+            return self.upload_hlg(renderer, source.frame(), &info, white_level);
         }
         let space = colorspace(&info);
         let (w, h) = (info.width, info.height);
@@ -326,7 +467,7 @@ impl VideoTexture {
             match info.kind {
                 // AYUV, Y410 or Y416: no SDL texture format, so the plane pass draws its copy.
                 #[cfg(windows)]
-                media::FRAME_D3D11_444 => self.upload_d3d11_444(renderer, frame, &info, white_level),
+                media::FRAME_D3D11_444 => self.upload_d3d11_444(renderer, &mut source, &info, white_level),
                 #[cfg(windows)]
                 media::FRAME_D3D11 => {
                     let format = if info.ten_bit != 0 {
@@ -338,6 +479,7 @@ impl VideoTexture {
                         return false;
                     }
                     self.d3d11_picture = true;
+                    let frame = source.frame();
                     self.hdr10_plus = frame.hdr10_plus_peak();
                     self.dolby_vision = match frame.dolby_vision() {
                         Some(rpu) if rpu.ipt => {
@@ -349,13 +491,12 @@ impl VideoTexture {
                         }
                         rpu => rpu.and_then(|rpu| rpu.peak),
                     };
+                    let readable = frame.d3d11_surface().is_some_and(|surface| surface.readable);
                     self.held = None;
                     self.copied = false;
                     // The pass reads a readable decoder texture in place: no copy.
-                    if !self.direct_failed && super::super::direct::enabled()
-                        && frame.d3d11_surface().is_some_and(|surface| surface.readable)
-                    {
-                        self.held = frame.reference();
+                    if !self.direct_failed && super::super::direct::enabled() && readable {
+                        self.held = source.take_or_ref();
                         if self.held.is_some() {
                             return true;
                         }
@@ -371,7 +512,7 @@ impl VideoTexture {
                         );
                         return false;
                     }
-                    let copied = frame.copy_to_d3d11(self.d3d11, w, h);
+                    let copied = source.frame().copy_to_d3d11(self.d3d11, w, h);
                     self.copied = copied;
                     if !copied {
                         self.fail(
@@ -387,21 +528,21 @@ impl VideoTexture {
                         let format = if info.ten_bit == 0 { SDL_PIXELFORMAT_NV12 } else { SDL_PIXELFORMAT_P010 };
                         // FFmpeg keeps the CVPixelBufferRef in AVFrame.data[3]. Keep the
                         // frame (and thus its pool slot) alive for the displayed texture.
-                        let buffer: *mut c_void = frame.raw.as_ref().data[3].cast();
+                        let buffer: *mut c_void = source.frame().raw.as_ref().data[3].cast();
                         if !buffer.is_null()
-                            && let Some(held) = frame.reference()
-                            && self.ensure_with(renderer, format, w, h, space, white_level, None, buffer)
+                            && self.ensure_videotoolbox(renderer, format, w, h, space, white_level, buffer)
+                            && let Some(held) = source.take_or_ref()
                         {
                             self.held = Some(held);
                             return true;
                         }
                     }
                     // An SDL renderer without IOSurface import can still display the frame.
-                    frame.map_to_memory().is_some_and(|mapped| self.upload_nv(renderer, &mapped.info(), space, white_level))
+                    source.frame().map_to_memory().is_some_and(|mapped| self.upload_nv(renderer, &mapped.info(), space, white_level))
                 }
                 media::FRAME_NV12 | media::FRAME_P010 => self.upload_nv(renderer, &info, space, white_level),
                 #[cfg(unix)]
-                media::FRAME_DMABUF => self.upload_dmabuf(renderer, frame, &info, space, white_level),
+                media::FRAME_DMABUF => self.upload_dmabuf(renderer, &mut source, &info, space, white_level),
                 media::FRAME_YUV420P => {
                     self.ensure(renderer, SDL_PIXELFORMAT_IYUV, w, h, space, white_level)
                         && SDL_UpdateYUVTexture(
@@ -439,14 +580,18 @@ impl VideoTexture {
     /// why once and maps the picture to memory instead, and the decoder maps the stream's next
     /// ones itself.
     #[cfg(unix)]
-    fn upload_dmabuf(&mut self, renderer: *mut SDL_Renderer, frame: &media::Frame, info: &FrameInfo, space: SDL_Colorspace, white_level: f32) -> bool {
-        let Some(export) = frame.dmabuf() else { return false };
+    fn upload_dmabuf(&mut self, renderer: *mut SDL_Renderer, source: &mut FrameSource<'_>, info: &FrameInfo, space: SDL_Colorspace, white_level: f32) -> bool {
+        if source.frame().dmabuf().is_none() { return false; }
         if !self.dmabuf_declined {
-            match self.import(renderer, export, info, space, white_level) {
+            let result = {
+                let export = source.frame().dmabuf().expect("checked above");
+                self.import(renderer, export, info, space, white_level)
+            };
+            match result {
                 Ok(()) => {
                     // The texture samples the decoder's surface: it stays out of the decoder's
                     // hands until the next picture replaces it.
-                    self.held = frame.reference();
+                    self.held = source.take_or_ref();
                     return true;
                 }
                 Err(error) => {
@@ -456,8 +601,10 @@ impl VideoTexture {
                 }
             }
         }
-        export.decline();
-        let Some(mapped) = frame.map_to_memory() else {
+        if let Some(export) = source.frame().dmabuf() {
+            export.decline();
+        }
+        let Some(mapped) = source.frame().map_to_memory() else {
             self.fail(format!("mapping a {}x{} VAAPI picture to memory failed", info.width, info.height), "the picture could not be read".into());
             return false;
         };
@@ -514,6 +661,13 @@ impl VideoTexture {
     #[cfg(windows)]
     pub(super) fn transfer(&self) -> super::super::direct::Transfer {
         picture_transfer(self.format, self.hdr_mode, self.hdr_stream, self.hdr_frame, self.hlg_frame)
+    }
+
+    /// Readable held D3D11 decoder frame not yet copied into SDL's texture, so AI enhancement can
+    /// read `SharedSlot::render_tex` directly without an intermediate `copy_held()` copy.
+    #[cfg(windows)]
+    pub fn enhance_held_frame(&self) -> Option<&media::Frame> {
+        self.held.as_ref().filter(|frame| !self.copied && frame.d3d11_surface().is_some_and(|surface| surface.readable))
     }
 
     /// Puts a held decoder picture into the video texture, for what reads it (AI enhancement,

@@ -15,6 +15,33 @@ use super::pyrowave_sdk::fence_ready_within;
 mod surface_cache;
 use surface_cache::SurfaceCache;
 
+/// One pass in [`Filter::draw_batch`]: `(binding, parameters, area)`.
+pub type FilterStep = (usize, [u32; 8], Option<(u32, u32)>);
+
+unsafe fn create_dynamic_cb(device: &ID3D11Device, byte_width: u32) -> windows::core::Result<ID3D11Buffer> {
+    let mut buffer = None;
+    // SAFETY: Caller guarantees `device` is a live D3D11 device.
+    unsafe {
+        device.CreateBuffer(&D3D11_BUFFER_DESC {
+            ByteWidth: byte_width, Usage: D3D11_USAGE_DYNAMIC,
+            BindFlags: D3D11_BIND_CONSTANT_BUFFER.0 as u32, CPUAccessFlags: D3D11_CPU_ACCESS_WRITE.0 as u32,
+            ..Default::default()
+        }, None, Some(&mut buffer))?;
+    }
+    Ok(buffer.unwrap())
+}
+
+unsafe fn write_cb<T>(context: &ID3D11DeviceContext, buffer: &ID3D11Buffer, value: &T) -> windows::core::Result<()> {
+    let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
+    // SAFETY: Caller guarantees `buffer` is a dynamic CB of at least `size_of::<T>()` bytes on `context`'s device.
+    unsafe {
+        context.Map(buffer, 0, D3D11_MAP_WRITE_DISCARD, 0, Some(&mut mapped))?;
+        std::ptr::copy_nonoverlapping(std::ptr::from_ref(value).cast::<u8>(), mapped.pData.cast::<u8>(), std::mem::size_of::<T>());
+        context.Unmap(buffer, 0);
+    }
+    Ok(())
+}
+
 pub struct Filter {
     device: ID3D11Device,
     context: ID3D11DeviceContext,
@@ -58,9 +85,7 @@ impl Filter {
             let code = compile(source, s!("fragment"), s!("ps_5_0"))?;
             let mut fragment = None;
             device.CreatePixelShader(std::slice::from_raw_parts(code.GetBufferPointer().cast(), code.GetBufferSize()), None, Some(&mut fragment))?;
-            let mut constants = None;
-            device.CreateBuffer(&D3D11_BUFFER_DESC { ByteWidth: 32, Usage: D3D11_USAGE_DEFAULT,
-                BindFlags: D3D11_BIND_CONSTANT_BUFFER.0 as u32, ..Default::default() }, None, Some(&mut constants))?;
+            let constants = Some(create_dynamic_cb(&device, 32)?);
             let mut sampler = None;
             device.CreateSamplerState(&D3D11_SAMPLER_DESC { Filter: D3D11_FILTER_MIN_MAG_MIP_LINEAR,
                 AddressU: D3D11_TEXTURE_ADDRESS_CLAMP, AddressV: D3D11_TEXTURE_ADDRESS_CLAMP,
@@ -96,22 +121,37 @@ impl Filter {
     }
 
     pub fn draw_binding(&self, binding: usize, parameters: &[u32; 8], area: Option<(u32, u32)>) -> bool {
-        let Some(binding) = self.bindings.get(binding) else { return false };
+        self.draw_batch(&[(binding, *parameters, area)])
+    }
+
+    /// Records every `(binding, parameters, area)` step into one deferred command list and
+    /// submits it with a single `ExecuteCommandList`, unbinding SRVs before RTV swaps.
+    pub fn draw_batch(&self, steps: &[FilterStep]) -> bool {
+        if steps.is_empty() { return true; }
+        let cb = self.constants[0].as_ref().unwrap();
+        let clear_srvs: [Option<ID3D11ShaderResourceView>; 4] = [None, None, None, None];
+        // SAFETY: `self.deferred` and `self.context` belong to the presenting thread; every binding lives on `self.device`.
         unsafe {
-            let size = area.unwrap_or(binding.size);
             let c = &self.deferred;
             c.ClearState();
-            c.UpdateSubresource(self.constants[0].as_ref().unwrap(), 0, None, parameters.as_ptr().cast(), 0, 0);
-            c.OMSetRenderTargets(Some(&binding.target), None);
-            c.RSSetViewports(Some(&[D3D11_VIEWPORT { Width: size.0 as f32, Height: size.1 as f32,
-                MinDepth: 0.0, MaxDepth: 1.0, ..Default::default() }]));
             c.IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
             c.VSSetShader(&self.vertex, None);
             c.PSSetShader(&self.fragment, None);
-            c.PSSetShaderResources(0, Some(&binding.inputs));
             c.PSSetSamplers(0, Some(&self.sampler));
             c.PSSetConstantBuffers(0, Some(&self.constants));
-            c.Draw(3, 0);
+            for &(index, ref parameters, area) in steps {
+                let Some(binding) = self.bindings.get(index) else { return false };
+                let size = area.unwrap_or(binding.size);
+                if write_cb(c, cb, parameters).is_err() { return false; }
+                let clear = binding.inputs.len().clamp(1, clear_srvs.len());
+                c.PSSetShaderResources(0, Some(&clear_srvs[..clear]));
+                c.OMSetRenderTargets(Some(&binding.target), None);
+                c.RSSetViewports(Some(&[D3D11_VIEWPORT {
+                    Width: size.0 as f32, Height: size.1 as f32, MinDepth: 0.0, MaxDepth: 1.0, ..Default::default()
+                }]));
+                c.PSSetShaderResources(0, Some(&binding.inputs));
+                c.Draw(3, 0);
+            }
             let mut commands = None;
             if c.FinishCommandList(false, Some(&mut commands)).is_err() { return false; }
             self.context.ExecuteCommandList(commands.as_ref().unwrap(), true);
@@ -123,6 +163,7 @@ impl Filter {
 /// Converts the GPU PyroWave decoder's planes to linear RGB in the renderer's target texture.
 pub struct PlanesPass {
     context: ID3D11DeviceContext,
+    context1: Option<ID3D11DeviceContext1>,
     queue: ID3D11DeviceContext4,
     deferred: ID3D11DeviceContext,
     device: ID3D11Device,
@@ -293,6 +334,7 @@ impl PlanesPass {
             target.GetDesc(&mut desc);
             let device = target.GetDevice()?;
             let context = device.GetImmediateContext()?;
+            let context1 = context.cast::<ID3D11DeviceContext1>().ok();
             let queue = context.cast::<ID3D11DeviceContext4>()?;
             let mut deferred = None;
             device.CreateDeferredContext(0, Some(&mut deferred))?;
@@ -305,9 +347,7 @@ impl PlanesPass {
             let code = compile(source, s!("planes"), s!("ps_5_0"))?;
             let mut fragment = None;
             device.CreatePixelShader(std::slice::from_raw_parts(code.GetBufferPointer().cast(), code.GetBufferSize()), None, Some(&mut fragment))?;
-            let mut constants = None;
-            device.CreateBuffer(&D3D11_BUFFER_DESC { ByteWidth: 32, Usage: D3D11_USAGE_DEFAULT,
-                BindFlags: D3D11_BIND_CONSTANT_BUFFER.0 as u32, ..Default::default() }, None, Some(&mut constants))?;
+            let constants = Some(create_dynamic_cb(&device, 32)?);
             let mut sampler = None;
             device.CreateSamplerState(&D3D11_SAMPLER_DESC { Filter: D3D11_FILTER_MIN_MAG_MIP_LINEAR,
                 AddressU: D3D11_TEXTURE_ADDRESS_CLAMP, AddressV: D3D11_TEXTURE_ADDRESS_CLAMP,
@@ -315,7 +355,7 @@ impl PlanesPass {
             let mut raster = None;
             device.CreateRasterizerState(&D3D11_RASTERIZER_DESC { FillMode: D3D11_FILL_SOLID, CullMode: D3D11_CULL_NONE,
                 DepthClipEnable: true.into(), ScissorEnable: true.into(), ..Default::default() }, Some(&mut raster))?;
-            Ok(Self { context, queue, deferred: deferred.unwrap(), device, target: [target_view],
+            Ok(Self { context, context1, queue, deferred: deferred.unwrap(), device, target: [target_view],
                 vertex: vertex.unwrap(), fragment: fragment.unwrap(), constants: [constants], sampler: [sampler],
                 raster: raster.unwrap(), size: (desc.Width, desc.Height), views: Default::default(), owner: None, frame: None,
                 surface: None, surface_fragment: None, direct: None, back_buffer: BackBuffer::default(), bound: None, surface_cache: SurfaceCache::default(), #[cfg(test)] surface_queries: 0,
@@ -362,14 +402,10 @@ impl PlanesPass {
             };
             let (planes, surface, surface_array, surface_array_target) =
                 (pixel(s!("planesDirect"))?, pixel(s!("surfaceDirect"))?, pixel(s!("surfaceArrayDirect"))?, pixel(s!("surfaceArray444"))?);
-            let mut constants = None;
-            // SAFETY: A buffer on the pass's device.
-            unsafe {
-                self.device.CreateBuffer(&D3D11_BUFFER_DESC { ByteWidth: std::mem::size_of::<super::direct_planes::Constants>() as u32, Usage: D3D11_USAGE_DEFAULT,
-                    BindFlags: D3D11_BIND_CONSTANT_BUFFER.0 as u32, ..Default::default() }, None, Some(&mut constants))
-                    .map_err(|e| format!("the direct plane constants cannot be made: {e}"))?;
-            }
-            self.direct = Some(DirectShaders { planes, surface, surface_array, surface_array_target, constants: constants.ok_or("no direct plane constants")? });
+            // SAFETY: A dynamic constant buffer on the pass's device.
+            let constants = unsafe { create_dynamic_cb(&self.device, std::mem::size_of::<super::direct_planes::Constants>() as u32) }
+                .map_err(|e| format!("the direct plane constants cannot be made: {e}"))?;
+            self.direct = Some(DirectShaders { planes, surface, surface_array, surface_array_target, constants });
         }
         Ok(self.direct.as_ref().expect("made above"))
     }
@@ -446,9 +482,15 @@ impl PlanesPass {
         let region = D3D11_BOX { left: 0, top: 0, front: 0, right: size.0, bottom: size.1, back: 1 };
         // Subresource `slice` is the picture: the decoder's textures have one mip level.
         let subresource = slice * desc.MipLevels.max(1);
-        // SAFETY: Both textures are live on this device, the region is inside both, and the
+        // SAFETY: Both textures are live on this device, the region covers `copy.texture`, and the
         // immediate context is used under the lock FFmpeg holds while it decodes.
-        lock(&mut || unsafe { self.context.CopySubresourceRegion(&copy.texture, 0, 0, 0, 0, source, subresource, Some(&region)) });
+        lock(&mut || unsafe {
+            if let Some(c1) = &self.context1 {
+                c1.CopySubresourceRegion1(&copy.texture, 0, 0, 0, 0, source, subresource, Some(&region), D3D11_COPY_DISCARD.0 as u32);
+            } else {
+                self.context.CopySubresourceRegion(&copy.texture, 0, 0, 0, 0, source, subresource, Some(&region));
+            }
+        });
         Ok(parameters)
     }
 
@@ -636,7 +678,7 @@ impl PlanesPass {
         unsafe {
             let c = &self.deferred;
             c.ClearState();
-            c.UpdateSubresource(self.constants[0].as_ref().unwrap(), 0, None, parameters.as_ptr().cast(), 0, 0);
+            write_cb(c, self.constants[0].as_ref().unwrap(), parameters)?;
             c.OMSetRenderTargets(Some(&self.target), None);
             // A whole picture draws with the default state `ClearState` left (no scissor); only a
             // slice scissors to its rows.
@@ -674,7 +716,7 @@ impl PlanesPass {
             let shaders = self.direct_shaders()?;
             (shaders.planes.clone(), shaders.surface.clone(), shaders.surface_array.clone(), shaders.constants.clone())
         };
-        let (fragment, slot, views, parameters): (ID3D11PixelShader, u32, Vec<Option<ID3D11ShaderResourceView>>, [u32; 8]) = match source {
+        let (fragment, slot, views, count, parameters): (ID3D11PixelShader, u32, [Option<ID3D11ShaderResourceView>; 3], usize, [u32; 8]) = match source {
             DirectSource::Lease { lease, fence_value, deadline } => {
                 let planes = lease.planes().clone();
                 self.retarget(&planes);
@@ -682,17 +724,17 @@ impl PlanesPass {
                 let views = self.views(&planes, lease.set()).map_err(|e| format!("cannot read the PyroWave planes: {e}"))?;
                 // SAFETY: The immediate context belongs to this (the presenting) thread.
                 unsafe { self.queue.Wait(planes.decode_fence(), *fence_value) }.map_err(|e| format!("cannot order the picture after the PyroWave decode: {e}"))?;
-                (planes_entry, 1, views.to_vec(), *parameters)
+                (planes_entry, 1, views, 3, *parameters)
             }
             DirectSource::Frame => {
                 let frame = self.frame.as_ref().ok_or("no planar picture was uploaded")?;
-                (planes_entry, 1, frame.views.to_vec(), *parameters)
+                (planes_entry, 1, frame.views.clone(), 3, *parameters)
             }
             DirectSource::Surface => {
                 let bound = self.bound.as_ref().ok_or("no 4:4:4 picture is bound")?;
                 match &bound.view {
-                    Some(view) => (array_entry, 5, vec![Some(view.clone())], bound.parameters),
-                    None => (surface_entry, 4, self.surface.as_ref().ok_or("no 4:4:4 picture was copied")?.view.to_vec(), bound.parameters),
+                    Some(view) => (array_entry, 5, [Some(view.clone()), None, None], 1, bound.parameters),
+                    None => (surface_entry, 4, [self.surface.as_ref().ok_or("no 4:4:4 picture was copied")?.view[0].clone(), None, None], 1, bound.parameters),
                 }
             }
         };
@@ -701,14 +743,14 @@ impl PlanesPass {
         unsafe {
             let c = &self.deferred;
             c.ClearState();
-            c.UpdateSubresource(self.constants[0].as_ref().unwrap(), 0, None, parameters.as_ptr().cast(), 0, 0);
-            c.UpdateSubresource(&buffer, 0, None, std::ptr::from_ref(constants).cast(), 0, 0);
+            write_cb(c, self.constants[0].as_ref().unwrap(), &parameters).map_err(|e| format!("cannot write plane constants: {e}"))?;
+            write_cb(c, &buffer, constants).map_err(|e| format!("cannot write direct plane constants: {e}"))?;
             c.OMSetRenderTargets(Some(&[Some(target.clone())]), None);
             c.RSSetViewports(Some(&[D3D11_VIEWPORT { TopLeftX: viewport[0], TopLeftY: viewport[1], Width: viewport[2], Height: viewport[3], MinDepth: 0.0, MaxDepth: 1.0 }]));
             c.IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
             c.VSSetShader(&self.vertex, None);
             c.PSSetShader(&fragment, None);
-            c.PSSetShaderResources(slot, Some(&views));
+            c.PSSetShaderResources(slot, Some(&views[..count]));
             // The HUD mask `warp_row` readied, when the constants say there is one.
             if constants.warp[2] > 0.0 && self.mask_view.is_some() {
                 c.PSSetShaderResources(6, Some(std::slice::from_ref(&self.mask_view)));
@@ -989,24 +1031,12 @@ impl Packed {
                 None,
                 Some(&mut fragment),
             )?;
-            let mut constants = None;
-            device.CreateBuffer(
-                &D3D11_BUFFER_DESC {
-                    ByteWidth: 48,
-                    Usage: D3D11_USAGE_DEFAULT,
-                    BindFlags: D3D11_BIND_CONSTANT_BUFFER.0 as u32,
-                    ..Default::default()
-                },
-                None,
-                Some(&mut constants),
-            )?;
-            let mut presentation = None;
-            if target.is_none() {
-                device.CreateBuffer(&D3D11_BUFFER_DESC {
-                    ByteWidth: PRESENTATION_BYTES, Usage: D3D11_USAGE_DEFAULT,
-                    BindFlags: D3D11_BIND_CONSTANT_BUFFER.0 as u32, ..Default::default()
-                }, None, Some(&mut presentation))?;
-            }
+            let constants = Some(create_dynamic_cb(device, 48)?);
+            let presentation = if target.is_none() {
+                Some(create_dynamic_cb(device, PRESENTATION_BYTES)?)
+            } else {
+                None
+            };
             Ok(Self {
                 context,
                 deferred: deferred.unwrap(),
@@ -1072,14 +1102,7 @@ impl Packed {
             // Recording on a deferred context preserves SDL's cached immediate-context state.
             let c = &self.deferred;
             c.ClearState();
-            c.UpdateSubresource(
-                self.constants[0].as_ref().unwrap(),
-                0,
-                None,
-                parameters.as_ptr().cast(),
-                0,
-                0,
-            );
+            if write_cb(c, self.constants[0].as_ref().unwrap(), parameters).is_err() { return false; }
             c.OMSetRenderTargets(Some(target), None);
             c.RSSetViewports(Some(&[D3D11_VIEWPORT {
                 TopLeftX: destination[0],
@@ -1095,7 +1118,7 @@ impl Packed {
             c.PSSetShaderResources(0, Some(&self.planes));
             c.PSSetConstantBuffers(0, Some(&self.constants));
             if let Some((presentation, mask)) = presentation {
-                c.UpdateSubresource(self.presentation[0].as_ref().unwrap(), 0, None, presentation.as_ptr().cast(), 0, 0);
+                if write_cb(c, self.presentation[0].as_ref().unwrap(), presentation).is_err() { return false; }
                 c.PSSetConstantBuffers(1, Some(&self.presentation));
                 if mask.is_some() { c.PSSetShaderResources(2, Some(&[mask])); }
             }

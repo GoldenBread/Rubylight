@@ -81,30 +81,37 @@ pub fn check_nv12_layers(descriptor: &Descriptor) -> Result<(), String> {
     Ok(())
 }
 
+/// Stack-allocated `eglCreateImageKHR` attribute list (at most 18 key/value ints plus `EGL_NONE`).
+#[derive(Clone, Copy, Debug)]
+pub struct LayerAttributes { values: [i32; 21], len: usize }
+impl std::ops::Deref for LayerAttributes {
+    type Target = [i32];
+    fn deref(&self) -> &[i32] { &self.values[..self.len] }
+}
+
 /// The `eglCreateImageKHR` attributes of layer `index` of an NV12 picture of `width` x `height`:
 /// chroma is half size, rounded up as SDL sizes its chroma texture. The modifier goes along when
 /// EGL takes modifiers and the driver named one (a tiled surface read as linear is garbage).
-pub fn layer_attributes(descriptor: &Descriptor, index: usize, width: u32, height: u32, modifiers: bool) -> Vec<i32> {
+pub fn layer_attributes(descriptor: &Descriptor, index: usize, width: u32, height: u32, modifiers: bool) -> LayerAttributes {
     let layer = &descriptor.layers[index];
     let object = &descriptor.objects[layer.object_index[0] as usize];
-    let (width, height) = if index == 0 { (width, height) } else { (width.div_ceil(2), height.div_ceil(2)) };
-    let mut attributes = vec![
-        EGL_LINUX_DRM_FOURCC_EXT, layer.drm_format as i32,
-        EGL_WIDTH, width as i32,
-        EGL_HEIGHT, height as i32,
-        EGL_IMAGE_PRESERVED_KHR, EGL_TRUE,
-        EGL_DMA_BUF_PLANE0_FD_EXT, object.fd,
-        EGL_DMA_BUF_PLANE0_OFFSET_EXT, layer.offset[0] as i32,
-        EGL_DMA_BUF_PLANE0_PITCH_EXT, layer.pitch[0] as i32,
+    let (w, h) = if index == 0 { (width, height) } else { (width.div_ceil(2), height.div_ceil(2)) };
+    let mut values = [
+        EGL_LINUX_DRM_FOURCC_EXT, layer.drm_format as i32, EGL_WIDTH, w as i32, EGL_HEIGHT, h as i32,
+        EGL_IMAGE_PRESERVED_KHR, EGL_TRUE, EGL_DMA_BUF_PLANE0_FD_EXT, object.fd,
+        EGL_DMA_BUF_PLANE0_OFFSET_EXT, layer.offset[0] as i32, EGL_DMA_BUF_PLANE0_PITCH_EXT, layer.pitch[0] as i32,
+        EGL_NONE, 0, 0, 0, 0, 0, 0,
     ];
+    let mut len = 14;
     if modifiers && object.drm_format_modifier != DRM_FORMAT_MOD_INVALID {
-        attributes.extend([
+        values[14..18].copy_from_slice(&[
             EGL_DMA_BUF_PLANE0_MODIFIER_LO_EXT, (object.drm_format_modifier & 0xffff_ffff) as u32 as i32,
             EGL_DMA_BUF_PLANE0_MODIFIER_HI_EXT, (object.drm_format_modifier >> 32) as u32 as i32,
         ]);
+        len = 18;
     }
-    attributes.push(EGL_NONE);
-    attributes
+    values[len] = EGL_NONE;
+    LayerAttributes { values, len: len + 1 }
 }
 
 fn fourcc_name(code: u32) -> String {
@@ -529,22 +536,28 @@ mod linux {
     type GetIntegerv = unsafe extern "C" fn(c_uint, *mut c_int);
     type GetError = unsafe extern "C" fn() -> c_uint;
 
+    /// macOS holds its VideoToolbox `SDL_Texture` cache in `VideoTexture::importer` so `destroy()` drops it.
+    #[cfg(target_os = "macos")]
+    pub struct Importer { slot: Option<Box<dyn std::any::Any>> }
+    #[cfg(target_os = "macos")]
+    impl Importer {
+        pub fn new() -> Result<Self, String> { Err("DMA-BUF EGL import is unavailable on macOS".into()) }
+        pub unsafe fn import(&mut self, _: *mut SDL_Renderer, _: *mut SDL_Texture, _: &Export, _: u32, _: u32) -> Result<(), String> { Err("DMA-BUF EGL import is unavailable on macOS".into()) }
+        pub fn macos_slot<T: 'static>(value: T) -> Self { Self { slot: Some(Box::new(value)) } }
+        pub fn macos_slot_mut<T: 'static>(&mut self) -> Option<&mut T> { self.slot.as_deref_mut()?.downcast_mut() }
+    }
+
     /// The EGL and GL entry points the import needs, and the images bound to the texture now:
     /// cached per decoder surface (`SurfaceCache`), or without the cache only the last picture's.
+    #[cfg(target_os = "linux")]
     pub struct Importer {
-        display: *mut c_void,
-        create: CreateImage,
-        destroy: DestroyImage,
-        target: ImageTargetTexture,
-        bind: BindTexture,
-        get_integer: GetIntegerv,
-        get_error: GetError,
-        modifiers: bool,
-        images: Vec<*mut c_void>,
-        caching: bool,
-        cache: SurfaceCache<[*mut c_void; 2]>,
+        display: *mut c_void, create: CreateImage, destroy: DestroyImage, target: ImageTargetTexture,
+        bind: BindTexture, get_integer: GetIntegerv, get_error: GetError, modifiers: bool,
+        images: Vec<*mut c_void>, caching: bool, cache: SurfaceCache<[*mut c_void; 2]>,
         /// The frames context whose surfaces the cache holds images of, kept alive with it.
         frames: FramesRef,
+        /// Cached `(SDL_Texture ptr, [Y gl name, UV gl name])` to skip per-frame SDL property queries.
+        gl_names: Option<(usize, [c_uint; 2])>,
         /// Pictures imported, and of them the ones whose images were cached, for the stream's log.
         imports: (u64, u64),
     }
@@ -554,6 +567,7 @@ mod linux {
         pointer.map(|f| unsafe { std::mem::transmute_copy(&f) }).ok_or_else(|| format!("no {name}"))
     }
 
+    #[cfg(target_os = "linux")]
     impl Importer {
         /// The importer of the current EGL context, on the renderer's thread.
         pub fn new() -> Result<Self, String> {
@@ -561,9 +575,7 @@ mod linux {
             // pointer is cast to its Khronos signature.
             unsafe {
                 let display = SDL_EGL_GetCurrentDisplay();
-                if display.is_null() {
-                    return Err("the renderer's context is not an EGL context".into());
-                }
+                if display.is_null() { return Err("the renderer's context is not an EGL context".into()); }
                 let query: QueryString = function(SDL_EGL_GetProcAddress(c"eglQueryString".as_ptr()), "eglQueryString")?;
                 let extensions = query(display, EGL_EXTENSIONS);
                 let extensions = if extensions.is_null() { String::new() } else { CStr::from_ptr(extensions).to_string_lossy().into_owned() };
@@ -583,11 +595,8 @@ mod linux {
                     get_integer: function(SDL_GL_GetProcAddress(c"glGetIntegerv".as_ptr()), "glGetIntegerv")?,
                     get_error: function(SDL_GL_GetProcAddress(c"glGetError".as_ptr()), "glGetError")?,
                     modifiers: has("EGL_EXT_image_dma_buf_import_modifiers"),
-                    images: Vec::new(),
-                    caching: caching(),
-                    cache: SurfaceCache::new(CACHE_LIMIT),
-                    frames: FramesRef::none(),
-                    imports: (0, 0),
+                    images: Vec::new(), caching: caching(), cache: SurfaceCache::new(CACHE_LIMIT),
+                    frames: FramesRef::none(), gl_names: None, imports: (0, 0),
                 })
             }
         }
@@ -598,24 +607,14 @@ mod linux {
         unsafe fn images_of(&mut self, export: &Export, width: u32, height: u32) -> Result<([*mut c_void; 2], bool), String> {
             // SAFETY: Caller guarantees current EGL context and valid `export`.
             unsafe {
-                if !self.caching {
-                    return Ok((self.create_images(export.descriptor()?, width, height)?, false));
-                }
+                if !self.caching { return Ok((self.create_images(export.descriptor()?, width, height)?, false)); }
                 let (changed, gone) = self.cache.retarget(export.generation());
                 // Destroyed EGL images stay in a texture they were bound to until it takes others.
-                for images in gone {
-                    self.destroy_images(images);
-                }
-                if changed {
-                    self.frames = FramesRef::of(export.frames());
-                }
-                if let Some(&images) = self.cache.get(export.surface()) {
-                    return Ok((images, true));
-                }
+                for images in gone { self.destroy_images(images); }
+                if changed { self.frames = FramesRef::of(export.frames()); }
+                if let Some(&images) = self.cache.get(export.surface()) { return Ok((images, true)); }
                 let images = self.create_images(export.descriptor()?, width, height)?;
-                for gone in self.cache.insert(export.surface(), images) {
-                    self.destroy_images(gone);
-                }
+                for gone in self.cache.insert(export.surface(), images) { self.destroy_images(gone); }
                 Ok((images, false))
             }
         }
@@ -642,9 +641,7 @@ mod linux {
         unsafe fn destroy_images(&self, images: [*mut c_void; 2]) {
             // SAFETY: Caller guarantees `images` were created on `self.display` and are unused.
             unsafe {
-                for image in images.into_iter().filter(|image| !image.is_null()) {
-                    (self.destroy)(self.display, image);
-                }
+                for image in images.into_iter().filter(|image| !image.is_null()) { (self.destroy)(self.display, image); }
             }
         }
 
@@ -656,47 +653,49 @@ mod linux {
         pub unsafe fn import(&mut self, renderer: *mut SDL_Renderer, texture: *mut SDL_Texture, export: &Export, width: u32, height: u32) -> Result<(), String> {
             // SAFETY: Caller guarantees `renderer` and `texture` are live on this thread with EGL context current.
             unsafe {
-                let properties = SDL_GetTextureProperties(texture);
-                let mut names = [
-                    SDL_GetNumberProperty(properties, SDL_PROP_TEXTURE_OPENGL_TEXTURE_NUMBER, 0),
-                    SDL_GetNumberProperty(properties, SDL_PROP_TEXTURE_OPENGL_TEXTURE_UV_NUMBER, 0),
-                ];
-                if names[0] != 0 {
-                    let target = SDL_GetNumberProperty(properties, SDL_PROP_TEXTURE_OPENGL_TEXTURE_TARGET_NUMBER, 0);
-                    if target != i64::from(GL_TEXTURE_2D) {
-                        return Err(format!("SDL's texture target is {target:#x}, not GL_TEXTURE_2D"));
+                let names = match self.gl_names {
+                    Some((cached, names)) if cached == texture as usize => names,
+                    _ => {
+                        let properties = SDL_GetTextureProperties(texture);
+                        let mut names = [
+                            SDL_GetNumberProperty(properties, SDL_PROP_TEXTURE_OPENGL_TEXTURE_NUMBER, 0),
+                            SDL_GetNumberProperty(properties, SDL_PROP_TEXTURE_OPENGL_TEXTURE_UV_NUMBER, 0),
+                        ];
+                        if names[0] != 0 {
+                            let target = SDL_GetNumberProperty(properties, SDL_PROP_TEXTURE_OPENGL_TEXTURE_TARGET_NUMBER, 0);
+                            if target != i64::from(GL_TEXTURE_2D) {
+                                return Err(format!("SDL's texture target is {target:#x}, not GL_TEXTURE_2D"));
+                            }
+                        } else {
+                            names = [
+                                SDL_GetNumberProperty(properties, SDL_PROP_TEXTURE_OPENGLES2_TEXTURE_NUMBER, 0),
+                                SDL_GetNumberProperty(properties, SDL_PROP_TEXTURE_OPENGLES2_TEXTURE_UV_NUMBER, 0),
+                            ];
+                        }
+                        if names.contains(&0) { return Err("the video texture has no GL textures for its planes".into()); }
+                        let names = [names[0] as c_uint, names[1] as c_uint];
+                        self.gl_names = Some((texture as usize, names));
+                        names
                     }
-                } else {
-                    names = [
-                        SDL_GetNumberProperty(properties, SDL_PROP_TEXTURE_OPENGLES2_TEXTURE_NUMBER, 0),
-                        SDL_GetNumberProperty(properties, SDL_PROP_TEXTURE_OPENGLES2_TEXTURE_UV_NUMBER, 0),
-                    ];
-                }
-                if names.contains(&0) {
-                    return Err("the video texture has no GL textures for its planes".into());
-                }
+                };
                 // SDL's queued drawing still samples the planes as they are; it goes to GL first,
                 // before a pool change destroys the images it may sample.
                 SDL_FlushRenderer(renderer);
                 let (images, cached) = self.images_of(export, width, height)?;
                 let mut bound = 0;
                 (self.get_integer)(GL_TEXTURE_BINDING_2D, &mut bound);
-                while (self.get_error)() != 0 {}
-                for (name, image) in names.iter().zip(&images) {
-                    (self.bind)(GL_TEXTURE_2D, *name as c_uint);
-                    (self.target)(GL_TEXTURE_2D, *image);
+                if !cached { while (self.get_error)() != 0 {} }
+                for (&name, &image) in names.iter().zip(&images) {
+                    (self.bind)(GL_TEXTURE_2D, name);
+                    (self.target)(GL_TEXTURE_2D, image);
                 }
-                let error = (self.get_error)();
+                let error = if cached { 0 } else { (self.get_error)() };
                 (self.bind)(GL_TEXTURE_2D, bound as c_uint);
                 if !self.caching {
                     // The textures hold the new images now; the previous ones can go.
-                    for image in std::mem::replace(&mut self.images, images.to_vec()) {
-                        (self.destroy)(self.display, image);
-                    }
+                    for image in std::mem::replace(&mut self.images, images.to_vec()) { (self.destroy)(self.display, image); }
                 }
-                if error != 0 {
-                    return Err(format!("glEGLImageTargetTexture2DOES failed ({error:#x})"));
-                }
+                if error != 0 { return Err(format!("glEGLImageTargetTexture2DOES failed ({error:#x})")); }
                 self.imports.0 += 1;
                 self.imports.1 += u64::from(cached);
                 Ok(())
@@ -704,6 +703,7 @@ mod linux {
         }
     }
 
+    #[cfg(target_os = "linux")]
     impl Drop for Importer {
         fn drop(&mut self) {
             if self.caching && self.imports.0 > 0 {
@@ -715,12 +715,8 @@ mod linux {
             let cached = self.cache.drain();
             // SAFETY: images this importer made on its display.
             unsafe {
-                for images in cached {
-                    self.destroy_images(images);
-                }
-                for image in self.images.drain(..) {
-                    (self.destroy)(self.display, image);
-                }
+                for images in cached { self.destroy_images(images); }
+                for image in self.images.drain(..) { (self.destroy)(self.display, image); }
             }
         }
     }
@@ -772,7 +768,7 @@ mod tests {
         let tiled = nv12(0x0100_0000_0000_0002);
         let luma = layer_attributes(&tiled, 0, 1919, 1081, true);
         assert_eq!(
-            luma,
+            &*luma,
             [0x3271, DRM_FORMAT_R8 as i32, 0x3057, 1919, 0x3056, 1081, 0x30D2, 1, 0x3272, 7, 0x3273, 0, 0x3274, 2048, 0x3443, 2, 0x3444, 0x0100_0000, 0x3038]
         );
         let chroma = layer_attributes(&tiled, 1, 1919, 1081, true);

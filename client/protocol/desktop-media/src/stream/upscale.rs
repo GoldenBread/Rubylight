@@ -40,10 +40,10 @@ impl Pass {
         }
     }
 
-    pub(super) unsafe fn draw(&self, renderer: *mut SDL_Renderer, input: *mut SDL_Texture, output: *mut SDL_Texture, parameters: &[u32; 8], area: Option<(u32, u32)>) -> bool {
+    /// Draws the pass assuming the caller already flushed SDL's command queue.
+    pub(super) unsafe fn draw_flushed(&self, renderer: *mut SDL_Renderer, input: *mut SDL_Texture, output: *mut SDL_Texture, parameters: &[u32; 8], area: Option<(u32, u32)>) -> bool {
         // SAFETY: caller guarantees `renderer`, `input`, and `output` are live on this thread.
         unsafe {
-            if !SDL_FlushRenderer(renderer) { return false; }
             #[cfg(windows)]
             if let Some(native) = &self.native { return native.draw(parameters, area); }
             let previous = SDL_GetRenderTarget(renderer);
@@ -82,7 +82,8 @@ impl Upscaler {
     pub fn new(renderer: *mut SDL_Renderer, input: (i32, i32), output: (i32, i32), mode: Upscaling) -> Result<Self, String> {
         let mut result = Self { passes: Vec::new(), textures: [ptr::null_mut(); 3], input, output, mode };
         unsafe {
-            for (i, size) in [input, output, output].into_iter().enumerate() {
+            let count = if mode == Upscaling::Fsr1 { 3 } else { 2 };
+            for (i, size) in [input, output, output].into_iter().take(count).enumerate() {
                 let texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_TARGET, size.0, size.1);
                 if texture.is_null() { return Err(format!("its target texture cannot be created: {}", crate::sdl::error())); }
                 result.textures[i] = texture;
@@ -133,7 +134,7 @@ impl Upscaler {
                     2.0f32.powf(-2.0 * (1.0 - sharpness.min(100) as f32 / 100.0)).to_bits(),
                     if self.mode == Upscaling::Sgsr1 { 3 } else if i == 0 { 1 } else { 2 }, 0,
                 ];
-                if !pass.draw(renderer, self.textures[i], self.textures[i + 1], &parameters, None) { return Err(failed("an upscaling pass failed")); }
+                if !pass.draw_flushed(renderer, self.textures[i], self.textures[i + 1], &parameters, None) { return Err(failed("an upscaling pass failed")); }
             }
             Ok(self.textures[self.passes.len()])
         }

@@ -146,7 +146,6 @@ struct SharedDecode {
     buffers: GpuBuffers,
     after: u64,
     value: u64,
-    wait: Duration,
     submitted: Arc<Mutex<Option<Instant>>>,
 }
 
@@ -155,7 +154,7 @@ unsafe impl Send for SharedDecode {}
 
 impl SharedDecode {
     /// Submits the decode after the reuse timeline reached `after` (the presenter's last copy out
-    /// of the set), with a signal of `value` on the decode timeline, and waits for that.
+    /// of the set), signalling `value` on the decode timeline; the presenter waits on the GPU.
     fn run(self) -> Result<(), String> {
         let (decode, reuse) = self.images.semaphores();
         let acquire = GpuSyncOperation { images: ptr::null(), num_images: 0, sync: SyncPoint { semaphore: reuse, value: self.after } };
@@ -166,7 +165,7 @@ impl SharedDecode {
         check(result, "decoding PyroWave into the renderer's planes")?;
         mark_submitted(&self.submitted);
         self.images.decode_queued(self.value);
-        self.images.wait_decode(self.value, self.wait)
+        Ok(())
     }
 }
 
@@ -461,20 +460,20 @@ impl GpuDecoder {
         self.watchdog.run(self.timeout, move || pending.run())
     }
 
-    /// Decodes the pushed records into plane set `set` of `images` once the presenter's copy out
-    /// of it that signalled `after` on the reuse timeline is done (0: none), and returns when the
-    /// planes are final, or fails like `decode`.
-    pub fn decode_into(&mut self, set: usize, after: u64) -> Result<(), String> {
+    /// Submits a decode of the pushed records into plane set `set` of `images` once the reuse
+    /// timeline reaches `after` (0: none), returning the decode timeline value the presenter waits on.
+    pub fn decode_into(&mut self, set: usize, after: u64) -> Result<u64, String> {
         if self.stalled() { return Err("the PyroWave decoder is stalled: an earlier decode never finished".into()); }
         let Some(shared) = &self.shared else { return Err("the PyroWave decoder does not share the renderer's device".into()) };
         if set >= self.config.slots { return Err(format!("PyroWave plane set {set} of {}", self.config.slots)); }
         self.decode_value += 1;
-        // The wait outlasts the watchdog, which gives up first and marks the decoder stalled.
+        let value = self.decode_value;
         let job = SharedDecode {
             api: self.api.clone(), decoder: self.decoder, images: shared.images.clone(), buffers: shared.images.views(set),
-            after, value: self.decode_value, wait: self.timeout * 2, submitted: self.unmarked(),
+            after, value, submitted: self.unmarked(),
         };
-        self.watchdog.run(self.timeout, move || job.run())
+        self.watchdog.run(self.timeout, move || job.run())?;
+        Ok(value)
     }
 
     /// When the submit of the last decode returned (in `decode` and `decode_into`, which also wait

@@ -120,9 +120,10 @@ pub fn sharpness(upscaling: bool, hdr: bool) -> f64 {
     if hdr || !upscaling { 2.00 } else { 0.30 }
 }
 
-/// The HQ Scaler on one device. Fields drop in order: the component and the context before the
-/// runtime library that holds their code.
+/// The HQ Scaler on one device. Fields drop in order: cached input surfaces before the component
+/// and context, and those before the runtime library that holds their code.
 pub struct HqScaler {
+    surfaces: Vec<(usize, ID3D11Texture2D, Object)>,
     scaler: Object,
     context: Object,
     parameters: Parameters,
@@ -162,7 +163,7 @@ impl HqScaler {
             let name = wide("AMFHQScaler");
             let mut scaler = ptr::null_mut();
             let created = factory.method::<unsafe extern "system" fn(*mut c_void, *mut c_void, *const u16, *mut *mut c_void) -> i32>(slot::FACTORY_CREATE_COMPONENT)(factory.0, context.0, name.as_ptr(), &mut scaler);
-            let result = Self { scaler: Object(scaler), context, parameters: p, input_desc: Default::default(), _library: library };
+            let result = Self { surfaces: Vec::new(), scaler: Object(scaler), context, parameters: p, input_desc: Default::default(), _library: library };
             check(created, "CreateComponent(AMFHQScaler)")?;
             if result.scaler.0.is_null() { return Err("AMF has no HQ Scaler".into()); }
             let mut caps = ptr::null_mut();
@@ -200,30 +201,59 @@ impl HqScaler {
         unsafe { check(self.scaler.method::<unsafe extern "system" fn(*mut c_void, i32, i32, i32) -> i32>(slot::COMPONENT_INIT)(self.scaler.0, self.format(), p.width, p.height), "Init") }
     }
 
+    /// Returns the cached `AMFSurface` wrapper for `input` (setting crop once at wrap time).
+    unsafe fn input_surface(&mut self, input: &ID3D11Texture2D) -> Result<*mut c_void, String> {
+        let key = input.as_raw() as usize;
+        if let Some((_, _, surface)) = self.surfaces.iter().find(|(k, _, _)| *k == key) {
+            return Ok(surface.0);
+        }
+        // SAFETY: Caller guarantees `input` is a live D3D11 texture on this device.
+        unsafe {
+            let mut raw = ptr::null_mut();
+            check(
+                self.context.method::<unsafe extern "system" fn(*mut c_void, *mut c_void, *mut *mut c_void, *mut c_void) -> i32>(slot::CONTEXT_SURFACE_FROM_DX11)(
+                    self.context.0, input.as_raw(), &mut raw, ptr::null_mut(),
+                ),
+                "CreateSurfaceFromDX11Native",
+            )?;
+            let surface = Object(raw);
+            if surface.0.is_null() { return Err("AMF made no surface of the picture".into()); }
+            let desc = self.input_desc.of(input);
+            if let Some((width, height)) = crop(&self.parameters, (desc.Width, desc.Height))? {
+                check(
+                    surface.method::<unsafe extern "system" fn(*mut c_void, i32, i32, i32, i32) -> i32>(slot::SURFACE_SET_CROP)(
+                        surface.0, 0, 0, width, height,
+                    ),
+                    "SetCrop",
+                )?;
+            }
+            let ptr = surface.0;
+            if self.surfaces.len() >= 32 { self.surfaces.remove(0); }
+            self.surfaces.push((key, input.clone(), surface));
+            Ok(ptr)
+        }
+    }
+
     /// Scales the top left input size of `input` (NV12 or P010, at least that size: a larger one
     /// is cropped, its alignment padding left out) and copies the result into the top left of
     /// `output` (at least the output size, same format) on `context`.
     pub unsafe fn render(&mut self, input: &ID3D11Texture2D, output: &ID3D11Texture2D, context: &ID3D11DeviceContext) -> Result<(), String> {
         // SAFETY: caller guarantees `input`, `output`, and `context` are live D3D11 objects on this thread.
         unsafe {
-            let mut surface = ptr::null_mut();
-            check(self.context.method::<unsafe extern "system" fn(*mut c_void, *mut c_void, *mut *mut c_void, *mut c_void) -> i32>(slot::CONTEXT_SURFACE_FROM_DX11)(
-                self.context.0, input.as_raw(), &mut surface, ptr::null_mut()), "CreateSurfaceFromDX11Native")?;
-            let surface = Object(surface);
-            if surface.0.is_null() { return Err("AMF made no surface of the picture".into()); }
-            let desc = self.input_desc.of(input);
-            let p = &self.parameters;
-            if let Some((width, height)) = crop(p, (desc.Width, desc.Height))? {
-                check(surface.method::<unsafe extern "system" fn(*mut c_void, i32, i32, i32, i32) -> i32>(slot::SURFACE_SET_CROP)(surface.0, 0, 0, width, height), "SetCrop")?;
+            let surface = self.input_surface(input)?;
+            let submitted = self.scaler.method::<unsafe extern "system" fn(*mut c_void, *mut c_void) -> i32>(slot::COMPONENT_SUBMIT_INPUT)(self.scaler.0, surface);
+            if submitted != OK {
+                self.scaler.call0(slot::COMPONENT_FLUSH);
+                return check(submitted, "SubmitInput");
             }
-            check(self.scaler.method::<unsafe extern "system" fn(*mut c_void, *mut c_void) -> i32>(slot::COMPONENT_SUBMIT_INPUT)(self.scaler.0, surface.0), "SubmitInput")?;
             let mut data = ptr::null_mut();
             let queried = self.scaler.method::<unsafe extern "system" fn(*mut c_void, *mut *mut c_void) -> i32>(slot::COMPONENT_QUERY_OUTPUT)(self.scaler.0, &mut data);
             let data = Object(data);
-            let flushed = self.scaler.call0(slot::COMPONENT_FLUSH);
-            check(queried, "QueryOutput")?;
-            check(flushed, "Flush")?;
-            if data.0.is_null() { return Err("AMF's HQ Scaler returned no picture".into()); }
+            if queried != OK || data.0.is_null() {
+                self.scaler.call0(slot::COMPONENT_FLUSH);
+                check(queried, "QueryOutput")?;
+                return Err("AMF's HQ Scaler returned no picture".into());
+            }
             let mut scaled = ptr::null_mut();
             check(data.method::<unsafe extern "system" fn(*mut c_void, *const GUID, *mut *mut c_void) -> i32>(slot::QUERY_INTERFACE)(data.0, &SURFACE_IID, &mut scaled), "QueryInterface(AMFSurface)")?;
             let scaled = Object(scaled);
@@ -234,6 +264,7 @@ impl HqScaler {
             let plane = std::mem::ManuallyDrop::new(Object(plane));
             let native = plane.method::<unsafe extern "system" fn(*mut c_void) -> *mut c_void>(slot::PLANE_NATIVE)(plane.0);
             let texture = ID3D11Texture2D::from_raw_borrowed(&native).ok_or("AMF's scaled surface is not a Direct3D 11 texture")?;
+            let p = &self.parameters;
             // A box, not CopyResource: AMF may allocate its surfaces larger than the picture.
             context.CopySubresourceRegion(output, 0, 0, 0, 0, texture, 0,
                 Some(&D3D11_BOX { left: 0, top: 0, front: 0, right: p.output_width as u32, bottom: p.output_height as u32, back: 1 }));
@@ -255,9 +286,14 @@ fn crop(p: &Parameters, texture: (u32, u32)) -> Result<Option<(i32, i32)>, Strin
 
 impl Drop for HqScaler {
     fn drop(&mut self) {
-        // SAFETY: Live AMF objects; terminate before the references are released.
+        // Release wrapped AMF surfaces while the AMF context is still live.
+        self.surfaces.clear();
+        // SAFETY: Live AMF objects; flush and terminate before the references are released.
         unsafe {
-            if !self.scaler.0.is_null() { self.scaler.call0(slot::COMPONENT_TERMINATE); }
+            if !self.scaler.0.is_null() {
+                self.scaler.call0(slot::COMPONENT_FLUSH);
+                self.scaler.call0(slot::COMPONENT_TERMINATE);
+            }
             if !self.context.0.is_null() { self.context.call0(slot::CONTEXT_TERMINATE); }
         }
     }
