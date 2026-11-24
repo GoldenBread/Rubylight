@@ -32,12 +32,21 @@ sunshine_name = linux-test
 ${HOST_CONF:-}
 EOF
 # APP=desktop streams the desktop through the ScreenCast portal (an app without a command).
+# APP=steam:APPID starts that Steam game as an imported library game, on the desktop it streams.
 [ "${APP:-}" = desktop ] && APP=" "
 APP=${APP:-"ffplay -hide_banner -loglevel warning -fs -f lavfi -i 'testsrc2=size=${W}x${H}:rate=${FPS}[out0];sine=frequency=440:sample_rate=48000[out1]'"}
 python3 - "$P" "$APP" <<'EOF'
 import hashlib, json, os, sys
 p, app = sys.argv[1], sys.argv[2].strip()
-json.dump({'apps': [{'name': 'Test', 'cmd': app, 'prep-cmd': [], 'working-dir': ''}]}, open(p + '/apps.json', 'w'))
+entry = {'name': 'Test', 'cmd': app, 'prep-cmd': [], 'working-dir': ''}
+if app.startswith('steam:'):
+    # A Steam game as the library import writes it (rust/core/session/src/library.rs).
+    appid = app.split(':', 1)[1]
+    command = f'cmd /c start "" steam://rungameid/{appid}'
+    entry.update({'cmd': command, 'auto-detach': True, 'launcher-source': 'steam', 'launcher-id': appid,
+                  'launcher-command': command, 'steam-id': appid,
+                  'launcher-launch': {'kind': 'uri', 'uri': f'steam://rungameid/{appid}'}})
+json.dump({'apps': [entry]}, open(p + '/apps.json', 'w'))
 salt = os.urandom(8).hex()
 json.dump({'username': 'test', 'salt': salt,
            'password': hashlib.sha256(('rust-smoke-only' + salt).encode()).digest()[::-1].hex().upper()},
