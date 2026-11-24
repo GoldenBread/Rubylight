@@ -58,7 +58,7 @@ pub(super) fn place(
     sha256: &str,
     runtime: &[Pinned],
 ) -> Result<PathBuf> {
-    use std::os::windows::fs::MetadataExt;
+    use crate::os_ext::MetadataExt;
     let base = folder_name(sha256);
     for n in 0..10 {
         let target = match n {

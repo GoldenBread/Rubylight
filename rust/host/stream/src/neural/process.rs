@@ -44,7 +44,7 @@ pub(super) fn run_child(
                 Box::new(stdout),
             )
         } else {
-            use std::os::windows::process::CommandExt;
+            use crate::os_ext::CommandExt;
             let mut own = std::process::Command::new(&program)
                 .arg(flag)
                 .stdin(std::process::Stdio::piped())

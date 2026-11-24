@@ -27,9 +27,8 @@ impl Media {
         if let Err(error) = socket2::SockRef::from(&*socket).set_recv_buffer_size(1 << 20) {
             tracing::warn!(%error, "control socket receive buffer unchanged");
         }
-        let raw_socket = std::os::windows::io::AsRawSocket::as_raw_socket(&*socket);
-        let raw_wake =
-            std::os::windows::io::AsRawSocket::as_raw_socket(&self.control_wake_receiver);
+        let raw_socket = crate::os_ext::AsRawSocket::as_raw_socket(&*socket);
+        let raw_wake = crate::os_ext::AsRawSocket::as_raw_socket(&self.control_wake_receiver);
         let mut control_socket = ControlSocket::new(socket.clone());
         control_socket.roaming = roaming::Roaming::remembering(self.roam_seqs.clone());
         let mut host = Host::new(

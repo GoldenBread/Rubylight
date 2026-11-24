@@ -66,8 +66,9 @@ pub fn probe_main(profile: &std::path::Path) -> i32 {
 
 /// Runs NVIDIA's check in its own process, as this host's user.
 fn probe_child(profile: &std::path::Path) -> nvidia_enhance::Offer {
+    use crate::os_ext::CommandExt;
     use nvidia_enhance::{PROBE_TIMEOUT_SECS, ProbeEnd, probe_failed, read_probe};
-    use std::{io::BufRead, os::windows::process::CommandExt, process::Stdio, time::Instant};
+    use std::{io::BufRead, process::Stdio, time::Instant};
     let spawned = std::env::current_exe().and_then(|program| {
         std::process::Command::new(program)
             .arg("--nvidia-probe")

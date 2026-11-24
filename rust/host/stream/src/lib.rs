@@ -32,6 +32,7 @@ pub mod nucleus;
 pub mod nvhttp;
 pub mod nvidia_component;
 pub mod nvidia_enhance;
+pub mod os_ext;
 pub mod pairing_approvals;
 pub mod playnite;
 pub mod power_action;

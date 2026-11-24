@@ -103,7 +103,7 @@ pub fn trusted_root_with(
     system: bool,
     hold: impl Fn(&Path, bool) -> Result<(), String>,
 ) -> Result<()> {
-    use std::os::windows::fs::MetadataExt;
+    use crate::os_ext::MetadataExt;
     ensure!(
         root.starts_with(data_root),
         "{} is not in this host's own folder {}",

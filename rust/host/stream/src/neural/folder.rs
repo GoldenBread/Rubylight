@@ -36,6 +36,7 @@ pub use remove::remove;
 pub(crate) use security::administrators_hold;
 pub use security::{account, administrators_only, hold, security, verdict, writable};
 
+use crate::os_ext::MetadataExt;
 use butterpollo_session::neural::{MANIFEST, Manifest, Mode, Now, Placed};
 use find::{find_exe, refuse_anti_cheat, refuse_without_frame_generation};
 use security::guard;
@@ -43,7 +44,6 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
     io::{BufRead, Read, Write},
-    os::windows::fs::MetadataExt,
     path::{Path, PathBuf},
 };
 

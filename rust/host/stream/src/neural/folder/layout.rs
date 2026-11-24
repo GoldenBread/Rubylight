@@ -1,10 +1,12 @@
 //! Install layout selection (full OptiScaler vs user add-on), leftover folder
 //! adoption, and legacy AMDNR removal simulation for Neural Rendering folders.
 use super::{ENTRIES, Failure, LINK, Outcome, PARTIAL, Writer, guard, manifest, state};
+use crate::os_ext::MetadataExt;
+use crate::os_ext::MetadataExt;
 use butterpollo_session::neural::{
     self, LEGACY_MANIFEST, Manifest, Mode, Now, Occupant, SETTINGS, in_the_way,
 };
-use std::{os::windows::fs::MetadataExt, path::Path};
+use std::path::Path;
 
 /// What has `name` beside the game's .exe.
 fn occupant(folder: &Path, name: &str, manifest: Option<&Manifest>) -> Occupant {

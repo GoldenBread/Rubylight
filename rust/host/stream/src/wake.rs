@@ -112,8 +112,8 @@ impl PowerSystem for Windows {
         butterpollo_win_io::wake::apply_nics(plan)
     }
     fn run_fix(&self, plan: &FixPlan) -> Result<Applied> {
+        use crate::os_ext::CommandExt;
         use butterpollo_win_io::wake::{SETTINGS_TIMEOUT, output_within};
-        use std::os::windows::process::CommandExt;
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         let program = std::env::current_exe()?;
         let mut command = std::process::Command::new(&program);

@@ -4,11 +4,9 @@ use super::{
     Failure, LINK, Outcome, PARTIAL, PROBE, Response, Writer, cleanup::left_in, guard,
     is_clean_path, manifest, state, writable, write_named, write_whole,
 };
+use crate::os_ext::MetadataExt;
 use butterpollo_session::neural::{self, LEGACY_MANIFEST, MANIFEST};
-use std::{
-    os::windows::fs::MetadataExt,
-    path::{Path, PathBuf},
-};
+use std::path::{Path, PathBuf};
 
 /// Delete what the host placed in the folder, by each of its manifests:
 /// this release's and Rubylight 3.0's AMDNR, whose record stays for what

@@ -676,7 +676,7 @@ async fn run_logged(
         if supervised {
             return Ok(ExitAction::Exit(exit_code as i32));
         } else {
-            use std::os::windows::process::CommandExt;
+            use butterpollo_stream::os_ext::CommandExt;
             std::process::Command::new(std::env::current_exe()?)
                 .args(std::env::args_os().skip(1))
                 .creation_flags(0x08000000)

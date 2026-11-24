@@ -135,7 +135,7 @@ fn trusted_with(
     elevated: bool,
     hold: impl Fn(&Path, bool) -> Result<(), String>,
 ) -> Result<()> {
-    use std::os::windows::fs::MetadataExt;
+    use crate::os_ext::MetadataExt;
     ensure!(
         folder.starts_with(data_root),
         "{} is not in this host's own folder {}",
@@ -506,7 +506,7 @@ async fn finish(h: &Shared, result: Result<Record>) -> Result<(), String> {
 /// ([`trusted`]) and never follows a link in it; a file still loaded stays
 /// until the next start.
 fn clean(root: &Path, keep: Option<&str>) -> Result<()> {
-    use std::os::windows::fs::MetadataExt;
+    use crate::os_ext::MetadataExt;
     if !exists(root)? {
         return Ok(());
     }

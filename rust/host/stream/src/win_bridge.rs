@@ -1,4 +1,5 @@
 //! Cross-crate platform wiring bridging graphics, display, and I/O leaf crates in `rust/host`.
+use crate::os_ext::OwnedHandle;
 use anyhow::Result;
 use butterpollo_config::config::Config;
 use butterpollo_media_policy::{WarningSink, rtsp::Negotiated};
@@ -27,10 +28,7 @@ use butterpollo_win_io::{
     process::{self, Process, Target},
     wifi_scan,
 };
-use std::{
-    collections::BTreeMap, ffi::OsString, os::windows::io::OwnedHandle, path::Path, sync::Arc,
-    time::Duration,
-};
+use std::{collections::BTreeMap, ffi::OsString, path::Path, sync::Arc, time::Duration};
 
 struct HostPipe(Pipe);
 impl HelperPipe for HostPipe {

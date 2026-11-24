@@ -1,1 +1,1 @@
-//! Linux side of `butterpollo_win_graphics::amf`.
+//! AMD's AMF encoder. AMF encoding is not available on a Linux host yet, and the host names nothing from this module.

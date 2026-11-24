@@ -179,7 +179,7 @@ pub(super) fn remove_download(directory: &Path) {
 }
 /// `path` and everything in it; a link is removed itself, never followed.
 fn remove_tree(path: &Path) -> std::io::Result<()> {
-    use std::os::windows::fs::MetadataExt;
+    use crate::os_ext::MetadataExt;
     let metadata = std::fs::symlink_metadata(path)?;
     if metadata.file_attributes() & 0x400 != 0 {
         std::fs::remove_dir(path).or_else(|_| std::fs::remove_file(path))

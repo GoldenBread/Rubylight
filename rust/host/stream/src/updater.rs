@@ -545,7 +545,7 @@ fn poll_with(h: &Shared, hashed: Option<Hashed>, hash: &dyn Fn(&std::path::Path)
             )?;
             let download = path.parent().map(Path::to_path_buf);
             let mut command = std::process::Command::new(path);
-            use std::os::windows::process::CommandExt;
+            use crate::os_ext::CommandExt;
             // The installer must survive the service stopping its host job.
             command
                 .creation_flags(0x01000000 | 0x08000000)

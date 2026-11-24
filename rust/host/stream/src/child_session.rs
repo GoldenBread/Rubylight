@@ -214,7 +214,7 @@ fn foreign_folder(error: &anyhow::Error) -> bool {
 /// owned by SYSTEM or Administrators, which alone may write it, and not a
 /// link elsewhere; [`Foreign`] when it is not.
 fn administrators_own(file: &File, path: &Path) -> Result<()> {
-    use std::os::windows::fs::MetadataExt;
+    use crate::os_ext::MetadataExt;
     let metadata = file
         .metadata()
         .with_context(|| format!("reading {}", path.display()))?;
@@ -258,7 +258,7 @@ fn administrators_own(file: &File, path: &Path) -> Result<()> {
 /// may change its permissions and move the record's folder out of it; a
 /// writer may make that folder first.
 fn administrators_own_root(file: &File, path: &Path) -> Result<()> {
-    use std::os::windows::fs::MetadataExt;
+    use crate::os_ext::MetadataExt;
     let metadata = file
         .metadata()
         .with_context(|| format!("reading {}", path.display()))?;

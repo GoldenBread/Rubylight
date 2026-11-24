@@ -37,13 +37,24 @@ pub(super) fn handle(
 pub(super) async fn export_crash(h: &Shared, include_dump: bool) -> Response {
     let h = h.clone();
     let result = tokio::task::spawn_blocking(move || -> anyhow::Result<std::fs::File> {
-        use std::os::windows::fs::OpenOptionsExt;
         let path = butterpollo_stream::maintenance::bundle(&h, include_dump)?;
-        Ok(std::fs::OpenOptions::new()
-            .access_mode(0x80000000 | 0x00010000)
-            .share_mode(1 | 4)
-            .custom_flags(0x04000000)
-            .open(path)?)
+        // The bundle goes once it has been sent. Windows deletes the file when its last
+        // handle closes; elsewhere the open file outlives its name.
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::OpenOptionsExt;
+            Ok(std::fs::OpenOptions::new()
+                .access_mode(0x80000000 | 0x00010000)
+                .share_mode(1 | 4)
+                .custom_flags(0x04000000)
+                .open(path)?)
+        }
+        #[cfg(not(windows))]
+        {
+            let file = std::fs::File::open(&path)?;
+            std::fs::remove_file(&path)?;
+            Ok(file)
+        }
     })
     .await;
     match result {

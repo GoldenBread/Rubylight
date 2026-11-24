@@ -1,10 +1,10 @@
 //! Game executable discovery, launcher/helper filtering, install walking, and
 //! anti-cheat / DLSS frame generation checks for Neural Rendering folders.
 use super::{ANTI_CHEAT, DEPTH, ENTRIES, Failure, LINK, NO_DLSS, Outcome, folder_of, real};
+use crate::os_ext::MetadataExt;
 use butterpollo_session::neural;
 use std::{
     collections::VecDeque,
-    os::windows::fs::MetadataExt,
     path::{Component, Path, PathBuf, Prefix},
 };
 

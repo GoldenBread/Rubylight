@@ -603,7 +603,7 @@ impl Media {
                 .name(if is_audio { "audio-ping" } else { "video-ping" }.into())
                 .spawn(move || {
                     let mut b = [0; 2048];
-                    let raw_socket = std::os::windows::io::AsRawSocket::as_raw_socket(&*socket);
+                    let raw_socket = crate::os_ext::AsRawSocket::as_raw_socket(&*socket);
                     while !h.stop.load(Ordering::Acquire) {
                         match butterpollo_win_io::net::wait_readable(raw_socket, 250) {
                             Ok(true) => {}

@@ -1,8 +1,10 @@
 //! Reparse-point guards, Windows ACL inspection, and administrator-only write
 //! checks for Neural Rendering game and cache folders.
 use super::{Failure, LINK, Outcome, PROBE, Rights, Security, Writer, is_clean_path};
+use crate::os_ext::MetadataExt;
+use crate::os_ext::MetadataExt;
 use butterpollo_session::neural;
-use std::{os::windows::fs::MetadataExt, path::Path};
+use std::path::Path;
 
 /// Refuse a link on the way from the game's folder to `relative` in it, the
 /// two included: a junction or symbolic link planted there would send a
