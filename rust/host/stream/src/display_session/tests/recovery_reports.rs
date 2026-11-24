@@ -552,3 +552,72 @@ fn a_resume_that_cannot_apply_its_profile_keeps_the_lease_it_had() {
     take_profile(&mut slot, None, |_, _| unreachable!()).unwrap();
     assert_eq!(slot, None);
 }
+
+#[test]
+fn machine_phase_stays_in_lockstep_with_active_count_across_pause_recovery_and_multistream() {
+    use butterpollo_media_policy::display_session_machine::SessionPhase;
+
+    let fixture = crate::state::test_support::Fixture::new();
+    let config = Config::parse("dd_config_revert_delay=0").unwrap();
+    *fixture.host.config.write().unwrap() = config.clone();
+    let prepared = test_prepared(&fixture.host);
+    let limiter =
+        limiter::Lease::acquire(&fixture.host.directory, &config, &prepared.framegen).unwrap();
+    let first = Ready::prepare((prepared, limiter)).unwrap();
+    let display = first.display.clone();
+
+    let phase = || display._state.lock().unwrap().machine.phase;
+    assert_eq!(phase(), SessionPhase::Active { streams: 1 });
+    assert_eq!(display.active.load(Ordering::Acquire), 1);
+
+    // Pause by dropping the only active transport.
+    drop(first);
+    assert_eq!(display.active.load(Ordering::Acquire), 0);
+    assert_eq!(phase(), SessionPhase::Paused);
+
+    // Simulate recovery running while paused (as Ready::resume's finish_feed does before attach).
+    {
+        let mut state = display._state.lock().unwrap();
+        state.machine.begin_recovery(std::time::Instant::now());
+        state.finish_feed(Ok(false)).unwrap();
+        assert_eq!(state.machine.phase, SessionPhase::Paused);
+    }
+
+    // Resume attaches cleanly to Active { streams: 1 }, then a second concurrent resume to 2.
+    let second = display
+        .clone()
+        .resume(
+            &fixture.host.directory,
+            &config,
+            Arc::new(Warnings::default()),
+        )
+        .unwrap();
+    assert_eq!(display.active.load(Ordering::Acquire), 1);
+    assert_eq!(phase(), SessionPhase::Active { streams: 1 });
+
+    let third = display
+        .clone()
+        .resume(
+            &fixture.host.directory,
+            &config,
+            Arc::new(Warnings::default()),
+        )
+        .unwrap();
+    assert_eq!(display.active.load(Ordering::Acquire), 2);
+    assert_eq!(phase(), SessionPhase::Active { streams: 2 });
+
+    // Recovery with 2 active streams preserves stream count across finish_feed and detach.
+    {
+        let mut state = display._state.lock().unwrap();
+        state.machine.begin_recovery(std::time::Instant::now());
+        assert_eq!(state.machine.phase, SessionPhase::Recovering { streams: 2 });
+        state.finish_feed(Ok(false)).unwrap();
+        assert_eq!(state.machine.phase, SessionPhase::Active { streams: 2 });
+    }
+    drop(second);
+    assert_eq!(display.active.load(Ordering::Acquire), 1);
+    assert_eq!(phase(), SessionPhase::Active { streams: 1 });
+    drop(third);
+    assert_eq!(display.active.load(Ordering::Acquire), 0);
+    assert_eq!(phase(), SessionPhase::Paused);
+}

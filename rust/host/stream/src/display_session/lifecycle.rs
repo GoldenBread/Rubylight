@@ -69,13 +69,14 @@ impl Drop for StreamPreparation {
             // a paused lease can observe unrelated local Win+P changes. The
             // state lock also serializes this boundary with resume's reapply.
             let mut prepared = self.display._state.lock().unwrap();
-            if self.display.active.fetch_sub(1, Ordering::AcqRel) == 1 {
-                let _ = prepared.machine.detach_stream();
+            let prev_active = self.display.active.fetch_sub(1, Ordering::AcqRel);
+            let detach = prepared.machine.detach_stream();
+            debug_assert_eq!(prev_active == 1, detach.capture_chosen_preferences);
+            debug_assert_eq!(prev_active.saturating_sub(1), detach.phase.active_streams());
+            if detach.capture_chosen_preferences {
                 prepared.keep_chosen_layout();
                 prepared.keep_chosen_resolution();
                 prepared.keep_chosen_scale();
-            } else {
-                let _ = prepared.machine.detach_stream();
             }
         }
         if let Some(retained) = &self.display.retained {
@@ -612,8 +613,11 @@ pub fn retime(
         "the stream asks for another rate than its launch; the display and the frame limiter follow it"
     );
     *display.framegen.lock().unwrap() = framegen.clone();
-    display.active.fetch_add(1, Ordering::AcqRel);
-    display._state.lock().unwrap().machine.attach_stream();
+    {
+        let mut prepared = display._state.lock().unwrap();
+        display.active.fetch_add(1, Ordering::AcqRel);
+        prepared.machine.attach_stream();
+    }
     if let Some(retained) = &display.retained {
         retained.stream_started();
     }
@@ -624,8 +628,11 @@ pub fn retime(
             _limiter: limiter,
         })),
         Err(error) => {
-            display.active.fetch_sub(1, Ordering::AcqRel);
-            let _ = display._state.lock().unwrap().machine.detach_stream();
+            {
+                let mut prepared = display._state.lock().unwrap();
+                display.active.fetch_sub(1, Ordering::AcqRel);
+                let _ = prepared.machine.detach_stream();
+            }
             if let Some(retained) = &display.retained {
                 retained.stream_stopped();
             }

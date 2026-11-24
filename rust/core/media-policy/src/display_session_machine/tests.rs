@@ -223,7 +223,8 @@ fn recovery_retries_layout_every_second_but_sets_mode_once() {
     assert!(!machine.recovery.due(start));
 
     machine.begin_recovery(start);
-    assert_eq!(machine.phase, SessionPhase::Recovering);
+    assert_eq!(machine.phase, SessionPhase::Recovering { streams: 1 });
+    assert_eq!(machine.phase.active_streams(), 1);
     assert!(machine.recovery.due(start));
     assert!(machine.recovery.take_mode());
 
@@ -232,9 +233,78 @@ fn recovery_retries_layout_every_second_but_sets_mode_once() {
     assert!(machine.recovery.due(start + Duration::from_secs(1)));
     assert!(!machine.recovery.take_mode());
 
-    machine.finish_recovery(1);
+    machine.finish_recovery();
     assert_eq!(machine.phase, SessionPhase::Active { streams: 1 });
     assert!(!machine.recovery.due(start + Duration::from_secs(5)));
+}
+
+#[test]
+fn recovery_preserves_stream_count_across_multistream_attach_and_detach() {
+    let start = Instant::now();
+    let mut machine = DisplaySessionMachine::launch(start, 0, 0, false, false);
+    assert_eq!(machine.attach_stream(), SessionPhase::Active { streams: 2 });
+
+    // Recovery preserves the count of attached streams.
+    machine.begin_recovery(start);
+    assert_eq!(machine.phase, SessionPhase::Recovering { streams: 2 });
+
+    // Detaching one of two streams during recovery must not pause or capture preferences.
+    let first_detach = machine.detach_stream();
+    assert!(!first_detach.capture_chosen_preferences);
+    assert_eq!(first_detach.phase, SessionPhase::Recovering { streams: 1 });
+
+    // Attaching another stream during recovery increments the count instead of resetting to 1.
+    assert_eq!(
+        machine.attach_stream(),
+        SessionPhase::Recovering { streams: 2 }
+    );
+
+    // Completing recovery restores Active with both streams intact.
+    machine.finish_recovery();
+    assert_eq!(machine.phase, SessionPhase::Active { streams: 2 });
+
+    // Re-enter recovery with 2 streams, detach both: only the 1->0 transition captures.
+    machine.begin_recovery(start + Duration::from_secs(2));
+    assert_eq!(machine.phase, SessionPhase::Recovering { streams: 2 });
+    let d1 = machine.detach_stream();
+    assert!(!d1.capture_chosen_preferences);
+    assert_eq!(d1.phase, SessionPhase::Recovering { streams: 1 });
+    let d2 = machine.detach_stream();
+    assert!(d2.capture_chosen_preferences);
+    assert_eq!(d2.phase, SessionPhase::Paused);
+    assert!(machine.recovery.pending);
+
+    // Reattaching while recovery is still pending enters Recovering { streams: 1 }.
+    assert_eq!(
+        machine.attach_stream(),
+        SessionPhase::Recovering { streams: 1 }
+    );
+    machine.finish_recovery();
+    assert_eq!(machine.phase, SessionPhase::Active { streams: 1 });
+}
+
+#[test]
+fn recovery_while_paused_keeps_paused_phase_until_resume_attaches() {
+    let start = Instant::now();
+    let mut machine = DisplaySessionMachine::launch(start, 0, 0, false, false);
+    assert!(machine.detach_stream().capture_chosen_preferences);
+    assert_eq!(machine.phase, SessionPhase::Paused);
+
+    // Resume runs finish_feed() while paused (0 active streams) before attach_stream().
+    // Completing recovery before attach must stay Paused so a later resume failure does
+    // not leave phase stuck Active, and a successful attach lands at Active { streams: 1 }.
+    machine.begin_recovery(start);
+    assert_eq!(machine.phase, SessionPhase::Paused);
+    assert!(machine.recovery.pending);
+    machine.finish_recovery();
+    assert_eq!(machine.phase, SessionPhase::Paused);
+    assert!(!machine.recovery.pending);
+
+    // Once resume succeeds and attaches, phase reaches Active { streams: 1 } (not 2).
+    assert_eq!(machine.attach_stream(), SessionPhase::Active { streams: 1 });
+    let detach = machine.detach_stream();
+    assert!(detach.capture_chosen_preferences);
+    assert_eq!(detach.phase, SessionPhase::Paused);
 }
 
 #[test]

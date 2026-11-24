@@ -179,7 +179,7 @@ impl Prepared {
                     },
                 )?;
             }
-            self.machine.finish_recovery(1);
+            self.machine.finish_recovery();
         } else {
             self.keep_layout(true)?;
         }

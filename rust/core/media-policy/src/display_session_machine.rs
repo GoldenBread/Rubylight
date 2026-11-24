@@ -27,10 +27,21 @@ pub enum SessionPhase {
     Active { streams: usize },
     /// No transport is attached; the display is retained across a pause/disconnect.
     Paused,
-    /// The display session is undergoing recovery after display recreation.
-    Recovering,
+    /// The display session is undergoing recovery after display recreation while
+    /// preserving the number of attached active transports (`streams`).
+    Recovering { streams: usize },
     /// The display session has been released and its saved state restored.
     Restored,
+}
+
+impl SessionPhase {
+    /// Number of currently attached active transports in this phase.
+    pub fn active_streams(self) -> usize {
+        match self {
+            Self::Active { streams } | Self::Recovering { streams } => streams,
+            Self::Paused | Self::Restored => 0,
+        }
+    }
 }
 
 /// Mode tuple `(width, height, refresh_millihz, hdr, vrr_low_latency)` for display matching.
@@ -526,11 +537,13 @@ impl DisplaySessionMachine {
     /// Record another active stream attaching (resume or concurrent join).
     pub fn attach_stream(&mut self) -> SessionPhase {
         let streams = match self.phase {
-            SessionPhase::Active { streams } => streams.saturating_add(1),
-            SessionPhase::Paused | SessionPhase::Recovering | SessionPhase::Restored => 1,
+            SessionPhase::Active { streams } | SessionPhase::Recovering { streams } => {
+                streams.saturating_add(1)
+            }
+            SessionPhase::Paused | SessionPhase::Restored => 1,
         };
         self.phase = if self.recovery.pending {
-            SessionPhase::Recovering
+            SessionPhase::Recovering { streams }
         } else {
             SessionPhase::Active { streams }
         };
@@ -550,10 +563,19 @@ impl DisplaySessionMachine {
                     phase: self.phase,
                 }
             }
-            SessionPhase::Active { .. } | SessionPhase::Recovering => {
+            SessionPhase::Recovering { streams } if streams > 1 => {
+                self.phase = SessionPhase::Recovering {
+                    streams: streams - 1,
+                };
+                DetachEffect {
+                    capture_chosen_preferences: false,
+                    phase: self.phase,
+                }
+            }
+            SessionPhase::Active { streams } | SessionPhase::Recovering { streams } => {
                 self.phase = SessionPhase::Paused;
                 DetachEffect {
-                    capture_chosen_preferences: true,
+                    capture_chosen_preferences: streams == 1,
                     phase: self.phase,
                 }
             }
@@ -576,22 +598,27 @@ impl DisplaySessionMachine {
     /// Start recovery after the display or retained display generation changed.
     pub fn begin_recovery(&mut self, now: Instant) {
         self.recovery.start(now);
-        if !matches!(self.phase, SessionPhase::Paused | SessionPhase::Restored) {
-            self.phase = SessionPhase::Recovering;
+        match self.phase {
+            SessionPhase::Active { streams } => {
+                self.phase = SessionPhase::Recovering { streams };
+            }
+            SessionPhase::Recovering { .. } | SessionPhase::Paused | SessionPhase::Restored => {}
         }
     }
 
     /// Mark recovery complete once scale, layout, mode and HDR profile succeeded.
-    pub fn finish_recovery(&mut self, active_streams: usize) {
+    /// Restores [`SessionPhase::Active`] with the preserved stream count when
+    /// active streams are attached, or remains [`SessionPhase::Paused`] when none are.
+    pub fn finish_recovery(&mut self) {
         self.recovery.finish();
-        if !matches!(self.phase, SessionPhase::Restored) {
-            self.phase = if active_streams > 0 {
-                SessionPhase::Active {
-                    streams: active_streams,
-                }
-            } else {
-                SessionPhase::Paused
-            };
+        match self.phase {
+            SessionPhase::Recovering { streams } if streams > 0 => {
+                self.phase = SessionPhase::Active { streams };
+            }
+            SessionPhase::Recovering { .. } => {
+                self.phase = SessionPhase::Paused;
+            }
+            SessionPhase::Active { .. } | SessionPhase::Paused | SessionPhase::Restored => {}
         }
     }
 
