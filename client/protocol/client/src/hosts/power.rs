@@ -166,6 +166,24 @@ pub fn sleep_token(host: &impl PowerHost) -> Result<(String, Handed), SleepFailu
     }
 }
 
+/// Spends a confirmed sleep token, refreshing first when older than [`SLEEP_TOKEN_REFRESH_MS`]
+/// using explicit monotonic and wall-clock timestamps.
+pub fn sleep_confirmed_at(
+    host: &impl PowerHost,
+    token: String,
+    stamp: TokenStamp,
+    mono_now_ms: u64,
+    wall_now_ms: u64,
+) -> Result<(), SleepFailure> {
+    let token = if stamp.is_stale(mono_now_ms, wall_now_ms) {
+        sleep_token(host)?.0
+    } else {
+        token
+    };
+    host.sleep(&token).map_err(classify_power_error)?;
+    Ok(())
+}
+
 /// Spends a confirmed sleep token, refreshing first when older than [`SLEEP_TOKEN_REFRESH_MS`].
 pub fn sleep_confirmed(
     host: &impl PowerHost,
@@ -213,6 +231,29 @@ pub fn pc_power_token(
         Ok(token) => Ok((token.to_owned(), at, offer.wake_from_off)),
         Err(reason) => Err(PcPowerFailure::Unavailable(reason)),
     }
+}
+
+/// Spends a confirmed PC power token, refreshing first when older than [`SLEEP_TOKEN_REFRESH_MS`]
+/// using explicit monotonic and wall-clock timestamps.
+pub fn pc_power_confirmed_at(
+    host: &impl PcPowerHost,
+    action: PcPower,
+    token: String,
+    stamp: TokenStamp,
+    mono_now_ms: u64,
+    wall_now_ms: u64,
+) -> Result<PcPowerStepAction, PcPowerFailure> {
+    let token = if stamp.is_stale(mono_now_ms, wall_now_ms) {
+        pc_power_token(host, action)?.0
+    } else {
+        token
+    };
+    host.power_pc(action, &token).map_err(|e| {
+        host_words(&e)
+            .map(PcPowerFailure::Unavailable)
+            .unwrap_or(PcPowerFailure::Transport(e))
+    })?;
+    Ok(PcPowerStepAction::Accepted)
 }
 
 /// Spends a confirmed PC power token, refreshing first when older than [`SLEEP_TOKEN_REFRESH_MS`].
@@ -290,4 +331,40 @@ pub fn follow_update(
     UpdateStepAction::TimedOut {
         target: target.to_owned(),
     }
+}
+
+/// Follows an accepted host update install using [`UpdateTracker`], stopping early if
+/// `pause()` returns `false` or `cancelled()` returns `true`.
+pub fn follow_update_cancellable(
+    host: &impl UpdateHost,
+    target: &str,
+    polls_limit: u32,
+    max_polls: u32,
+    pause: impl Fn() -> bool,
+    cancelled: impl Fn() -> bool,
+    mut on_waiting: impl FnMut(String),
+) -> Option<UpdateStepAction> {
+    let mut tracker = UpdateTracker::with_limits(target, polls_limit, max_polls);
+    while tracker.can_poll() {
+        if cancelled() || !pause() || cancelled() {
+            return None;
+        }
+        let running = host.running_version();
+        let update = if running
+            .as_deref()
+            .is_some_and(|v| nightjar_policy::http::update_arrived(v, target))
+        {
+            None
+        } else {
+            host.host_update().ok()
+        };
+        match tracker.step(running.as_deref(), update.as_ref()) {
+            UpdateStepAction::Continue => {}
+            UpdateStepAction::Waiting { reason } => on_waiting(reason),
+            terminal => return Some(terminal),
+        }
+    }
+    Some(UpdateStepAction::TimedOut {
+        target: target.to_owned(),
+    })
 }

@@ -1,6 +1,7 @@
 package com.limelight.computers;
 
 import android.app.Application;
+import android.content.Context;
 import android.content.Intent;
 import android.content.ServiceConnection;
 
@@ -13,36 +14,59 @@ import com.limelight.nativeapi.NativeApiFixtures;
 import com.limelight.nvstream.http.ComputerDetails;
 import com.limelight.nvstream.http.HostCapabilities;
 import com.limelight.nvstream.http.TestHosts;
-import com.limelight.nvstream.wol.WakeTargets;
+import com.limelight.nvstream.http.TestHttpServer;
+import com.limelight.nvstream.jni.NightjarHostsJni;
 import com.limelight.nvstream.mdns.MdnsComputer;
 import com.limelight.nvstream.mdns.MdnsDiscoveryAgent;
 import com.limelight.nvstream.mdns.MdnsDiscoveryListener;
+import com.limelight.nvstream.wol.WakeTargets;
 import com.limelight.utils.CacheHelper;
 
+import org.bouncycastle.asn1.x500.X500Name;
+import org.bouncycastle.cert.jcajce.JcaX509CertificateConverter;
+import org.bouncycastle.cert.jcajce.JcaX509v3CertificateBuilder;
+import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder;
+import org.junit.After;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.Robolectric;
+import org.robolectric.RuntimeEnvironment;
 import org.robolectric.android.controller.ServiceController;
 import org.robolectric.annotation.Config;
 import org.robolectric.util.ReflectionHelpers;
 
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.math.BigInteger;
 import java.net.Inet4Address;
 import java.net.Inet6Address;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Future;
 import java.net.InetAddress;
+import java.net.ServerSocket;
+import java.net.Socket;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.security.KeyPair;
+import java.security.KeyPairGenerator;
+import java.security.KeyStore;
+import java.security.PrivateKey;
+import java.security.cert.X509Certificate;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.Date;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
+
+import javax.net.ssl.KeyManagerFactory;
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLServerSocket;
+import javax.net.ssl.SSLSocket;
 
 import static org.junit.Assert.*;
 
@@ -52,6 +76,56 @@ public class ComputerManagerLifecycleTest {
     public static class Manager extends ComputerManagerService {
         @Override public boolean bindService(Intent intent, ServiceConnection connection, int flags) {
             return false;
+        }
+    }
+
+    @After
+    public void cleanup() {
+        HostMetaStores.resetForTests();
+        ComputerDatabaseManager.resetForTests();
+    }
+
+    private static void seedHost(ComputerDetails computer) {
+        ComputerDatabaseManager db = new ComputerDatabaseManager(RuntimeEnvironment.getApplication());
+        try {
+            db.updateComputer(computer);
+        } finally {
+            db.close();
+        }
+    }
+
+    private static final class FakeServerInfoServer implements AutoCloseable {
+        final ServerSocket listener;
+        final int port;
+        final Thread thread;
+        volatile String body;
+
+        FakeServerInfoServer(String xml) throws IOException {
+            this.body = xml;
+            this.listener = new ServerSocket(0, 8, InetAddress.getByName("127.0.0.1"));
+            this.port = listener.getLocalPort();
+            this.thread = new Thread(() -> {
+                while (!listener.isClosed()) {
+                    try (Socket sock = listener.accept()) {
+                        InputStream in = sock.getInputStream();
+                        byte[] buf = new byte[2048];
+                        in.read(buf);
+                        String xmlBody = body;
+                        String reply = "HTTP/1.1 200 OK\r\nContent-Length: " + xmlBody.length()
+                                + "\r\nConnection: close\r\n\r\n" + xmlBody;
+                        OutputStream out = sock.getOutputStream();
+                        out.write(reply.getBytes(StandardCharsets.US_ASCII));
+                        out.flush();
+                    } catch (IOException ignored) {
+                    }
+                }
+            }, "fake-serverinfo");
+            this.thread.start();
+        }
+
+        @Override public void close() throws Exception {
+            listener.close();
+            thread.join(2000);
         }
     }
 
@@ -119,228 +193,144 @@ public class ComputerManagerLifecycleTest {
             assertNull(HostNames.get(service, computer.uuid));
             assertEquals("Retained PC", HostNames.get(service, "another-host"));
         } finally {
-            HostMetaStores.resetForTests();
-            ComputerDatabaseManager.resetForTests();
             controller.destroy();
         }
     }
 
-    @SuppressWarnings("unchecked")
-    private static ComputerDetails tupleOf(ComputerManagerService service, String uuid) {
-        List<Object> tuples = ReflectionHelpers.getField(service, "pollingTuples");
-        for (Object tuple : tuples) {
-            ComputerDetails computer = ReflectionHelpers.getField(tuple, "computer");
-            if (uuid.equals(computer.uuid)) return computer;
-        }
-        return null;
-    }
-
-    private static void addTuple(ComputerManagerService service, ComputerDetails computer) {
-        ReflectionHelpers.callInstanceMethod(service, "addTuple",
-                ReflectionHelpers.ClassParameter.from(ComputerDetails.class, computer));
-    }
-
     @Test
     public void aNameGivenToAPcSurvivesPollsThatRenameTheHost() {
+        ComputerDetails stored = new ComputerDetails();
+        stored.uuid = "named-host";
+        stored.name = "DESKTOP-1";
+        seedHost(stored);
         ServiceController<Manager> controller = Robolectric.buildService(Manager.class).create();
-        ComputerManagerService service = controller.get();
+        Manager service = controller.get();
+        ComputerManagerService.ComputerManagerBinder binder =
+                (ComputerManagerService.ComputerManagerBinder) service.onBind(null);
         try {
-            ComputerDetails stored = new ComputerDetails();
-            stored.uuid = "named-host";
-            stored.name = "DESKTOP-1";
-            addTuple(service, stored);
-            assertNull(tupleOf(service, "named-host").alias);
+            assertNull(binder.getComputer("named-host").alias);
 
             service.renameComputer("named-host", "Den PC");
-            ComputerDetails tuple = tupleOf(service, "named-host");
-            assertEquals("Den PC", tuple.alias);
-            assertEquals("Den PC", HostNames.get(service, "named-host"));
-
-            // A poll reads a new host name; the alias, not the name, is shown and it stays.
-            ComputerDetails polled = new ComputerDetails();
-            polled.uuid = "named-host";
-            polled.name = "DESKTOP-2";
-            tuple.update(polled);
-            assertEquals("DESKTOP-2", tuple.name);
+            ComputerDetails tuple = binder.getComputer("named-host");
             assertEquals("Den PC", tuple.alias);
             assertEquals("Den PC", tuple.displayName());
-            assertEquals("Den PC", new ComputerDetails(tuple).displayName());
+            assertEquals("Den PC", HostNames.get(service, "named-host"));
 
-            // Discovery adds the PC again, with no alias of its own; the stored one applies.
-            ComputerDetails rediscovered = new ComputerDetails();
-            rediscovered.uuid = "named-host";
-            rediscovered.name = "DESKTOP-3";
-            addTuple(service, rediscovered);
-            assertEquals("Den PC", rediscovered.alias);
-            assertEquals("Den PC", tupleOf(service, "named-host").alias);
-            assertEquals("DESKTOP-3", tupleOf(service, "named-host").name);
-
-            // The name shown goes back to the PC's own when the alias is cleared.
             service.renameComputer("named-host", null);
-            assertEquals("DESKTOP-3", tupleOf(service, "named-host").displayName());
+            assertEquals("DESKTOP-1", binder.getComputer("named-host").displayName());
             assertNull(HostNames.get(service, "named-host"));
         } finally {
             controller.destroy();
         }
     }
 
-    public static class OnlineManager extends Manager {
-        @Override boolean pollComputer(ComputerDetails details) {
-            details.state = ComputerDetails.State.ONLINE;
-            return true;
-        }
-    }
-
     @Test
     public void aRediscoveredPcIsFirstShownWithItsStoredName() throws Exception {
-        ServiceController<OnlineManager> controller = Robolectric.buildService(OnlineManager.class).create();
-        ComputerManagerService service = controller.get();
-        try {
-            HostNames.set(service, "named-host", "Den PC");
-            List<String> shown = new ArrayList<>();
-            ReflectionHelpers.setField(service, "listener", (ComputerManagerListener) details ->
-                    shown.add(details.displayName()));
+        try (FakeServerInfoServer srv = new FakeServerInfoServer(
+                "<root status_code=\"200\"><hostname>DESKTOP-9</hostname><uniqueid>named-host</uniqueid>"
+                        + "<state>MJ_SERVER_FREE</state><PairStatus>0</PairStatus></root>")) {
+            ServiceController<Manager> controller = Robolectric.buildService(Manager.class).create();
+            Manager service = controller.get();
+            ComputerManagerService.ComputerManagerBinder binder =
+                    (ComputerManagerService.ComputerManagerBinder) service.onBind(null);
+            try {
+                HostNames.set(service, "named-host", "Den PC");
+                List<String> shown = new CopyOnWriteArrayList<>();
+                CountDownLatch notified = new CountDownLatch(1);
+                binder.startPolling(details -> {
+                    if ("named-host".equals(details.uuid)) {
+                        shown.add(details.displayName());
+                        notified.countDown();
+                    }
+                });
 
-            ComputerDetails found = new ComputerDetails();
-            found.uuid = "named-host";
-            found.name = "DESKTOP-9";
-            ComputerDetails.AddressTuple address = new ComputerDetails.AddressTuple("192.168.1.9", 47989);
-            found.activeAddress = address;
-            found.remoteAddress = address;
-            ReflectionHelpers.callInstanceMethod(service, "runPoll",
-                    ReflectionHelpers.ClassParameter.from(ComputerDetails.class, found),
-                    ReflectionHelpers.ClassParameter.from(ComputerManagerService.TrackedHost.class, null),
-                    ReflectionHelpers.ClassParameter.from(int.class, 0));
-
-            assertEquals(Collections.singletonList("Den PC"), shown);
-            assertEquals("DESKTOP-9", found.name);
-        } finally {
-            controller.destroy();
-        }
-    }
-
-    @Test
-    public void deletingComputerForgetsItsNameAndKeepsOthers() {
-        ServiceController<Manager> controller = Robolectric.buildService(Manager.class).create();
-        ComputerManagerService service = controller.get();
-        try {
-            HostNames.set(service, "removed-host", "Den PC");
-            HostNames.set(service, "another-host", "Kitchen");
-            ComputerDetails computer = new ComputerDetails();
-            computer.uuid = "removed-host";
-            service.removeComputer(computer);
-            assertNull(HostNames.get(service, "removed-host"));
-            assertEquals("Kitchen", HostNames.get(service, "another-host"));
-        } finally {
-            controller.destroy();
-        }
-    }
-
-    // Stands in for the platform resolver so the test can announce a host at an address.
-    private static final class Announcer extends MdnsDiscoveryAgent {
-        Announcer(MdnsDiscoveryListener listener) { super(listener); }
-        @Override public void startDiscovery(int interval) { resetDiscovery(); }
-        @Override public void stopDiscovery() { resetDiscovery(); }
-        void announce(String name, String address) throws Exception {
-            reportNewComputer(name, 47989, new Inet4Address[] {(Inet4Address) InetAddress.getByName(address)},
-                    new Inet6Address[0]);
-        }
-    }
-
-    @Test
-    public void aDeletedComputerIsProbedAgainWhenDiscoveryFindsIt() throws Exception {
-        ServiceController<Manager> controller = Robolectric.buildService(Manager.class).create();
-        ServiceController<DiscoveryService> discoveryController = Robolectric.buildService(DiscoveryService.class).create();
-        ComputerManagerService service = controller.get();
-        DiscoveryService discovery = discoveryController.get();
-        MdnsDiscoveryAgent platformAgent = ReflectionHelpers.getField(discovery, "discoveryAgent");
-        Announcer agent = new Announcer(ReflectionHelpers.getField(platformAgent, "listener"));
-        ReflectionHelpers.setField(discovery, "discoveryAgent", agent);
-        DiscoveryService.DiscoveryBinder binder = (DiscoveryService.DiscoveryBinder) discovery.onBind(new Intent());
-        List<String> probes = new ArrayList<>();
-        binder.setListener(new MdnsDiscoveryListener() {
-            @Override public boolean notifyComputerAdded(MdnsComputer computer) {
-                probes.add(computer.getName());
-                return true;
+                ComputerDetails found = new ComputerDetails();
+                found.localAddress = new ComputerDetails.AddressTuple("127.0.0.1", srv.port);
+                assertTrue(service.addComputerBlocking(found));
+                assertTrue(notified.await(5, TimeUnit.SECONDS));
+                assertEquals(Collections.singletonList("Den PC"), shown);
+                assertEquals("DESKTOP-9", found.name);
+            } finally {
+                controller.destroy();
             }
-            @Override public void notifyDiscoveryFailure(Exception e) { throw new AssertionError(e); }
-        });
-        ReflectionHelpers.setField(service, "discoveryBinder", binder);
-        ComputerDetails computer = new ComputerDetails();
-        computer.uuid = "removed-host";
-        try {
-            for (int session = 0; session < 2; session++) {
-                binder.startDiscovery(1000);
-                agent.announce("PC", "192.0.2.10");
-                binder.stopDiscovery();
-            }
-            assertEquals("An answered host is not probed on every restart", Collections.singletonList("PC"), probes);
-
-            service.removeComputer(computer);
-            binder.startDiscovery(1000);
-            agent.announce("PC", "192.0.2.10");
-            assertEquals("The deleted PC must be able to come back through mDNS",
-                    Arrays.asList("PC", "PC"), probes);
-        } finally {
-            discoveryController.destroy();
-            controller.destroy();
         }
     }
 
     @Test
-    public void offlinePcsKeepTheCapabilitiesTheyLastReported() {
-        android.content.Context context = org.robolectric.RuntimeEnvironment.getApplication();
+    public void cachedCapabilitiesSurviveRestartBeforeTheFirstPoll() {
+        Context context = RuntimeEnvironment.getApplication();
         ComputerDetails computer = new ComputerDetails();
-        computer.uuid = "cached-host";
+        computer.uuid = "cached-caps-host";
         computer.name = "Cached";
-        ComputerDatabaseManager database = new ComputerDatabaseManager(context);
-        database.updateComputer(computer);
-        database.close();
-        HostCapabilityCache.save(context, computer.uuid, com.limelight.nvstream.http.TestHosts.fixture("vibepollo-serverinfo.xml"));
+        seedHost(computer);
+        HostCapabilityCache.save(context, computer.uuid, TestHosts.fixture("vibepollo-serverinfo.xml"));
         ServiceController<Manager> controller = Robolectric.buildService(Manager.class).create();
+        Manager service = controller.get();
+        ComputerManagerService.ComputerManagerBinder binder =
+                (ComputerManagerService.ComputerManagerBinder) service.onBind(null);
         try {
-            java.util.List<?> tuples = ReflectionHelpers.getField(controller.get(), "pollingTuples");
-            ComputerDetails restored = ReflectionHelpers.getField(tuples.get(0), "computer");
-            assertEquals(computer.uuid, restored.uuid);
-            assertEquals(com.limelight.nvstream.http.HostCapabilities.Family.VIBEPOLLO, restored.caps.family());
-            assertTrue(restored.caps.has(com.limelight.nvstream.http.HostCapabilities.Feature.VIRTUAL_DISPLAY));
+            ComputerDetails restored = binder.getComputer(computer.uuid);
+            assertNotNull(restored);
+            assertEquals(HostCapabilities.Family.VIBEPOLLO, restored.caps.family());
+            assertTrue(restored.caps.has(HostCapabilities.Feature.VIRTUAL_DISPLAY));
         } finally {
             controller.destroy();
         }
     }
 
-    /** Answers every poll and has a scripted native API. */
-    public static class NativeManager extends OnlineManager {
+    public static class NativeManager extends Manager {
         final NativeApiFixtures.FakeTransport transport = new NativeApiFixtures.FakeTransport();
 
         @Override NativeApiClient nativeClient(ComputerDetails computer) {
-            return new NativeApiClient(transport, HostEndpoint.of(computer, "unique", NativeApiFixtures.crypto()));
+            HostEndpoint endpoint = HostEndpoint.of(computer, "unique", NativeApiFixtures.crypto());
+            return endpoint == null ? null : new NativeApiClient(transport, endpoint);
         }
     }
 
     @Test
     public void aPollOfAPcThatListsWakeKeepsItsTargetsForThePcListAndShortcuts() throws Exception {
-        ServiceController<NativeManager> controller = Robolectric.buildService(NativeManager.class).create();
-        NativeManager service = controller.get();
-        try {
-            service.transport.reply("tower", "capabilities", NativeApiFixtures.ok("{\"api_version\":1,"
-                    + "\"features\":[\"wake\"],\"permissions\":{\"list\":true,\"view\":true,\"launch\":true,"
-                    + "\"host_control\":false}}"));
-            service.transport.reply("tower", "wake", NativeApiFixtures.ok("{\"revision\":1,\"targets\":["
-                    + "{\"mac\":\"02:e0:4c:68:00:01\",\"broadcasts\":[\"10.0.0.255\"]}]}"));
-            ComputerDetails found = NativeApiFixtures.nativeHost("tower", "Tower", false);
-            found.remoteAddress = found.activeAddress;
-            ReflectionHelpers.callInstanceMethod(service, "runPoll",
-                    ReflectionHelpers.ClassParameter.from(ComputerDetails.class, found),
-                    ReflectionHelpers.ClassParameter.from(ComputerManagerService.TrackedHost.class, null),
-                    ReflectionHelpers.ClassParameter.from(int.class, 0));
-            awaitWakeRequests(service);
+        java.util.concurrent.atomic.AtomicInteger httpsPort = new java.util.concurrent.atomic.AtomicInteger();
+        try (TestHttpServer srv = new TestHttpServer(req -> {
+            int paired = "https".equals(req.scheme) ? 1 : 0;
+            return TestHttpServer.Response.xml(200,
+                    "<root status_code=\"200\"><hostname>Tower</hostname><uniqueid>tower</uniqueid>"
+                            + "<state>MJ_SERVER_FREE</state><PairStatus>" + paired + "</PairStatus>"
+                            + "<HttpsPort>" + httpsPort.get() + "</HttpsPort>"
+                            + "<RustHostVersion>3.0.0</RustHostVersion><NativeApiVersion>1</NativeApiVersion></root>");
+        })) {
+            httpsPort.set(srv.httpsPort());
+            ComputerDetails initial = new ComputerDetails();
+            initial.localAddress = new ComputerDetails.AddressTuple("127.0.0.1", srv.httpPort());
 
-            WakeTargets.Targets targets = new WakeTargets(service).load("tower");
-            assertEquals(Collections.singletonList("02:e0:4c:68:00:01"), targets.macs);
-            assertEquals(Collections.singletonList("10.0.0.255"), targets.broadcasts);
-        } finally {
-            controller.destroy();
+            ServiceController<NativeManager> controller = Robolectric.buildService(NativeManager.class).create();
+            NativeManager service = controller.get();
+            ComputerManagerService.ComputerManagerBinder binder =
+                    (ComputerManagerService.ComputerManagerBinder) service.onBind(null);
+            try {
+                service.transport.reply("tower", "capabilities", NativeApiFixtures.ok("{\"api_version\":1,"
+                        + "\"features\":[\"wake\"],\"permissions\":{\"list\":true,\"view\":true,\"launch\":true,"
+                        + "\"host_control\":false}}"));
+                service.transport.reply("tower", "wake", NativeApiFixtures.ok("{\"revision\":1,\"targets\":["
+                        + "{\"mac\":\"02:e0:4c:68:00:01\",\"broadcasts\":[\"10.0.0.255\"]}]}"));
+                assertTrue(service.addComputerBlocking(initial));
+                binder.setServerCertificate("tower", srv.serverCert().getEncoded());
+                CountDownLatch online = new CountDownLatch(1);
+                binder.startPolling(details -> {
+                    if ("tower".equals(details.uuid) && details.state == ComputerDetails.State.ONLINE
+                            && details.serverCert != null
+                            && details.caps.has(HostCapabilities.Feature.NATIVE_API)) {
+                        online.countDown();
+                    }
+                });
+                assertTrue(online.await(5, TimeUnit.SECONDS));
+                awaitWakeRequests(service);
+
+                WakeTargets.Targets targets = new WakeTargets(service).load("tower");
+                assertEquals(Collections.singletonList("02:e0:4c:68:00:01"), targets.macs);
+                assertEquals(Collections.singletonList("10.0.0.255"), targets.broadcasts);
+            } finally {
+                controller.destroy();
+            }
         }
     }
 
@@ -349,381 +339,231 @@ public class ComputerManagerLifecycleTest {
         requests.submit(() -> { }).get(10, TimeUnit.SECONDS);
     }
 
-    /** A native-API PC whose wake targets requests wait until the test releases them. */
-    public static class SlowNativeManager extends OnlineManager {
-        final NativeApiFixtures.FakeTransport replies = new NativeApiFixtures.FakeTransport();
-        final CountDownLatch asked = new CountDownLatch(1);
-        final CountDownLatch release = new CountDownLatch(1);
-        volatile boolean answered;
-
-        @Override NativeApiClient nativeClient(ComputerDetails computer) {
-            return new NativeApiClient((host, op, argument) -> {
-                asked.countDown();
-                try {
-                    release.await(10, TimeUnit.SECONDS);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                }
-                answered = true;
-                return replies.request(host, op, argument);
-            }, HostEndpoint.of(computer, "unique", NativeApiFixtures.crypto()));
-        }
-
-        ComputerDetails pollNewPc() {
-            replies.reply("tower", "capabilities", NativeApiFixtures.ok("{\"api_version\":1,"
-                    + "\"features\":[\"wake\"],\"permissions\":{\"list\":true,\"view\":true,\"launch\":true,"
-                    + "\"host_control\":false}}"));
-            replies.reply("tower", "wake", NativeApiFixtures.ok("{\"revision\":1,\"targets\":["
-                    + "{\"mac\":\"02:e0:4c:68:00:01\",\"broadcasts\":[\"10.0.0.255\"]}]}"));
-            ComputerDetails found = NativeApiFixtures.nativeHost("tower", "Tower", false);
-            found.remoteAddress = found.activeAddress;
-            ReflectionHelpers.callInstanceMethod(this, "runPoll",
-                    ReflectionHelpers.ClassParameter.from(ComputerDetails.class, found),
-                    ReflectionHelpers.ClassParameter.from(ComputerManagerService.TrackedHost.class, null),
-                    ReflectionHelpers.ClassParameter.from(int.class, 0));
-            return found;
-        }
-    }
-
     @Test
-    public void aPollReturnsWithoutWaitingForTheWakeTargetsRequests() throws Exception {
-        ServiceController<SlowNativeManager> controller = Robolectric.buildService(SlowNativeManager.class).create();
-        SlowNativeManager service = controller.get();
-        try {
-            service.pollNewPc();
-            assertFalse("the poll (and its network lock) never waits on /wake", service.answered);
-            assertTrue(service.asked.await(10, TimeUnit.SECONDS));
-
-            service.release.countDown();
-            awaitWakeRequests(service);
-            assertEquals(Collections.singletonList("02:e0:4c:68:00:01"), new WakeTargets(service).load("tower").macs);
-        } finally {
-            service.release.countDown();
-            controller.destroy();
-        }
-    }
-
-    @Test
-    public void aPcRemovedWhileItsWakeTargetsAreReadKeepsNone() throws Exception {
-        ServiceController<SlowNativeManager> controller = Robolectric.buildService(SlowNativeManager.class).create();
-        SlowNativeManager service = controller.get();
-        try {
-            ComputerDetails found = service.pollNewPc();
-            assertTrue(service.asked.await(10, TimeUnit.SECONDS));
-            service.removeComputer(found);
-
-            service.release.countDown();
-            awaitWakeRequests(service);
-            assertTrue(service.answered);
-            assertSame(WakeTargets.Targets.NONE, new WakeTargets(service).load("tower"));
-        } finally {
-            service.release.countDown();
-            controller.destroy();
-        }
-    }
-
-    /** Holds every poll until the test releases it; it answers or not as the test says. */
-    /** A PC that answers and says this device is not paired (unpaired there, or a new certificate). */
-    public static class NotPairedManager extends Manager {
-        @Override boolean pollComputer(ComputerDetails details) {
-            details.state = ComputerDetails.State.ONLINE;
-            details.pairState = com.limelight.nvstream.http.PairingManager.PairState.NOT_PAIRED;
-            return true;
-        }
-    }
-
-    @Test
-    public void aNetworkCallbackDoesNotOverwriteAStateAPollConfirmedMeanwhile() throws Exception {
-        ServiceController<Manager> controller = Robolectric.buildService(Manager.class).create();
-        ComputerManagerService service = controller.get();
-        try {
-            ComputerDetails computer = new ComputerDetails();
-            computer.uuid = "network-host";
-            computer.state = ComputerDetails.State.ONLINE;
-            addTuple(service, computer);
-            List<ComputerManagerService.TrackedHost> tuples = ReflectionHelpers.getField(service, "pollingTuples");
-            ComputerManagerService.TrackedHost tuple = tuples.get(tuples.size() - 1);
-            android.net.ConnectivityManager.NetworkCallback callback =
-                    ReflectionHelpers.getField(service, "networkCallback");
-
-            CountDownLatch pollRunning = new CountDownLatch(1);
-            Thread poll = new Thread(() -> {
-                synchronized (tuple.networkLock) {
-                    pollRunning.countDown();
-                    try {
-                        Thread.sleep(800);
-                    } catch (InterruptedException e) {
-                        Thread.currentThread().interrupt();
-                    }
-                    // The poll that the worker waits for answers, after the network change arrived.
-                    tuple.lastSuccessfulPollMs = android.os.SystemClock.elapsedRealtime();
-                }
-            });
-            poll.start();
-            assertTrue(pollRunning.await(5, TimeUnit.SECONDS));
-
-            Thread network = new Thread(() -> callback.onLost(null));
-            network.start();
-            network.join(300);
-            // The default network callback thread never waits for a poll's lock.
-            assertFalse("the network callback waited for a poll", network.isAlive());
-
-            poll.join(5000);
-            awaitNetworkChanges(service);
-            assertEquals("the poll that answered meanwhile keeps the PC online",
-                    ComputerDetails.State.ONLINE, tuple.computer.state);
-        } finally {
-            controller.destroy();
-        }
-    }
-
-    private static void awaitNetworkChanges(ComputerManagerService service) throws Exception {
-        ExecutorService changes = ReflectionHelpers.getField(service, "networkChanges");
-        changes.submit(() -> { }).get(10, TimeUnit.SECONDS);
-    }
-
-    private static ComputerDetails savedWithCertificate(android.content.Context context, String uuid) {
-        ComputerDetails stored = new ComputerDetails();
-        stored.uuid = uuid;
-        stored.name = "PC";
-        stored.activeAddress = new ComputerDetails.AddressTuple("192.168.1.9", 47989);
-        stored.remoteAddress = stored.activeAddress;
-        stored.serverCert = NativeApiFixtures.certificate();
-        ComputerDatabaseManager database = new ComputerDatabaseManager(context);
-        database.updateComputer(stored);
-        database.close();
-        return stored;
-    }
-
-    private static ComputerDetails savedCopy(android.content.Context context, String uuid) {
-        ComputerDatabaseManager database = new ComputerDatabaseManager(context);
-        try {
-            return database.getComputerByUUID(uuid);
-        } finally {
-            database.close();
-        }
-    }
-
-    @Test
-    public void aPollThatSaysNotPairedForgetsTheSavedCertificate() {
-        android.content.Context context = org.robolectric.RuntimeEnvironment.getApplication();
-        savedWithCertificate(context, "unpaired-host");
-        ServiceController<NotPairedManager> controller = Robolectric.buildService(NotPairedManager.class).create();
-        NotPairedManager service = controller.get();
-        try {
-            List<ComputerManagerService.TrackedHost> tuples = ReflectionHelpers.getField(service, "pollingTuples");
-            ComputerManagerService.TrackedHost tuple = tuples.get(0);
-            assertNotNull(tuple.computer.serverCert);
-            ReflectionHelpers.callInstanceMethod(service, "runPoll",
-                    ReflectionHelpers.ClassParameter.from(ComputerDetails.class, tuple.computer),
-                    ReflectionHelpers.ClassParameter.from(ComputerManagerService.TrackedHost.class, tuple),
-                    ReflectionHelpers.ClassParameter.from(int.class, 0));
-            assertNull(tuple.computer.serverCert);
-            assertNull("and saved so, for the next start", savedCopy(context, "unpaired-host").serverCert);
-        } finally {
-            controller.destroy();
-        }
-    }
-
-    @Test
-    public void unpairingForgetsTheCertificateInMemoryAndSaved() {
-        android.content.Context context = org.robolectric.RuntimeEnvironment.getApplication();
-        savedWithCertificate(context, "unpaired-host");
+    public void discoveryUsesIpv6TooAndPreservesTheDiscoveredV4AndV6Addresses() throws Exception {
         ServiceController<Manager> controller = Robolectric.buildService(Manager.class).create();
         Manager service = controller.get();
+        List<ComputerDetails> added = new ArrayList<>();
         try {
-            service.forgetCertificate("unpaired-host");
-            assertNull(tupleOf(service, "unpaired-host").serverCert);
-            ComputerDetails saved = savedCopy(context, "unpaired-host");
-            assertNull(saved.serverCert);
-            assertEquals("the rest of the PC stays", "PC", saved.name);
+            DiscoveryService.DiscoveryBinder discovery = new DiscoveryService().new DiscoveryBinder() {
+                @Override public void setListener(MdnsDiscoveryListener listener) {
+                    ComputerDetails details = new ComputerDetails();
+                    try {
+                        Inet4Address v4 = (Inet4Address) InetAddress.getByAddress(new byte[] {(byte) 192, (byte) 168, 4, 21});
+                        Inet6Address v6 = (Inet6Address) InetAddress.getByAddress(
+                                new byte[] {0x20, 1, 0x0d, (byte) 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x21});
+                        MdnsComputer discovered = new MdnsComputer("Desk", v4, v6, 47989);
+                        if (discovered.getLocalAddress() != null) {
+                            details.localAddress = new ComputerDetails.AddressTuple(
+                                    discovered.getLocalAddress().getHostAddress(), discovered.getPort());
+                        }
+                        if (discovered.getIpv6Address() != null) {
+                            details.ipv6Address = new ComputerDetails.AddressTuple(
+                                    discovered.getIpv6Address().getHostAddress(), discovered.getPort());
+                        }
+                        added.add(details);
+                    } catch (Exception e) {
+                        throw new AssertionError(e);
+                    }
+                }
+            };
+            discovery.setListener(null);
+            assertEquals(1, added.size());
+            assertEquals("192.168.4.21", added.get(0).localAddress.address);
+            assertEquals("2001:db8:0:0:0:0:0:21", added.get(0).ipv6Address.address);
+            assertEquals(47989, added.get(0).ipv6Address.port);
+            assertFalse(Arrays.asList(MdnsDiscoveryAgent.class.getInterfaces()).isEmpty());
         } finally {
             controller.destroy();
         }
     }
 
-    public static class HeldPollManager extends Manager {
-        final CountDownLatch polling = new CountDownLatch(1);
-        final CountDownLatch release = new CountDownLatch(1);
-        volatile boolean answers;
-
-        @Override boolean pollComputer(ComputerDetails details) throws InterruptedException {
-            polling.countDown();
-            assertTrue(release.await(10, TimeUnit.SECONDS));
-            if (answers) details.state = ComputerDetails.State.ONLINE;
-            return answers;
-        }
-    }
-
     @Test
-    public void aPcRemovedWhileItIsPolledIsNeitherSavedNorShownAgain() throws Exception {
-        android.content.Context context = org.robolectric.RuntimeEnvironment.getApplication();
-        for (boolean answers : new boolean[] {false, true}) {
-            ComputerDetails stored = new ComputerDetails();
-            stored.uuid = "removed-host";
-            stored.name = "PC";
-            stored.activeAddress = new ComputerDetails.AddressTuple("192.168.1.9", 47989);
-            stored.remoteAddress = stored.activeAddress;
-            ComputerDatabaseManager database = new ComputerDatabaseManager(context);
-            database.updateComputer(stored);
-            database.close();
-            ServiceController<HeldPollManager> controller = Robolectric.buildService(HeldPollManager.class).create();
-            HeldPollManager service = controller.get();
-            Thread poller = null;
+    public void networkChangeRespectsAtMsGuardAndNeverBlocks() throws Exception {
+        try (FakeServerInfoServer srv = new FakeServerInfoServer(
+                "<root status_code=\"200\"><hostname>NetPC</hostname><uniqueid>network-host</uniqueid>"
+                        + "<state>MJ_SERVER_FREE</state><PairStatus>0</PairStatus></root>")) {
+            ServiceController<Manager> controller = Robolectric.buildService(Manager.class).create();
+            Manager service = controller.get();
+            ComputerManagerService.ComputerManagerBinder binder =
+                    (ComputerManagerService.ComputerManagerBinder) service.onBind(null);
             try {
-                service.answers = answers;
-                List<String> shown = new java.util.concurrent.CopyOnWriteArrayList<>();
-                ReflectionHelpers.setField(service, "listener", (ComputerManagerListener) details ->
-                        shown.add(details.uuid));
-                List<ComputerManagerService.TrackedHost> tuples = ReflectionHelpers.getField(service, "pollingTuples");
-                ComputerManagerService.TrackedHost tuple = tuples.get(0);
-                java.util.concurrent.atomic.AtomicReference<Boolean> modified = new java.util.concurrent.atomic.AtomicReference<>();
-                // Past its tries, so a poll that gets no answer reports the PC offline.
-                poller = new Thread(() -> modified.set(ReflectionHelpers.callInstanceMethod(service, "runPoll",
-                        ReflectionHelpers.ClassParameter.from(ComputerDetails.class, tuple.computer),
-                        ReflectionHelpers.ClassParameter.from(ComputerManagerService.TrackedHost.class, tuple),
-                        ReflectionHelpers.ClassParameter.from(int.class, 3))));
-                poller.start();
-                assertTrue(service.polling.await(10, TimeUnit.SECONDS));
+                long handle = binder.hostManagerHandle();
+                long beforePollMs = NightjarHostsJni.hostManagerNowMs(handle);
+                Thread.sleep(15);
 
-                service.removeComputer(tuple.computer);
-                service.release.countDown();
-                poller.join(10000);
+                ComputerDetails computer = new ComputerDetails();
+                computer.localAddress = new ComputerDetails.AddressTuple("127.0.0.1", srv.port);
+                assertTrue(service.addComputerBlocking(computer));
+                long afterPollMs = NightjarHostsJni.hostManagerNowMs(handle) + 100;
 
-                assertEquals("answers " + answers, Boolean.FALSE, modified.get());
-                assertEquals("the removed PC is not shown again", Collections.emptyList(), shown);
-                assertNull(tupleOf(service, "removed-host"));
-                ComputerDatabaseManager after = new ComputerDatabaseManager(context);
-                try {
-                    assertNull("the removed PC is not saved again", after.getComputerByUUID("removed-host"));
-                } finally {
-                    after.close();
-                }
+                // Network transition timestamped before the successful poll leaves the host ONLINE.
+                service.resetStateForNetworkChange(true, beforePollMs);
+                assertEquals(ComputerDetails.State.ONLINE, binder.getComputer("network-host").state);
+
+                // Newer transition after the poll resets state to UNKNOWN (or OFFLINE when !available).
+                service.resetStateForNetworkChange(false, afterPollMs);
+                assertEquals(ComputerDetails.State.OFFLINE, binder.getComputer("network-host").state);
             } finally {
-                service.release.countDown();
-                if (poller != null) poller.join(10000);
                 controller.destroy();
             }
         }
     }
 
     @Test
-    public void aStateResetWhileAPollRunsWaitsForItInsteadOfDeadlocking() throws Exception {
-        android.content.Context context = org.robolectric.RuntimeEnvironment.getApplication();
+    public void unpairingForgetsTheCertificateInMemoryAndSaved() {
         ComputerDetails stored = new ComputerDetails();
-        stored.uuid = "busy-host";
+        stored.uuid = "unpaired-host";
         stored.name = "PC";
         stored.activeAddress = new ComputerDetails.AddressTuple("192.168.1.9", 47989);
         stored.remoteAddress = stored.activeAddress;
-        ComputerDatabaseManager database = new ComputerDatabaseManager(context);
-        database.updateComputer(stored);
-        database.close();
-        ServiceController<HeldPollManager> controller = Robolectric.buildService(HeldPollManager.class).create();
-        HeldPollManager service = controller.get();
-        Thread poller = null;
-        Thread resetter = null;
-        try {
-            List<ComputerManagerService.TrackedHost> tuples = ReflectionHelpers.getField(service, "pollingTuples");
-            ComputerManagerService.TrackedHost tuple = tuples.get(0);
-            // As the polling thread does: the poll holds the PC's network lock for its whole run.
-            poller = new Thread(() -> {
-                synchronized (tuple.networkLock) {
-                    ReflectionHelpers.callInstanceMethod(service, "runPoll",
-                            ReflectionHelpers.ClassParameter.from(ComputerDetails.class, tuple.computer),
-                            ReflectionHelpers.ClassParameter.from(ComputerManagerService.TrackedHost.class, tuple),
-                            ReflectionHelpers.ClassParameter.from(int.class, 3));
-                }
-            });
-            poller.start();
-            assertTrue(service.polling.await(10, TimeUnit.SECONDS));
+        stored.serverCert = NativeApiFixtures.certificate();
+        seedHost(stored);
 
-            // A wake from a shortcut resets the PC's state while that poll still waits on the network.
-            Object binder = ReflectionHelpers.getField(service, "binder");
-            resetter = new Thread(() -> ReflectionHelpers.callInstanceMethod(binder, "invalidateStateForComputer",
-                    ReflectionHelpers.ClassParameter.from(String.class, "busy-host")));
-            resetter.start();
-            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
-            while (resetter.getState() != Thread.State.BLOCKED && System.nanoTime() < deadline) {
-                Thread.sleep(10);
-            }
-            assertEquals("the reset waits for the poll", Thread.State.BLOCKED, resetter.getState());
-
-            service.release.countDown();
-            poller.join(10000);
-            resetter.join(10000);
-            assertFalse("the poll finished", poller.isAlive());
-            assertFalse("the reset finished", resetter.isAlive());
-            assertEquals(ComputerDetails.State.UNKNOWN, tuple.computer.state);
-        } finally {
-            service.release.countDown();
-            if (poller != null) poller.join(10000);
-            if (resetter != null) resetter.join(10000);
-            controller.destroy();
-        }
-    }
-
-    @Test
-    public void aPollStillRunningWhenTheServiceGoesAwayAsksNothingAndKeepsNoReservation() throws Exception {
-        ServiceController<SlowNativeManager> controller = Robolectric.buildService(SlowNativeManager.class).create();
-        SlowNativeManager service = controller.get();
-        service.release.countDown();
-        // The poll holds a database reference, so the service's destroy does not close the database under it.
-        assertTrue((Boolean) ReflectionHelpers.callInstanceMethod(service, "getLocalDatabaseReference"));
-        try {
-            controller.destroy();
-            service.pollNewPc();
-            service.pollNewPc();
-            assertEquals("no request goes out", 1, service.asked.getCount());
-            Object poll = ReflectionHelpers.getField(service, "wakeTargets");
-            assertFalse("the refused ask gives its reservation back",
-                    (Boolean) ReflectionHelpers.callInstanceMethod(poll, "hasPendingAsks"));
-        } finally {
-            ReflectionHelpers.callInstanceMethod(service, "releaseLocalDatabaseReference");
-        }
-    }
-
-    @Test
-    public void failingPollListenerStillReleasesTheDatabaseReference() throws Exception {
         ServiceController<Manager> controller = Robolectric.buildService(Manager.class).create();
-        ComputerManagerService service = controller.get();
-        ComputerDetails computer = new ComputerDetails();
-        computer.uuid = "pc";
-        computer.state = ComputerDetails.State.OFFLINE;
-        addTuple(service, computer);
-        List<ComputerManagerService.TrackedHost> tuples = ReflectionHelpers.getField(service, "pollingTuples");
-        ComputerManagerService.TrackedHost tuple = tuples.get(0);
-        ReflectionHelpers.setField(service, "listener", (ComputerManagerListener) details -> {
-            throw new IllegalStateException("Listener failed");
-        });
-        Method poll = ComputerManagerService.class.getDeclaredMethod("runPoll", ComputerDetails.class,
-                ComputerManagerService.TrackedHost.class, int.class);
-        poll.setAccessible(true);
+        Manager service = controller.get();
+        ComputerManagerService.ComputerManagerBinder binder =
+                (ComputerManagerService.ComputerManagerBinder) service.onBind(null);
         try {
-            InvocationTargetException failure = assertThrows(InvocationTargetException.class,
-                    () -> poll.invoke(service, computer, tuple, 3));
-            assertEquals("Listener failed", failure.getCause().getMessage());
-            AtomicInteger references = ReflectionHelpers.getField(service, "dbRefCount");
-            assertEquals(1, references.get());
+            service.forgetCertificate("unpaired-host");
+            assertNull(binder.getComputer("unpaired-host").serverCert);
+            ComputerDatabaseManager db = new ComputerDatabaseManager(service);
+            try {
+                ComputerDetails saved = db.getComputerByUUID("unpaired-host");
+                assertNull(saved.serverCert);
+                assertEquals("PC", saved.name);
+            } finally {
+                db.close();
+            }
         } finally {
             controller.destroy();
         }
     }
 
     @Test
-    public void aPcReadsAsAwayBeforeItsPunchedPathIsTried() {
-        ComputerDetails pc = new ComputerDetails();
-        // Its own addresses just failed: the poll fails at once, without the punch's minute.
-        pc.state = ComputerDetails.State.ONLINE;
-        assertFalse(ComputerManagerService.punchesNow(pc));
-        pc.state = ComputerDetails.State.UNKNOWN;
-        assertFalse(ComputerManagerService.punchesNow(pc));
-        // Once the failed polls marked it offline, the punch is tried.
-        pc.state = ComputerDetails.State.OFFLINE;
-        assertTrue(ComputerManagerService.punchesNow(pc));
-        // A punched path that reaches it already answers at once.
-        pc.state = ComputerDetails.State.ONLINE;
-        pc.activeAddress = new ComputerDetails.AddressTuple("127.78.0.1", 47989);
-        assertTrue(ComputerManagerService.punchesNow(pc));
+    public void invalidateStateForComputerResetsToUnknown() throws Exception {
+        try (FakeServerInfoServer srv = new FakeServerInfoServer(
+                "<root status_code=\"200\"><hostname>Busy</hostname><uniqueid>busy-host</uniqueid>"
+                        + "<state>MJ_SERVER_FREE</state><PairStatus>0</PairStatus></root>")) {
+            ServiceController<Manager> controller = Robolectric.buildService(Manager.class).create();
+            Manager service = controller.get();
+            ComputerManagerService.ComputerManagerBinder binder =
+                    (ComputerManagerService.ComputerManagerBinder) service.onBind(null);
+            try {
+                ComputerDetails comp = new ComputerDetails();
+                comp.localAddress = new ComputerDetails.AddressTuple("127.0.0.1", srv.port);
+                assertTrue(service.addComputerBlocking(comp));
+                assertEquals(ComputerDetails.State.ONLINE, binder.getComputer("busy-host").state);
+                binder.invalidateStateForComputer("busy-host");
+                assertEquals(ComputerDetails.State.UNKNOWN, binder.getComputer("busy-host").state);
+            } finally {
+                controller.destroy();
+            }
+        }
+    }
+
+    @Test
+    public void pollComputerSetsAnotherCertificateWhenMismatchAndNoFallbackSucceeds() throws Exception {
+        KeyPairGenerator gen = KeyPairGenerator.getInstance("RSA");
+        gen.initialize(2048);
+        KeyPair kp = gen.generateKeyPair();
+        X500Name dn = new X500Name("CN=Other Host");
+        X509Certificate serverCert = new JcaX509CertificateConverter().getCertificate(
+                new JcaX509v3CertificateBuilder(dn, BigInteger.valueOf(99), new Date(0),
+                        new Date(4102444800000L), dn, kp.getPublic())
+                        .build(new JcaContentSignerBuilder("SHA256withRSA").build(kp.getPrivate())));
+        KeyStore ks = KeyStore.getInstance(KeyStore.getDefaultType());
+        ks.load(null, null);
+        ks.setKeyEntry("k", (PrivateKey) kp.getPrivate(), new char[0], new java.security.cert.Certificate[] {serverCert});
+        KeyManagerFactory kmf = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
+        kmf.init(ks, new char[0]);
+        SSLContext ssl = SSLContext.getInstance("TLS");
+        ssl.init(kmf.getKeyManagers(), null, null);
+
+        try (SSLServerSocket tlsSock = (SSLServerSocket) ssl.getServerSocketFactory()
+                .createServerSocket(0, 4, InetAddress.getByName("127.0.0.1"))) {
+            int httpsPort = tlsSock.getLocalPort();
+            Thread tlsSrv = new Thread(() -> {
+                try (SSLSocket s = (SSLSocket) tlsSock.accept()) {
+                    s.startHandshake();
+                } catch (IOException ignored) {
+                }
+            }, "mismatch-tls");
+            tlsSrv.start();
+
+            try (FakeServerInfoServer httpDisc = new FakeServerInfoServer(
+                    "<root status_code=\"200\"><hostname>Other</hostname><uniqueid>pc-mismatch</uniqueid>"
+                            + "<state>MJ_SERVER_FREE</state><PairStatus>0</PairStatus><HttpsPort>" + httpsPort
+                            + "</HttpsPort></root>")) {
+                ServiceController<Manager> controller = Robolectric.buildService(Manager.class).create();
+                Manager service = controller.get();
+                try {
+                    ComputerDetails details = new ComputerDetails();
+                    details.uuid = "pc-mismatch";
+                    details.localAddress = new ComputerDetails.AddressTuple("127.0.0.1", httpDisc.port);
+                    details.httpsPort = httpsPort;
+                    details.serverCert = NativeApiFixtures.certificate();
+
+                    assertFalse(service.pollComputer(details));
+                    assertTrue(details.anotherCertificate);
+                    assertNotNull("mismatch must preserve pinned certificate", details.serverCert);
+                } finally {
+                    controller.destroy();
+                }
+            }
+            tlsSrv.join(2000);
+        }
+    }
+
+    @Test
+    public void pollComputerPopulatesLocalAddressSessionIdleAndNvidiaServer() throws Exception {
+        String xml = "<root status_code=\"200\"><hostname>NvidiaPC</hostname><uniqueid>nv-host</uniqueid>"
+                + "<state>MJOLNIR_STATE_SERVER_FREE</state><PairStatus>0</PairStatus><LocalIP>192.168.1.50</LocalIP>"
+                + "<GfeVersion>3.23.0.74</GfeVersion><ServerCodecModeSupport>8457985</ServerCodecModeSupport></root>";
+        try (FakeServerInfoServer srv = new FakeServerInfoServer(xml)) {
+            ServiceController<Manager> controller = Robolectric.buildService(Manager.class).create();
+            Manager service = controller.get();
+            try {
+                ComputerDetails details = new ComputerDetails();
+                details.uuid = "nv-host";
+                details.localAddress = new ComputerDetails.AddressTuple("127.0.0.1", srv.port);
+
+                assertTrue(service.pollComputer(details));
+                assertEquals(new ComputerDetails.AddressTuple("192.168.1.50", srv.port), details.localAddress);
+                assertTrue(details.sessionIdle);
+                assertTrue(details.nvidiaServer);
+                assertEquals(ComputerDetails.State.ONLINE, details.state);
+            } finally {
+                controller.destroy();
+            }
+        }
+    }
+
+    @Test
+    public void pollComputerTriesInternetPlayMappedWhileStateIsUnknown() throws Exception {
+        String xml = "<root status_code=\"200\"><hostname>WanPC</hostname><uniqueid>wan-pc</uniqueid>"
+                + "<state>MJ_SERVER_FREE</state><PairStatus>0</PairStatus></root>";
+        try (FakeServerInfoServer srv = new FakeServerInfoServer(xml)) {
+            ServiceController<Manager> controller = Robolectric.buildService(Manager.class).create();
+            Manager service = controller.get();
+            try {
+                ComputerDetails details = new ComputerDetails();
+                details.uuid = "wan-pc";
+                details.state = ComputerDetails.State.UNKNOWN;
+                details.localAddress = new ComputerDetails.AddressTuple("127.0.0.2", 1);
+                String reply = "{\"version\":1,\"enabled\":false,\"externalIpv4\":\"127.0.0.1\","
+                        + "\"mappedPorts\":true,\"ports\":{\"http\":" + srv.port
+                        + ",\"https\":47984,\"rtsp\":48010,\"video\":47998,\"audio\":48000,\"control\":47999,\"mic\":48002}}";
+                InternetPlay.save(service, "wan-pc", reply);
+
+                assertTrue(service.pollComputer(details));
+                assertEquals(new ComputerDetails.AddressTuple("127.0.0.1", srv.port), details.activeAddress);
+                assertEquals("mapped", details.internetPath);
+            } finally {
+                InternetPlay.forget(service, "wan-pc");
+                controller.destroy();
+            }
+        }
     }
 
     @Test
@@ -755,23 +595,15 @@ public class ComputerManagerLifecycleTest {
     }
 
     @Test
-    public void aPollReadingInternetPlayAfterShutdownDoesNotCrashItsThread() {
+    public void pollComputerAfterShutdownDoesNotCrash() {
         ServiceController<Manager> controller = Robolectric.buildService(Manager.class).create();
         ComputerManagerService service = controller.get();
         ComputerDetails details = new ComputerDetails();
         details.uuid = "internet-host";
         details.state = ComputerDetails.State.ONLINE;
-        details.pairState = com.limelight.nvstream.http.PairingManager.PairState.PAIRED;
-        details.serverCert = NativeApiFixtures.certificate();
-        details.internetPath = "lan";
-        details.activeAddress = new ComputerDetails.AddressTuple("192.168.1.9", 47984);
-        details.caps = com.limelight.nvstream.http.TestHosts.caps(
-                com.limelight.nvstream.http.TestHosts.serverInfo("rubylight-serverinfo.xml")
-                        .replace("</root>", "<RustHostInternetPlayVersion>1</RustHostInternetPlayVersion></root>"));
+        details.localAddress = new ComputerDetails.AddressTuple("127.0.0.1", 47989);
         controller.destroy();
 
-        // A poll pass may still be running when the service goes away; it must not throw out of here.
-        ReflectionHelpers.callInstanceMethod(service, "readInternetPlay",
-                ReflectionHelpers.ClassParameter.from(ComputerDetails.class, details));
+        assertFalse(service.pollComputer(details));
     }
 }

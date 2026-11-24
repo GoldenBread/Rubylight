@@ -3,15 +3,19 @@ package com.limelight.computers;
 import com.limelight.nativeapi.NativeApiClient;
 import com.limelight.nativeapi.NativeApiClient.PowerReply;
 import com.limelight.nativeapi.NativeApiException;
+import com.limelight.nvstream.jni.NightjarHostsJni;
 import com.limelight.nvstream.jni.NightjarPolicyJni;
+
+import org.json.JSONException;
+import org.json.JSONObject;
 
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.LongSupplier;
 
 /**
- * Sleep PC: ask the host for a token, let the person confirm, ask again when {@link NightjarPolicyJni}
- * marks the token stale ({@link #TOKEN_REFRESH_MS}, the host keeps it 30 s), then spend it once.
+ * Sleep PC: asks the host for a token, lets the person confirm, and delegates token staleness
+ * and spending to {@link NightjarHostsJni#hostFlowSleepOffer} / {@link NightjarHostsJni#hostFlowSleepSpend}.
  */
 final class SleepFlow {
     /** A token this old when the person confirms is fetched again: it could expire on the way. */
@@ -44,63 +48,78 @@ final class SleepFlow {
     private final Executor worker;
     private final Executor main;
     private final LongSupplier clockMs;
+    private final LongSupplier wallClockMs;
 
     SleepFlow(Client client, Ui ui, Executor worker, Executor main, LongSupplier clockMs) {
+        this(client, ui, worker, main, clockMs, System::currentTimeMillis);
+    }
+
+    SleepFlow(Client client, Ui ui, Executor worker, Executor main, LongSupplier clockMs, LongSupplier wallClockMs) {
         this.client = client;
         this.ui = ui;
         this.worker = worker;
         this.main = main;
         this.clockMs = clockMs;
+        this.wallClockMs = wallClockMs;
     }
 
     void start() {
         worker.execute(() -> {
             try {
                 NativeApiClient api = client.open();
-                // Timed from before the request: the host may have minted the token at any point during it.
-                long asked = clockMs.getAsLong();
-                PowerReply offer = api.powerCapabilities();
-                main.execute(() -> offered(api, offer, asked));
+                long monoAsked = clockMs.getAsLong();
+                long wallAsked = wallClockMs.getAsLong();
+                JSONObject res = new JSONObject(NightjarHostsJni.hostFlowSleepOffer(api::requestRaw));
+                main.execute(() -> deliverOffer(api, res, monoAsked, wallAsked));
             } catch (NativeApiException e) {
                 main.execute(() -> fail(e));
+            } catch (JSONException e) {
+                main.execute(() -> ui.failed(new NativeApiException(NativeApiException.Kind.MALFORMED, e.getMessage())));
             }
         });
     }
 
-    private void offered(NativeApiClient api, PowerReply offer, long asked) {
-        if (offer.token == null) {
-            ui.unavailable(offer);
-            return;
-        }
-        // A double tap or a key repeat must not spend the token twice.
-        AtomicBoolean confirmed = new AtomicBoolean();
-        ui.confirm(() -> {
-            if (confirmed.compareAndSet(false, true)) {
-                worker.execute(() -> sleep(api, offer.token, asked));
-            }
-        });
-    }
-
-    private void sleep(NativeApiClient api, String token, long asked) {
-        try {
-            if (NightjarPolicyJni.sleepTokenIsStale(asked, clockMs.getAsLong(), asked, clockMs.getAsLong())) {
-                PowerReply fresh = api.powerCapabilities();
-                if (fresh.token == null) {
-                    main.execute(() -> ui.unavailable(fresh));
-                    return;
-                }
-                token = fresh.token;
-            }
-            PowerReply reply = api.sleep(token);
-            main.execute(() -> {
-                if (reply.accepted) {
-                    ui.accepted();
-                } else {
-                    ui.refused(reply.message, reply.status);
+    private void deliverOffer(NativeApiClient api, JSONObject res, long monoAsked, long wallAsked) {
+        if ("token".equals(res.optString("outcome"))) {
+            final String token = res.optString("token", "");
+            AtomicBoolean confirmed = new AtomicBoolean();
+            ui.confirm(() -> {
+                if (confirmed.compareAndSet(false, true)) {
+                    worker.execute(() -> spend(api, token, monoAsked, wallAsked));
                 }
             });
-        } catch (NativeApiException e) {
-            main.execute(() -> fail(e));
+        } else {
+            deliverOutcome(res);
+        }
+    }
+
+    private void spend(NativeApiClient api, String token, long monoAsked, long wallAsked) {
+        try {
+            String raw = NightjarHostsJni.hostFlowSleepSpend(
+                    api::requestRaw, token, monoAsked, wallAsked, clockMs.getAsLong(), wallClockMs.getAsLong());
+            JSONObject res = new JSONObject(raw);
+            main.execute(() -> deliverOutcome(res));
+        } catch (JSONException e) {
+            main.execute(() -> ui.failed(new NativeApiException(NativeApiException.Kind.MALFORMED, e.getMessage())));
+        }
+    }
+
+    private void deliverOutcome(JSONObject res) {
+        switch (res.optString("outcome")) {
+            case "accepted":
+                ui.accepted();
+                break;
+            case "unavailable": {
+                int reason = res.optInt("reason", 2);
+                ui.unavailable(PowerReply.unavailable(reason != 0, reason == 2));
+                break;
+            }
+            case "refused":
+                ui.refused(res.optString("message", ""), res.optInt("status", 0));
+                break;
+            default:
+                ui.failed(exceptionFromJson(res.optJSONObject("error")));
+                break;
         }
     }
 
@@ -110,5 +129,18 @@ final class SleepFlow {
         } else {
             ui.failed(e);
         }
+    }
+
+    static NativeApiException exceptionFromJson(JSONObject err) {
+        if (err == null) {
+            return new NativeApiException(NativeApiException.Kind.MALFORMED, "Unrecognized native API reply");
+        }
+        return new NativeApiException(
+                NativeApiException.Kind.of(err.optString("kind")),
+                err.optString("message", "Native API error"),
+                err.optInt("http_status", 0),
+                err.isNull("code") ? null : err.optString("code", null),
+                err.isNull("setting") ? null : err.optString("setting", null),
+                err.optLong("retry_after_ms", 0));
     }
 }

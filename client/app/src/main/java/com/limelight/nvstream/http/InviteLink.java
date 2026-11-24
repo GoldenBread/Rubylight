@@ -47,6 +47,7 @@ public final class InviteLink {
     }
 
     public String shownName() { return shownName; }
+    public byte[] certSha256Bytes() { return certSha256 == null ? null : certSha256.clone(); }
     public boolean matches(X509Certificate certificate) { return certificate != null && PairingLink.matches(certSha256, certificate); }
     public boolean expired(long nowSeconds) { return nowSeconds >= expires; }
 }

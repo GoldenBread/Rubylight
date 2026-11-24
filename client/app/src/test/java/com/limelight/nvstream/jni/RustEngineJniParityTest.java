@@ -281,7 +281,6 @@ public class RustEngineJniParityTest {
                 "com/limelight/binding/video/SharpColor",
                 "com/limelight/computers/InternetPlay",
                 "com/limelight/computers/ComputerManagerService",
-                "com/limelight/computers/HostServiceHelpers",
                 "com/limelight/computers/HostActions",
                 "com/limelight/computers/HostFlowRoutes",
                 "com/limelight/computers/SleepFlow",
@@ -675,5 +674,33 @@ public class RustEngineJniParityTest {
             }
         }
         assertTrue("MoonBridge callbacks the Rust bridge never calls: " + missing, missing.isEmpty());
+    }
+
+    @Test public void everyNightjarHostsAndPolicyJniNativeHasAMainCaller() throws Exception {
+        File mainJava = new File("src/main/java");
+        StringBuilder allMain = new StringBuilder();
+        try (Stream<Path> walk = Files.walk(mainJava.toPath())) {
+            for (Path p : walk.filter(p -> p.toString().endsWith(".java")).toArray(Path[]::new)) {
+                String name = p.getFileName().toString();
+                if (name.equals("NightjarHostsJni.java") || name.equals("NightjarPolicyJni.java")) {
+                    continue;
+                }
+                allMain.append(new String(Files.readAllBytes(p), StandardCharsets.UTF_8)).append('\n');
+            }
+        }
+        String body = allMain.toString();
+        for (Class<?> holder : new Class<?>[] { NightjarHostsJni.class, NightjarPolicyJni.class }) {
+            String cls = holder.getSimpleName();
+            TreeSet<String> dead = new TreeSet<>();
+            for (Method m : holder.getDeclaredMethods()) {
+                if (!Modifier.isNative(m.getModifiers()) || m.getName().endsWith("ResetForTests")) {
+                    continue;
+                }
+                if (!body.contains(cls + "." + m.getName()) && !body.contains(cls + "::" + m.getName())) {
+                    dead.add(cls + "." + m.getName());
+                }
+            }
+            assertTrue("Dead JNI exports with zero src/main callers: " + dead, dead.isEmpty());
+        }
     }
 }

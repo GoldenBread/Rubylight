@@ -363,11 +363,8 @@ public class HomeShellTest {
                 @Override public void invalidateStateForComputer(String uuid) { }
                 @Override public String getUniqueId() { return "client"; }
                 @Override public void waitForPollingStopped() {
-                    try {
-                        pollingStopped.await();
-                    } catch (InterruptedException e) {
-                        Thread.currentThread().interrupt();
-                    }
+                    try { pollingStopped.await(); }
+                    catch (InterruptedException e) { Thread.currentThread().interrupt(); }
                 }
             });
             ComputerDetails tower = new ComputerDetails();
@@ -398,22 +395,22 @@ public class HomeShellTest {
             shadowOf(Looper.getMainLooper()).idle();
             assertTrue("done: Home follows the form", (boolean) ReflectionHelpers.getField(screen, "recreatingForForm"));
         } finally {
-            pollingStopped.countDown();
-            controller.pause().stop().destroy();
-            if (worker != null) worker.join(5000);
+            pollingStopped.countDown(); controller.pause().stop().destroy(); if (worker != null) worker.join(5000);
         }
     }
 
-    @Test
-    public void onAPortraitPhoneTheHeadingsAndCardsStartUnderTheFirstTab() throws Exception {
-        assertHeadingsAndCardsStartUnderTheFirstTab();
+    @Test public void onDestroyClosesPairingWatchHandle() {
+        ActivityController<Home> controller = home();
+        long tracker = ReflectionHelpers.getField(ReflectionHelpers.getField(controller.get(), "pairingWatch"), "tracker");
+        assertTrue(tracker > 0);
+        controller.pause().stop().destroy();
+        assertEquals(0, com.limelight.nvstream.jni.NightjarPolicyJni.pairingWatchBeginPoll(tracker, 10_000, true));
     }
 
-    @Test
-    @Config(qualifiers = "w891dp-h411dp-land-xxhdpi")
-    public void inLandscapeTheHeadingsAndCardsStartUnderTheFirstTab() throws Exception {
-        assertHeadingsAndCardsStartUnderTheFirstTab();
-    }
+    @Test public void onAPortraitPhoneTheHeadingsAndCardsStartUnderTheFirstTab() throws Exception { assertHeadingsAndCardsStartUnderTheFirstTab(); }
+
+    @Test @Config(qualifiers = "w891dp-h411dp-land-xxhdpi")
+    public void inLandscapeTheHeadingsAndCardsStartUnderTheFirstTab() throws Exception { assertHeadingsAndCardsStartUnderTheFirstTab(); }
 
     /** In the grid the section headings' text and the cards' edges sit on the screen gutter. */
     private void assertHeadingsAndCardsStartUnderTheFirstTab() throws Exception {

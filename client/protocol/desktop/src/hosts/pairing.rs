@@ -3,10 +3,33 @@
 //! Core pairing classification and execution live in `nightjar_core::hosts::pairing`; this
 //! module translates outcomes into Desktop UI constants (`PAIR_*`, `UNPAIR_*`) and [`Event`].
 
+use std::sync::OnceLock;
+
 use super::*;
 
+use nightjar_core::hosts::client_pool::HostClientPool;
 pub use nightjar_core::hosts::pairing::random_pin;
 use nightjar_policy::hosts::{PairFailureKind, UnpairFailureKind};
+
+type PoolMap = HashMap<String, (Arc<ClientIdentity>, Arc<HostClientPool>)>;
+static SHARED_POOLS: OnceLock<Mutex<PoolMap>> = OnceLock::new();
+
+/// Returns the shared [`HostClientPool`] for `identity`, refreshing its identity on rotation.
+pub(super) fn shared_pool_for(identity: &Arc<ClientIdentity>) -> Arc<HostClientPool> {
+    let map = SHARED_POOLS.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut guard = map.lock().unwrap_or_else(|e| e.into_inner());
+    let key = identity.unique_id().to_owned();
+    if let Some((cached_id, pool)) = guard.get_mut(&key) {
+        if !Arc::ptr_eq(cached_id, identity) {
+            *cached_id = Arc::clone(identity);
+            pool.set_identity(Arc::clone(identity));
+        }
+        return Arc::clone(pool);
+    }
+    let pool = Arc::new(HostClientPool::new(Arc::clone(identity)));
+    guard.insert(key, (Arc::clone(identity), Arc::clone(&pool)));
+    pool
+}
 
 /// Whether this record is paired with a certificate other than `certificate`.
 pub(super) fn pins_another(record: &HostRecord, certificate: &[u8; 32]) -> bool {
@@ -239,5 +262,38 @@ impl Hosts {
         host.native = Native::default();
         host.set_classic_apps(None);
         host.native_epoch += 1;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn client_for_reuses_pooled_clients_and_rejects_bad_pem() {
+        let identity = Arc::new(ClientIdentity::generate().unwrap());
+        let pool = shared_pool_for(&identity);
+        pool.clear();
+
+        let mut record = HostRecord {
+            unique_id: "u-pool".into(),
+            name: "PoolPC".into(),
+            address: "192.0.2.15".into(),
+            http_port: 47989,
+            https_port: 47984,
+            ..Default::default()
+        };
+        let c1 = client_for(&identity, &record, &record.address).unwrap();
+        drop(c1);
+        assert_eq!(pool.idle_len(), 1);
+
+        // Second borrow reuses the idle pooled client cleanly and returns it again on drop.
+        let c2 = client_for(&identity, &record, &record.address).unwrap();
+        assert_eq!(pool.idle_len(), 0);
+        drop(c2);
+        assert_eq!(pool.idle_len(), 1);
+
+        record.server_certificate = Some("not valid pem".into());
+        assert!(client_for(&identity, &record, &record.address).is_err());
     }
 }

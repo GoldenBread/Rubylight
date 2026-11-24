@@ -150,7 +150,7 @@
     "client/protocol/desktop/src/app/session.rs": 841,
     "client/protocol/desktop/src/cli.rs": 951,
     "client/protocol/desktop/src/gui.rs": 936,
-    "client/protocol/desktop/src/hosts.rs": 1474,
+    "client/protocol/desktop/src/hosts.rs": 1463,
     "client/protocol/desktop/src/hosts/tests.rs": 2256,
     "client/protocol/desktop/src/main.rs": 1122,
     "client/protocol/policy/src/health.rs": 833,

@@ -7,6 +7,7 @@ use std::sync::mpsc::{channel, Receiver};
 use std::sync::Arc;
 use std::time::Duration;
 
+use nightjar_core::hosts::client_pool::PooledHostClient;
 use nightjar_core::http::{pace, ConnectionTestStats, Family, Feature, HostClient, ServerInfo};
 use nightjar_policy::connection_test::{self as plan, Speed, SpeedStep};
 
@@ -33,7 +34,7 @@ pub struct Test {
     /// PyroWave's frame-pace calibration rather than Connection test.
     pub calibrate: bool,
     pub events: Receiver<Event>,
-    client: Arc<HostClient>,
+    client: Arc<PooledHostClient>,
     cancelled: Arc<AtomicBool>,
 }
 
@@ -45,7 +46,7 @@ impl Test {
     #[allow(clippy::too_many_arguments)]
     pub fn start(
         host: u64,
-        client: HostClient,
+        client: PooledHostClient,
         network: Network,
         address: String,
         mode: (u32, u32),

@@ -448,15 +448,6 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarPolicyJni_paceFlo
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarPolicyJni_pacePacketSizeFor(
-    _: JNIEnv,
-    _: JClass,
-    offered: jint,
-) -> jint {
-    pace::packet_size_for(u16::try_from(offered.max(0)).unwrap_or(u16::MAX)) as jint
-}
-
-#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarPolicyJni_paceSearchCreate(
     _: JNIEnv,
     _: JClass,
@@ -487,19 +478,6 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarPolicyJni_paceSea
     PACE_SEARCH_SLAB
         .with(handle, |s| s.next_pace().map(|v| v as i32).unwrap_or(-1))
         .unwrap_or(-1)
-}
-
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarPolicyJni_paceSearchIsDone(
-    _: JNIEnv,
-    _: JClass,
-    handle: jlong,
-) -> jboolean {
-    jbool(
-        PACE_SEARCH_SLAB
-            .with(handle, |s| s.is_done())
-            .unwrap_or(true),
-    )
 }
 
 fn parse_measurement(raw: &str) -> Option<Measurement> {

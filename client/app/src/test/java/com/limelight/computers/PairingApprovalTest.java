@@ -203,83 +203,102 @@ public class PairingApprovalTest {
 
     @Test
     public void aPcNotAskedIsNeverRead() {
-        PairingWatch watch = watch(host -> List.of(TV), false);
-        watch.poll(List.of(pc("pc")));
-        assertTrue(reads.isEmpty());
-        assertTrue(published.isEmpty());
+        try (PairingWatch watch = watch(host -> List.of(TV), false)) {
+            watch.poll(List.of(pc("pc")));
+            assertTrue(reads.isEmpty());
+            assertTrue(published.isEmpty());
+        }
     }
 
     @Test
     public void readsAtMostEveryFewSecondsAndTellsOnlyChanges() {
-        PairingWatch watch = watch(host -> List.of(TV), true);
-        watch.poll(List.of(pc("pc")));
-        watch.poll(List.of(pc("pc")));
-        assertEquals(1, reads.size());
-        assertEquals(1, published.size());
-        assertEquals("TV", published.get(0).get(0).request.name);
-        now.addAndGet(4000);
-        watch.poll(List.of(pc("pc")));
-        assertEquals(2, reads.size());
-        assertEquals("the same request again", 1, published.size());
+        try (PairingWatch watch = watch(host -> List.of(TV), true)) {
+            watch.poll(List.of(pc("pc")));
+            watch.poll(List.of(pc("pc")));
+            assertEquals(1, reads.size());
+            assertEquals(1, published.size());
+            assertEquals("TV", published.get(0).get(0).request.name);
+            now.addAndGet(4000);
+            watch.poll(List.of(pc("pc")));
+            assertEquals(2, reads.size());
+            assertEquals("the same request again", 1, published.size());
+        }
     }
 
     @Test
     public void aSettledRequestReadsAtOnceAndTheBannerGoes() {
         List<NativePairing.Request> answer = new ArrayList<>(List.of(TV));
-        PairingWatch watch = watch(host -> new ArrayList<>(answer), true);
-        watch.poll(List.of(pc("pc")));
-        answer.clear();
-        watch.refreshSoon();
-        watch.poll(List.of(pc("pc")));
-        assertEquals(2, reads.size());
-        assertTrue(published.get(1).isEmpty());
+        try (PairingWatch watch = watch(host -> new ArrayList<>(answer), true)) {
+            watch.poll(List.of(pc("pc")));
+            answer.clear();
+            watch.refreshSoon();
+            watch.poll(List.of(pc("pc")));
+            assertEquals(2, reads.size());
+            assertTrue(published.get(1).isEmpty());
+        }
     }
 
     @Test
     public void aPcThatStopsAnsweringDropsOut() {
         boolean[] down = {false};
-        PairingWatch watch = watch(host -> {
+        try (PairingWatch watch = watch(host -> {
             if (down[0]) {
                 throw new NativeApiException(NativeApiException.Kind.NETWORK, "timed out");
             }
             return List.of(TV);
-        }, true);
-        watch.poll(List.of(pc("pc")));
-        down[0] = true;
-        now.addAndGet(4000);
-        watch.poll(List.of(pc("pc")));
-        assertEquals(2, published.size());
-        assertTrue(published.get(1).isEmpty());
+        }, true)) {
+            watch.poll(List.of(pc("pc")));
+            down[0] = true;
+            now.addAndGet(4000);
+            watch.poll(List.of(pc("pc")));
+            assertEquals(2, published.size());
+            assertTrue(published.get(1).isEmpty());
+        }
     }
 
     @Test
     public void anAnswerAfterTheScreenLeftIsDropped() {
         List<Runnable> answers = new ArrayList<>();
-        PairingWatch watch = new PairingWatch(host -> List.of(TV), host -> true, Runnable::run, answers::add, now::get,
-                published::add);
-        watch.poll(List.of(pc("pc")));
-        watch.pause();
-        answers.get(0).run();
-        assertTrue(published.isEmpty());
-        // Coming back reads at once, and that answer counts.
-        watch.poll(List.of(pc("pc")));
-        answers.get(1).run();
-        assertEquals(1, published.size());
+        try (PairingWatch watch = new PairingWatch(host -> List.of(TV), host -> true, Runnable::run, answers::add, now::get,
+                published::add)) {
+            watch.poll(List.of(pc("pc")));
+            watch.pause();
+            answers.get(0).run();
+            assertTrue(published.isEmpty());
+            // Coming back reads at once, and that answer counts.
+            watch.poll(List.of(pc("pc")));
+            answers.get(1).run();
+            assertEquals(1, published.size());
+        }
     }
 
     @Test
     public void losingTheCapabilityTakesTheBannerAwayWithoutAsking() {
         boolean[] asks = {true};
-        PairingWatch watch = new PairingWatch(host -> {
+        try (PairingWatch watch = new PairingWatch(host -> {
             reads.add(host.uuid);
             return List.of(TV);
-        }, host -> asks[0], Runnable::run, Runnable::run, now::get, published::add);
+        }, host -> asks[0], Runnable::run, Runnable::run, now::get, published::add)) {
+            watch.poll(List.of(pc("pc")));
+            asks[0] = false;
+            now.addAndGet(4000);
+            watch.poll(List.of(pc("pc")));
+            assertEquals(1, reads.size());
+            assertEquals(Collections.emptyList(), published.get(1));
+        }
+    }
+
+    @Test
+    public void closeDestroysNativeTrackerAndStopsFurtherPolls() {
+        PairingWatch watch = watch(host -> List.of(TV), true);
+        long tracker = org.robolectric.util.ReflectionHelpers.getField(watch, "tracker");
+        assertTrue(tracker > 0);
+        watch.close();
+        watch.close();
+        assertEquals(0, com.limelight.nvstream.jni.NightjarPolicyJni.pairingWatchBeginPoll(tracker, 10_000, true));
         watch.poll(List.of(pc("pc")));
-        asks[0] = false;
-        now.addAndGet(4000);
-        watch.poll(List.of(pc("pc")));
-        assertEquals(1, reads.size());
-        assertEquals(Collections.emptyList(), published.get(1));
+        assertTrue(reads.isEmpty());
+        assertTrue(published.isEmpty());
     }
 
     // The dialog

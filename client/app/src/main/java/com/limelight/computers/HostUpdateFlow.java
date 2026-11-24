@@ -2,7 +2,7 @@ package com.limelight.computers;
 
 import com.limelight.nativeapi.NativeApiClient;
 import com.limelight.nativeapi.NativeApiException;
-import com.limelight.nativeapi.NativePcPower;
+import com.limelight.nvstream.jni.NightjarHostsJni;
 import com.limelight.nvstream.jni.NightjarPolicyJni;
 
 import org.json.JSONException;
@@ -12,8 +12,8 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * Update the PC's host via {@link NightjarPolicyJni} {@code UpdateTracker}: POST /update/install, then poll GET /update
- * every {@link #POLL_MS} up to {@link #WAIT_MS} active wait ({@link #MAX_WAIT_MS} overall including waits).
+ * Update the PC's host via {@link NightjarHostsJni#hostFlowUpdateRun}: POST /update/install,
+ * then poll GET /update up to {@link #WAIT_MS} active wait ({@link #MAX_WAIT_MS} overall).
  */
 final class HostUpdateFlow {
     static final long WAIT_MS = NightjarPolicyJni.hostUpdateWaitMs();
@@ -71,10 +71,8 @@ final class HostUpdateFlow {
     void start() {
         worker.execute(() -> {
             NativeApiClient api;
-            String target;
             try {
                 api = client.open();
-                target = api.installHostUpdate().offered();
             } catch (NativeApiException e) {
                 main.execute(() -> {
                     if (PcPowerFlow.isRefusal(e)) {
@@ -85,109 +83,68 @@ final class HostUpdateFlow {
                 });
                 return;
             }
-            if (target == null) {
-                // No 15-minute wait for a version that isn't coming.
-                main.execute(ui::nothingToInstall);
-                return;
-            }
-            main.execute(() -> ui.started(target));
-            follow(api, target);
+            NightjarHostsJni.hostFlowUpdateRun(
+                    api::requestRaw,
+                    ms -> {
+                        if (cancelled.get()) {
+                            return false;
+                        }
+                        try {
+                            sleeper.sleep(ms);
+                            return !cancelled.get();
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                            return false;
+                        }
+                    },
+                    stepJson -> {
+                        if (cancelled.get()) {
+                            return;
+                        }
+                        try {
+                            JSONObject step = new JSONObject(stepJson);
+                            main.execute(() -> deliverStep(step));
+                        } catch (JSONException ignored) {
+                        }
+                    });
         });
     }
 
-    private void follow(NativeApiClient api, String target) {
-        int polls = (int) (WAIT_MS / POLL_MS);
-        int most = (int) (MAX_WAIT_MS / POLL_MS);
-        long tracker = NightjarPolicyJni.updateTrackerCreate(target, polls, most);
-        try {
-            while (!cancelled.get()) {
-                try {
-                    sleeper.sleep(POLL_MS);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    return;
-                }
-                if (cancelled.get()) {
-                    return;
-                }
-                String runningVersion = null;
-                String updateJson = null;
-                try {
-                    NativePcPower.Update update = api.hostUpdate(target);
-                    if (update.arrived) {
-                        runningVersion = target;
-                    } else {
-                        updateJson = encodeUpdate(update, target);
-                    }
-                } catch (NativeApiException e) {
-                    // Down while installing: pass updateJson = null so UpdateTracker marks gone = true.
-                }
-                String stepRaw = NightjarPolicyJni.updateTrackerStep(tracker, runningVersion, updateJson);
-                JSONObject step = new JSONObject(stepRaw);
-                String action = step.optString("action", "continue");
-                switch (action) {
-                    case "continue":
-                        break;
-                    case "waiting": {
-                        String reason = step.optString("reason", "");
-                        main.execute(() -> ui.waiting(reason));
-                        break;
-                    }
-                    case "back": {
-                        String version = step.optString("version", target);
-                        main.execute(() -> ui.back(version));
-                        return;
-                    }
-                    case "update_failed": {
-                        String err = step.isNull("error") ? null : step.optString("error", null);
-                        main.execute(() -> ui.updateFailed(err));
-                        return;
-                    }
-                    case "came_back_on": {
-                        String current = step.optString("current_version", "");
-                        String err = step.isNull("error") ? null : step.optString("error", null);
-                        main.execute(() -> ui.cameBackOn(current, err));
-                        return;
-                    }
-                    case "timed_out": {
-                        String version = step.optString("target", target);
-                        main.execute(() -> ui.timedOut(version));
-                        return;
-                    }
-                    default:
-                        break;
-                }
-            }
-        } catch (JSONException e) {
-            if (!cancelled.get()) {
-                main.execute(() -> ui.timedOut(target));
-            }
-        } finally {
-            NightjarPolicyJni.updateTrackerDestroy(tracker);
+    private void deliverStep(JSONObject step) {
+        if (cancelled.get()) {
+            return;
         }
-    }
-
-    private static String encodeUpdate(NativePcPower.Update update, String target) throws JSONException {
-        JSONObject obj = new JSONObject();
-        obj.put("current_version", update.currentVersion == null ? "" : update.currentVersion);
-        obj.put("latest_version", target);
-        if (update.failed) {
-            obj.put("phase", "failed");
-            obj.put("install_now", false);
-            obj.put("error", update.failure);
-        } else if (update.waitingFor != null) {
-            obj.put("phase", "waiting");
-            obj.put("install_now", true);
-            obj.put("waiting_for", update.waitingFor);
-        } else if (update.gaveUp) {
-            obj.put("phase", "idle");
-            obj.put("install_now", false);
-            obj.put("error", update.error);
-        } else {
-            obj.put("phase", "installing");
-            obj.put("install_now", true);
+        switch (step.optString("outcome")) {
+            case "started":
+                ui.started(step.optString("version", ""));
+                break;
+            case "waiting":
+                ui.waiting(step.optString("reason", ""));
+                break;
+            case "back":
+                ui.back(step.optString("version", ""));
+                break;
+            case "timed_out":
+                ui.timedOut(step.optString("version", ""));
+                break;
+            case "nothing_to_install":
+                ui.nothingToInstall();
+                break;
+            case "update_failed":
+                ui.updateFailed(step.isNull("error") ? null : step.optString("error", null));
+                break;
+            case "came_back_on":
+                ui.cameBackOn(
+                        step.optString("current_version", ""),
+                        step.isNull("error") ? null : step.optString("error", null));
+                break;
+            case "refused":
+                ui.refused(step.optString("message", ""));
+                break;
+            default:
+                ui.failed(SleepFlow.exceptionFromJson(step.optJSONObject("error")));
+                break;
         }
-        return obj.toString();
     }
 
     /** Stops the wait: nothing more is asked or reported. */

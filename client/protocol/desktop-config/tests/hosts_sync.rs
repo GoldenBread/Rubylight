@@ -30,4 +30,17 @@ fn host_record_syncs_shared_fields_and_slots_without_promoting_remote() {
     legacy.sync_slots_from_shared();
     assert_eq!(legacy.slots().local, Some(EndpointSlot { address: "192.168.1.20".into(), port: 47989 }));
     assert_eq!(legacy.slots().remote, Some(EndpointSlot { address: "203.0.113.10".into(), port: 47989 }));
+
+    let mut other_only = HostRecord {
+        unique_id: "u-other-v6".into(),
+        name: "OtherV6".into(),
+        http_port: 47989,
+        other_addresses: vec!["2001:db8::7".into()],
+        ..Default::default()
+    };
+    other_only.sync_slots_from_shared();
+    assert_eq!(other_only.slots().ipv6, None);
+    other_only.sync_shared_from_slots();
+    assert_eq!(other_only.address, "");
+    assert_eq!(other_only.other_addresses, vec!["2001:db8::7".to_string()]);
 }

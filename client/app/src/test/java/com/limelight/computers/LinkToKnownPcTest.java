@@ -17,12 +17,20 @@ import org.bouncycastle.asn1.x500.X500Name;
 import org.bouncycastle.cert.jcajce.JcaX509CertificateConverter;
 import org.bouncycastle.cert.jcajce.JcaX509v3CertificateBuilder;
 import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder;
+import org.junit.After;
 import org.junit.Test;
 import org.robolectric.Robolectric;
+import org.robolectric.RuntimeEnvironment;
 import org.robolectric.annotation.Config;
-import org.robolectric.util.ReflectionHelpers;
 
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.math.BigInteger;
+import java.net.InetAddress;
+import java.net.ServerSocket;
+import java.net.Socket;
+import java.nio.charset.StandardCharsets;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
 import java.security.MessageDigest;
@@ -35,20 +43,50 @@ import java.util.HexFormat;
 @Config(sdk = 28, application = Application.class)
 public class LinkToKnownPcTest {
     private static final ComputerDetails.AddressTuple KNOWN_ADDRESS = new ComputerDetails.AddressTuple("192.168.4.2", 47989);
-    private static final ComputerDetails.AddressTuple LINK_ADDRESS = new ComputerDetails.AddressTuple("203.0.113.9", 47989);
 
-    /** Answers every poll in the name of the known PC. */
     public static class Manager extends ComputerManagerService {
         @Override public boolean bindService(Intent intent, ServiceConnection connection, int flags) {
             return false;
         }
+    }
 
-        @Override boolean pollComputer(ComputerDetails details) {
-            details.uuid = "known-pc";
-            details.name = "Claimed";
-            details.state = ComputerDetails.State.ONLINE;
-            details.activeAddress = details.manualAddress;
-            return true;
+    @After
+    public void tearDown() {
+        ComputerDatabaseManager.resetForTests();
+    }
+
+    private static final class ClaimingServer implements AutoCloseable {
+        final ServerSocket listener;
+        final int port;
+        final Thread thread;
+
+        ClaimingServer() throws IOException {
+            listener = new ServerSocket(0, 8, InetAddress.getByName("127.0.0.1"));
+            port = listener.getLocalPort();
+            thread = new Thread(() -> {
+                while (!listener.isClosed()) {
+                    try (Socket sock = listener.accept()) {
+                        InputStream in = sock.getInputStream();
+                        byte[] buf = new byte[2048];
+                        in.read(buf);
+                        String body = "<root status_code=\"200\"><hostname>Claimed</hostname>"
+                                + "<uniqueid>known-pc</uniqueid><state>MJ_SERVER_FREE</state>"
+                                + "<PairStatus>0</PairStatus><HttpsPort>47984</HttpsPort></root>";
+                        String reply = "HTTP/1.1 200 OK\r\nContent-Length: " + body.length()
+                                + "\r\nConnection: close\r\n\r\n" + body;
+                        OutputStream out = sock.getOutputStream();
+                        out.write(reply.getBytes(StandardCharsets.US_ASCII));
+                        out.flush();
+                    } catch (IOException ignored) {
+                    }
+                }
+            }, "claiming-server");
+            thread.start();
+        }
+
+        @Override public void close() throws Exception {
+            listener.close();
+            thread.join(2000);
         }
     }
 
@@ -62,9 +100,9 @@ public class LinkToKnownPcTest {
                 .build(new JcaContentSignerBuilder("SHA256withRSA").build(keys.getPrivate())));
     }
 
-    private static PairingLink linkNaming(X509Certificate certificate) throws Exception {
+    private static PairingLink linkNaming(X509Certificate certificate, int port) throws Exception {
         String fp = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(certificate.getEncoded()));
-        PairingLink link = PairingLink.parse("rubylight://pair?v=1&host=203.0.113.9&port=47989&otp=4821&fp=" + fp);
+        PairingLink link = PairingLink.parse("rubylight://pair?v=1&host=127.0.0.1&port=" + port + "&otp=4821&fp=" + fp);
         assertNotNull(link);
         return link;
     }
@@ -80,27 +118,39 @@ public class LinkToKnownPcTest {
         return known;
     }
 
-    private static ComputerDetails linkDetails() {
+    private static ComputerDetails linkDetails(int port) {
         ComputerDetails details = new ComputerDetails();
-        details.manualAddress = LINK_ADDRESS;
+        details.manualAddress = new ComputerDetails.AddressTuple("127.0.0.1", port);
         return details;
+    }
+
+    private static void seedKnownPc(ComputerDetails known) {
+        ComputerDatabaseManager db = new ComputerDatabaseManager(RuntimeEnvironment.getApplication());
+        try {
+            db.updateComputer(known);
+        } finally {
+            db.close();
+        }
     }
 
     @Test
     public void aServerClaimingAPinnedPcIsRefusedBeforeItsAddressChanges() throws Exception {
-        var controller = Robolectric.buildService(Manager.class).create();
-        ComputerManagerService service = controller.get();
-        ComputerDetails known = knownPc(certificate(1));
-        ReflectionHelpers.callInstanceMethod(service, "addTuple",
-                ReflectionHelpers.ClassParameter.from(ComputerDetails.class, known));
+        X509Certificate pinned = certificate(1);
+        seedKnownPc(knownPc(pinned));
+        try (ClaimingServer server = new ClaimingServer()) {
+            var controller = Robolectric.buildService(Manager.class).create();
+            Manager service = controller.get();
+            ComputerManagerService.ComputerManagerBinder binder =
+                    (ComputerManagerService.ComputerManagerBinder) service.onBind(null);
 
-        assertEquals(ComputerManagerService.LinkAdd.CERTIFICATE_MISMATCH,
-                service.addComputerForLink(linkDetails(), linkNaming(certificate(2))));
+            assertEquals(ComputerManagerService.LinkAdd.CERTIFICATE_MISMATCH,
+                    service.addComputerForLink(linkDetails(server.port), linkNaming(certificate(2), server.port)));
 
-        assertEquals(KNOWN_ADDRESS, known.manualAddress);
-        assertEquals(KNOWN_ADDRESS, known.activeAddress);
-        assertEquals("Desk", known.name);
-        controller.destroy();
+            ComputerDetails stored = binder.getComputer("known-pc");
+            assertEquals(KNOWN_ADDRESS, stored.manualAddress);
+            assertEquals("Desk", stored.name);
+            controller.destroy();
+        }
     }
 
     private static InviteLink inviteNaming(String id, X509Certificate certificate) throws Exception {
@@ -116,52 +166,48 @@ public class LinkToKnownPcTest {
         details.uuid = "known-pc";
         details.name = "Claimed";
         details.state = ComputerDetails.State.UNKNOWN;
-        details.manualAddress = LINK_ADDRESS;
-        details.activeAddress = LINK_ADDRESS;
+        details.manualAddress = new ComputerDetails.AddressTuple("203.0.113.9", 47989);
+        details.activeAddress = details.manualAddress;
         details.httpsPort = 47984;
         details.serverCert = certificate;
         return details;
     }
 
-    // Anyone can write an invite with the ID of a PC paired here and the certificate of the PC it really leads to.
     @Test
     public void anInviteNeverReplacesTheCertificateOfAPcPairedWithAnotherOne() throws Exception {
-        var controller = Robolectric.buildService(Manager.class).create();
-        ComputerManagerService service = controller.get();
         X509Certificate pinned = certificate(1);
         X509Certificate other = certificate(2);
-        ComputerDetails known = knownPc(pinned);
-        ReflectionHelpers.callInstanceMethod(service, "addTuple",
-                ReflectionHelpers.ClassParameter.from(ComputerDetails.class, known));
+        seedKnownPc(knownPc(pinned));
+        var controller = Robolectric.buildService(Manager.class).create();
+        Manager service = controller.get();
+        ComputerManagerService.ComputerManagerBinder binder =
+                (ComputerManagerService.ComputerManagerBinder) service.onBind(null);
         InternetPlay.save(service, "known-pc", "its own");
 
-        // Before anything is sent.
         assertTrue(service.inviteClaimsKnownPc(inviteNaming("known-pc", other)));
         assertFalse(service.inviteClaimsKnownPc(inviteNaming("known-pc", pinned)));
         assertFalse(service.inviteClaimsKnownPc(inviteNaming("another-pc", other)));
 
-        // And once more where the PC is kept.
         assertFalse(service.addInvitedComputer(invited(other), "the invite's"));
-        assertEquals(pinned, known.serverCert);
-        assertEquals(KNOWN_ADDRESS, known.manualAddress);
-        assertEquals("Desk", known.name);
+        ComputerDetails stored = binder.getComputer("known-pc");
+        assertEquals(pinned, stored.serverCert);
+        assertEquals(KNOWN_ADDRESS, stored.manualAddress);
+        assertEquals("Desk", stored.name);
         assertEquals("its own", InternetPlay.reply(service, "known-pc"));
 
-        // The same certificate is the PC itself: the invite's details are kept.
         assertTrue(service.addInvitedComputer(invited(pinned), "the invite's"));
         assertEquals("the invite's", InternetPlay.reply(service, "known-pc"));
         controller.destroy();
     }
 
-    // The PC is not polled yet (the service starts its tuples after binding) but is saved with its certificate.
     @Test
     public void anInviteNeverReplacesASavedPcsCertificateEither() throws Exception {
-        var controller = Robolectric.buildService(Manager.class).create();
-        ComputerManagerService service = controller.get();
         X509Certificate pinned = certificate(1);
+        seedKnownPc(knownPc(pinned));
+        var controller = Robolectric.buildService(Manager.class).create();
+        Manager service = controller.get();
         ComputerDatabaseManager database = new ComputerDatabaseManager(service);
         try {
-            database.updateComputer(knownPc(pinned));
             assertFalse(service.addInvitedComputer(invited(certificate(2)), "the invite's"));
             assertEquals(pinned, database.getComputerByUUID("known-pc").serverCert);
             assertEquals(KNOWN_ADDRESS, database.getComputerByUUID("known-pc").manualAddress);
@@ -173,22 +219,26 @@ public class LinkToKnownPcTest {
 
     @Test
     public void theRightCertificateStillGoesThrough() throws Exception {
-        var controller = Robolectric.buildService(Manager.class).create();
-        ComputerManagerService service = controller.get();
         X509Certificate pinned = certificate(1);
-        ReflectionHelpers.callInstanceMethod(service, "addTuple",
-                ReflectionHelpers.ClassParameter.from(ComputerDetails.class, knownPc(pinned)));
-        assertEquals(ComputerManagerService.LinkAdd.ADDED, service.addComputerForLink(linkDetails(), linkNaming(pinned)));
-        controller.destroy();
+        seedKnownPc(knownPc(pinned));
+        try (ClaimingServer server = new ClaimingServer()) {
+            var controller = Robolectric.buildService(Manager.class).create();
+            Manager service = controller.get();
+            assertEquals(ComputerManagerService.LinkAdd.ADDED,
+                    service.addComputerForLink(linkDetails(server.port), linkNaming(pinned, server.port)));
+            controller.destroy();
+        }
     }
 
     @Test
     public void aPcWithoutACertificateStillGoesThrough() throws Exception {
-        var controller = Robolectric.buildService(Manager.class).create();
-        ComputerManagerService service = controller.get();
-        ReflectionHelpers.callInstanceMethod(service, "addTuple",
-                ReflectionHelpers.ClassParameter.from(ComputerDetails.class, knownPc(null)));
-        assertEquals(ComputerManagerService.LinkAdd.ADDED, service.addComputerForLink(linkDetails(), linkNaming(certificate(2))));
-        controller.destroy();
+        seedKnownPc(knownPc(null));
+        try (ClaimingServer server = new ClaimingServer()) {
+            var controller = Robolectric.buildService(Manager.class).create();
+            Manager service = controller.get();
+            assertEquals(ComputerManagerService.LinkAdd.ADDED,
+                    service.addComputerForLink(linkDetails(server.port), linkNaming(certificate(2), server.port)));
+            controller.destroy();
+        }
     }
 }

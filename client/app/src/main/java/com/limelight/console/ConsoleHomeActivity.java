@@ -760,17 +760,14 @@ public class ConsoleHomeActivity extends NightjarActivity implements HostFeed.Li
     @Override
     protected void onDestroy() {
         handler.removeCallbacksAndMessages(null);
+        if (pairingWatch != null) pairingWatch.close();
         hostActions.destroy();
         feed.unbind();
         worker.shutdownNow();
         starWorker.shutdownNow();
         if (chrome != null) chrome.destroy();
-        if (ambience != null) {
-            ambience.destroy();
-        }
-        if (covers != null) {
-            covers.release();
-        }
+        if (ambience != null) ambience.destroy();
+        if (covers != null) covers.release();
         super.onDestroy();
     }
 

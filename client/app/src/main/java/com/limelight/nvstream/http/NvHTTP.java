@@ -200,6 +200,40 @@ public class NvHTTP implements AutoCloseable {
         }
     }
 
+    /**
+     * Populates session, LAN/WAN endpoints, capabilities, and host family flags from a
+     * Rust {@code server_info_json} object produced by {@code HostManager}.
+     */
+    public static void applyServerInfoSnapshot(ComputerDetails target, Json.Obj snap, int httpPort) {
+        if (target == null || snap == null) return;
+        String name = snap.optString("hostname", "UNKNOWN");
+        if (!name.isEmpty() && !"UNKNOWN".equals(name)) {
+            target.name = name;
+        }
+        String uid = optNullString(snap, "unique_id");
+        if (uid != null && !uid.isEmpty()) target.uuid = uid;
+        int https = snap.optInt("https_port", 0);
+        if (https != 0) target.httpsPort = https;
+        String mac = optNullString(snap, "mac_address");
+        if (mac != null) target.macAddress = mac;
+        String localIp = optNullString(snap, "local_ip");
+        if (localIp != null && !localIp.startsWith("127.")) {
+            ComputerDetails.AddressTuple local = makeTuple(localIp, httpPort);
+            if (local != null) target.localAddress = local;
+        }
+        target.externalPort = snap.optInt("external_port", httpPort);
+        ComputerDetails.AddressTuple remote = makeTuple(optNullString(snap, "external_ip"), target.externalPort);
+        if (remote != null) target.remoteAddress = remote;
+        target.pairState = snap.optBoolean("paired", false)
+                ? PairingManager.PairState.PAIRED : PairingManager.PairState.NOT_PAIRED;
+        target.runningGameId = snap.optInt("current_game", 0);
+        target.sessionIdle = snap.optBoolean("session_idle", false);
+        target.runningGameUuid = optNullString(snap, "current_game_uuid");
+        applyCapabilities(target, snap);
+        target.nvidiaServer = snap.optBoolean("nvidia_server", false);
+        target.state = ComputerDetails.State.ONLINE;
+    }
+
     private static void applyCapabilities(ComputerDetails details, Json.Obj snap) {
         details.caps = HostCapabilities.fromSnapshotJson(snap.getObject("capabilities"));
         details.permission = snap.isNull("permission") ? -1 : snap.getLong("permission");

@@ -312,7 +312,7 @@ impl Hosts {
                 result,
             });
             waker();
-            if follow && let Some(refusal) = pc_power_refusal(&client, POWER_REFUSAL_READS, || {
+            if follow && let Some(refusal) = pc_power_refusal(&*client, POWER_REFUSAL_READS, || {
                 std::thread::sleep(POWER_REFUSAL_POLL);
             }) {
                 let message = match refusal {
@@ -376,7 +376,7 @@ impl Hosts {
             let polls = (UPDATE_WAIT.as_secs() / UPDATE_POLL.as_secs()) as u32;
             let most = (UPDATE_MAX_WAIT.as_secs() / UPDATE_POLL.as_secs()) as u32;
             let result = follow_update(
-                &client,
+                &*client,
                 &target,
                 polls,
                 most,

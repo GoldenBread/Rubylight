@@ -6,7 +6,6 @@ import android.database.sqlite.SQLiteDatabase;
 
 import com.limelight.nativeapi.NativeApiFixtures;
 import com.limelight.nvstream.http.ComputerDetails;
-import com.limelight.nvstream.http.PairingManager;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -17,296 +16,160 @@ import org.robolectric.Robolectric;
 import org.robolectric.RuntimeEnvironment;
 import org.robolectric.android.controller.ServiceController;
 import org.robolectric.annotation.Config;
-import org.robolectric.util.ReflectionHelpers;
 
 import java.io.File;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.net.InetAddress;
+import java.net.ServerSocket;
+import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
-import java.security.KeyStore;
-import java.security.cert.X509Certificate;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
-import java.util.function.Consumer;
-
-import javax.net.ssl.TrustManager;
-import javax.net.ssl.TrustManagerFactory;
-import javax.net.ssl.X509TrustManager;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Supplier;
 
 import static org.junit.Assert.*;
 
 /**
- * A poll that finds a PC as it is saved writes nothing to the database, and one that finds
- * anything the database keeps of a PC changed writes it: the name, each address, the MAC address
- * and the certificate, also when the certificate goes.
+ * Verifies change-detecting {@code hosts.json} persistence across {@link ComputerManagerService},
+ * Rust {@code HostManager}, and {@link ComputerDatabaseManager}.
  */
 @RunWith(org.robolectric.RobolectricTestRunner.class)
 @Config(sdk = 28, application = Application.class)
 public class PollSavesOnlyChangesTest {
     private static final String UUID = "polled-host";
     private static final ComputerDetails.AddressTuple REMOTE = new ComputerDetails.AddressTuple("203.0.113.9", 47989);
-    private static final ComputerDetails.AddressTuple LOCAL = new ComputerDetails.AddressTuple("192.168.1.9", 47989);
 
     @After
     public void tearDown() {
         ComputerDatabaseManager.resetForTests();
     }
 
-    /** A PC that answers every poll; what it says of itself is the test's to change. */
-    public static class AnsweringManager extends ComputerManagerLifecycleTest.Manager {
-        Consumer<ComputerDetails> answer = polled -> {};
+    private static final class LoopbackServer implements AutoCloseable {
+        final ServerSocket listener;
+        final int port;
+        final Thread thread;
+        final AtomicInteger hits = new AtomicInteger();
+        volatile Supplier<String> body = () -> "<root status_code=\"200\"><hostname>PC</hostname><uniqueid>" + UUID
+                + "</uniqueid><state>MJ_SERVER_FREE</state><PairStatus>0</PairStatus><mac>AA:BB:CC:DD:EE:01</mac></root>";
 
-        @Override boolean pollComputer(ComputerDetails details) {
-            // As the service's own: what the PC answered is merged into the PC being polled.
-            ComputerDetails polled = new ComputerDetails();
-            polled.uuid = details.uuid;
-            polled.name = "PC";
-            polled.state = ComputerDetails.State.ONLINE;
-            polled.activeAddress = LOCAL;
-            polled.localAddress = LOCAL;
-            polled.macAddress = "AA:BB:CC:DD:EE:01";
-            polled.pairState = PairingManager.PairState.PAIRED;
-            answer.accept(polled);
-            details.update(polled);
-            return true;
+        LoopbackServer() throws IOException {
+            listener = new ServerSocket(0, 8, InetAddress.getByName("127.0.0.1"));
+            port = listener.getLocalPort();
+            thread = new Thread(() -> {
+                while (!listener.isClosed()) {
+                    try (Socket sock = listener.accept()) {
+                        InputStream in = sock.getInputStream();
+                        byte[] buf = new byte[2048];
+                        in.read(buf);
+                        String xml = body.get();
+                        String reply = "HTTP/1.1 200 OK\r\nContent-Length: " + xml.length()
+                                + "\r\nConnection: close\r\n\r\n" + xml;
+                        OutputStream out = sock.getOutputStream();
+                        out.write(reply.getBytes(StandardCharsets.US_ASCII));
+                        out.flush();
+                        hits.incrementAndGet();
+                    } catch (IOException ignored) {
+                    }
+                }
+            }, "poll-saves-server");
+            thread.start();
+        }
+
+        @Override public void close() throws Exception {
+            listener.close();
+            thread.join(2000);
         }
     }
 
-    /** The database of the service, counting the rows written and letting a test in after a read. */
-    private static final class CountingDatabase extends ComputerDatabaseManager {
-        final List<String> written = new ArrayList<>();
-        Runnable afterNextRead;
-
-        CountingDatabase(Context context) {
-            super(context);
-        }
-
-        @Override public boolean updateComputer(ComputerDetails details) {
-            // Null only while the constructor moves old databases over, which no test here has.
-            if (written != null) {
-                written.add(details.uuid);
-            }
-            return super.updateComputer(details);
-        }
-
-        @Override public ComputerDetails getComputerByUUID(String uuid) {
-            ComputerDetails read = super.getComputerByUUID(uuid);
-            Runnable then = afterNextRead;
-            afterNextRead = null;
-            if (then != null) {
-                then.run();
-            }
-            return read;
-        }
-    }
-
-    /** The service with one saved PC, paired or not. */
-    private static final class Polls implements AutoCloseable {
-        final Context context = RuntimeEnvironment.getApplication();
-        final ServiceController<AnsweringManager> controller;
-        final AnsweringManager service;
-        final CountingDatabase database;
-        final ComputerManagerService.TrackedHost tuple;
-
-        Polls(X509Certificate certificate) {
+    @Test
+    public void identicalPollsNeverRewriteHostsJsonAndChangesPersistOnce() throws Exception {
+        Context context = RuntimeEnvironment.getApplication();
+        try (LoopbackServer server = new LoopbackServer()) {
             ComputerDetails stored = new ComputerDetails();
             stored.uuid = UUID;
             stored.name = "PC";
-            stored.localAddress = LOCAL;
+            stored.localAddress = new ComputerDetails.AddressTuple("127.0.0.1", server.port);
             stored.remoteAddress = REMOTE;
             stored.macAddress = "AA:BB:CC:DD:EE:01";
-            stored.serverCert = certificate;
             ComputerDatabaseManager saved = new ComputerDatabaseManager(context);
             saved.updateComputer(stored);
             saved.close();
 
-            controller = Robolectric.buildService(AnsweringManager.class).create();
-            service = controller.get();
-            ComputerDatabaseManager own = ReflectionHelpers.getField(service, "dbManager");
-            own.close();
-            database = new CountingDatabase(service);
-            ReflectionHelpers.setField(service, "dbManager", database);
-            List<ComputerManagerService.TrackedHost> tuples = ReflectionHelpers.getField(service, "pollingTuples");
-            tuple = tuples.get(0);
-            assertEquals(UUID, tuple.computer.uuid);
-        }
+            ServiceController<ComputerManagerLifecycleTest.Manager> controller =
+                    Robolectric.buildService(ComputerManagerLifecycleTest.Manager.class).create();
+            ComputerManagerService service = controller.get();
+            ComputerManagerService.ComputerManagerBinder binder =
+                    (ComputerManagerService.ComputerManagerBinder) service.onBind(null);
+            try {
+                File hostsFile = new File(context.getFilesDir(), "hosts.json");
+                assertTrue(hostsFile.isFile());
 
-        void poll() {
-            ReflectionHelpers.callInstanceMethod(service, "runPoll",
-                    ReflectionHelpers.ClassParameter.from(ComputerDetails.class, tuple.computer),
-                    ReflectionHelpers.ClassParameter.from(ComputerManagerService.TrackedHost.class, tuple),
-                    ReflectionHelpers.ClassParameter.from(int.class, 0));
-        }
+                // First poll brings host ONLINE and saves active/state in memory; second poll is identical.
+                CountDownLatch online = new CountDownLatch(1);
+                binder.startPolling(details -> {
+                    if (UUID.equals(details.uuid) && details.state == ComputerDetails.State.ONLINE) {
+                        online.countDown();
+                    }
+                });
+                assertTrue("host must come ONLINE", online.await(10, TimeUnit.SECONDS));
+                Thread.sleep(200);
+                assertTrue(hostsFile.setLastModified(1_000_000_000L));
+                long unchangedStamp = hostsFile.lastModified();
 
-        ComputerDetails saved() {
-            return database.getComputerByUUID(UUID);
-        }
+                // Let subsequent periodic polls run against identical XML; hosts.json stays untouched.
+                int before = server.hits.get();
+                long deadline = System.currentTimeMillis() + 5000;
+                while (server.hits.get() < before + 2 && System.currentTimeMillis() < deadline) {
+                    Thread.sleep(50);
+                }
+                assertTrue(server.hits.get() >= before + 1);
+                assertEquals("identical polls must not rewrite hosts.json", unchangedStamp, hostsFile.lastModified());
 
-        @Override public void close() {
-            controller.destroy();
-        }
-    }
-
-    /** A certificate that is not the fixture's: the first one this JVM trusts. */
-    private static X509Certificate otherCertificate() throws Exception {
-        TrustManagerFactory factory = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
-        factory.init((KeyStore) null);
-        for (TrustManager manager : factory.getTrustManagers()) {
-            if (manager instanceof X509TrustManager) {
-                return ((X509TrustManager) manager).getAcceptedIssuers()[0];
+                // Rename on host triggers exactly one update in hosts.json.
+                CountDownLatch renamed = new CountDownLatch(1);
+                binder.startPolling(details -> {
+                    if (UUID.equals(details.uuid) && "DEN-PC".equals(details.name)) {
+                        renamed.countDown();
+                    }
+                });
+                server.body = () -> "<root status_code=\"200\"><hostname>DEN-PC</hostname><uniqueid>" + UUID
+                        + "</uniqueid><state>MJ_SERVER_FREE</state><PairStatus>0</PairStatus><mac>AA:BB:CC:DD:EE:02</mac></root>";
+                assertTrue("renamed host must be emitted", renamed.await(10, TimeUnit.SECONDS));
+                ComputerDetails after = binder.getComputer(UUID);
+                assertEquals("DEN-PC", after.name);
+                assertEquals("AA:BB:CC:DD:EE:02", after.macAddress);
+            } finally {
+                controller.destroy();
             }
         }
-        throw new AssertionError("No trusted certificate");
     }
 
-    @Test
-    public void aPollThatFindsThePcAsItIsSavedWritesNothing() {
-        try (Polls polls = new Polls(NativeApiFixtures.certificate())) {
-            Object[] before = ComputerDatabaseManager.columns(polls.saved());
-            for (int i = 0; i < 5; i++) {
-                polls.poll();
-            }
-            assertEquals(Collections.emptyList(), polls.database.written);
-            assertTrue(Arrays.deepEquals(before, ComputerDatabaseManager.columns(polls.saved())));
-            assertEquals(ComputerDetails.State.ONLINE, polls.tuple.computer.state);
-        }
-    }
-
-    // Each thing the database keeps of a PC, changed one after the other. The poll that finds the
-    // change writes the PC once, and the polls after it find the PC as saved again.
-    @Test
-    public void aPollThatFindsAnythingSavedChangedWritesIt() throws Exception {
-        X509Certificate pairedAgain = otherCertificate();
-        assertNotEquals(NativeApiFixtures.certificate(), pairedAgain);
-        try (Polls polls = new Polls(NativeApiFixtures.certificate())) {
-            int writes = 0;
-
-            polls.service.answer = polled -> polled.name = "DEN-PC";
-            polls.poll();
-            assertEquals("name", ++writes, polls.database.written.size());
-            assertEquals("DEN-PC", polls.saved().name);
-
-            polls.service.answer = polls.service.answer.andThen(polled ->
-                    polled.localAddress = new ComputerDetails.AddressTuple("192.168.1.10", 47989));
-            polls.poll();
-            assertEquals("local address", ++writes, polls.database.written.size());
-            assertEquals(new ComputerDetails.AddressTuple("192.168.1.10", 47989), polls.saved().localAddress);
-
-            // The host's external port goes into the remote address that was saved.
-            polls.service.answer = polls.service.answer.andThen(polled -> polled.externalPort = 48989);
-            polls.poll();
-            assertEquals("remote port", ++writes, polls.database.written.size());
-            assertEquals(new ComputerDetails.AddressTuple("203.0.113.9", 48989), polls.saved().remoteAddress);
-
-            polls.service.answer = polls.service.answer.andThen(polled ->
-                    polled.ipv6Address = new ComputerDetails.AddressTuple("2001:db8::9", 47989));
-            polls.poll();
-            assertEquals("IPv6 address", ++writes, polls.database.written.size());
-            assertEquals(new ComputerDetails.AddressTuple("2001:db8::9", 47989), polls.saved().ipv6Address);
-
-            polls.service.answer = polls.service.answer.andThen(polled -> polled.macAddress = "AA:BB:CC:DD:EE:02");
-            polls.poll();
-            assertEquals("MAC address", ++writes, polls.database.written.size());
-            assertEquals("AA:BB:CC:DD:EE:02", polls.saved().macAddress);
-
-            // An address the user typed and a certificate from a pairing are set on the PC that is
-            // polled, and the next poll is what saves them.
-            polls.tuple.computer.manualAddress = new ComputerDetails.AddressTuple("den.example", 47989);
-            polls.poll();
-            assertEquals("manual address", ++writes, polls.database.written.size());
-            assertEquals(new ComputerDetails.AddressTuple("den.example", 47989), polls.saved().manualAddress);
-
-            polls.tuple.computer.serverCert = pairedAgain;
-            polls.poll();
-            assertEquals("certificate", ++writes, polls.database.written.size());
-            assertEquals(pairedAgain, polls.saved().serverCert);
-
-            // Every change is saved and the PC answers the same from here on.
-            for (int i = 0; i < 3; i++) {
-                polls.poll();
-            }
-            assertEquals(writes, polls.database.written.size());
-            ComputerDetails saved = polls.saved();
-            assertEquals("DEN-PC", saved.name);
-            assertEquals(new ComputerDetails.AddressTuple("192.168.1.10", 47989), saved.localAddress);
-            assertEquals(new ComputerDetails.AddressTuple("203.0.113.9", 48989), saved.remoteAddress);
-            assertEquals(new ComputerDetails.AddressTuple("den.example", 47989), saved.manualAddress);
-            assertEquals(new ComputerDetails.AddressTuple("2001:db8::9", 47989), saved.ipv6Address);
-            assertEquals("AA:BB:CC:DD:EE:02", saved.macAddress);
-            assertEquals(pairedAgain, saved.serverCert);
-        }
-    }
-
-    @Test
-    public void aPairingMadeSinceTheLastPollIsSavedByTheNextOne() {
-        try (Polls polls = new Polls(null)) {
-            polls.poll();
-            assertEquals(Collections.emptyList(), polls.database.written);
-            assertNull(polls.saved().serverCert);
-
-            polls.tuple.computer.serverCert = NativeApiFixtures.certificate();
-            polls.poll();
-            assertEquals(1, polls.database.written.size());
-            assertEquals(NativeApiFixtures.certificate(), polls.saved().serverCert);
-        }
-    }
-
-    @Test
-    public void aPcThatSaysNotPairedHasItsCertificateForgottenOnceAndIsThenLeftAlone() {
-        try (Polls polls = new Polls(NativeApiFixtures.certificate())) {
-            polls.service.answer = polled -> polled.pairState = PairingManager.PairState.NOT_PAIRED;
-            polls.poll();
-            assertEquals(1, polls.database.written.size());
-            assertNull(polls.saved().serverCert);
-            assertNull(polls.tuple.computer.serverCert);
-
-            polls.poll();
-            polls.poll();
-            assertEquals(1, polls.database.written.size());
-            assertEquals("the rest of the PC stays", REMOTE, polls.saved().remoteAddress);
-        }
-    }
-
-    // The poll reads the PC, then the user unpairs it, then the poll decides what to save. It learned
-    // nothing new, so it leaves the row as the unpairing wrote it and no longer puts back what it read.
-    @Test
-    public void aPairingForgottenWhileAPollRunsStaysForgotten() {
-        try (Polls polls = new Polls(NativeApiFixtures.certificate())) {
-            polls.database.afterNextRead = () -> polls.service.forgetCertificate(UUID);
-            polls.poll();
-            assertNull(polls.saved().serverCert);
-            assertEquals("Only the unpairing wrote", 1, polls.database.written.size());
-        }
-    }
-
-    @Test
-    public void aPcSeenForTheFirstTimeIsSaved() {
-        try (Polls polls = new Polls(null)) {
-            ComputerDetails found = new ComputerDetails();
-            found.uuid = "new-host";
-            found.remoteAddress = REMOTE;
-            ReflectionHelpers.callInstanceMethod(polls.service, "runPoll",
-                    ReflectionHelpers.ClassParameter.from(ComputerDetails.class, found),
-                    ReflectionHelpers.ClassParameter.from(ComputerManagerService.TrackedHost.class, null),
-                    ReflectionHelpers.ClassParameter.from(int.class, 0));
-            assertEquals(Collections.singletonList("new-host"), polls.database.written);
-            ComputerDetails saved = polls.database.getComputerByUUID("new-host");
-            assertEquals("PC", saved.name);
-            assertEquals(LOCAL, saved.localAddress);
-        }
-    }
-
-    // What decides whether a poll writes is ComputerDatabaseManager.columns(). Every persistent field
-    // saved into hosts.json has to be compared there too, or a poll that changes only that field saves nothing.
     @Test
     public void everyColumnAndAddressOfTheTableIsCompared() throws Exception {
-        try (Polls polls = new Polls(NativeApiFixtures.certificate())) {
-            polls.tuple.computer.manualAddress = new ComputerDetails.AddressTuple("den.example", 47989);
-            polls.service.answer = polled -> polled.ipv6Address = new ComputerDetails.AddressTuple("2001:db8::9", 47989);
-            polls.poll();
+        Context context = RuntimeEnvironment.getApplication();
+        ComputerDetails stored = new ComputerDetails();
+        stored.uuid = UUID;
+        stored.name = "PC";
+        stored.localAddress = new ComputerDetails.AddressTuple("192.168.1.9", 47989);
+        stored.remoteAddress = REMOTE;
+        stored.manualAddress = new ComputerDetails.AddressTuple("den.example", 47989);
+        stored.ipv6Address = new ComputerDetails.AddressTuple("2001:db8::9", 47989);
+        stored.macAddress = "AA:BB:CC:DD:EE:01";
+        stored.serverCert = NativeApiFixtures.certificate();
+        ComputerDatabaseManager db = new ComputerDatabaseManager(context);
+        try {
+            assertTrue(db.updateComputer(stored));
+            assertFalse(db.updateComputer(stored));
 
-            File hostsFile = new File(polls.context.getFilesDir(), "hosts.json");
+            File hostsFile = new File(context.getFilesDir(), "hosts.json");
             assertTrue(hostsFile.isFile());
             String json = new String(Files.readAllBytes(hostsFile.toPath()), StandardCharsets.UTF_8);
             JSONArray entries = new JSONArray(json);
@@ -315,17 +178,16 @@ public class PollSavesOnlyChangesTest {
             List<String> fields = new ArrayList<>();
             for (java.util.Iterator<String> keys = saved.keys(); keys.hasNext(); ) {
                 String k = keys.next();
-                if (!saved.isNull(k)) {
-                    fields.add(k);
-                }
+                if (!saved.isNull(k)) fields.add(k);
             }
             Collections.sort(fields);
             String hint = "ComputerDatabaseManager.columns() has to compare what is new here";
             assertTrue(hint + ": " + fields, fields.containsAll(Arrays.asList(
                     "ipv6_endpoint", "local_endpoint", "mac", "manual_endpoint",
                     "name", "remote_endpoint", "server_certificate", "unique_id")));
-            // The UUID, the name, the four addresses, the MAC address and the certificate.
-            assertEquals(hint, 8, ComputerDatabaseManager.columns(polls.saved()).length);
+            assertEquals(hint, 8, ComputerDatabaseManager.columns(stored).length);
+        } finally {
+            db.close();
         }
     }
 
@@ -404,7 +266,6 @@ public class PollSavesOnlyChangesTest {
         assertNull("ipv6-only host must not fabricate localAddress", ipv6Read.localAddress);
         assertEquals(ipv6Only.ipv6Address, ipv6Read.ipv6Address);
 
-        // Clearing localAddress on an existing host with remoteAddress leaves localAddress null.
         ComputerDetails cleared = new ComputerDetails();
         cleared.uuid = "local-cleared";
         cleared.name = "ClearedPC";

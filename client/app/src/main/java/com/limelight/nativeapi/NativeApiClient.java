@@ -335,6 +335,18 @@ public final class NativeApiClient {
             tokenLifetimeSeconds = json.getInt("token_lifetime_seconds");
             accepted = json.getBoolean("accepted");
         }
+
+        public static PowerReply unavailable(boolean sleepSupported, boolean sleepAllowed) {
+            return new PowerReply(Json.obj()
+                    .put("status", 200)
+                    .put("message", "")
+                    .put("sleep_supported", sleepSupported)
+                    .put("sleep_allowed", sleepAllowed)
+                    .put("sleep_available", false)
+                    .put("token", (String) null)
+                    .put("token_lifetime_seconds", 0)
+                    .put("accepted", false));
+        }
     }
 
     /** The devices waiting to pair (GET /pairing/requests). Only with feature pairing.approve and Host control. */
@@ -405,6 +417,35 @@ public final class NativeApiClient {
         } catch (Json.SyntaxException e) {
             throw malformed("pairing requests", e);
         }
+    }
+
+    /** Raw JSON envelope request used by Rust host-flow loops (`SleepFlow`, `PcPowerFlow`, `HostUpdateFlow`). */
+    public String requestRaw(String op, String argument) {
+        String envelope;
+        try {
+            envelope = transport.request(host, op, argument);
+        } catch (NativeApiException e) {
+            Json.Obj err = Json.obj()
+                    .put("kind", e.getKind().name().toLowerCase(java.util.Locale.ROOT))
+                    .put("message", e.getMessage() == null ? "Native API error" : e.getMessage())
+                    .put("http_status", e.getHttpStatus())
+                    .put("retry_after_ms", e.getRetryAfterMs());
+            if (e.getCode() != null) err.put("code", e.getCode());
+            if (e.getSetting() != null) err.put("setting", e.getSetting());
+            return Json.obj().put("error", err).toString();
+        }
+        if ("update".equals(op)) {
+            try {
+                KnownUpdates.record(host.hostUuid, NativePcPower.parseUpdate(decode(envelope)));
+            } catch (NativeApiException | Json.SyntaxException ignored) {
+            }
+        } else if ("update.install".equals(op)) {
+            try {
+                KnownUpdates.installing(host.hostUuid, NativePcPower.parseUpdate(decode(envelope)));
+            } catch (NativeApiException | Json.SyntaxException ignored) {
+            }
+        }
+        return envelope;
     }
 
     private Json.Obj call(String op, String argument) throws NativeApiException {

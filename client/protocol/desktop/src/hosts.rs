@@ -9,13 +9,14 @@ use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 
+use nightjar_core::hosts::client_pool::PooledHostClient;
 use nightjar_core::http::native_api::feature;
 use nightjar_core::http::native_api::library::Library;
 use nightjar_core::http::native_api::session::{ActionId, Session};
 use nightjar_core::http::{
     App, AppControl, Availability, ClientIdentity, Feature, HostClient, HostUpdate, InfoPath,
     LateRefusal, NativeCapabilities, NativeLibrary, PairingRequest, PcPower,
-    ServerInfo, StreamMove, DEFAULT_HTTP_PORT,
+    ServerInfo, StreamMove, DEFAULT_HTTP_PORT, pem_decode_certificate,
 };
 #[cfg(test)]
 use nightjar_core::http::{PairResult, PcPowerOffer, PowerError, PowerReply};
@@ -550,7 +551,7 @@ pub struct Hosts {
     sender: Sender<Event>,
     waker: Waker,
     next_id: u64,
-    pairing: Option<(u64, Arc<HostClient>)>,
+    pairing: Option<(u64, Arc<PooledHostClient>)>,
     pairing_generation: u64,
     /// The certificate a pairing link named, for each record it was opened on.
     link_claims: HashMap<u64, [u8; 32]>,
@@ -603,23 +604,11 @@ fn http_port(port: u16) -> u16 {
     }
 }
 
-pub fn client_for(identity: &Arc<ClientIdentity>, record: &HostRecord, address: &str) -> Result<HostClient, String> {
-    let port = http_port(record.http_port);
-    let mut client = HostClient::new(address, port, identity.clone())
-        .map_err(|e| e.to_string())?
-        .with_device_name(device_name());
-    if crate::second_screen::this_process() {
-        client = client.with_second_screen();
-    }
-    if record.https_port != 0 {
-        client = client.with_https_port(record.https_port);
-    }
-    if let Some(pem) = &record.server_certificate {
-        client = client
-            .with_server_certificate_pem(pem)
-            .map_err(|e| e.to_string())?;
-    }
-    Ok(client)
+pub fn client_for(identity: &Arc<ClientIdentity>, record: &HostRecord, address: &str) -> Result<PooledHostClient, String> {
+    let der = record.server_certificate.as_deref().map(pem_decode_certificate).transpose().map_err(|e| e.to_string())?;
+    let pool = pairing::shared_pool_for(identity);
+    pool.set_device_name(device_name());
+    pool.borrow_with_options(address, http_port(record.http_port), record.https_port, der.as_deref(), crate::second_screen::this_process()).map_err(|e| e.to_string())
 }
 
 /// What proves the pairing user is at the PC.

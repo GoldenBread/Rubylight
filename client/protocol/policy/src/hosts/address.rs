@@ -162,14 +162,6 @@ pub fn sync_slots_from_shared(shared: &SharedHostFields, slots: &mut HostSlots) 
             slots.local = primary;
         }
     }
-    if slots.ipv6.is_none() {
-        for addr in &shared.other_addresses {
-            if addr.parse::<IpAddr>().is_ok_and(|ip| ip.is_ipv6()) {
-                slots.ipv6 = EndpointSlot::new(addr, default_port);
-                break;
-            }
-        }
-    }
     if slots.remote.is_none()
         && let Some(remote) = shared.remote_address.as_deref()
     {

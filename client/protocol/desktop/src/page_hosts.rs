@@ -6,6 +6,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use nightjar_core::hosts::client_pool::PooledHostClient;
 use nightjar_core::http::native_api::capabilities::Capabilities;
 use nightjar_core::http::native_api::radeon::{Radeon, SettingsWrite};
 use nightjar_core::http::native_api::session::{ActionId, Session};
@@ -27,8 +28,8 @@ use nightjar_desktop_ui::ui::files::FileHost;
 
 use crate::hosts::{client_for, Host};
 
-/// Local orphan-rule newtype wrapping [`HostClient`] for UI page worker traits.
-pub struct HostClientPage(pub Arc<HostClient>);
+/// Local orphan-rule newtype wrapping [`PooledHostClient`] for UI page worker traits.
+pub struct HostClientPage(pub PooledHostClient);
 
 impl CoopSource for HostClientPage {
     fn coop(&self) -> Result<Coop, Error> {
@@ -153,7 +154,7 @@ impl FileHost for HostClientPage {
 fn page_client(identity: Option<&Arc<ClientIdentity>>, host: &Host) -> Result<HostClientPage, String> {
     match identity {
         Some(identity) => client_for(identity, &host.record, host.connect_address())
-            .map(|c| HostClientPage(Arc::new(c))),
+            .map(HostClientPage),
         None => Err(tr("Nightjar has no client identity yet. Restart Nightjar and try again.").to_owned()),
     }
 }
@@ -270,7 +271,7 @@ pub fn open_session_page(
     let page = session_page::Page::open(
         move || {
             client_for(&identity, &record, &address)
-                .map(|c| HostClientPage(Arc::new(c)))
+                .map(HostClientPage)
         },
         waker,
     );
@@ -493,7 +494,7 @@ mod tests {
                 })
                 .expect("a paired host at that address");
         let page = session_page::Page::open(
-            move || client_for(&identity, &record, &address).map(|c| HostClientPage(Arc::new(c))),
+            move || client_for(&identity, &record, &address).map(HostClientPage),
             Arc::new(|| {}),
         );
         until("the first answers", || {

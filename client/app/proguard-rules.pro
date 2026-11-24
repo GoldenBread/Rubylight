@@ -42,6 +42,16 @@
 -keepclassmembers interface com.limelight.nvstream.jni.NightjarConsoleJni$TransportCallback {
     java.lang.String call(java.lang.String, java.lang.String, java.lang.String);
 }
+# Looked up by name from protocol/android/src/hosts_power_flows.rs.
+-keepclassmembers interface com.limelight.nvstream.jni.NightjarHostsJni$FlowTransport {
+    java.lang.String call(java.lang.String, java.lang.String);
+}
+-keepclassmembers interface com.limelight.nvstream.jni.NightjarHostsJni$FlowSleeper {
+    boolean sleep(long);
+}
+-keepclassmembers interface com.limelight.nvstream.jni.NightjarHostsJni$FlowStepListener {
+    void onStep(java.lang.String);
+}
 
 # The default Android rules retain native method names and descriptor classes.
 # BouncyCastle discovers mappings and JCA services by name. AndroidCryptoProvider

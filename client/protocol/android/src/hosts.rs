@@ -7,6 +7,8 @@ pub mod host_flows;
 pub mod hosts_manager;
 #[path = "hosts_poller.rs"]
 pub mod hosts_poller;
+#[path = "hosts_power_flows.rs"]
+pub mod hosts_power_flows;
 
 use jni::JNIEnv;
 use jni::objects::{JClass, JString};

@@ -294,6 +294,11 @@ impl HostClient {
         self
     }
 
+    /// Enables or disables the second-screen flag on an existing client instance.
+    pub fn set_second_screen(&mut self, second_screen: bool) {
+        self.second_screen = second_screen;
+    }
+
     /// The HTTPS port from an earlier serverinfo, to skip asking for it.
     pub fn with_https_port(self, port: u16) -> Self {
         self.set_https_port(port);

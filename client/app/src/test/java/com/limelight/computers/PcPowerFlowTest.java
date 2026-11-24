@@ -285,6 +285,22 @@ public class PcPowerFlowTest {
     }
 
     @Test
+    public void wallClockJumpMarksTokenStaleEvenWhenMonotonicClockIsFrozen() {
+        script("pc_power", offer(TOKEN_A, null, true), offer(TOKEN_B, null, true), UNREACHABLE);
+        script("pc_power.restart", ACCEPTED);
+        AtomicLong monoClock = new AtomicLong(1_000_000);
+        AtomicLong wallClock = new AtomicLong(5_000_000);
+        Recorder ui = new Recorder();
+        NativeApiClient api = client();
+        new PcPowerFlow(NativePcPower.Action.RESTART, () -> api, ui, Runnable::run, Runnable::run,
+                monoClock::get, wallClock::get, slept::add).start();
+        wallClock.addAndGet(SleepFlow.TOKEN_REFRESH_MS);
+        ui.go.run();
+        assertEquals(List.of("pc_power", "pc_power", "pc_power.restart " + TOKEN_B, "pc_power"), calls);
+        assertEquals(List.of("confirm", "accepted"), ui.events);
+    }
+
+    @Test
     public void theHostsReasonAndRefusalReachThePersonAsSent() {
         script("pc_power", offer(null, STREAMING, true));
         Recorder busy = new Recorder();

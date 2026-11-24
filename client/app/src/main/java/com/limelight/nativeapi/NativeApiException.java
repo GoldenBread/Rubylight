@@ -10,7 +10,7 @@ public class NativeApiException extends Exception {
         NETWORK, TLS, CERTIFICATE_MISMATCH, STATUS, NOT_FOUND, API, MALFORMED, NOT_PAIRED,
         IDENTITY, INVALID_ARGUMENT, CANCELLED, POWER_REFUSED, UNAVAILABLE;
 
-        static Kind of(String wire) {
+        public static Kind of(String wire) {
             for (Kind kind : values()) {
                 if (kind.name().equalsIgnoreCase(wire)) {
                     return kind;

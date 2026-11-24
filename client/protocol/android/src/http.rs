@@ -76,7 +76,7 @@ pub(crate) fn error_json(error: &Error) -> String {
     json!({"error": body}).to_string()
 }
 
-fn server_info_json(info: &ServerInfo) -> Value {
+pub(crate) fn server_info_json(info: &ServerInfo) -> Value {
     json!({
         "raw": info.raw,
         "hostname": info.hostname,

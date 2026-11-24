@@ -389,3 +389,23 @@ fn pairing_and_invite_policies_sanitize_classify_and_track_generations() {
     assert!(is_tunnel_address("127.78.0.2"));
     assert!(!is_tunnel_address("127.0.0.1"));
 }
+
+#[test]
+fn sync_slots_from_shared_never_promotes_other_addresses_ipv6_with_default_port() {
+    use crate::hosts::{sync_shared_from_slots, sync_slots_from_shared, HostSlots, SharedHostFields};
+
+    let mut shared = SharedHostFields {
+        unique_id: "u-v6-other".into(),
+        name: "V6Other".into(),
+        http_port: 47989,
+        other_addresses: vec!["2001:db8::42".into()],
+        ..Default::default()
+    };
+    let mut slots = HostSlots::default();
+    sync_slots_from_shared(&shared, &mut slots);
+    assert_eq!(slots.ipv6, None, "other_addresses IPv6 must not become ipv6 slot");
+
+    sync_shared_from_slots(&mut shared, &slots);
+    assert_eq!(shared.address, "", "primary address must stay empty");
+    assert_eq!(shared.other_addresses, vec!["2001:db8::42".to_string()]);
+}

@@ -23,8 +23,8 @@ use super::client_pool::HostClientPool;
 use super::identity::IdentityStore;
 use super::meta::HostMetaStore;
 use super::poll::{
-    is_site_local_host, parallel_poll_direct, parse_internet_reply, poll_over_the_internet,
-    refresh_internet_play,
+    compute_internet_path, is_site_local_host, parallel_poll_direct, parse_internet_reply,
+    poll_over_the_internet, refresh_internet_play,
 };
 use super::store::{HostEntry, HostStore};
 
@@ -43,6 +43,10 @@ pub struct HostSnapshot {
     pub capabilities_json: Option<String>,
     pub alias: Option<String>,
     pub pinned_endpoint: Option<EndpointSlot>,
+    pub internet_path: Option<String>,
+    pub needs_vpn_stun: bool,
+    #[serde(skip)]
+    pub server_info: Option<ServerInfo>,
 }
 
 /// Outcome of [`HostManager::add_computer_for_link`].
@@ -62,8 +66,8 @@ pub type HostUpdateListener = Arc<dyn Fn(&HostSnapshot) + Send + Sync>;
 pub(super) struct ManagedTuple {
     pub(super) snapshot: HostSnapshot,
     pub(super) poll_state: PollTupleState,
-    last_internet_read_ms: Option<u64>,
-    network_lock: Arc<Mutex<()>>,
+    pub(super) last_internet_read_ms: Option<u64>,
+    pub(super) network_lock: Arc<Mutex<()>>,
     pub(super) stop_signal: Arc<(Mutex<bool>, Condvar)>,
     pub(super) poll_thread: Option<JoinHandle<()>>,
     pub(super) removal_tombstone: bool,
@@ -79,8 +83,23 @@ pub(super) struct Inner {
     pub(super) tuples: Mutex<HashMap<String, Arc<Mutex<ManagedTuple>>>>,
     pub(super) removal_lock: Mutex<()>,
     polling_active: AtomicBool,
+    pub(super) vpn_active: AtomicBool,
+    active_polls: Mutex<usize>,
+    active_polls_cv: Condvar,
     listener: Mutex<Option<HostUpdateListener>>,
     pub(super) stun_resolver: Mutex<ExternalIpv4Resolver>,
+}
+
+struct ActivePollGuard<'a>(&'a Inner);
+
+impl Drop for ActivePollGuard<'_> {
+    fn drop(&mut self) {
+        let mut count = self.0.active_polls.lock().unwrap_or_else(|e| e.into_inner());
+        *count = count.saturating_sub(1);
+        if *count == 0 {
+            self.0.active_polls_cv.notify_all();
+        }
+    }
 }
 
 /// Default non-VPN direct UDP STUN resolver.
@@ -140,6 +159,9 @@ impl HostManager {
                 tuples: Mutex::new(HashMap::new()),
                 removal_lock: Mutex::new(()),
                 polling_active: AtomicBool::new(false),
+                vpn_active: AtomicBool::new(false),
+                active_polls: Mutex::new(0),
+                active_polls_cv: Condvar::new(),
                 listener: Mutex::new(None),
                 stun_resolver: Mutex::new(Arc::new(refresh_external_ipv4_direct)),
             }),
@@ -172,7 +194,35 @@ impl HostManager {
             .unwrap_or_else(|e| e.into_inner()) = resolver;
     }
 
-    pub(super) fn now_ms(&self) -> u64 {
+    /// Sets whether an OS VPN interface is active (suppressing direct UDP STUN in favor of Android's
+    /// bound-socket fallback flagged via `needs_vpn_stun`).
+    pub fn set_vpn_active(&self, active: bool) {
+        self.inner.vpn_active.store(active, Ordering::Release);
+    }
+
+    /// Updates the global internet-play enabled switch (stopping active tunnels when turned off).
+    pub fn set_internet_play_enabled(&self, enabled: bool) {
+        internet::set_enabled(enabled);
+    }
+
+    /// Blocks until every in-flight `poll_host` call has completed.
+    pub fn wait_for_polling_stopped(&self) {
+        let mut count = self
+            .inner
+            .active_polls
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        while *count != 0 {
+            count = self
+                .inner
+                .active_polls_cv
+                .wait(count)
+                .unwrap_or_else(|e| e.into_inner());
+        }
+    }
+
+    /// Monotonic milliseconds elapsed since this manager was opened.
+    pub fn now_ms(&self) -> u64 {
         self.inner.epoch.elapsed().as_millis() as u64
     }
 
@@ -256,6 +306,9 @@ impl HostManager {
                 capabilities_json,
                 alias,
                 pinned_endpoint: pinned,
+                internet_path: None,
+                needs_vpn_stun: false,
+                server_info: None,
             };
             let arc = Arc::new(Mutex::new(ManagedTuple {
                 snapshot: snap.clone(),
@@ -302,7 +355,8 @@ impl HostManager {
         (!t.removal_tombstone).then(|| t.snapshot.clone())
     }
 
-    /// Starts periodic background polling for all current and future tuples.
+    /// Starts periodic background polling for all current and future tuples, emitting initial
+    /// snapshots after [`PollTupleState::enforce_ttl`].
     pub fn start_polling(&self) {
         self.inner.polling_active.store(true, Ordering::Release);
         let arcs: Vec<_> = self
@@ -313,7 +367,19 @@ impl HostManager {
             .values()
             .cloned()
             .collect();
+        let now_ms = self.now_ms();
         for arc in arcs {
+            let initial_snap = {
+                let mut t = arc.lock().unwrap_or_else(|e| e.into_inner());
+                t.poll_state.enforce_ttl(now_ms);
+                if t.poll_state.state == HostReachState::Unknown {
+                    t.snapshot.state = HostReachState::Unknown;
+                }
+                (!t.removal_tombstone).then(|| t.snapshot.clone())
+            };
+            if let Some(snap) = initial_snap {
+                self.emit(&snap);
+            }
             self.maybe_start_tuple_thread(&arc);
         }
     }
@@ -413,6 +479,16 @@ impl HostManager {
         };
 
         let _net_guard = network_lock.lock().unwrap_or_else(|e| e.into_inner());
+        {
+            let mut count = self
+                .inner
+                .active_polls
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            *count += 1;
+        }
+        let _active_guard = ActivePollGuard(&self.inner);
+
         let cert_der = snap_before.entry.server_certificate_der();
         let slots = snap_before.entry.slots();
         let active_port = snap_before.active_endpoint.as_ref().map(|e| e.port);
@@ -434,50 +510,59 @@ impl HostManager {
         let now_ms = self.now_ms();
         let mut winner = direct.winner;
         let mut unreachable_msg: Option<String> = None;
+        let mut internet_another_cert = false;
 
-        if winner.is_none() && !direct.another_certificate {
+        if winner.is_none()
+            && slots.pinned.is_none()
+            && let Some(reply_json) = snap_before.entry.shared.internet_play.as_deref()
+        {
             let active_is_tunnel = snap_before
                 .active_endpoint
                 .as_ref()
                 .is_some_and(|e| nightjar_policy::hosts::is_tunnel_address(&e.address));
-            if punches_now(
+            let allow_punch = punches_now(
                 slots.local.is_some(),
                 initial_state == HostReachState::Offline,
                 active_is_tunnel,
-            ) && let Some(reply_json) = snap_before.entry.shared.internet_play.as_deref()
-            {
-                match poll_over_the_internet(
-                    &self.inner.pool,
-                    uuid,
-                    reply_json,
-                    Some(uuid),
-                    cert_der.as_deref(),
-                    direct.tried,
-                    likely_online,
-                ) {
-                    Ok((_, win)) => winner = Some(win),
-                    Err(msg) => unreachable_msg = Some(msg),
+            );
+            match poll_over_the_internet(
+                &self.inner.pool,
+                uuid,
+                reply_json,
+                Some(uuid),
+                cert_der.as_deref(),
+                &candidates,
+                direct.tried,
+                likely_online,
+                allow_punch,
+            ) {
+                Ok((_, win)) => winner = Some(win),
+                Err(fail) => {
+                    internet_another_cert = fail.another_certificate;
+                    unreachable_msg = Some(fail.reason);
                 }
-            } else if let Some(reply) =
-                parse_internet_reply(snap_before.entry.shared.internet_play.as_deref())
-            {
-                unreachable_msg = Some(internet::unreachable(&reply, direct.tried, None));
             }
         }
 
         let mut internet_play_update: Option<Option<String>> = None;
         let mut resolved_stun_remote: Option<EndpointSlot> = None;
+        let mut needs_vpn_stun = false;
         if let Some(ref win) = winner {
             if snap_before.entry.remote_endpoint.is_none()
+                && win.info.external_ip.is_none()
                 && is_site_local_host(&win.candidate.address)
             {
-                let resolver = self
-                    .inner
-                    .stun_resolver
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .clone();
-                resolved_stun_remote = resolver(win.info.external_port);
+                if self.inner.vpn_active.load(Ordering::Acquire) {
+                    needs_vpn_stun = true;
+                } else {
+                    let resolver = self
+                        .inner
+                        .stun_resolver
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .clone();
+                    resolved_stun_remote = resolver(win.info.external_port);
+                }
             }
             if win.info.paired
                 && !win.should_clear_cert
@@ -513,16 +598,23 @@ impl HostManager {
                 t.snapshot.state = HostReachState::Online;
                 t.snapshot.another_certificate = false;
                 t.snapshot.unreachable = None;
+                t.snapshot.needs_vpn_stun = needs_vpn_stun;
                 if win.should_clear_cert {
                     t.snapshot.entry.shared.server_certificate = None;
+                    t.snapshot.entry.shared.internet_play = None;
                     t.snapshot.paired = false;
+                    internet::stop(uuid);
+                    self.inner.pool.clear();
                 } else {
                     t.snapshot.paired = win.info.paired;
                 }
                 if let Some(remote) = resolved_stun_remote {
                     t.snapshot.entry.remote_endpoint = Some(remote);
+                    t.snapshot.needs_vpn_stun = false;
                 }
-                if let Some(ref raw_update) = internet_play_update {
+                if !win.should_clear_cert
+                    && let Some(ref raw_update) = internet_play_update
+                {
                     t.snapshot.entry.shared.internet_play = raw_update.clone();
                     t.last_internet_read_ms = Some(now_ms);
                 }
@@ -530,6 +622,13 @@ impl HostManager {
                     let _ = self.inner.meta.save_capabilities(uuid, &caps_json);
                     t.snapshot.capabilities_json = Some(caps_json);
                 }
+                let reply = parse_internet_reply(t.snapshot.entry.shared.internet_play.as_deref());
+                t.snapshot.internet_path = compute_internet_path(
+                    t.snapshot.active_endpoint.as_ref(),
+                    t.snapshot.entry.local_endpoint.as_ref(),
+                    t.snapshot.entry.manual_endpoint.as_ref(),
+                    reply.as_ref(),
+                );
                 t.snapshot.entry.sync_shared_from_slots();
                 let _ = self.inner.store.upsert(t.snapshot.entry.clone());
                 t.snapshot != prev
@@ -541,16 +640,24 @@ impl HostManager {
                 let prev_state = t.snapshot.state;
                 let prev_cert_flag = t.snapshot.another_certificate;
                 let prev_unreach = t.snapshot.unreachable.clone();
+                let prev_path = t.snapshot.internet_path.clone();
+                let prev_vpn_stun = t.snapshot.needs_vpn_stun;
                 if offline_now {
                     t.snapshot.state = HostReachState::Offline;
                 }
-                t.snapshot.another_certificate = direct.another_certificate;
+                t.snapshot.server_info = None;
+                t.snapshot.another_certificate =
+                    direct.another_certificate || internet_another_cert;
+                t.snapshot.internet_path = None;
+                t.snapshot.needs_vpn_stun = false;
                 if let Some(msg) = unreachable_msg {
                     t.snapshot.unreachable = Some(msg);
                 }
                 t.snapshot.state != prev_state
                     || t.snapshot.another_certificate != prev_cert_flag
                     || t.snapshot.unreachable != prev_unreach
+                    || t.snapshot.internet_path != prev_path
+                    || t.snapshot.needs_vpn_stun != prev_vpn_stun
             }
         };
         let emitted = changed.then(|| t.snapshot.clone());
@@ -595,14 +702,22 @@ pub(super) fn apply_server_info(
         port: answered_port,
     });
     if let Some(ref local_ip) = info.local_ip
-        && is_site_local_host(&candidate.address)
+        && !local_ip.is_empty()
+        && !local_ip.starts_with("127.")
     {
-        let _ = local_ip;
-        snap.entry.local_endpoint = Some(EndpointSlot {
-            address: candidate.address.clone(),
-            port: answered_port,
-        });
+        snap.entry.local_endpoint = EndpointSlot::new(local_ip, answered_port);
     }
+    if let Some(ref external_ip) = info.external_ip
+        && !external_ip.is_empty()
+    {
+        let ext_port = if info.external_port != 0 {
+            info.external_port
+        } else {
+            answered_port
+        };
+        snap.entry.remote_endpoint = EndpointSlot::new(external_ip, ext_port);
+    }
+    snap.server_info = Some(info.clone());
 }
 
 fn merge_entry_in_memory(dst: &mut HostEntry, src: HostEntry) {

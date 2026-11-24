@@ -167,6 +167,20 @@ public class SleepFlowTest {
     }
 
     @Test
+    public void wallClockJumpMarksTokenStaleEvenWhenMonotonicClockIsFrozen() {
+        script("power.capabilities", offer(TOKEN_A), offer(TOKEN_B));
+        script("power.sleep", ACCEPTED);
+        AtomicLong monoClock = new AtomicLong(1_000_000);
+        AtomicLong wallClock = new AtomicLong(5_000_000);
+        NativeApiClient api = client();
+        new SleepFlow(() -> api, ui, Runnable::run, Runnable::run, monoClock::get, wallClock::get).start();
+        wallClock.addAndGet(SleepFlow.TOKEN_REFRESH_MS);
+        ui.confirm.run();
+        assertEquals(Arrays.asList("power.capabilities", "power.capabilities", "power.sleep " + TOKEN_B), calls);
+        assertEquals(Arrays.asList("confirm", "accepted"), ui.events);
+    }
+
+    @Test
     public void aRefreshWithoutATokenStopsBeforeThePost() {
         script("power.capabilities", offer(TOKEN_A), "{\"ok\":" + reply(200, "", true, true, null, false) + "}");
         flow().start();

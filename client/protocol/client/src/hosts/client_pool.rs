@@ -23,6 +23,7 @@ struct PoolKey {
     address: String,
     http_port: u16,
     cert_der: Option<Vec<u8>>,
+    second_screen: bool,
 }
 
 struct IdleEntry {
@@ -108,13 +109,27 @@ impl HostClientPool {
         https_port: u16,
         cert_der: Option<&[u8]>,
     ) -> Result<PooledHostClient, Error> {
-        let (client, generation) = self.take(address, http_port, https_port, cert_der)?;
+        self.borrow_with_options(address, http_port, https_port, cert_der, false)
+    }
+
+    /// Borrows a pooled [`HostClient`] configured with `second_screen`.
+    pub fn borrow_with_options(
+        self: &Arc<Self>,
+        address: &str,
+        http_port: u16,
+        https_port: u16,
+        cert_der: Option<&[u8]>,
+        second_screen: bool,
+    ) -> Result<PooledHostClient, Error> {
+        let (client, generation) =
+            self.take_at(address, http_port, https_port, cert_der, second_screen, Instant::now())?;
         Ok(PooledHostClient {
             pool: Arc::clone(self),
             key: PoolKey {
                 address: address.to_owned(),
                 http_port,
                 cert_der: cert_der.map(ToOwned::to_owned),
+                second_screen,
             },
             generation,
             client: Some(client),
@@ -130,7 +145,7 @@ impl HostClientPool {
         https_port: u16,
         cert_der: Option<&[u8]>,
     ) -> Result<(HostClient, u64), Error> {
-        self.take_at(address, http_port, https_port, cert_der, Instant::now())
+        self.take_at(address, http_port, https_port, cert_der, false, Instant::now())
     }
 
     fn take_at(
@@ -139,23 +154,26 @@ impl HostClientPool {
         http_port: u16,
         https_port: u16,
         cert_der: Option<&[u8]>,
+        second_screen: bool,
         now: Instant,
     ) -> Result<(HostClient, u64), Error> {
         let key = PoolKey {
             address: address.to_owned(),
             http_port,
             cert_der: cert_der.map(ToOwned::to_owned),
+            second_screen,
         };
         let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
         state.sweep(now);
         let generation = state.generation;
         if let Some(list) = state.entries.get_mut(&key) {
-            while let Some(entry) = list.pop() {
+            while let Some(mut entry) = list.pop() {
                 if !entry.client.is_cancelled() {
                     if list.is_empty() {
                         state.entries.remove(&key);
                     }
                     entry.client.set_https_port(https_port);
+                    entry.client.set_second_screen(second_screen);
                     return Ok((entry.client, generation));
                 }
             }
@@ -167,6 +185,7 @@ impl HostClientPool {
 
         let mut client =
             HostClient::new(address, http_port, identity)?.with_device_name(device_name);
+        client.set_second_screen(second_screen);
         if https_port != 0 {
             client = client.with_https_port(https_port);
         }
@@ -190,6 +209,7 @@ impl HostClientPool {
                 address: address.to_owned(),
                 http_port,
                 cert_der: cert_der.map(ToOwned::to_owned),
+                second_screen: false,
             },
             generation,
             client,
@@ -252,6 +272,15 @@ impl PooledHostClient {
             .expect("PooledHostClient accessed after release")
     }
 
+    /// Configures `second_screen` on the borrowed client and updates its pool key on return.
+    pub fn with_second_screen(mut self, second_screen: bool) -> Self {
+        self.key.second_screen = second_screen;
+        if let Some(client) = self.client.as_mut() {
+            client.set_second_screen(second_screen);
+        }
+        self
+    }
+
     /// Takes ownership of the inner [`HostClient`] so it will not be returned to the pool.
     pub fn detach(mut self) -> HostClient {
         self.client
@@ -278,6 +307,7 @@ impl Drop for PooledHostClient {
                         address: String::new(),
                         http_port: 0,
                         cert_der: None,
+                        second_screen: false,
                     },
                 ),
                 self.generation,
@@ -301,7 +331,7 @@ mod tests {
         let cert_b = vec![9u8, 8, 7, 6];
 
         let (c1, g1) = pool
-            .take_at("192.168.1.10", 47989, 47984, Some(&cert_a), t0)
+            .take_at("192.168.1.10", 47989, 47984, Some(&cert_a), false, t0)
             .unwrap();
         assert_eq!(c1.https_port_cached(), 47984);
         pool.give_back_at(
@@ -309,6 +339,7 @@ mod tests {
                 address: "192.168.1.10".into(),
                 http_port: 47989,
                 cert_der: Some(cert_a.clone()),
+                second_screen: false,
             },
             g1,
             c1,
@@ -323,6 +354,7 @@ mod tests {
                 47989,
                 0,
                 Some(&cert_a),
+                false,
                 t0 + Duration::from_secs(5),
             )
             .unwrap();
@@ -332,6 +364,7 @@ mod tests {
                 address: "192.168.1.10".into(),
                 http_port: 47989,
                 cert_der: Some(cert_a.clone()),
+                second_screen: false,
             },
             g2,
             c2,
@@ -345,6 +378,7 @@ mod tests {
                 47989,
                 47984,
                 Some(&cert_b),
+                false,
                 t0 + Duration::from_secs(6),
             )
             .unwrap();
@@ -358,6 +392,7 @@ mod tests {
                 47989,
                 0,
                 Some(&cert_a),
+                false,
                 t0 + Duration::from_secs(36),
             )
             .unwrap();

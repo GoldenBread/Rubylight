@@ -2,13 +2,17 @@
 //! classification over [`HostClient`] and [`nightjar_policy::hosts::pairing`].
 
 use nightjar_policy::hosts::{
-    PairFailureKind, PairFailureState, UnpairFailureKind, classify_pairing_failure,
-    classify_unpair,
+    PairFailureKind, PairFailureState, UnpairFailureKind, already_paired,
+    classify_pairing_failure, classify_pairing_http_refusal, classify_unpair,
+    pairing_refused_status,
 };
 use ring::rand::{SecureRandom, SystemRandom};
 use rubylight_protocol::pairing_uri::PairingUri;
 
-use crate::http::{Error, HostClient, PairFailure, PairResult, certificate_sha256_pem};
+use crate::http::{
+    Error, HostClient, PairFailure, PairResult, certificate_sha256_der, certificate_sha256_pem,
+    pem_decode_certificate,
+};
 
 /// Cryptographically random 4-digit pairing PIN (`"0000"`..`"9999"`).
 pub fn random_pin() -> String {
@@ -116,6 +120,90 @@ pub fn execute_unpair(client: &HostClient) -> Result<(), UnpairFailureKind> {
                 Err(kind)
             }
         }
+    }
+}
+
+/// Checks current pair status on `client`, executes [`PairSecret`] pairing with full HTTP refusal
+/// and `in_game` classification, and returns the paired host certificate DER bytes.
+pub fn execute_pair_checked(
+    client: &HostClient,
+    secret: &PairSecret,
+    has_pinned_cert: bool,
+    in_game: bool,
+    known_otherwise: &[String],
+) -> Result<Vec<u8>, PairFailureKind> {
+    let from_link = matches!(secret, PairSecret::Link(_));
+    let one_time = !matches!(secret, PairSecret::Pin(_));
+    let map_err = |e: Error| match e {
+        Error::Status { code, .. } if pairing_refused_status(code as u16) => {
+            classify_pairing_http_refusal(from_link, one_time)
+        }
+        Error::CertificateMismatch => PairFailureKind::LinkCertMismatch,
+        _ => PairFailureKind::Network,
+    };
+
+    let (info, _) = client.server_info_with_cert_check(true).map_err(map_err)?;
+    if already_paired(info.paired, from_link, has_pinned_cert) {
+        if let PairSecret::Link(link) = secret {
+            let matches = client
+                .server_certificate_der()
+                .is_some_and(|der| certificate_sha256_der(&der) == link.cert_sha256);
+            if !matches {
+                return Err(PairFailureKind::LinkCertMismatch);
+            }
+        }
+        return Ok(client.server_certificate_der().unwrap_or_default());
+    }
+    if from_link && known_otherwise.contains(&info.unique_id) {
+        return Err(PairFailureKind::LinkCertMismatch);
+    }
+
+    let res = match secret {
+        PairSecret::Pin(pin) => client.pair(&info, pin),
+        PairSecret::OneTime { pin, passphrase } => {
+            client.pair_with_passphrase(&info, pin, passphrase)
+        }
+        PairSecret::Link(link) => client.pair_with_link(&info, link),
+    }
+    .map_err(map_err)?;
+
+    match res {
+        PairResult::Paired {
+            server_certificate_pem,
+        } => pem_decode_certificate(&server_certificate_pem).map_err(|_| PairFailureKind::Failed),
+        PairResult::PinWrong => Err(classify_pairing_failure(
+            PairFailureState::PinWrong,
+            from_link,
+            one_time,
+            in_game,
+        )),
+        PairResult::AlreadyInProgress => Err(PairFailureKind::AlreadyInProgress),
+        PairResult::Failed(PairFailure::ServerSignature) => Err(PairFailureKind::ServerUnverified),
+        PairResult::Failed(PairFailure::Declined(_)) => Err(classify_pairing_failure(
+            PairFailureState::Failed,
+            from_link,
+            one_time,
+            in_game,
+        )),
+    }
+}
+
+/// Checks paired state, sends `/unpair`, and verifies the host reports unpaired afterward.
+pub fn execute_unpair_verified(client: &HostClient) -> Result<(), UnpairFailureKind> {
+    let (before, _) = client
+        .server_info_with_cert_check(true)
+        .map_err(|e| unpair_error_kind(&e))?;
+    if !before.paired {
+        return Err(UnpairFailureKind::NotPaired);
+    }
+    client.unpair().map_err(|e| unpair_error_kind(&e))?;
+    let (after, _) = client
+        .server_info_with_cert_check(true)
+        .map_err(|e| unpair_error_kind(&e))?;
+    if !after.paired {
+        Ok(())
+    } else {
+        Err(UnpairFailureKind::Failed)
     }
 }
 

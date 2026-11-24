@@ -286,27 +286,133 @@ pub fn parallel_poll_direct(
     }
 }
 
-/// Attempts internet-play punching and then polls the resulting endpoint via `pool`.
+/// Failure details from [`poll_over_the_internet`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InternetPollFailure {
+    pub reason: String,
+    pub another_certificate: bool,
+}
+
+/// Probes WAN candidates from `internet_play_json` (IPv6 first, then UPnP/mapped IPv4) before
+/// optionally gating only [`internet::punch`] on `allow_punch`, computing `unreachable` on failure.
+#[allow(clippy::too_many_arguments)]
 pub fn poll_over_the_internet(
     pool: &HostClientPool,
     uuid: &str,
     internet_play_json: &str,
     expected_uuid: Option<&str>,
     cert_der: Option<&[u8]>,
-    tried: Tried,
+    direct_candidates: &[ProbeCandidate],
+    mut tried: Tried,
     likely_online: bool,
-) -> Result<(SocketAddr, PollIpSuccess), String> {
-    let reply = InternetPlay::parse(internet_play_json).map_err(|e| e.to_string())?;
-    let addr = internet::punch(uuid, &reply, tried)?;
+    allow_punch: bool,
+) -> Result<(SocketAddr, PollIpSuccess), InternetPollFailure> {
+    let reply = InternetPlay::parse(internet_play_json).map_err(|e| InternetPollFailure {
+        reason: e.to_string(),
+        another_certificate: false,
+    })?;
+    let mut another_certificate = false;
+
+    for ip in &reply.ipv6 {
+        let addr_str = ip.to_string();
+        tried.ipv6 = true;
+        if direct_candidates
+            .iter()
+            .any(|d| d.address == addr_str && d.port == reply.ports.http)
+        {
+            continue;
+        }
+        let candidate = ProbeCandidate {
+            slot: CandidateSlot::Ipv6,
+            address: addr_str,
+            port: reply.ports.http,
+            https_port: reply.ports.https,
+        };
+        match try_poll_ip(pool, &candidate, expected_uuid, cert_der, likely_online) {
+            Ok(win) => return Ok((SocketAddr::new(IpAddr::V6(*ip), candidate.port), win)),
+            Err(err) => {
+                if matches!(err.kind, PollErrorKind::CertificateMismatch) {
+                    another_certificate = true;
+                }
+            }
+        }
+    }
+
+    if reply.mapped_ports
+        && let Some(ip) = reply.external_ipv4
+    {
+        let addr_str = ip.to_string();
+        tried.mapped = true;
+        if !direct_candidates
+            .iter()
+            .any(|d| d.address == addr_str && d.port == reply.ports.http)
+        {
+            let candidate = ProbeCandidate {
+                slot: CandidateSlot::Remote,
+                address: addr_str,
+                port: reply.ports.http,
+                https_port: reply.ports.https,
+            };
+            match try_poll_ip(pool, &candidate, expected_uuid, cert_der, likely_online) {
+                Ok(win) => return Ok((SocketAddr::new(IpAddr::V4(ip), candidate.port), win)),
+                Err(err) => {
+                    if matches!(err.kind, PollErrorKind::CertificateMismatch) {
+                        another_certificate = true;
+                    }
+                }
+            }
+        }
+    }
+
+    if !allow_punch {
+        return Err(InternetPollFailure {
+            reason: internet::unreachable(&reply, tried, None),
+            another_certificate,
+        });
+    }
+
+    let addr = internet::punch(uuid, &reply, tried).map_err(|reason| InternetPollFailure {
+        reason,
+        another_certificate,
+    })?;
     let candidate = ProbeCandidate {
         slot: CandidateSlot::Remote,
         address: addr.ip().to_string(),
         port: addr.port(),
         https_port: reply.ports.https,
     };
-    let win = try_poll_ip(pool, &candidate, expected_uuid, cert_der, likely_online)
-        .map_err(|err| err.message.unwrap_or_else(|| "internet poll failed".into()))?;
-    Ok((addr, win))
+    match try_poll_ip(pool, &candidate, expected_uuid, cert_der, likely_online) {
+        Ok(win) => Ok((addr, win)),
+        Err(err) => {
+            if matches!(err.kind, PollErrorKind::CertificateMismatch) {
+                another_certificate = true;
+            }
+            let msg = err
+                .message
+                .unwrap_or_else(|| "internet poll failed".into());
+            Err(InternetPollFailure {
+                reason: internet::unreachable(&reply, tried, Some(msg)),
+                another_certificate,
+            })
+        }
+    }
+}
+
+/// Computes `"lan"`, `"ipv6"`, `"mapped"`, or `"punched"` for an active endpoint given
+/// local/manual LAN endpoints and stored `/internet-play/v1` reply.
+pub fn compute_internet_path(
+    active: Option<&nightjar_policy::hosts::EndpointSlot>,
+    local: Option<&nightjar_policy::hosts::EndpointSlot>,
+    manual: Option<&nightjar_policy::hosts::EndpointSlot>,
+    reply: Option<&InternetPlay>,
+) -> Option<String> {
+    let active_addr = active?.address.parse::<IpAddr>().ok()?;
+    let lan: Vec<IpAddr> = local
+        .into_iter()
+        .chain(manual)
+        .filter_map(|ep| ep.address.parse::<IpAddr>().ok())
+        .collect();
+    Some(internet::path_of(active_addr, &lan, reply).key().to_owned())
 }
 
 /// Fetches a fresh `/internet-play/v1` reply from the host over HTTPS.

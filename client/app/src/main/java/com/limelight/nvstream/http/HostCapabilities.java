@@ -223,7 +223,7 @@ public final class HostCapabilities {
         this.availabilities = Collections.unmodifiableMap(map);
     }
 
-    static HostCapabilities fromSnapshotJson(Json.Obj snapshot) {
+    public static HostCapabilities fromSnapshotJson(Json.Obj snapshot) {
         return new HostCapabilities(snapshot);
     }
 

@@ -10,6 +10,7 @@ import com.limelight.binding.PlatformBinding;
 import com.limelight.nvstream.http.ComputerDetails;
 import com.limelight.nvstream.http.InviteLink;
 import com.limelight.nvstream.http.LimelightCryptoProvider;
+import com.limelight.nvstream.jni.NightjarHostsJni;
 import com.limelight.nvstream.jni.NightjarPolicyJni;
 import com.limelight.preferences.PreferenceConfiguration;
 
@@ -113,9 +114,18 @@ public final class Invites {
         InternetPlay.setEnabled(PreferenceManager.getDefaultSharedPreferences(context)
                 .getBoolean(PreferenceConfiguration.INTERNET_PLAY_PREF_STRING, true));
         try {
-            JSONObject redeemed = InternetPlay.redeem(link, binder.getUniqueId(),
+            String raw = NightjarHostsJni.hostFlowRedeemInvite(
+                    link,
+                    binder.getUniqueId(),
                     pem("CERTIFICATE", crypto.getClientCertificate().getEncoded()),
-                    pem("PRIVATE KEY", crypto.getClientPrivateKey().getEncoded()), Build.MODEL);
+                    pem("PRIVATE KEY", crypto.getClientPrivateKey().getEncoded()),
+                    Build.MODEL,
+                    System.currentTimeMillis() / 1000);
+            JSONObject envelope = new JSONObject(raw);
+            if (envelope.has("error")) {
+                throw new InternetPlay.Unreachable(envelope.optString("error"));
+            }
+            JSONObject redeemed = envelope.getJSONObject("ok");
             ComputerDetails details = details(redeemed);
             if (!binder.addInvitedComputer(details, redeemed.getString("reply"))) {
                 throw new InternetPlay.Unreachable(KNOWN_PC);

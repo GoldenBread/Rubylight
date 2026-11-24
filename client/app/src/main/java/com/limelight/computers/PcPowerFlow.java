@@ -3,14 +3,19 @@ package com.limelight.computers;
 import com.limelight.nativeapi.NativeApiClient;
 import com.limelight.nativeapi.NativeApiException;
 import com.limelight.nativeapi.NativePcPower;
+import com.limelight.nvstream.jni.NightjarHostsJni;
 import com.limelight.nvstream.jni.NightjarPolicyJni;
+
+import org.json.JSONException;
+import org.json.JSONObject;
 
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.LongSupplier;
 
 /**
- * Restart PC or Shut down PC, backed by {@link NightjarPolicyJni} staleness and refusal polling limits.
+ * Restart PC or Shut down PC, delegating offer, staleness refresh, confirmation spend, and late
+ * refusal polling to {@link NightjarHostsJni#hostFlowPcPowerOffer} / {@link NightjarHostsJni#hostFlowPcPowerSpend}.
  */
 final class PcPowerFlow {
     static final long REFUSAL_POLL_MS = NightjarPolicyJni.hostPcPowerRefusalPollMs();
@@ -48,83 +53,102 @@ final class PcPowerFlow {
     private final Executor worker;
     private final Executor main;
     private final LongSupplier clockMs;
+    private final LongSupplier wallClockMs;
     private final HostUpdateFlow.Sleeper sleeper;
 
     PcPowerFlow(NativePcPower.Action action, SleepFlow.Client client, Ui ui, Executor worker, Executor main,
                 LongSupplier clockMs, HostUpdateFlow.Sleeper sleeper) {
+        this(action, client, ui, worker, main, clockMs, System::currentTimeMillis, sleeper);
+    }
+
+    PcPowerFlow(NativePcPower.Action action, SleepFlow.Client client, Ui ui, Executor worker, Executor main,
+                LongSupplier clockMs, LongSupplier wallClockMs, HostUpdateFlow.Sleeper sleeper) {
         this.action = action;
         this.client = client;
         this.ui = ui;
         this.worker = worker;
         this.main = main;
         this.clockMs = clockMs;
+        this.wallClockMs = wallClockMs;
         this.sleeper = sleeper;
     }
 
     void start() {
+        final boolean isRestart = action == NativePcPower.Action.RESTART;
         worker.execute(() -> {
             try {
                 NativeApiClient api = client.open();
-                // Timed from before the request: the host may have minted the token at any point during it.
-                long asked = clockMs.getAsLong();
-                NativePcPower.Offer offer = api.pcPower();
-                main.execute(() -> offered(api, offer, asked));
+                long monoAsked = clockMs.getAsLong();
+                long wallAsked = wallClockMs.getAsLong();
+                JSONObject res = new JSONObject(NightjarHostsJni.hostFlowPcPowerOffer(api::requestRaw, isRestart));
+                main.execute(() -> deliverOffer(api, isRestart, res, monoAsked, wallAsked));
             } catch (NativeApiException e) {
                 main.execute(() -> fail(e));
+            } catch (JSONException e) {
+                main.execute(() -> ui.failed(new NativeApiException(NativeApiException.Kind.MALFORMED, e.getMessage())));
             }
         });
     }
 
-    private void offered(NativeApiClient api, NativePcPower.Offer offer, long asked) {
-        String token = offer.tokenFor(action);
-        if (token == null) {
-            ui.unavailable(offer.reason(action));
-            return;
+    private void deliverOffer(NativeApiClient api, boolean isRestart, JSONObject res, long monoAsked, long wallAsked) {
+        if ("token".equals(res.optString("outcome"))) {
+            final String token = res.optString("token", "");
+            final boolean wakeFromOff = res.optBoolean("wake_from_off", false);
+            AtomicBoolean confirmed = new AtomicBoolean();
+            ui.confirm(wakeFromOff, () -> {
+                if (confirmed.compareAndSet(false, true)) {
+                    worker.execute(() -> spend(api, isRestart, token, monoAsked, wallAsked));
+                }
+            });
+        } else {
+            deliverStep(res);
         }
-        // A double tap or a key repeat must not spend the token twice.
-        AtomicBoolean confirmed = new AtomicBoolean();
-        ui.confirm(offer.wakeFromOff, () -> {
-            if (confirmed.compareAndSet(false, true)) {
-                worker.execute(() -> spend(api, token, asked));
-            }
-        });
     }
 
-    private void spend(NativeApiClient api, String token, long asked) {
-        try {
-            if (NightjarPolicyJni.sleepTokenIsStale(asked, clockMs.getAsLong(), asked, clockMs.getAsLong())) {
-                NativePcPower.Offer fresh = api.pcPower();
-                token = fresh.tokenFor(action);
-                if (token == null) {
-                    main.execute(() -> ui.unavailable(fresh.reason(action)));
-                    return;
-                }
-            }
-            api.powerPc(action, token);
-            main.execute(ui::accepted);
-        } catch (NativeApiException e) {
-            main.execute(() -> fail(e));
-            return;
-        }
-        watchForRefusal(api);
+    private void spend(NativeApiClient api, boolean isRestart, String token, long monoAsked, long wallAsked) {
+        NightjarHostsJni.hostFlowPcPowerSpend(
+                api::requestRaw,
+                isRestart,
+                token,
+                monoAsked,
+                wallAsked,
+                clockMs.getAsLong(),
+                wallClockMs.getAsLong(),
+                ms -> {
+                    try {
+                        sleeper.sleep(ms);
+                        return true;
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        return false;
+                    }
+                },
+                stepJson -> {
+                    try {
+                        JSONObject step = new JSONObject(stepJson);
+                        main.execute(() -> deliverStep(step));
+                    } catch (JSONException ignored) {
+                    }
+                });
     }
 
-    private void watchForRefusal(NativeApiClient api) {
-        for (int read = 0; read < REFUSAL_READS; read++) {
-            try {
-                sleeper.sleep(REFUSAL_POLL_MS);
-                NativePcPower.Offer offer = api.pcPower();
-                if (offer.lastRefusal != null) {
-                    main.execute(() -> ui.refusedLater(offer.lastRefusal, offer.lastRefusalUnconfirmed));
-                    return;
-                }
-            } catch (NativeApiException e) {
-                // Going down.
-                return;
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                return;
-            }
+    private void deliverStep(JSONObject step) {
+        switch (step.optString("outcome")) {
+            case "accepted":
+                ui.accepted();
+                break;
+            case "unavailable":
+                ui.unavailable(step.optString("reason", ""));
+                break;
+            case "refused":
+                ui.refused(step.optString("message", ""));
+                break;
+            case "refused_later":
+                ui.refusedLater(step.optString("refusal", ""), step.optBoolean("unconfirmed", false));
+                break;
+            default:
+                ui.failed(SleepFlow.exceptionFromJson(step.optJSONObject("error")));
+                break;
         }
     }
 

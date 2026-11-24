@@ -8,6 +8,7 @@ import com.limelight.LimeLog;
 import com.limelight.nativeapi.NativeApiException;
 import com.limelight.nativeapi.NativePairing;
 import com.limelight.nvstream.http.ComputerDetails;
+import com.limelight.nvstream.jni.HandleReaper;
 import com.limelight.nvstream.jni.NightjarPolicyJni;
 
 import org.json.JSONArray;
@@ -23,7 +24,7 @@ import java.util.function.Predicate;
  * The devices waiting to pair with the PCs this device may approve for, backed by
  * {@link NightjarPolicyJni} {@code PairingWatchTracker} and BiDi control sanitization.
  */
-public final class PairingWatch {
+public final class PairingWatch implements AutoCloseable {
     public interface Reader {
         List<NativePairing.Request> read(ComputerDetails host) throws NativeApiException;
     }
@@ -55,6 +56,8 @@ public final class PairingWatch {
     private final LongSupplier clock;
     private final Listener listener;
     private final long tracker;
+    private final HandleReaper.Token reaper;
+    private volatile boolean closed;
 
     public PairingWatch(Reader reader, Predicate<ComputerDetails> asks, Executor worker, Executor main,
                         Listener listener) {
@@ -71,10 +74,14 @@ public final class PairingWatch {
         this.clock = clock;
         this.listener = listener;
         this.tracker = NightjarPolicyJni.pairingWatchCreate();
+        this.reaper = HandleReaper.register(this, tracker, NightjarPolicyJni::pairingWatchDestroy);
     }
 
     /** The screen's hosts were polled. A PC that doesn't answer drops out, logged. */
     public void poll(List<ComputerDetails> hosts) {
+        if (closed) {
+            return;
+        }
         final List<ComputerDetails> asked = new ArrayList<>();
         for (ComputerDetails host : hosts) {
             if (asks.test(host)) {
@@ -82,7 +89,7 @@ public final class PairingWatch {
             }
         }
         long command = NightjarPolicyJni.pairingWatchBeginPoll(tracker, clock.getAsLong(), !asked.isEmpty());
-        if (command == 0) {
+        if (command == 0 || closed) {
             return;
         }
         if (command < 0) {
@@ -91,6 +98,9 @@ public final class PairingWatch {
         }
         final long generation = command;
         worker.execute(() -> {
+            if (closed) {
+                return;
+            }
             final List<Waiting> waiting = new ArrayList<>();
             JSONArray ids = new JSONArray();
             for (ComputerDetails host : asked) {
@@ -104,7 +114,7 @@ public final class PairingWatch {
                 }
             }
             main.execute(() -> {
-                if (NightjarPolicyJni.pairingWatchFinishPoll(tracker, generation, ids.toString()) == 2) {
+                if (!closed && NightjarPolicyJni.pairingWatchFinishPoll(tracker, generation, ids.toString()) == 2) {
                     listener.onWaiting(waiting);
                 }
             });
@@ -113,11 +123,23 @@ public final class PairingWatch {
 
     /** The next {@link #poll} reads at once: the list just changed. */
     public void refreshSoon() {
-        NightjarPolicyJni.pairingWatchRefreshSoon(tracker);
+        if (!closed) {
+            NightjarPolicyJni.pairingWatchRefreshSoon(tracker);
+        }
     }
 
     /** The screen left: an answer still on its way is dropped, and the next poll reads at once. */
     public void pause() {
-        NightjarPolicyJni.pairingWatchPause(tracker);
+        if (!closed) {
+            NightjarPolicyJni.pairingWatchPause(tracker);
+        }
+    }
+
+    @Override
+    public void close() {
+        if (!closed) {
+            closed = true;
+            reaper.close();
+        }
     }
 }

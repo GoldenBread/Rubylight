@@ -2,6 +2,7 @@
 //! atomic `0o600` writes, `.bad` backup, unreadable refusal, DER<->PEM, and migration idempotency.
 
 use super::*;
+use crate::http::identity::tests::fixture;
 use crate::http::ClientIdentity;
 use nightjar_policy::http::ServerInfo;
 use std::collections::BTreeMap;
@@ -193,4 +194,270 @@ fn identity_store_protects_corrupt_files_and_imports_legacy_credentials() {
         assert_eq!(mode & 0o777, 0o600);
     }
     let _ = std::fs::remove_dir_all(&dir2);
+}
+
+#[test]
+fn poll_host_tries_internet_play_mapped_ipv4_while_state_is_unknown_without_punching() {
+    use super::manager::HostManager;
+    use nightjar_policy::hosts::HostReachState;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::sync::Arc;
+
+    let dir = temp_dir("mapped-unknown");
+    let mgr = HostManager::open(&dir, Some(Arc::new(fixture()))).unwrap();
+    mgr.set_stun_resolver(Arc::new(|_| None));
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let srv = std::thread::spawn(move || {
+        let (mut sock, _) = listener.accept().unwrap();
+        let mut buf = [0u8; 2048];
+        let _ = sock.read(&mut buf);
+        let body = r#"<root status_code="200"><hostname>WanPC</hostname><uniqueid>pc-mapped</uniqueid><state>MJ_SERVER_FREE</state><PairStatus>0</PairStatus><HttpsPort>47984</HttpsPort><ExternalPort>47989</ExternalPort></root>"#;
+        let reply = format!(
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        sock.write_all(reply.as_bytes()).unwrap();
+    });
+
+    let mut entry = HostEntry::default();
+    entry.shared.unique_id = "pc-mapped".into();
+    entry.shared.name = "WanPC".into();
+    entry.local_endpoint = EndpointSlot::new("127.0.0.2", 1);
+    entry.shared.internet_play = Some(format!(
+        r#"{{"version":1,"enabled":false,"externalIpv4":"127.0.0.1","mappedPorts":true,"ports":{{"http":{port},"https":47984,"rtsp":48010,"video":47998,"audio":48000,"control":47999,"mic":48002}}}}"#
+    ));
+    entry.sync_shared_from_slots();
+    mgr.upsert_tuple(entry);
+
+    // State starts at Unknown, where punches_now(...) is false; mapped IPv4 from internet_play
+    // must still be probed and bring the host Online without punching.
+    assert_eq!(mgr.get_snapshot("pc-mapped").unwrap().state, HostReachState::Unknown);
+    assert!(mgr.poll_host("pc-mapped", true));
+    let snap = mgr.get_snapshot("pc-mapped").unwrap();
+    assert_eq!(snap.state, HostReachState::Online);
+    assert_eq!(snap.active_endpoint, EndpointSlot::new("127.0.0.1", port));
+    assert_eq!(snap.internet_path.as_deref(), Some("mapped"));
+
+    srv.join().unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn poll_host_sets_another_certificate_on_cert_mismatch_and_plain_http_does_not_clear_cert() {
+    use super::manager::HostManager;
+    use super::poll::try_poll_ip_with_client;
+    use crate::http::{Error, HostClient};
+    use nightjar_policy::hosts::{CandidateSlot, ProbeCandidate};
+    use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
+    use std::io::Write;
+    use std::net::TcpListener;
+    use std::sync::Arc;
+
+    let server_id = fixture();
+    let pinned_id = ClientIdentity::generate().unwrap();
+    let server_cfg = Arc::new(
+        rustls::ServerConfig::builder_with_provider(Arc::new(
+            rustls::crypto::ring::default_provider(),
+        ))
+        .with_safe_default_protocol_versions()
+        .unwrap()
+        .with_no_client_auth()
+        .with_single_cert(
+            vec![CertificateDer::from(server_id.certificate_der().to_vec())],
+            PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(
+                server_id.private_key_pkcs8().to_vec(),
+            )),
+        )
+        .unwrap(),
+    );
+
+    let tls_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let https_port = tls_listener.local_addr().unwrap().port();
+    let tls_srv = std::thread::spawn(move || {
+        if let Ok((sock, _)) = tls_listener.accept() {
+            let mut tls = rustls::StreamOwned::new(
+                rustls::ServerConnection::new(server_cfg).unwrap(),
+                sock,
+            );
+            while tls.conn.is_handshaking() {
+                if tls.conn.complete_io(&mut tls.sock).is_err() {
+                    break;
+                }
+            }
+        }
+    });
+
+    let http_disc_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let http_disc_port = http_disc_listener.local_addr().unwrap().port();
+    let http_disc_srv = std::thread::spawn(move || {
+        use std::io::Read;
+        if let Ok((mut sock, _)) = http_disc_listener.accept() {
+            let mut buf = [0u8; 2048];
+            let _ = sock.read(&mut buf);
+            let body = format!(
+                r#"<root status_code="200"><hostname>OtherPC</hostname><uniqueid>pc-cert</uniqueid><state>MJ_SERVER_FREE</state><PairStatus>0</PairStatus><HttpsPort>{https_port}</HttpsPort></root>"#
+            );
+            let reply = format!(
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            let _ = sock.write_all(reply.as_bytes());
+        }
+    });
+
+    let dir = temp_dir("cert-mismatch");
+    let mgr = HostManager::open(&dir, Some(Arc::new(fixture()))).unwrap();
+    mgr.set_stun_resolver(Arc::new(|_| None));
+    let mut entry = HostEntry::default();
+    entry.shared.unique_id = "pc-cert".into();
+    entry.shared.https_port = https_port;
+    entry.shared.server_certificate = Some(pinned_id.certificate_pem().to_owned());
+    entry.local_endpoint = EndpointSlot::new("127.0.0.1", http_disc_port);
+    entry.sync_shared_from_slots();
+    mgr.upsert_tuple(entry);
+
+    assert!(mgr.poll_host("pc-cert", true));
+    let snap = mgr.get_snapshot("pc-cert").unwrap();
+    assert!(snap.another_certificate);
+    assert!(snap.entry.shared.server_certificate.is_some());
+    http_disc_srv.join().unwrap();
+    tls_srv.join().unwrap();
+
+    // Also verify plain HTTP (InfoPath::Plain) with has_pinned_cert=true never triggers cert clear.
+    let http_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let http_port = http_listener.local_addr().unwrap().port();
+    let http_srv = std::thread::spawn(move || {
+        let (mut sock, _) = http_listener.accept().unwrap();
+        let body = r#"<root status_code="200"><hostname>PlainPC</hostname><uniqueid>pc-plain</uniqueid><state>MJ_SERVER_FREE</state><PairStatus>0</PairStatus></root>"#;
+        let reply = format!(
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        sock.write_all(reply.as_bytes()).unwrap();
+    });
+    let unpinned = HostClient::new("127.0.0.1", http_port, Arc::new(fixture())).unwrap();
+    let cand = ProbeCandidate {
+        slot: CandidateSlot::Local,
+        address: "127.0.0.1".into(),
+        port: http_port,
+        https_port: 0,
+    };
+    let win = try_poll_ip_with_client(&unpinned, &cand, Some("pc-plain"), true, false).unwrap();
+    assert!(!win.should_clear_cert);
+    assert!(!matches!(win.info.app_version, Some(ref v) if v == "bad"));
+    let _ = Error::Cancelled;
+    http_srv.join().unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn apply_server_info_sets_local_ip_and_external_ip_preserving_127_guard() {
+    use super::manager::{HostSnapshot, apply_server_info};
+    use nightjar_policy::hosts::{CandidateSlot, HostReachState, ProbeCandidate};
+
+    let mut snap = HostSnapshot {
+        entry: HostEntry::default(),
+        state: HostReachState::Online,
+        active_endpoint: None,
+        paired: false,
+        another_certificate: false,
+        running_game_id: 0,
+        running_game_uuid: None,
+        external_port: 0,
+        unreachable: None,
+        capabilities_json: None,
+        alias: None,
+        pinned_endpoint: None,
+        internet_path: None,
+        needs_vpn_stun: false,
+        server_info: None,
+    };
+    let cand = ProbeCandidate {
+        slot: CandidateSlot::Remote,
+        address: "203.0.113.10".into(),
+        port: 47989,
+        https_port: 47984,
+    };
+
+    let info = ServerInfo {
+        local_ip: Some("192.168.1.50".into()),
+        external_ip: Some("198.51.100.42".into()),
+        external_port: 48123,
+        https_port: 47984,
+        ..ServerInfo::parse(
+            r#"<root status_code="200"><hostname>PC</hostname><uniqueid>u</uniqueid><state>MJ_SERVER_FREE</state><PairStatus>1</PairStatus></root>"#,
+            47989,
+        )
+        .unwrap()
+    };
+    apply_server_info(&mut snap, &info, 47989, &cand);
+    assert_eq!(snap.entry.local_endpoint, EndpointSlot::new("192.168.1.50", 47989));
+    assert_eq!(snap.entry.remote_endpoint, EndpointSlot::new("198.51.100.42", 48123));
+
+    // Loopback LocalIP (127.*) must never overwrite the real LAN endpoint.
+    let mut loopback = info.clone();
+    loopback.local_ip = Some("127.0.0.1".into());
+    apply_server_info(&mut snap, &loopback, 47989, &cand);
+    assert_eq!(snap.entry.local_endpoint, EndpointSlot::new("192.168.1.50", 47989));
+}
+
+#[test]
+fn reset_network_state_respects_at_ms_guard_and_emits_snapshot() {
+    use super::manager::HostManager;
+    use nightjar_policy::hosts::HostReachState;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::sync::{Arc, Mutex};
+
+    let dir = temp_dir("reset-guard");
+    let mgr = HostManager::open(&dir, Some(Arc::new(fixture()))).unwrap();
+    mgr.set_stun_resolver(Arc::new(|_| None));
+    let emitted = Arc::new(Mutex::new(Vec::<HostReachState>::new()));
+    let emitted_cb = Arc::clone(&emitted);
+    mgr.set_listener(Some(Arc::new(move |snap| {
+        emitted_cb.lock().unwrap().push(snap.state);
+    })));
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let srv = std::thread::spawn(move || {
+        let (mut sock, _) = listener.accept().unwrap();
+        let mut buf = [0u8; 2048];
+        let _ = sock.read(&mut buf);
+        let body = r#"<root status_code="200"><hostname>NetPC</hostname><uniqueid>pc-net</uniqueid><state>MJ_SERVER_FREE</state><PairStatus>0</PairStatus></root>"#;
+        let reply = format!(
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        sock.write_all(reply.as_bytes()).unwrap();
+    });
+
+    let mut entry = HostEntry::default();
+    entry.shared.unique_id = "pc-net".into();
+    entry.local_endpoint = EndpointSlot::new("127.0.0.1", port);
+    mgr.upsert_tuple(entry);
+    std::thread::sleep(std::time::Duration::from_millis(15));
+    let before_poll_ms = mgr.now_ms();
+    assert!(mgr.poll_host("pc-net", true));
+    let after_poll_ms = mgr.now_ms() + 100;
+    srv.join().unwrap();
+    emitted.lock().unwrap().clear();
+
+    // Older transition before the successful poll must NOT revert Online -> Unknown.
+    mgr.reset_network_state(true, before_poll_ms);
+    assert_eq!(mgr.get_snapshot("pc-net").unwrap().state, HostReachState::Online);
+    assert!(emitted.lock().unwrap().is_empty());
+
+    // Newer transition after the successful poll MUST revert Online -> Offline (available=false) and emit.
+    mgr.reset_network_state(false, after_poll_ms);
+    assert_eq!(mgr.get_snapshot("pc-net").unwrap().state, HostReachState::Offline);
+    assert_eq!(*emitted.lock().unwrap(), vec![HostReachState::Offline]);
+    let _ = std::fs::remove_dir_all(&dir);
 }

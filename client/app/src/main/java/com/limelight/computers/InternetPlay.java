@@ -6,6 +6,7 @@ import android.content.SharedPreferences;
 import com.limelight.LimeLog;
 import com.limelight.R;
 import com.limelight.nvstream.http.ComputerDetails;
+import com.limelight.nvstream.jni.NightjarHostsJni;
 import com.limelight.nvstream.jni.NightjarJni;
 
 import org.json.JSONArray;
@@ -82,6 +83,16 @@ public final class InternetPlay {
         SharedPreferences preferences = preferences(context);
         if (!reply.equals(preferences.getString(hostUuid, null))) {
             preferences.edit().putString(hostUuid, reply).apply();
+        }
+    }
+
+    /** Migrates any legacy per-host internet-play replies from SharedPreferences into Rust {@code HostManager}. */
+    public static void migrateLegacyToManager(Context context, long hostManagerHandle) {
+        if (context == null || hostManagerHandle == 0) return;
+        for (java.util.Map.Entry<String, ?> entry : preferences(context).getAll().entrySet()) {
+            if (entry.getValue() instanceof String reply && !entry.getKey().isEmpty()) {
+                NightjarHostsJni.hostManagerImportInternetPlay(hostManagerHandle, entry.getKey(), reply);
+            }
         }
     }
 
