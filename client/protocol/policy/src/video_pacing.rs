@@ -37,17 +37,16 @@ impl FramePacingMode {
     }
 }
 
-/// Java `Math.round(float)`: `(x + 0.5_f32).floor()`, `NaN -> 0`, clamped to `i32`.
+/// Java `Math.round(float)`: exact round-half-toward-`+inf`, `NaN -> 0`, saturating to `i32`.
 pub fn java_round_f32(x: f32) -> i32 {
     if x.is_nan() {
         0
+    } else if x.abs() >= 8_388_608.0 {
+        x as i32
     } else {
-        f64::from(x + 0.5_f32)
-            .floor()
-            .clamp(f64::from(i32::MIN), f64::from(i32::MAX)) as i32
+        (f64::from(x) + 0.5_f64).floor() as i32
     }
 }
-
 pub fn pyro_wave_mode(req: i32, vrr: bool, host_times: bool, arr: bool) -> i32 {
     if !vrr {
         req
@@ -57,39 +56,32 @@ pub fn pyro_wave_mode(req: i32, vrr: bool, host_times: bool, arr: bool) -> i32 {
         0
     }
 }
-
 pub fn uses_pyro_wave_display_clock(req: i32, vrr: bool, local: bool) -> bool {
     !vrr && local && FramePacingMode::from_ordinal(req).is_some_and(FramePacingMode::forces_vsync)
 }
-
 pub fn drop_queued_frames(mode: i32) -> bool {
     !matches!(
         FramePacingMode::from_ordinal(mode),
         Some(FramePacingMode::MaxSmoothness | FramePacingMode::CapFps)
     )
 }
-
 pub fn is_frame_due(due_ns: i64, vsync_ns: i64, iv_ns: i64) -> bool {
     i128::from(vsync_ns) + i128::from(iv_ns / 2) >= i128::from(due_ns)
 }
-
 pub fn frame_interval_ns(fps_mhz: i32) -> Option<i64> {
     (MIN_FPS_MILLI_HZ..=MAX_FPS_MILLI_HZ)
         .contains(&fps_mhz)
         .then(|| 1_000_000_000_000_i64 / i64::from(fps_mhz))
 }
-
 pub fn balanced_paces_on_vsync(lock: bool, drop_late: bool, mhz: i32, iv: i64) -> Option<bool> {
     if !lock || !drop_late || iv <= 0 || iv > 1_000_000_000 {
         return Some(true);
     }
     Some(i128::from(frame_interval_ns(mhz)?) * 20 > i128::from(iv) * 21)
 }
-
 pub fn next_frame_time_ns(due_ns: i64, vsync_ns: i64, fps: i32) -> Option<i64> {
     next_frame_time_ns_milli_hz(due_ns, vsync_ns, fps.saturating_mul(1_000))
 }
-
 pub fn next_frame_time_ns_milli_hz(due_ns: i64, vsync_ns: i64, fps_mhz: i32) -> Option<i64> {
     let iv = frame_interval_ns(fps_mhz)?;
     if due_ns == 0 {
@@ -102,7 +94,6 @@ pub fn next_frame_time_ns_milli_hz(due_ns: i64, vsync_ns: i64, fps_mhz: i32) -> 
             .clamp(i128::from(i64::MIN), i128::from(i64::MAX)) as i64,
     )
 }
-
 pub fn limit_refresh_hz(ask: f32, start: f32, fps: i32, sav: bool, hot: bool, peak: f32) -> f32 {
     let rest = java_round_f32(start) == fps
         && refreshes_per_frame(f64::from(ask), f64::from(start), false, true) > 1;
@@ -112,7 +103,6 @@ pub fn limit_refresh_hz(ask: f32, start: f32, fps: i32, sav: bool, hot: bool, pe
         start
     }
 }
-
 pub fn limited_frame_rate(fps: i32, hz: f32) -> i32 {
     let scr = java_round_f32(hz);
     if fps < scr {
@@ -125,7 +115,6 @@ pub fn limited_frame_rate(fps: i32, hz: f32) -> i32 {
         scr - 1
     }
 }
-
 pub fn negotiated_frame_rate_milli_hz(req_mhz: i32, neg_fps: i32) -> i32 {
     if (MIN_FPS_MILLI_HZ..=MAX_FPS_MILLI_HZ).contains(&req_mhz)
         && (req_mhz + 500) / 1_000 == neg_fps
@@ -135,11 +124,9 @@ pub fn negotiated_frame_rate_milli_hz(req_mhz: i32, neg_fps: i32) -> i32 {
         neg_fps.saturating_mul(1_000)
     }
 }
-
 pub fn schedules_frames(host_times: bool, pacing: i32) -> bool {
     host_times && !FramePacingMode::from_ordinal(pacing).is_some_and(FramePacingMode::forces_vsync)
 }
-
 pub fn recovers_decoder_debt(host_times: bool, pacing: i32) -> bool {
     !schedules_frames(host_times, pacing) && !drop_queued_frames(pacing)
 }
@@ -579,6 +566,17 @@ mod tests {
         assert_eq!(limited_frame_rate(60, 60.0), 59);
         assert_eq!(limited_frame_rate(64, 60.0), LIMIT_ABOVE_SCREEN);
         assert_eq!(limited_frame_rate(48, 48.0), LIMIT_BOGUS_SCREEN);
+        assert_eq!(limited_frame_rate(0, 0.49999997), LIMIT_BOGUS_SCREEN);
+        assert_eq!(limited_frame_rate(4, 0.49999997), LIMIT_ABOVE_SCREEN);
+        assert_eq!(java_round_f32(0.49999997_f32), 0);
+        assert_eq!(java_round_f32(0.5_f32), 1);
+        assert_eq!(java_round_f32(-0.5_f32), 0);
+        assert_eq!(java_round_f32(-0.50000006_f32), -1);
+        assert_eq!(java_round_f32(8_388_609.0_f32), 8_388_609);
+        assert_eq!(java_round_f32(-8_388_609.0_f32), -8_388_609);
+        assert_eq!(java_round_f32(f32::NAN), 0);
+        assert_eq!(java_round_f32(f32::INFINITY), i32::MAX);
+        assert_eq!(java_round_f32(f32::NEG_INFINITY), i32::MIN);
         assert_eq!(limit_refresh_hz(120.0, 60.0, 60, false, false, 0.0), 120.0);
         assert_eq!(limit_refresh_hz(120.0, 60.0, 60, true, false, 0.0), 60.0);
         assert!(apply_output_pacing_fallback(false, false, false, 1));
