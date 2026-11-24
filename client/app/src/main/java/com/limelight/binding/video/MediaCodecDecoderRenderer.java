@@ -232,8 +232,6 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
     // Frames out and uptime when the last recovery ran: CR_REFILL_FRAMES good frames and
     // CR_REFILL_MS since refill the attempts, so only a crash loop uses them up (one every few
     // seconds at 240 FPS included), not ten recoveries hours apart
-    private static final int CR_REFILL_FRAMES = 600;
-    private static final long CR_REFILL_MS = 10_000;
     private int framesOutAtLastRecovery;
     private long uptimeAtLastRecoveryMs;
     // A decoder that stops taking input gets one reset (through the same attempts) before the
@@ -4186,17 +4184,14 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
             catchUpReason = "catch_up";
             return true;
         }
-        if (FramePacingPolicy.shouldDrainOutput(effectiveMode,
+        int reason = NightjarPolicyJni.decoderWantsCatchUp(residency.handle(),
+                effectiveMode,
                 frameLatencyStats.getEnqueueTimeNsForOutput(index), System.nanoTime(),
-                streamFrameRateMilliHz, drained)) {
-            catchUpReason = "catch_up";
-            return true;
-        }
-        if (scheduled && residency.shouldDrop(DecoderQueuePolicy.depth(numFramesIn, numFramesOut, decoderDepthBase))) {
-            catchUpReason = "governor";
-            return true;
-        }
-        return false;
+                streamFrameRateMilliHz, drained, FramePacingPolicy.MAX_OUTPUT_DRAIN,
+                scheduled, numFramesIn, numFramesOut, decoderDepthBase);
+        if (reason == 0) return false;
+        catchUpReason = reason == 1 ? "catch_up" : "governor";
+        return true;
     }
 
     private final ScheduledRelease scheduledRelease =
@@ -4892,11 +4887,16 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
         vendorKeyHangUnrecorded.set(false);
         List<String> vendorKeys = lowLatencyKeysVendor;
         String decoder = lowLatencyKeysDecoder;
-        boolean withoutKeys = !vendorKeys.isEmpty() && decoder != null && !hungKeys.containsKey(decoder) &&
-                ((framesOutAtHangReset >= 0 && !ranWellSinceHangReset()) || !recoveryAttemptsLeft());
-        if (!withoutKeys && (framesOutAtHangReset == numFramesOut || !recoveryAttemptsLeft())) {
-            return false;
+        int decision = NightjarPolicyJni.decoderRecoveryOp(2,
+                !vendorKeys.isEmpty(), decoder != null, decoder != null && hungKeys.containsKey(decoder),
+                codecRecoveryAttempts, numFramesOut, framesOutAtLastRecovery, framesOutAtHangReset,
+                SystemClock.uptimeMillis(), uptimeAtLastRecoveryMs, uptimeAtHangResetMs);
+        if ((decision & 4) != 0) {
+            LimeLog.info("Codec recovery attempts refilled after " + (numFramesOut - framesOutAtLastRecovery) + " frames since the last");
+            codecRecoveryAttempts = 0;
         }
+        if ((decision & 3) == 0) return false;
+        boolean withoutKeys = (decision & 3) == 2;
         boolean afterReset = framesOutAtHangReset >= 0;
         synchronized (codecRecoveryMonitor) {
             if (stopping) return true;
@@ -4946,8 +4946,8 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
     // Whether the decoder ran well since its last hang reset: CR_REFILL_FRAMES frames over CR_REFILL_MS,
     // the measure that refills the recovery attempts.
     private boolean ranWellSinceHangReset() {
-        return numFramesOut - framesOutAtHangReset >= CR_REFILL_FRAMES &&
-                SystemClock.uptimeMillis() - uptimeAtHangResetMs >= CR_REFILL_MS;
+        return NightjarPolicyJni.decoderRecoveryOp(1, false, false, false, 0,
+                numFramesOut, 0, framesOutAtHangReset, SystemClock.uptimeMillis(), 0, uptimeAtHangResetMs) != 0;
     }
 
     // Once the decoder set up without its vendor keys after a hang ran well, the next streams start it
@@ -4975,13 +4975,13 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
     // The recovery attempts are refilled once the decoder put out CR_REFILL_FRAMES frames over at
     // least CR_REFILL_MS since the last recovery: only failures close together use them up.
     private boolean recoveryAttemptsLeft() {
-        int framesSince = numFramesOut - framesOutAtLastRecovery;
-        if (codecRecoveryAttempts > 0 && framesSince >= CR_REFILL_FRAMES &&
-                SystemClock.uptimeMillis() - uptimeAtLastRecoveryMs >= CR_REFILL_MS) {
-            LimeLog.info("Codec recovery attempts refilled after " + framesSince + " frames since the last");
+        int res = NightjarPolicyJni.decoderRecoveryOp(0, false, false, false, codecRecoveryAttempts,
+                numFramesOut, framesOutAtLastRecovery, 0, SystemClock.uptimeMillis(), uptimeAtLastRecoveryMs, 0);
+        if ((res & 2) != 0) {
+            LimeLog.info("Codec recovery attempts refilled after " + (numFramesOut - framesOutAtLastRecovery) + " frames since the last");
             codecRecoveryAttempts = 0;
         }
-        return codecRecoveryAttempts < CR_MAX_TRIES;
+        return (res & 1) != 0;
     }
 
     @Override
@@ -5300,8 +5300,9 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
                 Thread.currentThread().interrupt();
             }
         }
-        refreshSlots.close();
-        holdStamp.close();
+        refreshSlots.close(); holdStamp.close(); residency.close(); debt.close();
+        inFlight.close(); displayQueue.close(); presentScheduler.close();
+        if (recoveryBackoff != null) recoveryBackoff.close();
     }
 
     @Override

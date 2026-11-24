@@ -60,7 +60,7 @@ pub fn refresh_grid(refresh_us: i64, period_ns: i64) -> Grid {
 /// What the phase lock adds to its aim while the PC's frame times place each picture on the grid:
 /// with the pictures right at the deadline, ordinary jitter moves them between two refreshes, so
 /// the PC keeps them a little earlier (Android's `SCHEDULED_LATCH_ROOM_NS`).
-pub const HOST_GRID_LATCH_ROOM_US: i64 = 1_000;
+pub use nightjar_policy::vsync::HOST_GRID_LATCH_ROOM_US;
 
 /// Whether a stream asks the GPU renderer for IMMEDIATE before MAILBOX when it presents without
 /// V-Sync (`sdl::prefer_immediate`): MAILBOX never tears, so it would hold each picture for the
@@ -75,7 +75,7 @@ pub fn prefers_immediate(vrr: bool, wayland: bool, gamescope: bool) -> bool {
 /// The longest a picture waits in the in-order frame pacings before a newer due one replaces it:
 /// one frame of the stream, at most 250 ms (Android's `FramePacingPolicy.shouldDrainOutput`).
 pub fn frame_us(fps: u32) -> u64 {
-    (1_000_000 / u64::from(fps.max(1))).min(250_000)
+    (1_000_000 / u64::from(fps.max(1))).min(nightjar_policy::vsync::MAX_QUEUED_FRAME_US)
 }
 
 /// The pacing once the display check (`race_probe`) has a verdict: a VRR stream on a display that

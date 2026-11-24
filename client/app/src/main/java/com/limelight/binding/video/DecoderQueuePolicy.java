@@ -1,28 +1,24 @@
 package com.limelight.binding.video;
 
-import java.util.Locale;
+import com.limelight.nvstream.jni.HandleReaper;
+import com.limelight.nvstream.jni.NightjarPolicyJni;
 
+/**
+ * Decoder queue depth, buffer limits, residency governor, display gate, debt recovery, and
+ * in-flight compositor tracking ({@code nightjar_policy::video_queue}).
+ */
 final class DecoderQueuePolicy {
     /**
      * Frames the decoder holds: submitted less returned since the last flush, whose frames are gone
      * (base is the difference at that moment). Never negative.
      */
     static int depth(int framesIn, int framesOut, int base) {
-        return Math.max(0, framesIn - framesOut - base);
+        return NightjarPolicyJni.decoderQueueDepth(framesIn, framesOut, base);
     }
 
     static int outputLimit(String decoderName, boolean advertisedLowLatency, boolean dropLateFrames,
                            boolean recovered) {
-        if (dropLateFrames || recovered) return 1;
-        String name = decoderName.toLowerCase(Locale.ROOT);
-        // Old OMX families in decoder-errata.txt must return scarce output buffers promptly.
-        // These are client-held buffers, not codec reference pictures or vendor queue knobs.
-        if (name.startsWith("omx.mtk.") || name.startsWith("omx.exynos.") ||
-                name.startsWith("omx.nvidia.") || name.startsWith("omx.brcm.") ||
-                name.startsWith("omx.ti.") || name.startsWith("omx.allwinner.") ||
-                name.startsWith("omx.amlogic.") || name.startsWith("omx.intel.")) return 1;
-        // Modern SoC names alone are not evidence of low-latency support.
-        return advertisedLowLatency ? 2 : 1;
+        return NightjarPolicyJni.decoderOutputLimit(decoderName, advertisedLowLatency, dropLateFrames, recovered);
     }
 
     /**
@@ -30,95 +26,59 @@ final class DecoderQueuePolicy {
      * comes from a Shield TV (Nightjar issue 7), so they stay on its decoder family.
      */
     static boolean watchesDisplayQueue(String decoderName) {
-        String name = decoderName.toLowerCase(Locale.ROOT);
-        return name.startsWith("omx.nvidia.") || name.startsWith("c2.nvidia.");
+        return NightjarPolicyJni.decoderWatchesDisplayQueue(decoderName);
     }
 
     /**
-     * Residency governor. A frame's input-to-output time is compared with the smallest seen in the
-     * last ten seconds; when the excess stays above half a content interval for [FRAMES] frames in
-     * a row, the decoder is holding a surplus (a few ms, issue 7) that the age rule in
-     * [FramePacingPolicy] cannot see, and the older output is dropped when a newer one is already
-     * decoded. At most one drop in [PERIOD] outputs, and none when no output is behind it. Only
-     * decoded outputs are dropped, never compressed reference frames.
+     * Residency governor (`nightjar_policy::video_queue::Residency`).
      */
-    static final class Residency {
+    static final class Residency implements AutoCloseable {
         static final int FRAMES = 30;
         static final int PERIOD = 4;
         static final int WINDOWS = 10;
         static final long WINDOW_NS = 1_000_000_000L;
 
-        private final long[] windowMinNs = new long[WINDOWS];
-        private int windows;
-        private int slot;
-        private long windowStartNs;
-        private long currentMinNs = Long.MAX_VALUE;
-        private int streak;
-        private int sinceDrop = PERIOD;
+        private final long handle = NightjarPolicyJni.queueSlabCreate(NightjarPolicyJni.QUEUE_SLAB_RESIDENCY);
+        private final HandleReaper.Token reaper = HandleReaper.register(
+                this,
+                handle,
+                h -> NightjarPolicyJni.queueSlabDestroy(NightjarPolicyJni.QUEUE_SLAB_RESIDENCY, h));
 
-        /**
-         * One decoder output: input-to-output time and the clock reading. Returns the excess over
-         * the ten second minimum (zero for the first frame or an unknown time).
-         */
+        long handle() {
+            return handle;
+        }
+
+        @Override
+        public void close() {
+            reaper.close();
+        }
+
         long onOutput(long inputToOutputNs, long nowNs) {
-            if (inputToOutputNs <= 0) return 0;
-            if (windowStartNs == 0) windowStartNs = nowNs;
-            if (nowNs - windowStartNs >= WINDOW_NS) {
-                windowMinNs[slot] = currentMinNs;
-                slot = (slot + 1) % WINDOWS;
-                windows = Math.min(WINDOWS, windows + 1);
-                currentMinNs = Long.MAX_VALUE;
-                windowStartNs = nowNs;
-            }
-            currentMinNs = Math.min(currentMinNs, inputToOutputNs);
-            long baseline = currentMinNs;
-            for (int i = 0; i < windows; i++) baseline = Math.min(baseline, windowMinNs[i]);
-            return inputToOutputNs - baseline;
+            return NightjarPolicyJni.residencyOp(0, handle, inputToOutputNs, nowNs);
         }
 
-        /** Counts the output for the streak and the drop period; call after [onOutput], once per output. */
         void track(long excessNs, long contentIntervalNs) {
-            streak = excessNs > contentIntervalNs / 2 ? streak + 1 : 0;
-            if (sinceDrop < PERIOD) sinceDrop++;
+            NightjarPolicyJni.residencyOp(1, handle, excessNs, contentIntervalNs);
         }
 
-        /** framesBehind: outputs still in the decoder behind this one. */
         boolean shouldDrop(int framesBehind) {
-            return framesBehind >= 1 && streak >= FRAMES && sinceDrop >= PERIOD;
+            return NightjarPolicyJni.residencyOp(2, handle, framesBehind, 0) != 0;
         }
 
         void onDropped() {
-            sinceDrop = 0;
+            NightjarPolicyJni.residencyOp(3, handle, 0, 0);
         }
 
         void reset() {
-            windows = 0;
-            slot = 0;
-            windowStartNs = 0;
-            currentMinNs = Long.MAX_VALUE;
-            streak = 0;
-            sinceDrop = PERIOD;
+            NightjarPolicyJni.residencyOp(4, handle, 0, 0);
         }
     }
 
     /**
-     * Whether the display, not the input, paces the decoder's outputs. An output that leaves as soon
-     * as it is decoded follows its input: a frame that comes in a millisecond late comes out a
-     * millisecond late. With every display buffer taken, the output leaves when the display gives
-     * one back, whenever its input came, and the wait is input-to-output time above the floor. The
-     * slope of output intervals over input intervals tells the two apart at any level of that wait:
-     * about 1 when free, about 0 when held (4.6.1 Shield captures, over ten seconds: 0.8 to 1.2 free,
-     * -0.4 to 0.5 held, and 0.6 to 0.8 on the stream that is half held and has no wait to speak of).
-     * It is taken over [BUCKETS] seconds of steady intervals and read once a second.
-     *
-     * Held needs the wait as well: [OVER_PERCENT] of the outputs, and of the last second's, above the
-     * caller's level, so a queue that has just drained does not count. A decoder that keeps frames
-     * back on its own has them behind its outputs, and more than [MAX_BEHIND_PERCENT] rule it out.
-     * Inputs steadier than [MIN_SPREAD_NS] say nothing either way, and neither does a slope they
-     * cannot pin down: it has to be under [MAX_SLOPE] by two standard errors, because a free decoder
-     * with little input spread against its decode noise reads any slope now and then.
+     * Whether the display, not the input, paces the decoder's outputs
+     * (`nightjar_policy::video_queue::DisplayGate`).
      */
-    static final class DisplayGate {
+    static final class DisplayGate implements AutoCloseable {
         static final int BUCKETS = 10;
         static final long BUCKET_NS = 1_000_000_000L;
         static final double MAX_SLOPE = 0.3;
@@ -126,258 +86,77 @@ final class DecoderQueuePolicy {
         static final int MAX_BEHIND_PERCENT = 10;
         static final long MIN_SPREAD_NS = 100_000;
 
-        private final int[] totals = new int[BUCKETS];
-        private final int[] outputs = new int[BUCKETS];
-        private final int[] overs = new int[BUCKETS];
-        private final int[] behinds = new int[BUCKETS];
-        private final double[] sumIn = new double[BUCKETS];
-        private final double[] sumOut = new double[BUCKETS];
-        private final double[] sumInIn = new double[BUCKETS];
-        private final double[] sumInOut = new double[BUCKETS];
-        private final double[] sumOutOut = new double[BUCKETS];
-        private int slot;
-        private int closed;
-        private long bucketStartNs;
-        private long lastOutputNs;
-        private long lastInputToOutputNs;
-        private long intervalNs;
-        private boolean spreadKnown;
-        private double slope = 1;
-        private boolean held;
+        private final long handle = NightjarPolicyJni.queueSlabCreate(NightjarPolicyJni.QUEUE_SLAB_DISPLAY_GATE);
+        private final HandleReaper.Token reaper = HandleReaper.register(
+                this,
+                handle,
+                h -> NightjarPolicyJni.queueSlabDestroy(NightjarPolicyJni.QUEUE_SLAB_DISPLAY_GATE, h));
 
-        /** One decoder output: over is whether its wait counts, behind whether frames are behind it. */
+        @Override
+        public void close() {
+            reaper.close();
+        }
+
         void onOutput(long inputToOutputNs, long outputNs, long contentIntervalNs, boolean over, boolean behind) {
-            intervalNs = contentIntervalNs;
-            if (bucketStartNs == 0) bucketStartNs = outputNs;
-            long elapsedNs = outputNs - bucketStartNs;
-            if (elapsedNs >= BUCKET_NS) {
-                long steps = elapsedNs / BUCKET_NS;
-                for (long i = 0; i < Math.min(steps, BUCKETS); i++) close();
-                bucketStartNs += steps * BUCKET_NS;
-            }
-            // Over every output: frames behind come in bursts, which the steady steps below leave out.
-            totals[slot]++;
-            if (behind) behinds[slot]++;
-            if (lastOutputNs != 0) {
-                long outNs = outputNs - lastOutputNs;
-                long inNs = outNs - (inputToOutputNs - lastInputToOutputNs);
-                // A stall or a burst is one large step, which would decide the slope alone.
-                if (Math.abs(inNs - contentIntervalNs) * 2 < contentIntervalNs &&
-                        Math.abs(outNs - contentIntervalNs) * 2 < contentIntervalNs) {
-                    double in = inNs - contentIntervalNs;
-                    double out = outNs - contentIntervalNs;
-                    outputs[slot]++;
-                    if (over) overs[slot]++;
-                    sumIn[slot] += in;
-                    sumOut[slot] += out;
-                    sumInIn[slot] += in * in;
-                    sumInOut[slot] += in * out;
-                    sumOutOut[slot] += out * out;
-                }
-            }
-            lastOutputNs = outputNs;
-            lastInputToOutputNs = inputToOutputNs;
+            NightjarPolicyJni.displayGateOp(0, handle, inputToOutputNs, outputNs, contentIntervalNs, over, behind);
         }
 
-        /** Whether the display held the outputs over the last [BUCKETS] seconds, at the last reading. */
         boolean held() {
-            return held;
+            return NightjarPolicyJni.displayGateOp(1, handle, 0, 0, 0, false, false) != 0;
         }
 
-        /** Whether the outputs since [clear] do not follow their input; false until a few seconds are in. */
         boolean stillHeld(int minBuckets, double maxSlope) {
-            return closed >= minBuckets && spreadKnown && slope <= maxSlope;
+            return NightjarPolicyJni.displayGateStillHeld(handle, minBuckets, maxSlope);
         }
 
-        /** Forgets the measurements; the last output stays the base of the next interval. */
         void clear() {
-            java.util.Arrays.fill(totals, 0);
-            java.util.Arrays.fill(outputs, 0);
-            java.util.Arrays.fill(overs, 0);
-            java.util.Arrays.fill(behinds, 0);
-            java.util.Arrays.fill(sumIn, 0);
-            java.util.Arrays.fill(sumOut, 0);
-            java.util.Arrays.fill(sumInIn, 0);
-            java.util.Arrays.fill(sumInOut, 0);
-            java.util.Arrays.fill(sumOutOut, 0);
-            slot = 0;
-            closed = 0;
-            bucketStartNs = 0;
-            spreadKnown = false;
-            slope = 1;
-            held = false;
+            NightjarPolicyJni.displayGateOp(2, handle, 0, 0, 0, false, false);
         }
 
         void reset() {
-            clear();
-            lastOutputNs = 0;
-            lastInputToOutputNs = 0;
-        }
-
-        /** Takes the reading for the bucket that just ended and starts the next one. */
-        private void close() {
-            closed = Math.min(BUCKETS, closed + 1);
-            int total = 0;
-            int count = 0;
-            int over = 0;
-            int behind = 0;
-            double in = 0;
-            double out = 0;
-            double inIn = 0;
-            double inOut = 0;
-            double outOut = 0;
-            for (int i = 0; i < BUCKETS; i++) {
-                total += totals[i];
-                count += outputs[i];
-                over += overs[i];
-                behind += behinds[i];
-                in += sumIn[i];
-                out += sumOut[i];
-                inIn += sumInIn[i];
-                inOut += sumInOut[i];
-                outOut += sumOutOut[i];
-            }
-            double varianceNs2 = count > 2 ? inIn - in * in / count : 0;
-            spreadKnown = count > 2 && varianceNs2 >= count * (double) MIN_SPREAD_NS * MIN_SPREAD_NS;
-            double covariance = spreadKnown ? inOut - in * out / count : 0;
-            slope = spreadKnown ? covariance / varianceNs2 : 1;
-            double slopeError = spreadKnown ?
-                    Math.sqrt(Math.max(0, outOut - out * out / count - slope * covariance) / ((count - 2) * varianceNs2)) : 0;
-            // At least half of the outputs a steady stream would have had in the window.
-            held = closed == BUCKETS && spreadKnown && slope + 2 * slopeError <= MAX_SLOPE &&
-                    count * intervalNs * 2 >= BUCKETS * BUCKET_NS &&
-                    over * 100L >= count * (long) OVER_PERCENT &&
-                    overs[slot] * 100L >= outputs[slot] * (long) OVER_PERCENT && outputs[slot] > 0 &&
-                    behind * 100L <= total * (long) MAX_BEHIND_PERCENT;
-            slot = (slot + 1) % BUCKETS;
-            totals[slot] = 0;
-            outputs[slot] = 0;
-            overs[slot] = 0;
-            behinds[slot] = 0;
-            sumIn[slot] = 0;
-            sumOut[slot] = 0;
-            sumInIn[slot] = 0;
-            sumInOut[slot] = 0;
-            sumOutOut[slot] = 0;
+            NightjarPolicyJni.displayGateOp(3, handle, 0, 0, 0, false, false);
         }
     }
 
     /**
-     * A low percentile of a time over the last minute with outputs, what it comes to when nothing
-     * makes it wait. The lowest fifth of each second gives the second its level, and the lowest
-     * tenth of those levels is the answer: the smallest time since a flush would hold on to one light
-     * scene for the rest of a stream, and outputs can never all be above a low percentile of their
-     * own, however noisy they are.
+     * Low percentile of wait times over the last minute (`nightjar_policy::video_queue::RecentLevel`).
      */
-    static final class RecentLevel {
+    static final class RecentLevel implements AutoCloseable {
         static final int SECONDS = 60;
         static final long SECOND_NS = 1_000_000_000L;
-        private static final int SECOND_PERCENT = 20;
-        private static final int SECONDS_PERCENT = 10;
 
-        private final long[] samples = new long[256];
-        private final long[] levels = new long[SECONDS];
-        private final long[] sorted = new long[SECONDS];
-        private int sampleCount;
-        private int levelCount;
-        private int slot;
-        private long secondStartNs;
-        private long lastNs;
-        private long lowNs = Long.MAX_VALUE;
+        private final long handle = NightjarPolicyJni.queueSlabCreate(NightjarPolicyJni.QUEUE_SLAB_RECENT_LEVEL);
+        private final HandleReaper.Token reaper = HandleReaper.register(
+                this,
+                handle,
+                h -> NightjarPolicyJni.queueSlabDestroy(NightjarPolicyJni.QUEUE_SLAB_RECENT_LEVEL, h));
+
+        @Override
+        public void close() {
+            reaper.close();
+        }
 
         void add(long valueNs, long nowNs) {
-            if (secondStartNs == 0) secondStartNs = nowNs;
-            if (nowNs - secondStartNs >= SECOND_NS) {
-                close();
-                secondStartNs = nowNs;
-            }
-            if (sampleCount < samples.length) samples[sampleCount++] = valueNs;
+            NightjarPolicyJni.recentLevelOp(0, handle, valueNs, nowNs);
         }
 
-        /** The low percentile; Long.MAX_VALUE until a second has ended. */
         long lowNs() {
-            return lowNs;
+            return NightjarPolicyJni.recentLevelOp(1, handle, 0, 0);
         }
 
-        /** The level of the last second that ended. */
         long lastNs() {
-            return lastNs;
+            return NightjarPolicyJni.recentLevelOp(2, handle, 0, 0);
         }
 
         void reset() {
-            sampleCount = 0;
-            levelCount = 0;
-            slot = 0;
-            secondStartNs = 0;
-            lastNs = 0;
-            lowNs = Long.MAX_VALUE;
-        }
-
-        private void close() {
-            java.util.Arrays.sort(samples, 0, sampleCount);
-            lastNs = samples[sampleCount * SECOND_PERCENT / 100];
-            sampleCount = 0;
-            levels[slot] = lastNs;
-            slot = (slot + 1) % SECONDS;
-            levelCount = Math.min(SECONDS, levelCount + 1);
-            System.arraycopy(levels, 0, sorted, 0, levelCount);
-            java.util.Arrays.sort(sorted, 0, levelCount);
-            lowNs = sorted[levelCount * SECONDS_PERCENT / 100];
+            NightjarPolicyJni.recentLevelOp(3, handle, 0, 0);
         }
     }
 
     /**
-     * Decoder debt in Smoothest and the frame rate limit, which show every frame (issue 7). After a
-     * start or a stall the decoder can keep one or two frames waiting inside it for a minute:
-     * input-to-output stays a frame or more above its floor while the frame behind is not decoded
-     * yet, so the age rule in [FramePacingPolicy] has no newer output to swap in. The display's
-     * queue can also hold one buffer too many with nothing behind it: the decoder then waits for a
-     * free buffer, and input-to-output sits most of a frame above the floor (10-12 ms at 60 fps
-     * for 45 s on a Shield, until one dropped frame brought it back to 1 ms).
-     *
-     * The floor starts as the smallest input-to-output time since the last flush. An output is
-     * over when it is at least half a content interval above the floor. Once [SHARE_PERCENT] of
-     * the outputs of the last [WINDOW_NS] were over, the held output gives way: while a newer frame
-     * is in the decoder behind it, the renderer waits up to [WAIT_US] for that frame to come out and
-     * drops the held output only if it does; with nothing behind it, the held output is dropped
-     * and the screen keeps the previous frame one refresh longer, which frees the extra buffer. On a
-     * screen at 2 to 4 times the stream's rate, where a frame that comes early waits for its turn
-     * (MediaCodecDecoderRenderer.smoothDisplayNs), the next frame takes the dropped one's turn
-     * instead, and the previous frame stays longer only by what that frame then comes late. The
-     * turns release each output as it comes out, stamped for its refresh, so they leave the
-     * decoder's times alone until the display's queue runs out of buffers, as at the stream's rate.
-     * One drop at a time: the next [SETTLE] outputs are measured after each, and recovery stops
-     * once their median is under the threshold again. Healthy streams stay under the threshold
-     * (in the Shield captures 1-4 ms above the floor, and never half a frame for 80% of a window),
-     * and a decoder whose floor is a frame long has no excess.
-     *
-     * A drop that did not take half a frame off, or no newer output in [MAX_WAITS] waits or in a
-     * whole window, mean the excess is the decoder's own pipelining for this content (deeper in
-     * motion than in a still scene, say) or frames it will never output. Then the floor rises to
-     * the level measured and recovery pauses until a whole window is healthy, so the next scene
-     * change does not start it again; real debt still shrinks when a frame is dropped. [MAX_DROPS]
-     * drops pause it without moving the floor.
-     *
-     * Only on the decoders of [watchesDisplayQueue], the wait for a display buffer does not need half
-     * a frame to be seen. A stream a little faster than the panel adds to the display's queue at its
-     * own slow rate (45-50 ppm, 0.05 ms a second, on the 4.6.1 Shield captures), and each late frame
-     * the compositor misses adds a whole frame that nothing takes back, because these modes show
-     * every frame. Once the queue is full, the drift goes into input-to-output, which took 2.5 minutes
-     * to reach half a frame. As soon as [DisplayGate] sees outputs held with at least
-     * [GATE_EXCESS_NS] over their [RecentLevel], the held output is dropped with nothing behind it.
-     * It uses the time before the queue call: the call's own jitter is in the stamp the times of
-     * this class otherwise use, and no output could follow that.
-     *
-     * Outputs that still follow the display [GATE_CHECK_NS] later were not waiting for a buffer, and
-     * neither were those a drop with nothing behind it left over half a frame: the gate then stays
-     * off until the next flush. A drop that left over half of the wait in place changed nothing, and
-     * the next one waits [GATE_BACKOFF_NS], twice that after another. [MAX_GATE_DROPS] drops since a
-     * flush turn the gate off too, and half a frame is what is left. A level over [MAX_LEARNED_FRAMES]
-     * does not raise the floor the first time: it is more likely a stall still working through
-     * (start-up bursts reach 70 ms and more, and a floor that high would hide every later rise). The
-     * same level again is the decoder's.
+     * Decoder debt recovery in Smoothest and the frame rate limit (`nightjar_policy::video_queue::Debt`).
      */
-    static final class Debt {
+    static final class Debt implements AutoCloseable {
         static final long WINDOW_NS = 1_500_000_000L;
         static final int SHARE_PERCENT = 80;
         static final int MIN_OUTPUTS = 20;
@@ -390,346 +169,91 @@ final class DecoderQueuePolicy {
         static final long GATE_CHECK_NS = 5_000_000_000L;
         static final long GATE_BACKOFF_NS = 600_000_000_000L;
         static final int MAX_GATE_DROPS = 24;
-        private static final int GATE_CHECK_BUCKETS = 3;
-        private static final double GATE_CHECK_SLOPE = 0.5;
-        private static final int CAPACITY = 1024;
-        private static final int WATCH = 0;
-        private static final int RECOVER = 1;
-        private static final int PAUSED = 2;
 
-        // The window: outputs of the last WINDOW_NS, oldest at head.
-        private final long[] sampleNs = new long[CAPACITY];
-        private final boolean[] sampleOver = new boolean[CAPACITY];
-        private int head;
-        private int count;
-        private int overCount;
-        private long windowStartNs;
+        private final long handle = NightjarPolicyJni.queueSlabCreate(NightjarPolicyJni.QUEUE_SLAB_DEBT);
+        private final HandleReaper.Token reaper = HandleReaper.register(
+                this,
+                handle,
+                h -> NightjarPolicyJni.queueSlabDestroy(NightjarPolicyJni.QUEUE_SLAB_DEBT, h));
 
-        // The floor: the smallest input-to-output time, plus what recovery learned is the decoder's.
-        private long minNs = Long.MAX_VALUE;
-        private long learnedNs;
-        private long intervalNs;
-        private long excessNs;
-        private boolean over;
-        private final long[] recentNs = new long[3];
-        private int state = WATCH;
-        private int drops;
-        private int waits;
-        private int settle;
-        private final long[] settleNs = new long[SETTLE];
-        private long droppedLevelNs;
-        private long startLevelNs;
-        private long readySinceNs;
-        private int under;
-        private String event;
+        @Override
+        public void close() {
+            reaper.close();
+        }
 
-        // The display's pace: a recovery it started, the check on its drop, and that check failing.
-        private boolean watchesDisplay;
-        private final DisplayGate gate = new DisplayGate();
-        private final RecentLevel recentWait = new RecentLevel();
-        private boolean gateRecovery;
-        private boolean nothingBehind;
-        private boolean droppedAlone;
-        private long lastOutputNs;
-        private long gateCheckNs;
-        private boolean gateOff;
-        private int gateDrops;
-        private long gateLevelNs;
-        private long gateBaseNs;
-        private long gateBackoffNs;
-        private long gateQuietUntilNs;
-        private long unlearnedLevelNs;
-
-        /** Whether the display's queue is watched as well, see [watchesDisplayQueue]; off to start with. */
         void watchDisplay(boolean watch) {
-            watchesDisplay = watch;
-            if (!watch) gateRecovery = false;
+            NightjarPolicyJni.debtOp(0, handle, 0, 0, 0, 0, 0, watch);
         }
 
         boolean watchesDisplay() {
-            return watchesDisplay;
+            return NightjarPolicyJni.debtOp(1, handle, 0, 0, 0, 0, 0, false) != 0;
         }
 
-        /**
-         * One decoder output: its input-to-output time, the clock reading and the content interval.
-         * Returns its excess over the floor (zero for an unknown time).
-         */
         long onOutput(long inputToOutputNs, long nowNs, long contentIntervalNs) {
             return onOutput(inputToOutputNs, 0, nowNs, contentIntervalNs, 0);
         }
 
-        /**
-         * The same when the display is watched, with nowNs when the output came out, the time from
-         * just before its queue call (zero when unknown) and the frames in the decoder behind it.
-         */
         long onOutput(long inputToOutputNs, long submitToOutputNs, long nowNs, long contentIntervalNs, int framesBehind) {
-            if (inputToOutputNs <= 0 || contentIntervalNs <= 0) {
-                over = false;
-                nothingBehind = false;
-                return 0;
-            }
-            intervalNs = contentIntervalNs;
-            minNs = Math.min(minNs, inputToOutputNs);
-            excessNs = Math.max(0, inputToOutputNs - floorNs());
-            over = isOver(excessNs);
-            nothingBehind = framesBehind == 0;
-            lastOutputNs = nowNs;
-            recentNs[0] = recentNs[1];
-            recentNs[1] = recentNs[2];
-            recentNs[2] = excessNs;
-            if (watchesDisplay && submitToOutputNs > 0) watchDisplay(submitToOutputNs, nowNs, contentIntervalNs);
-            if (state == WATCH) {
-                add(nowNs, over);
-                boolean share = windowShare(nowNs, true);
-                if (share || (watchesDisplay && !gateOff && nowNs >= gateQuietUntilNs && gate.held())) {
-                    state = RECOVER;
-                    gateRecovery = !share;
-                    drops = 0;
-                    waits = 0;
-                    settle = 0;
-                    under = 0;
-                    readySinceNs = nowNs;
-                    startLevelNs = median(recentNs[0], recentNs[1], recentNs[2]);
-                }
-            } else if (state == RECOVER) {
-                recover(nowNs);
-            } else {
-                add(nowNs, over);
-                if (windowShare(nowNs, false)) {
-                    state = WATCH;
-                    clear();
-                }
-            }
-            return excessNs;
+            return NightjarPolicyJni.debtOp(2, handle, inputToOutputNs, submitToOutputNs, nowNs, contentIntervalNs,
+                    framesBehind, false);
         }
 
-        /**
-         * Whether the held output should give way: to a newer one if a frame is in the decoder
-         * behind it and comes out within [WAIT_US], else to the previous frame on screen. Call
-         * after [onOutput], then [onDropped] or [onNoNewer].
-         */
         boolean shouldDrop() {
-            return state == RECOVER && settle == 0 && (gateRecovery ? nothingBehind : over) && drops < MAX_DROPS;
+            return NightjarPolicyJni.debtOp(3, handle, 0, 0, 0, 0, 0, false) != 0;
         }
 
-        /** The held output was dropped, for a newer one or with nothing behind it. */
         void onDropped() {
-            drops++;
-            settle = SETTLE;
-            droppedLevelNs = median(recentNs[0], recentNs[1], recentNs[2]);
-            droppedAlone = nothingBehind;
-            if (gateRecovery) {
-                gateCheckNs = lastOutputNs + GATE_CHECK_NS;
-                gateLevelNs = recentWait.lastNs();
-                gateBaseNs = recentWait.lowNs();
-                if (++gateDrops >= MAX_GATE_DROPS) {
-                    gateOff = true;
-                    event = "Decoder debt: " + gateDrops + " drops for the display since the last flush, half a frame is what is left";
-                }
-            }
+            NightjarPolicyJni.debtOp(4, handle, 0, 0, 0, 0, 0, false);
         }
 
-        /** No newer output came out within [WAIT_US] after [shouldDrop]; the held one was shown. */
         void onNoNewer() {
-            if (state == RECOVER && ++waits >= MAX_WAITS) learn("paused, no newer output came out");
+            NightjarPolicyJni.debtOp(5, handle, 0, 0, 0, 0, 0, false);
         }
 
-        /** The one-line summary of a recovery that ended since the last call, or null. */
         String takeEvent() {
-            String taken = event;
-            event = null;
-            return taken;
+            return NightjarPolicyJni.debtTakeEvent(handle);
         }
 
         void reset() {
-            clear();
-            minNs = Long.MAX_VALUE;
-            learnedNs = 0;
-            excessNs = 0;
-            over = false;
-            java.util.Arrays.fill(recentNs, 0);
-            state = WATCH;
-            drops = 0;
-            waits = 0;
-            settle = 0;
-            under = 0;
-            event = null;
-            gate.reset();
-            recentWait.reset();
-            gateRecovery = false;
-            nothingBehind = false;
-            droppedAlone = false;
-            lastOutputNs = 0;
-            gateCheckNs = 0;
-            gateOff = false;
-            gateDrops = 0;
-            gateBackoffNs = 0;
-            gateQuietUntilNs = 0;
-            unlearnedLevelNs = 0;
-        }
-
-        private void watchDisplay(long submitToOutputNs, long nowNs, long contentIntervalNs) {
-            recentWait.add(submitToOutputNs, nowNs);
-            gate.onOutput(submitToOutputNs, nowNs, contentIntervalNs,
-                    submitToOutputNs - recentWait.lowNs() >= GATE_EXCESS_NS, !nothingBehind);
-            if (gateCheckNs == 0 || nowNs < gateCheckNs) return;
-            gateCheckNs = 0;
-            long waitBeforeNs = gateLevelNs - gateBaseNs;
-            long waitAfterNs = recentWait.lastNs() - gateBaseNs;
-            if (gate.stillHeld(GATE_CHECK_BUCKETS, GATE_CHECK_SLOPE)) {
-                gateOff = true;
-                event = "Decoder debt: outputs still follow the display after a drop, the wait for a buffer is not it";
-            } else if (waitAfterNs * 2 > waitBeforeNs) {
-                gateBackoffNs = gateBackoffNs == 0 ? GATE_BACKOFF_NS : gateBackoffNs * 2;
-                gateQuietUntilNs = nowNs + gateBackoffNs;
-                event = String.format(java.util.Locale.ROOT,
-                        "Decoder debt: a drop left %.1f of %.1f ms of wait, the next one waits %d minutes",
-                        waitAfterNs / 1e6, waitBeforeNs / 1e6, gateBackoffNs / 60_000_000_000L);
-            } else {
-                gateBackoffNs = 0;
-            }
-        }
-
-        private void recover(long nowNs) {
-            if (settle > 0) {
-                settleNs[SETTLE - settle] = excessNs;
-                if (--settle > 0) return;
-                long level = median(settleNs[0], settleNs[1], settleNs[2]);
-                // A gate drop starts from under half a frame: its own check comes a few seconds on.
-                if (gateRecovery || !isOver(level)) {
-                    finish("recovered", level, WATCH, false);
-                } else if (level > droppedLevelNs - intervalNs / 2) {
-                    if (droppedAlone) gateOff = true;
-                    learn("paused, a drop did not shorten the queue");
-                } else if (drops >= MAX_DROPS) {
-                    finish("paused at the drop limit", level, PAUSED, false);
-                } else {
-                    readySinceNs = nowNs;
-                    waits = 0;
-                    under = 0;
-                }
-                return;
-            }
-            if (!over && !gateRecovery) {
-                if (++under >= 2) finish("recovered", excessNs, WATCH, false);
-                return;
-            }
-            under = 0;
-            if (nowNs - readySinceNs < WINDOW_NS) return;
-            // Over for a whole window without a drop. Newer frames that never came out: learn
-            // the level. Never asked to drop (format changes): watch again from scratch.
-            if (waits > 0) learn("paused, no newer output came out");
-            else finish("ended without a drop", excessNs, WATCH, false);
-        }
-
-        /** The excess is the decoder's own: raise the floor to the level measured and pause. */
-        private void learn(String result) {
-            long level = median(recentNs[0], recentNs[1], recentNs[2]);
-            if (watchesDisplay && learnedNs + level > MAX_LEARNED_FRAMES * intervalNs &&
-                    Math.abs(level - unlearnedLevelNs) * 2 >= intervalNs) {
-                unlearnedLevelNs = level;
-                finish(result, level, PAUSED, false);
-                return;
-            }
-            learnedNs += level;
-            finish(result, level, PAUSED, true);
-        }
-
-        private void finish(String result, long levelNs, int next, boolean learned) {
-            if (drops > 0 || next == PAUSED) {
-                event = String.format(java.util.Locale.ROOT,
-                        "Decoder debt %s: %d stale output%s dropped, excess %.1f -> %.1f ms over a %.1f ms floor%s",
-                        result, drops, drops == 1 ? "" : "s", startLevelNs / 1e6, levelNs / 1e6,
-                        (floorNs() - (learned ? levelNs : 0)) / 1e6,
-                        learned ? String.format(java.util.Locale.ROOT, ", floor raised to %.1f ms", floorNs() / 1e6) : "");
-            }
-            state = next;
-            gateRecovery = false;
-            gate.clear();
-            clear();
-        }
-
-        private long floorNs() {
-            return minNs + learnedNs;
-        }
-
-        private boolean isOver(long excess) {
-            return excess * 2 >= intervalNs;
-        }
-
-        private void add(long nowNs, boolean isOver) {
-            while (count > 0 && (count == CAPACITY || sampleNs[head] < nowNs - WINDOW_NS)) {
-                if (sampleOver[head]) overCount--;
-                head = (head + 1) % CAPACITY;
-                count--;
-            }
-            if (count == 0) windowStartNs = nowNs;
-            int tail = (head + count) % CAPACITY;
-            sampleNs[tail] = nowNs;
-            sampleOver[tail] = isOver;
-            count++;
-            if (isOver) overCount++;
-        }
-
-        /** Whether the window spans [WINDOW_NS] and at least [SHARE_PERCENT] of it is over (or under). */
-        private boolean windowShare(long nowNs, boolean ofOver) {
-            if (count < MIN_OUTPUTS || nowNs - windowStartNs < WINDOW_NS) return false;
-            int matching = ofOver ? overCount : count - overCount;
-            return matching * 100L >= count * (long) SHARE_PERCENT;
-        }
-
-        private void clear() {
-            head = 0;
-            count = 0;
-            overCount = 0;
-        }
-
-        private static long median(long a, long b, long c) {
-            return Math.max(Math.min(a, b), Math.min(Math.max(a, b), c));
+            NightjarPolicyJni.debtOp(6, handle, 0, 0, 0, 0, 0, false);
         }
     }
 
     /**
-     * Frames released to the compositor and not yet shown. A frame counts from its release until
-     * it is rendered, or until the vsync it was planned for has passed (the render callback can
-     * be late, and a frame the compositor replaced is never reported).
+     * Frames released to the compositor and not yet shown (`nightjar_policy::video_queue::InFlight`).
      */
-    static final class InFlight {
+    static final class InFlight implements AutoCloseable {
         static final int MAX = 2;
-        private static final int SLOTS = 8;
 
-        private final long[] ptsUs = new long[SLOTS];
-        private final long[] dueNs = new long[SLOTS];
-        private int next;
-        private long renderedPtsUs = Long.MIN_VALUE;
+        private final long handle = NightjarPolicyJni.queueSlabCreate(NightjarPolicyJni.QUEUE_SLAB_IN_FLIGHT);
+        private final HandleReaper.Token reaper = HandleReaper.register(
+                this,
+                handle,
+                h -> NightjarPolicyJni.queueSlabDestroy(NightjarPolicyJni.QUEUE_SLAB_IN_FLIGHT, h));
+
+        @Override
+        public void close() {
+            reaper.close();
+        }
 
         synchronized void onReleased(long codecPtsUs, long dueAtNs) {
-            ptsUs[next] = codecPtsUs;
-            dueNs[next] = dueAtNs;
-            next = (next + 1) % SLOTS;
+            NightjarPolicyJni.inFlightOp(0, handle, codecPtsUs, dueAtNs);
         }
 
         synchronized void onRendered(long codecPtsUs) {
-            renderedPtsUs = Math.max(renderedPtsUs, codecPtsUs);
+            NightjarPolicyJni.inFlightOp(1, handle, codecPtsUs, 0);
         }
 
         synchronized int count(long nowNs) {
-            int count = 0;
-            for (int i = 0; i < SLOTS; i++) {
-                if (dueNs[i] > nowNs && ptsUs[i] > renderedPtsUs) count++;
-            }
-            return count;
+            return (int) NightjarPolicyJni.inFlightOp(2, handle, nowNs, 0);
         }
 
-        /** Another release would put more than [MAX] frames in front of the compositor. */
         synchronized boolean full(long nowNs) {
-            return count(nowNs) >= MAX;
+            return NightjarPolicyJni.inFlightOp(3, handle, nowNs, 0) != 0;
         }
 
         synchronized void reset() {
-            java.util.Arrays.fill(dueNs, 0);
-            java.util.Arrays.fill(ptsUs, 0);
-            renderedPtsUs = Long.MIN_VALUE;
+            NightjarPolicyJni.inFlightOp(4, handle, 0, 0);
         }
     }
 }

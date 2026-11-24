@@ -40,6 +40,7 @@ pub mod policy_quality;
 pub mod policy_recovery;
 pub mod policy_roaming;
 pub mod policy_video_pacing;
+pub mod policy_video_queue;
 mod renderers;
 pub mod session_actions;
 pub mod sharp_color;
@@ -65,21 +66,11 @@ use nightjar_core::session::{HostInfo, NetworkChange, SessionConfig};
 use rubylight_protocol::control::{HostTimingRequest, LinkNoticeRequest, Reconfigure};
 
 use crate::extras::input_result;
-
-pub(crate) fn jbool(value: bool) -> jboolean {
-    jboolean::from(value)
-}
+pub(crate) use bridge::{jbool, string};
 
 /// Runs an input call on the session: 0 or the C API's error code (-2 without a stream).
 fn input(f: impl FnOnce(&mut InputQueue) -> Result<(), nightjar_core::input::InputError>) -> jint {
     engine::with_session(-2, |s| input_result(s.input(f)))
-}
-
-pub(crate) fn string(env: &mut JNIEnv, value: &JString) -> Option<String> {
-    if value.is_null() {
-        return None;
-    }
-    env.get_string(value).ok().map(Into::into)
 }
 
 #[unsafe(no_mangle)]

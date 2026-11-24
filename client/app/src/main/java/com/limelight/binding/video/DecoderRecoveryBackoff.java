@@ -1,25 +1,39 @@
 package com.limelight.binding.video;
 
+import com.limelight.nvstream.jni.HandleReaper;
+import com.limelight.nvstream.jni.NightjarPolicyJni;
+
 /**
- * Paces decoder recoveries that keep failing before the decoder puts out a frame. A decoder that
- * is out of memory fails every reset at once (a TV's HEVC decoder failed ten in 2 s), so each
- * recovery in a row without a frame waits longer, and then the decoder is given up: the stream
- * ends and says why.
+ * Paces decoder recoveries that keep failing before the decoder puts out a frame
+ * ({@code nightjar_policy::video_queue::DecoderRecoveryBackoff}).
  */
-final class DecoderRecoveryBackoff {
+final class DecoderRecoveryBackoff implements AutoCloseable {
     /** The wait before the 1st, 2nd... recovery in a row without a frame; one more gives up. */
     static final long[] DELAYS_MS = {0, 250, 500, 1000, 2000};
 
-    private final long[] delaysMs;
-    private int framesOutAtLastRecovery;
-    private int withoutFrame;
+    private final long handle;
+    private final HandleReaper.Token reaper;
 
     DecoderRecoveryBackoff() {
-        this(DELAYS_MS);
+        this.handle = NightjarPolicyJni.queueSlabCreate(NightjarPolicyJni.QUEUE_SLAB_RECOVERY_BACKOFF);
+        this.reaper = registerReaper(handle);
     }
 
     DecoderRecoveryBackoff(long[] delaysMs) {
-        this.delaysMs = delaysMs;
+        this.handle = NightjarPolicyJni.recoveryBackoffCreate(delaysMs);
+        this.reaper = registerReaper(handle);
+    }
+
+    private HandleReaper.Token registerReaper(long h) {
+        return HandleReaper.register(
+                this,
+                h,
+                id -> NightjarPolicyJni.queueSlabDestroy(NightjarPolicyJni.QUEUE_SLAB_RECOVERY_BACKOFF, id));
+    }
+
+    @Override
+    public void close() {
+        reaper.close();
     }
 
     /**
@@ -27,13 +41,11 @@ final class DecoderRecoveryBackoff {
      * or -1 when that many recoveries in a row brought no frame and the decoder is given up.
      */
     long beforeRecovery(int framesOut) {
-        withoutFrame = framesOut == framesOutAtLastRecovery ? withoutFrame + 1 : 1;
-        framesOutAtLastRecovery = framesOut;
-        return withoutFrame > delaysMs.length ? -1 : delaysMs[withoutFrame - 1];
+        return NightjarPolicyJni.recoveryBackoffOp(0, handle, framesOut);
     }
 
     /** The recoveries in a row that brought no frame, the one just asked about included. */
     int recoveriesWithoutFrame() {
-        return withoutFrame;
+        return (int) NightjarPolicyJni.recoveryBackoffOp(1, handle, 0);
     }
 }

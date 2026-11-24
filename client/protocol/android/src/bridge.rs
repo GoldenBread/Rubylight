@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 
 use jni::objects::{GlobalRef, JByteArray, JClass, JObject, JStaticMethodID, JValue};
 use jni::signature::{Primitive, ReturnType};
-use jni::sys::jvalue;
+use jni::sys::{jboolean, jvalue};
 use jni::{JNIEnv, JavaVM};
 
 use crate::platform;
@@ -259,4 +259,15 @@ pub(crate) fn key16(env: &mut JNIEnv, array: &JByteArray) -> [u8; 16] {
         out[..n].copy_from_slice(&bytes[..n]);
     }
     out
+}
+
+pub(crate) fn jbool(value: bool) -> jboolean {
+    jboolean::from(value)
+}
+
+pub(crate) fn string(env: &mut JNIEnv, value: &jni::objects::JString) -> Option<String> {
+    if value.is_null() {
+        return None;
+    }
+    env.get_string(value).ok().map(Into::into)
 }

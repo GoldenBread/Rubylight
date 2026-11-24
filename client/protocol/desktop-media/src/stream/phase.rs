@@ -76,7 +76,7 @@ impl Phase {
         let Some((latch_us, period_ns)) = timing.filter(|(_, period)| (2_000_000..=41_700_000).contains(period)) else {
             self.reset(); return None;
         };
-        if now_us.saturating_sub(ready_us) > 250_000 { self.reset(); return None; }
+        if now_us.saturating_sub(ready_us) > nightjar_policy::vsync::MAX_QUEUED_FRAME_US { self.reset(); return None; }
         // A place kept before the stream stopped skipping is stale once it skips again.
         if steady_windows == 0 { self.steady = SteadyReports::default(); }
         if self.last_frame == 0 || now_us.saturating_sub(self.last_frame) > 250_000 { self.reset(); self.last_report = now_us; }
@@ -102,9 +102,8 @@ pub fn aimed(timing: Option<(i64, i64)>, aim_us: i64) -> Option<(i64, i64)> {
 /// How long pictures in a row have to come `EARLY_SPARE_US` and a refresh ahead of the refresh that
 /// opens their turn before the turns move a refresh earlier (`HeldAnchor::hold`). Longer than the
 /// host's phase lock takes to move them later itself (a report or two), so the two never take turns.
-pub const EARLY_FOR_US: u64 = 2_000_000;
 /// See `EARLY_FOR_US`.
-pub const EARLY_SPARE_US: u64 = 3_000;
+pub use nightjar_policy::vsync::{EARLY_FOR_US, EARLY_SPARE_US};
 
 /// How long after the refresh that opens a held picture's turn its present goes out, µs: the
 /// picture is offered to the swap chain right after that refresh, so the chain has all but this guard

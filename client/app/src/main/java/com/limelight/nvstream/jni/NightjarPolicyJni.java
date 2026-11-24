@@ -284,4 +284,55 @@ public final class NightjarPolicyJni {
     public static native boolean arrHalfRateStep(long handle, int op, long nowMs, float rendered, float presented,
                                                  float displayHz, float streamHz);
     public static native float contentRateVoteStep(long handle, int op, long nowMs, int contentMilliHz);
+
+    // Video Queue, PresentScheduler, DisplayQueueWatch (#7), DecoderRecoveryBackoff (`policy_video_queue.rs`)
+    public static final int QUEUE_SLAB_RESIDENCY = 0;
+    public static final int QUEUE_SLAB_DISPLAY_GATE = 1;
+    public static final int QUEUE_SLAB_RECENT_LEVEL = 2;
+    public static final int QUEUE_SLAB_DEBT = 3;
+    public static final int QUEUE_SLAB_IN_FLIGHT = 4;
+    public static final int QUEUE_SLAB_DISPLAY_WATCH = 5;
+    public static final int QUEUE_SLAB_PRESENT_SCHEDULER = 6;
+    public static final int QUEUE_SLAB_RECOVERY_BACKOFF = 7;
+
+    public static native long queueSlabCreate(int kind);
+    public static native void queueSlabDestroy(int kind, long handle);
+    public static native long recoveryBackoffCreate(long[] delaysMs);
+
+    public static native int decoderQueueDepth(int framesIn, int framesOut, int base);
+    public static native int decoderOutputLimit(String decoderName, boolean advertisedLowLatency,
+                                                boolean dropLateFrames, boolean recovered);
+    public static native boolean decoderWatchesDisplayQueue(String decoderName);
+
+    public static native long residencyOp(int op, long handle, long a, long b);
+    public static native long displayGateOp(int op, long handle, long a, long b, long c,
+                                            boolean fa, boolean fb);
+    public static native boolean displayGateStillHeld(long handle, int minBuckets, double maxSlope);
+    public static native long recentLevelOp(int op, long handle, long a, long b);
+    public static native long debtOp(int op, long handle, long a, long b, long c, long d, int e, boolean flag);
+    public static native String debtTakeEvent(long handle);
+    public static native long inFlightOp(int op, long handle, long a, long b);
+
+    public static native boolean displayQueueApplies(boolean settingOn, boolean latencyOrBalanced,
+                                                     boolean scheduled, boolean renderCallbacks,
+                                                     boolean vrr, int streamFrameRateMilliHz, long refreshNs);
+    public static native long displayQueueOp(int op, long handle, long a, long b, boolean flag);
+    public static native String displayQueueTakeEvent(long handle);
+
+    public static native boolean presentSchedulerIsLate(long handle, long hostUs, long readyNs,
+                                                        long contentIntervalNs);
+    public static native boolean presentSchedulerDropLate(boolean late, boolean newerAvailable,
+                                                          boolean previousDropped);
+    public static native long presentSchedulerOp(int op, long handle, boolean flag);
+    public static native String presentSchedulerOverlayLine(long handle);
+
+    public static native long recoveryBackoffOp(int op, long handle, int framesOut);
+    public static native int decoderWantsCatchUp(long residencyHandle, int mode, long enqueueNs, long nowNs,
+                                                 int fpsMilliHz, int drained, int maxOutputDrain,
+                                                 boolean scheduled, int framesIn, int framesOut, int depthBase);
+    public static native int decoderRecoveryOp(int op, boolean hasVendorKeys, boolean hasDecoder,
+                                               boolean alreadyHungWithKeys, int attempts,
+                                               int framesOut, int framesOutAtLastRecovery,
+                                               int framesOutAtHangReset, long uptimeMs,
+                                               long uptimeAtLastRecoveryMs, long uptimeAtHangResetMs);
 }
