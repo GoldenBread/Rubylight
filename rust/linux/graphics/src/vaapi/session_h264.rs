@@ -80,6 +80,8 @@ impl Session {
             level_idc: level_idc(width, height, self.fps),
             crop: (width - self.width, height - self.height),
             references: self.references.capacity() as u32,
+            color: self.format.color(),
+            full_range: self.format.full_range(),
         };
 
         if keyframe {

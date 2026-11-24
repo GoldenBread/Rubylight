@@ -23,6 +23,8 @@ pub use display::Va;
 pub use display::{BGRA, BGRX, NV12, P010, Plane, RGBA, RGBX, fourcc};
 
 #[cfg(test)]
+mod colour_tests;
+#[cfg(test)]
 mod recovery_tests;
 #[cfg(test)]
 mod tenbit_tests;

@@ -1,11 +1,66 @@
 //! Capture publication and idle-wait policy, independent of Windows/GPU APIs.
 use std::time::{Duration, Instant};
 
-/// The capture setting a stream sets, in its capture's own copy of the settings, when the
-/// encoder needs the picture's full chroma: a packed 4:4:4 stream. A Linux capture then keeps
-/// its frames in RGB instead of converting them to 4:2:0; the Windows capture is RGB anyway.
-/// Not a user setting.
-pub const FULL_CHROMA: &str = "capture_full_chroma";
+/// The picture a Linux capture makes for its stream's encoder, which a Windows capture leaves
+/// to the encoder: the stream writes it into its capture's own copy of the settings (never a
+/// user setting), the capture reads it, and streams share a capture only when it is the same.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct Picture {
+    /// The full chroma of the RGB frames, kept for a packed 4:4:4 stream instead of a 4:2:0
+    /// picture.
+    pub full_chroma: bool,
+    /// The negotiated YCbCr matrix (0 BT.601, 1 BT.709, 2 BT.2020) and range.
+    pub color_matrix: u8,
+    pub full_range: bool,
+}
+
+const FULL_CHROMA: &str = "capture_full_chroma";
+const COLOR_MATRIX: &str = "capture_color_matrix";
+const FULL_RANGE: &str = "capture_full_range";
+
+impl Default for Picture {
+    fn default() -> Self {
+        Self {
+            full_chroma: false,
+            color_matrix: 1,
+            full_range: false,
+        }
+    }
+}
+
+impl Picture {
+    /// What `stream` takes from its capture.
+    pub fn of(stream: &crate::rtsp::Negotiated) -> Self {
+        Self {
+            full_chroma: stream.chroma_packing != 0,
+            color_matrix: stream.color_matrix(),
+            full_range: stream.full_range(),
+        }
+    }
+
+    pub fn write(self, config: &mut butterpollo_config::config::Config) {
+        for (key, value) in [
+            (FULL_CHROMA, self.full_chroma.to_string()),
+            (COLOR_MATRIX, self.color_matrix.to_string()),
+            (FULL_RANGE, self.full_range.to_string()),
+        ] {
+            config.values.insert(key.into(), value);
+        }
+    }
+
+    /// The picture `config` asks for: the default, 4:2:0 BT.709 limited, where it names none.
+    pub fn read(config: &butterpollo_config::config::Config) -> Self {
+        let default = Self::default();
+        Self {
+            full_chroma: config.boolean(FULL_CHROMA, default.full_chroma),
+            color_matrix: config
+                .get(COLOR_MATRIX, "")
+                .parse()
+                .unwrap_or(default.color_matrix),
+            full_range: config.boolean(FULL_RANGE, default.full_range),
+        }
+    }
+}
 
 /// Preserve short active polls and pending GPU handoffs. After 100 ms without
 /// a frame, notifications can interrupt a longer wait; the 10 ms bound still

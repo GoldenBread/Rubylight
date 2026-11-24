@@ -21,6 +21,8 @@ pub struct Stream {
     pub level_idx: u8,
     /// `color_primaries`, `transfer_characteristics` and `matrix_coefficients`.
     pub color: (u8, u8, u8),
+    /// `color_range`.
+    pub full_range: bool,
 }
 
 /// Bits of `order_hint`: counts wrap at 256 frames.
@@ -140,7 +142,7 @@ pub fn sequence(s: &Stream) -> Vec<u8> {
     b.put(8, u32::from(s.color.0)); // color_primaries
     b.put(8, u32::from(s.color.1)); // transfer_characteristics
     b.put(8, u32::from(s.color.2)); // matrix_coefficients
-    b.flag(false); // color_range: limited
+    b.flag(s.full_range); // color_range
     b.put(2, 0); // chroma_sample_position: unknown
     b.flag(false); // separate_uv_delta_q
     b.flag(false); // film_grain_params_present
@@ -276,6 +278,7 @@ mod tests {
             depth: 8,
             level_idx: level_idx(1920, 1080, 60),
             color: (1, 1, 1),
+            full_range: false,
         }
     }
 

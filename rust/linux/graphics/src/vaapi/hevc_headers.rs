@@ -25,6 +25,8 @@ pub struct Stream {
     pub references: u32,
     /// `colour_primaries`, `transfer_characteristics` and `matrix_coeffs` of the VUI.
     pub color: (u8, u8, u8),
+    /// `video_full_range_flag`.
+    pub full_range: bool,
 }
 
 /// Bits of `slice_pic_order_cnt_lsb`: counts wrap at 65536 pictures.
@@ -130,7 +132,7 @@ fn sps(s: &Stream) -> Vec<u8> {
         b.flag(false); // overscan_info_present_flag
         b.flag(true); // video_signal_type_present_flag
         b.put(3, 5); // video_format: unspecified
-        b.flag(false); // video_full_range_flag
+        b.flag(s.full_range); // video_full_range_flag
         b.flag(true); // colour_description_present_flag
         b.put(8, u32::from(s.color.0)); // colour_primaries
         b.put(8, u32::from(s.color.1)); // transfer_characteristics
@@ -307,6 +309,7 @@ mod tests {
             crop: (0, 0),
             references: 4,
             color: (1, 1, 1),
+            full_range: false,
         };
         let bytes = parameter_sets(&s);
         let kinds: Vec<u8> = bytes
@@ -331,12 +334,19 @@ mod tests {
             crop: (0, 0),
             references: 4,
             color: (1, 1, 1),
+            full_range: false,
         };
         let cropped = Stream {
             crop: (0, 8),
             ..plain
         };
         assert_ne!(sps(&plain), sps(&cropped));
+        // The colour space the client asked for is the one the stream declares.
+        let full = Stream {
+            full_range: true,
+            ..plain
+        };
+        assert_ne!(sps(&plain), sps(&full));
     }
 
     #[test]

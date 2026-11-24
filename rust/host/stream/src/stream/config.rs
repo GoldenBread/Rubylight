@@ -1,21 +1,21 @@
 //! A launch's effective configuration: host, device, app and stream-preset layers.
 use super::*;
+use butterpollo_media_policy::capture_policy::Picture;
 use butterpollo_session::config_ext::ConfigExt;
 
-/// A stream's settings as its capture reads them: marked with whether the stream's encoder
-/// needs the picture's full chroma (a packed 4:4:4 stream), whatever the settings say.
-pub(super) fn with_full_chroma(config: &Config, full_chroma: bool) -> Config {
+/// A stream's settings as its capture reads them. On Linux, where the capture makes the
+/// stream's YCbCr picture, they name the picture the stream's encoder takes (full chroma for a
+/// packed 4:4:4 stream, the negotiated matrix and range), whatever the settings say. A Windows
+/// capture gives RGB to every encoder, so its settings stay as they are.
+pub(super) fn for_capture(
+    config: &Config,
+    stream: &butterpollo_media_policy::rtsp::Negotiated,
+) -> Config {
     let mut config = config.clone();
-    config.values.insert(
-        butterpollo_media_policy::capture_policy::FULL_CHROMA.into(),
-        full_chroma.to_string(),
-    );
+    if cfg!(target_os = "linux") {
+        Picture::of(stream).write(&mut config);
+    }
     config
-}
-
-/// Whether a capture's settings ask for full chroma ([`with_full_chroma`]).
-pub(super) fn full_chroma(config: &Config) -> bool {
-    config.boolean(butterpollo_media_policy::capture_policy::FULL_CHROMA, false)
 }
 
 /// Whether `overrides` set the peak brightness, under its name before or
@@ -518,18 +518,38 @@ pub(super) fn video_max_batch_size_kb(config: &Config) -> usize {
 mod tests {
     use super::*;
 
-    /// A packed 4:4:4 stream's capture keeps full chroma, so it is never shared with a 4:2:0
-    /// stream's; the stream decides, not a setting of the same name.
+    /// A Linux capture makes the stream's YCbCr picture, so streams share one only when they
+    /// take the same picture: full chroma or not, the same matrix and range. The stream
+    /// decides, not a setting of the same name. A Windows capture is shared as before.
     #[test]
-    fn a_full_chroma_capture_is_its_own() {
-        let key = |config: &Config| {
-            CaptureKey::new("wgc", "display", false, &capture_config(config), "", false)
+    fn a_capture_is_shared_by_streams_that_take_its_picture() {
+        let key = |stream: &butterpollo_media_policy::rtsp::Negotiated| {
+            let config = for_capture(&Config::default(), stream);
+            CaptureKey::new("wgc", "display", false, &capture_config(&config), "", false)
         };
-        let plain = Config::default();
-        assert_eq!(key(&plain), key(&with_full_chroma(&plain, false)));
-        assert_ne!(key(&plain), key(&with_full_chroma(&plain, true)));
+        let plain = butterpollo_media_policy::rtsp::Negotiated::default();
+        let other = [
+            butterpollo_media_policy::rtsp::Negotiated {
+                chroma_packing: 1,
+                ..plain.clone()
+            },
+            butterpollo_media_policy::rtsp::Negotiated {
+                csc_mode: plain.csc_mode ^ 1,
+                ..plain.clone()
+            },
+            butterpollo_media_policy::rtsp::Negotiated {
+                csc_mode: plain.csc_mode ^ 2,
+                ..plain.clone()
+            },
+        ];
+        for stream in &other {
+            assert_eq!(key(stream) == key(&plain), !cfg!(target_os = "linux"));
+        }
+        assert_eq!(key(&plain), key(&plain.clone()));
+        // On Linux the 4:2:0 stream's own answer replaces the setting.
         let set = Config::parse("capture_full_chroma=true").unwrap();
-        assert!(!full_chroma(&with_full_chroma(&set, false)));
+        let picture = Picture::read(&for_capture(&set, &plain));
+        assert_eq!(picture.full_chroma, !cfg!(target_os = "linux"));
     }
 
     fn negotiated(width: u32, height: u32) -> butterpollo_media_policy::rtsp::Negotiated {

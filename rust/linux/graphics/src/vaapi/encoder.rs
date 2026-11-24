@@ -117,7 +117,7 @@ impl Backend {
             let (width, height) = self.size;
             let format = self.session.format;
             self.convert = Some(Convert {
-                converter: Converter::new(&self.va, width, height)?,
+                converter: Converter::new(&self.va, width, height)?.writing(format.colors),
                 target: Pool::new(
                     &self.va,
                     format.rt_format(),
@@ -146,7 +146,14 @@ impl Backend {
             return self.encode_packed(surface, picture, idr, bits_per_second);
         }
         // A picture is encoded where it is when it has the stream's size and bit depth.
-        let as_is = picture == self.size && surface.pixel() == self.session.format.pixel();
+        let format = self.session.format;
+        // A YCbCr capture wrote the picture in the stream's colours (its settings say which).
+        let source = if matches!(surface.pixel(), super::NV12 | super::P010) {
+            Source::Video(format.colors)
+        } else {
+            Source::Rgb
+        };
+        let as_is = picture == self.size && surface.pixel() == format.pixel();
         let (surface_id, held): (VASurfaceID, Option<Pooled>) = if as_is {
             (surface.id(), None)
         } else {
@@ -155,7 +162,7 @@ impl Backend {
             let target = convert.target.take().context("no surface for conversion")?;
             convert
                 .converter
-                .convert(surface.id(), Source::Video, picture, target.id(), size)?;
+                .convert(surface.id(), source, picture, target.id(), size)?;
             (target.id(), Some(target))
         };
         let output = self.run(surface_id, idr, bits_per_second);

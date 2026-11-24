@@ -203,6 +203,7 @@ fn memory_buffers_are_uploaded_and_encoded() {
                 repeat: false,
                 origin: 0,
                 surface: Some(frame.surface),
+                colors: Default::default(),
             };
             let image = Arc::new(image);
             let encoder = encoder.get_or_insert_with(|| {

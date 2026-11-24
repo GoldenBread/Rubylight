@@ -9,11 +9,12 @@ use crate::{
         BGRA, BGRX, NV12, Plane, RGBA, RGBX, Va,
         ffi::{VA_RT_FORMAT_RGB32, VA_RT_FORMAT_YUV420, VASurfaceID},
         pool::{Pool, Pooled},
-        vpp::{Converter, Source},
+        vpp::{Colors, Converter, Source},
     },
 };
 use anyhow::{Context, Result, anyhow, bail};
 use butterpollo_linux_io::portal::ScreenCast;
+use butterpollo_media_policy::capture_policy::Picture;
 use pipewire as pw;
 use pw::spa::{
     self,
@@ -68,9 +69,10 @@ pub(super) struct Options {
     /// Buffers in memory (MemFd or MemPtr) that are uploaded to the GPU, for a producer that
     /// offers no DMA-BUF the GPU can import.
     pub(super) shm: bool,
-    /// Frames kept in RGB, in linear surfaces, for a packed 4:4:4 stream: only RGB formats are
-    /// asked for, and each frame is copied rather than converted to NV12.
-    pub(super) full_chroma: bool,
+    /// What the stream takes. With full chroma, frames are kept in RGB in linear surfaces:
+    /// only RGB formats are asked for, and each frame is copied, not converted to NV12.
+    /// Otherwise they are converted to NV12 in the stream's colours.
+    pub(super) picture: Picture,
 }
 
 /// The surfaces frames are converted into: NV12, or linear BGRX for full chroma.
@@ -116,15 +118,16 @@ pub struct PipeWireCapture {
     thread: Option<JoinHandle<()>>,
     /// The picture's size, as the producer negotiated it.
     pub size: (u32, u32),
+    colors: Colors,
     /// The portal session this capture's node belongs to, kept open as long as it runs.
     _session: Option<Arc<ScreenCast>>,
 }
 
 impl PipeWireCapture {
     /// Starts capturing `node` and waits until the producer has said what its picture is.
-    pub fn open(node: u32, va: &Arc<Va>, full_chroma: bool) -> Result<Self> {
+    pub fn open(node: u32, va: &Arc<Va>, picture: Picture) -> Result<Self> {
         let options = Options {
-            full_chroma,
+            picture,
             ..Options::default()
         };
         Self::open_with(node, None, va, options)
@@ -137,12 +140,12 @@ impl PipeWireCapture {
         session: &Arc<ScreenCast>,
         node: u32,
         va: &Arc<Va>,
-        full_chroma: bool,
+        picture: Picture,
     ) -> Result<Self> {
         let desktop = Options {
             desktop: true,
             shm: false,
-            full_chroma,
+            picture,
         };
         let first = session
             .open_remote()
@@ -161,6 +164,11 @@ impl PipeWireCapture {
         };
         capture._session = Some(session.clone());
         Ok(capture)
+    }
+
+    /// The colour space a YCbCr frame is in: the stream's.
+    pub fn colors(&self) -> Colors {
+        self.colors
     }
 
     /// Which way frames reach the GPU: `"dmabuf"` (imported in place), `"shm"` (copied from
@@ -206,6 +214,7 @@ impl PipeWireCapture {
             quit,
             thread: Some(thread),
             size: (0, 0),
+            colors: options.picture.into(),
             _session: None,
         };
         let timeout = if options.desktop {
@@ -312,7 +321,7 @@ impl Local {
         info.parse(param)
             .map_err(|e| anyhow!("unreadable video format: {e:?}"))?;
         let pixel = match info.format() {
-            VideoFormat::NV12 if !self.options.shm && !self.options.full_chroma => NV12,
+            VideoFormat::NV12 if !self.options.shm && !self.options.picture.full_chroma => NV12,
             VideoFormat::BGRx => BGRX,
             VideoFormat::BGRA => BGRA,
             VideoFormat::RGBx => RGBX,
@@ -343,21 +352,12 @@ impl Local {
             width,
             height,
             modifier: info.modifier(),
-            pool: pool(&self.va, width, height, self.options.full_chroma)?,
-            converter: Converter::new(&self.va, width, height)?,
-            upload: if self.options.shm {
-                Some(Pool::new(
-                    &self.va,
-                    VA_RT_FORMAT_RGB32,
-                    BGRX,
-                    width,
-                    height,
-                    1,
-                    2,
-                )?)
-            } else {
-                None
-            },
+            pool: pool(&self.va, width, height, self.options.picture.full_chroma)?,
+            converter: Converter::new(&self.va, width, height)?
+                .writing(self.options.picture.into()),
+            upload: (self.options.shm)
+                .then(|| Pool::new(&self.va, VA_RT_FORMAT_RGB32, BGRX, width, height, 1, 2))
+                .transpose()?,
         });
         // Ask for DMA-BUF buffers: a copy through system memory is not the capture this is,
         // unless the DMA-BUFs were tried and the memory path is the fallback.
@@ -514,13 +514,16 @@ impl Local {
             // SAFETY: one descriptor that stays open while the buffer is held.
             unsafe { libc::poll(&raw mut ready, 1, 50) };
             let source = if format.pixel == NV12 {
-                Source::Video
+                // gamescope converts to BT.709 limited range (a flat colour decoded as BT.601
+                // came out as BT.709 would turn it), which the converter turns into the
+                // stream's colours in the copy it makes anyway.
+                Source::Video(Colors::BT709_LIMITED)
             } else {
                 Source::Rgb
             };
             (input, source)
         };
-        if self.options.full_chroma {
+        if self.options.picture.full_chroma {
             format.converter.scale_rgb(input, size, output.id(), size)?;
         } else {
             format
@@ -762,7 +765,7 @@ fn run(
             .collect::<Result<_>>()?
     } else {
         // NV12 first, unless the stream needs the full chroma an NV12 picture has lost.
-        let nv12 = (!options.full_chroma).then_some(VideoFormat::NV12);
+        let nv12 = (!options.picture.full_chroma).then_some(VideoFormat::NV12);
         nv12.into_iter()
             .chain([VideoFormat::BGRx, VideoFormat::BGRA])
             .map(|format| offer(format, false))

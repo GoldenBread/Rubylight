@@ -43,6 +43,7 @@ impl Session {
             depth: self.format.depth,
             level_idx: av1_headers::level_idx(self.width, self.height, self.fps),
             color: self.format.color(),
+            full_range: self.format.full_range(),
         };
 
         if keyframe {

@@ -3,7 +3,7 @@ use crate::vaapi::{
     Va,
     node::{self, Node},
     pool::{Pool, Pooled},
-    vpp::Converter,
+    vpp::{Colors, Converter},
 };
 use anyhow::{Context, Result, bail};
 use butterpollo_media_policy::encoder_gpu;
@@ -434,6 +434,8 @@ pub struct GpuImage {
     /// The VA-API surface that holds the picture, back in its pool when the last copy of the
     /// image is dropped.
     surface: Option<Arc<Pooled>>,
+    /// The colour space the surface's YCbCr is in.
+    colors: Colors,
 }
 
 /// A shown pointer a capture supplied beside a picture.
@@ -472,9 +474,10 @@ impl GpuImage {
             .context("this picture is not on a VA-API surface")?;
         let size = (self.width, self.height);
         let va = surface.va();
-        if staging.as_ref().is_none_or(|texture| texture.size != size) {
+        let made = |texture: &D3d11Texture| (texture.size, texture.converter.colors());
+        if staging.as_ref().map(made) != Some((size, self.colors)) {
             *staging = Some(D3d11Texture {
-                converter: Converter::new(va, size.0, size.1)?,
+                converter: Converter::new(va, size.0, size.1)?.writing(self.colors),
                 rgb: Pool::new(
                     va,
                     crate::vaapi::ffi::VA_RT_FORMAT_RGB32,
@@ -618,14 +621,13 @@ impl PipeWire {
             config.get("adapter_name", ""),
             config.get("adapter_pnp_id", ""),
         )?;
-        // Set by the stream for a packed 4:4:4 picture (`capture_config` in the stream crate).
-        let full_chroma =
-            config.boolean(butterpollo_media_policy::capture_policy::FULL_CHROMA, false);
+        // The picture the stream's encoder takes, which the stream set.
+        let picture = butterpollo_media_policy::capture_policy::Picture::read(config);
         let capture = match &desktop {
             Some((cast, node)) => {
-                pw_capture::PipeWireCapture::open_portal(cast, *node, probe.va(), full_chroma)?
+                pw_capture::PipeWireCapture::open_portal(cast, *node, probe.va(), picture)?
             }
-            None => pw_capture::PipeWireCapture::open(node, probe.va(), full_chroma)?,
+            None => pw_capture::PipeWireCapture::open(node, probe.va(), picture)?,
         };
         let size = capture.size;
         let found = node::nodes()
@@ -669,6 +671,7 @@ impl PipeWire {
             repeat: false,
             origin,
             surface: Some(frame.surface),
+            colors: self.capture.colors(),
         })))
     }
 }

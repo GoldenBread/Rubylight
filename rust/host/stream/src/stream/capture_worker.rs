@@ -74,8 +74,8 @@ pub(super) struct CaptureKey {
     idd_fence_ring: bool,
     background: bool,
     constant_rate: bool,
-    /// A packed 4:4:4 stream's capture keeps the picture's full chroma (Linux).
-    full_chroma: bool,
+    /// The picture a Linux capture makes: full chroma (packed 4:4:4), matrix and range.
+    picture: butterpollo_media_policy::capture_policy::Picture,
 }
 
 impl CaptureKey {
@@ -113,7 +113,7 @@ impl CaptureKey {
             idd_fence_ring: config.idd_push_fence_ring(),
             background: butterpollo_session::background::enabled(config),
             constant_rate,
-            full_chroma: super::config::full_chroma(config),
+            picture: butterpollo_media_policy::capture_policy::Picture::read(config),
         }
     }
 }

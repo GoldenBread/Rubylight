@@ -679,7 +679,7 @@ impl Media {
         prepared: &Arc<crate::display_session::Ready>,
         latest: &'a mut Option<Arc<Source>>,
     ) -> Result<(&'a mut Arc<Source>, Arc<capture::Consumer>)> {
-        let c = config::with_full_chroma(c, s.config.chroma_packing != 0);
+        let c = config::for_capture(c, &s.config);
         let latest = latest.insert(self.capture(
             s.config.hdr,
             &c,

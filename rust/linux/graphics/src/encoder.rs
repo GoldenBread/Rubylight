@@ -13,6 +13,7 @@ use crate::{
         Va,
         encoder::{Backend, Output},
         session::{Codec, Format},
+        vpp::Colors,
     },
 };
 use anyhow::{Context, Result, bail};
@@ -202,6 +203,11 @@ pub(crate) fn format_of(config: &Negotiated, picture_is_hdr: bool) -> Result<(Co
         Format {
             depth,
             hdr: config.hdr,
+            // The colour space the client asked for, as the Windows host encodes it.
+            colors: Colors {
+                matrix: config.color_matrix(),
+                full_range: config.full_range(),
+            },
         },
     ))
 }

@@ -20,18 +20,21 @@ pub enum Codec {
     Av1,
 }
 
-/// The picture format a session encodes: 8-bit BT.709, or 10-bit, which is HDR10 (BT.2020
-/// primaries, PQ, mastering display metadata) when `hdr` is set and BT.709 otherwise.
+/// The picture format a session encodes: 8 or 10-bit SDR in `colors`, or 10-bit HDR10
+/// (BT.2020 primaries, PQ, limited range, mastering display metadata) when `hdr` is set.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Format {
     pub depth: u8,
     pub hdr: bool,
+    /// The SDR colour space the pictures are in, which the stream declares.
+    pub colors: super::vpp::Colors,
 }
 
 impl Format {
     pub const SDR: Self = Self {
         depth: 8,
         hdr: false,
+        colors: super::vpp::Colors::BT709_LIMITED,
     };
 
     pub fn rt_format(self) -> u32 {
@@ -54,7 +57,16 @@ impl Format {
     /// `colour_primaries`, `transfer_characteristics` and `matrix_coefficients` the stream
     /// declares.
     pub fn color(self) -> (u8, u8, u8) {
-        if self.hdr { (9, 16, 9) } else { (1, 1, 1) }
+        if self.hdr {
+            (9, 16, 9)
+        } else {
+            self.colors.vui()
+        }
+    }
+
+    /// Whether the stream declares full-range samples.
+    pub fn full_range(self) -> bool {
+        !self.hdr && self.colors.full_range
     }
 }
 

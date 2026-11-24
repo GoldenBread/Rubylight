@@ -19,6 +19,10 @@ pub struct Stream {
     pub crop: (u32, u32),
     /// Pictures held as references: `max_num_ref_frames`.
     pub references: u32,
+    /// `colour_primaries`, `transfer_characteristics` and `matrix_coefficients` of the VUI.
+    pub color: (u8, u8, u8),
+    /// `video_full_range_flag`.
+    pub full_range: bool,
 }
 
 /// Bits of `frame_num`: counts wrap at 65536 pictures.
@@ -69,11 +73,11 @@ fn sps(s: &Stream) -> Vec<u8> {
     b.flag(false); // overscan_info_present_flag
     b.flag(true); // video_signal_type_present_flag
     b.put(3, 5); // video_format: unspecified
-    b.flag(false); // video_full_range_flag
+    b.flag(s.full_range); // video_full_range_flag
     b.flag(true); // colour_description_present_flag
-    b.put(8, 1); // colour_primaries: BT.709
-    b.put(8, 1); // transfer_characteristics: BT.709
-    b.put(8, 1); // matrix_coefficients: BT.709
+    b.put(8, u32::from(s.color.0)); // colour_primaries
+    b.put(8, u32::from(s.color.1)); // transfer_characteristics
+    b.put(8, u32::from(s.color.2)); // matrix_coefficients
     b.flag(false); // chroma_loc_info_present_flag
     b.flag(true); // timing_info_present_flag
     b.put(32, 1); // num_units_in_tick
@@ -212,7 +216,24 @@ mod tests {
             level_idc: 42,
             crop: (0, 8),
             references: 4,
+            color: (1, 1, 1),
+            full_range: false,
         }
+    }
+
+    /// The colour space the client asked for is the one the stream declares.
+    #[test]
+    fn the_sequence_set_declares_the_colour_space() {
+        let bt601 = Stream {
+            color: (6, 6, 6),
+            ..stream()
+        };
+        let full = Stream {
+            full_range: true,
+            ..stream()
+        };
+        assert_ne!(sps(&bt601), sps(&stream()));
+        assert_ne!(sps(&full), sps(&stream()));
     }
 
     #[test]
