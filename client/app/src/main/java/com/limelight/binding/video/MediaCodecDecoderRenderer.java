@@ -4887,12 +4887,12 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
         vendorKeyHangUnrecorded.set(false);
         List<String> vendorKeys = lowLatencyKeysVendor;
         String decoder = lowLatencyKeysDecoder;
-        int decision = NightjarPolicyJni.decoderRecoveryOp(2,
-                !vendorKeys.isEmpty(), decoder != null, decoder != null && hungKeys.containsKey(decoder),
-                codecRecoveryAttempts, numFramesOut, framesOutAtLastRecovery, framesOutAtHangReset,
-                SystemClock.uptimeMillis(), uptimeAtLastRecoveryMs, uptimeAtHangResetMs);
+        final int framesOut = numFramesOut;
+        int decision = NightjarPolicyJni.decoderRecoveryOp(2, !vendorKeys.isEmpty(), decoder != null,
+                decoder != null && hungKeys.containsKey(decoder), codecRecoveryAttempts, framesOut, framesOutAtLastRecovery,
+                framesOutAtHangReset, SystemClock.uptimeMillis(), uptimeAtLastRecoveryMs, uptimeAtHangResetMs);
         if ((decision & 4) != 0) {
-            LimeLog.info("Codec recovery attempts refilled after " + (numFramesOut - framesOutAtLastRecovery) + " frames since the last");
+            LimeLog.info("Codec recovery attempts refilled after " + (framesOut - framesOutAtLastRecovery) + " frames since the last");
             codecRecoveryAttempts = 0;
         }
         if ((decision & 3) == 0) return false;

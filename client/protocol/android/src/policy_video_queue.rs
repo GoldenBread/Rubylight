@@ -501,32 +501,30 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarPolicyJni_decoder
     frames_out: jint,
     depth_base: jint,
 ) -> jint {
-    let reason = RESIDENCY_SLAB
-        .with(residency_handle, |r| {
-            video_queue::wants_catch_up(
-                mode,
-                enqueue_ns,
-                now_ns,
-                fps_milli_hz,
-                drained,
-                max_output_drain,
-                scheduled != JNI_FALSE,
-                frames_in,
-                frames_out,
-                depth_base,
-                r,
-            )
-        })
-        .flatten();
-    match reason {
-        Some(r) => r as jint,
-        None => {
+    match RESIDENCY_SLAB.with(residency_handle, |r| {
+        video_queue::wants_catch_up(
+            mode,
+            enqueue_ns,
+            now_ns,
+            fps_milli_hz,
+            drained,
+            max_output_drain,
+            scheduled != JNI_FALSE,
+            frames_in,
+            frames_out,
+            depth_base,
+            r,
+        )
+    }) {
+        Some(Some(r)) => r as jint,
+        Some(None) => {
             let _ = env.throw_new(
                 "java/lang/IllegalArgumentException",
                 "Invalid stream frame rate",
             );
             0
         }
+        None => 0,
     }
 }
 
@@ -584,5 +582,19 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarPolicyJni_decoder
             };
             code | (jint::from(decision.refilled_attempts) << 2)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn wants_catch_up_slab_miss_distinct_from_invalid_fps() {
+        use super::{RESIDENCY_SLAB, Residency};
+        use nightjar_policy::video_queue::{CatchUpReason as R, wants_catch_up as wcu};
+        let f = |h, fps| RESIDENCY_SLAB.with(h, |r| wcu(3, 1, 1, fps, 0, 64, true, 1, 1, 0, r));
+        let h = RESIDENCY_SLAB.insert(Residency::new());
+        let got = (f(0, 60_000), f(h, 0), f(h, 60_000));
+        assert_eq!(got, (None, Some(None), Some(Some(R::None))));
+        assert!(RESIDENCY_SLAB.remove(h));
     }
 }
