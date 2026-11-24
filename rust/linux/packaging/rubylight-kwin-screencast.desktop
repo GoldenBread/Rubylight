@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Rubylight screen capture permission
+Comment=Lets KWin offer its screencast to the Rubylight host
+Exec=/usr/bin/butterpollo
+X-KDE-Wayland-Interfaces=zkde_screencast_unstable_v1
+NoDisplay=true

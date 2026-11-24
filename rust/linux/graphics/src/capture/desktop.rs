@@ -8,10 +8,14 @@ use butterpollo_linux_io::portal::{self, Monitor, layout};
 /// The capture target of the desktop's primary monitor.
 pub const DESKTOP_TARGET: &str = "desktop";
 
-/// The monitor a target names: `Some(None)` for `desktop`, `Some(Some(n))` for `desktop:<n>`,
-/// `None` for any other target.
+/// The monitor a portal target names: `Some(None)` for `desktop`, `Some(Some(n))` for
+/// `desktop:<n>`, `None` for any other target (`kwin-output:<name>` is KWin's, [`super::kwin`]).
 pub fn parse(target: &str) -> Option<Option<usize>> {
-    portal::desktop_target(target)
+    match portal::desktop_target(target)? {
+        portal::DesktopMonitor::Primary => Some(None),
+        portal::DesktopMonitor::Index(index) => Some(Some(index)),
+        portal::DesktopMonitor::Named(_) => None,
+    }
 }
 
 /// The monitors of the desktop, numbered as the host's displays are: the primary is
@@ -43,6 +47,9 @@ pub fn displays() -> Vec<Display> {
 /// Whether the desktop target `name` can be opened now: a desktop session is there and, for a
 /// numbered monitor, the desktop has that many.
 pub fn present(name: &str) -> bool {
+    if super::kwin::parse(name).is_some() {
+        return true;
+    }
     match parse(name) {
         Some(None) => portal::desktop_session_present(),
         Some(Some(index)) => displays().len() > index,

@@ -14,6 +14,8 @@
 #   /usr/lib/systemd/user/rubylight.service       the user unit
 #   /usr/lib/udev/rules.d/70..72-rubylight-*      the encoder clock, pads and uinput/uhid rules
 #   /usr/lib/modules-load.d/rubylight.conf        uinput and uhid
+#   /usr/share/applications/rubylight-kwin-screencast.desktop
+#                                                 lets KWin offer its screencast to the host
 #   /usr/share/licenses/rubylight/                GPL-3.0 text, NOTICE, THIRD_PARTY.md, Cargo.lock
 # Profile and logs: $XDG_CONFIG_HOME/rubylight, else ~/.config/rubylight.
 #
@@ -110,6 +112,8 @@ package() {
   install -Dm644 -t "$pkgdir/usr/lib/udev/rules.d" "$packaging"/udev/*.rules
   install -Dm644 "$packaging/systemd/rubylight.service" \
     "$pkgdir/usr/lib/systemd/user/rubylight.service"
+  install -Dm644 "$packaging/rubylight-kwin-screencast.desktop" \
+    "$pkgdir/usr/share/applications/rubylight-kwin-screencast.desktop"
   printf 'uinput\nuhid\n' | install -Dm644 /dev/stdin "$pkgdir/usr/lib/modules-load.d/rubylight.conf"
 
   install -Dm644 "$repo/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"

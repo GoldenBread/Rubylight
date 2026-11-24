@@ -17,7 +17,11 @@ pub mod desktop;
 #[cfg(test)]
 mod desktop_tests;
 pub mod idd_push;
+pub mod kwin;
+mod priority;
 mod pw_capture;
+
+pub use priority::Priority;
 
 pub use butterpollo_media_policy::app_window::WindowTarget;
 use butterpollo_media_policy::app_window::{Candidate, WINDOW_TARGET_PREFIX};
@@ -263,37 +267,6 @@ pub fn panel_driver(config: &butterpollo_config::config::Config) -> crate::radeo
         .map(|gpus| gpus.iter().map(|gpu| gpu.vendor).collect())
         .unwrap_or_default();
     crate::radeon::Driver::for_stream(stream_gpu_vendor(config), &vendors)
-}
-
-/// The scheduling priority of a capture, encode or input thread, put back when dropped.
-/// Linux threads keep their priority: the value holds nothing.
-pub struct Priority {
-    _private: (),
-}
-/// Ends what the value holds, at the point the host drops it. It raised no priority on Linux, so there is nothing to lower.
-impl Drop for Priority {
-    fn drop(&mut self) {}
-}
-
-impl Default for Priority {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl Priority {
-    /// For a thread that lives as long as its stream.
-    pub fn new() -> Self {
-        Self { _private: () }
-    }
-    /// For a borrowed (pool) thread, which gets its own priority back.
-    pub fn scoped() -> Self {
-        Self::new()
-    }
-    /// For an input thread.
-    pub fn input() -> Self {
-        Self::new()
-    }
 }
 
 /// The pixel format of a captured picture.
@@ -571,6 +544,8 @@ pub struct PipeWire {
     /// The gamescope session's folder, when the target is a session: its end ends the capture
     /// even when PipeWire does not say so.
     session: Option<std::path::PathBuf>,
+    /// The KWin screencast of a `kwin-output:` target, which ends when this drops.
+    kwin: Option<kwin::KwinStream>,
     last_check: Instant,
     /// Keeps the readback converter for `next_frame`.
     staging: Option<D3d11Texture>,
@@ -611,9 +586,11 @@ impl PipeWire {
             )
         } else if let Some(node) = butterpollo_linux_io::gamescope::node_of(name) {
             (node, None)
+        } else if kwin::parse(name).is_some() {
+            (0, None)
         } else {
             bail!(
-                "this Linux host captures the targets \"{GAMESCOPE_TARGET}\", \"desktop\", \"desktop:<monitor>\" or \"pipewire-node:<id>\", not {name:?}"
+                "this Linux host captures the targets \"{GAMESCOPE_TARGET}\", \"desktop\", \"desktop:<monitor>\" or \"kwin-output:<name>\", \"pipewire-node:<id>\", not {name:?}"
             );
         };
         let probe = Device::new_adapter(
@@ -623,11 +600,17 @@ impl PipeWire {
         )?;
         // The picture the stream's encoder takes, which the stream set.
         let picture = butterpollo_media_policy::capture_policy::Picture::read(config);
-        let capture = match &desktop {
-            Some((cast, node)) => {
+        let mut kwin_stream = None;
+        let capture = match (&desktop, kwin::parse(name)) {
+            (Some((cast, node)), _) => {
                 pw_capture::PipeWireCapture::open_portal(cast, *node, probe.va(), picture)?
             }
-            None => pw_capture::PipeWireCapture::open(node, probe.va(), picture)?,
+            (None, Some(output)) => {
+                let (capture, stream) = kwin::open(output, probe.va(), picture)?;
+                kwin_stream = Some(stream);
+                capture
+            }
+            (None, None) => pw_capture::PipeWireCapture::open(node, probe.va(), picture)?,
         };
         let size = capture.size;
         let found = node::nodes()
@@ -639,12 +622,16 @@ impl PipeWire {
             capture,
             device,
             session,
+            kwin: kwin_stream,
             last_check: Instant::now(),
             staging: None,
         })
     }
 
     fn next_gpu(&mut self, origin: u64) -> Result<Option<Arc<GpuImage>>> {
+        if let Some(reason) = self.kwin.as_ref().and_then(|stream| stream.ended()) {
+            bail!("{reason}");
+        }
         let Some(frame) = self.capture.take()? else {
             // PipeWire may not tell when the producer is gone: the session's own record does.
             if let Some(folder) = &self.session
@@ -730,8 +717,8 @@ impl Capture {
     pub fn wait_interval(&self, _idle: Duration, poll: Duration) -> Duration {
         poll
     }
-    /// Opens the capture of a stream, with the host's bridges: the target `gamescope`, `desktop`, `desktop:<n>` or
-    /// `pipewire-node:<id>`. A window target is refused, as is any other.
+    /// Opens the capture of a stream, with the host's bridges: the target `gamescope`, `desktop`, `desktop:<n>`,
+    /// `kwin-output:<name>` or `pipewire-node:<id>`. A window target is refused, as is any other.
     pub fn open_for_stream_with_env(
         name: &str,
         _kind: &str,
