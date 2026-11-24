@@ -1,4 +1,5 @@
-# Maintainer: RamazanKara (https://github.com/RamazanKara/Rubylight)
+# Upstream: Rubylight by RamazanKara (https://github.com/RamazanKara/Rubylight); this package was
+# written on a fork and is not maintained upstream yet.
 #
 # Builds Rubylight's Linux host from the git checkout this file sits in
 # (rust/linux/packaging/arch), without downloading the source:
