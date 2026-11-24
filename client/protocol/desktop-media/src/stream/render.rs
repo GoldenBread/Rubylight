@@ -1256,7 +1256,7 @@ impl Streaming {
             if self.facts.phase_lock && self.pacer.mode == PacingMode::Vsync && self.focused && !self.menu_visible {
                 // With no refreshes to spare a picture has to make the desktop's deadline, which comes before the refresh.
                 let refresh_hz = self.plan.display.refresh_hz;
-                let skipping = self.no_wait_present && self.pacer.skips_instead_of_waiting(refresh_hz);
+                let skipping = self.no_wait_present && !self.skipped.waits() && self.pacer.skips_instead_of_waiting(refresh_hz);
                 let exclusive = exclusive_fullscreen(renderer);
                 let room_us = if self.pacer.host_grid() { present::HOST_GRID_LATCH_ROOM_US } else { 0 };
                 let held = self.vrr.held(self.pacer.mode);
@@ -1388,17 +1388,17 @@ impl Streaming {
         }
         if flipped.refused {
             self.skipped_picture = picture;
-            let refresh_us = (1_000_000.0 / self.plan.display.refresh_hz.max(1.0)) as u64;
+            let (refresh_us, was_waiting) = ((1_000_000.0 / self.plan.display.refresh_hz.max(1.0)) as u64, self.skipped.waits());
             if let Some(hold) = self.skipped.skipped(flipped.returned_us, self.pacer.frame_us(), refresh_us) {
                 eprintln!("nightjar: pacing: many presents find the last picture waiting, each now tries for {hold:?}");
-            }
+            } else if !was_waiting && self.skipped.waits() { eprintln!("nightjar: pacing: presents still refused after a whole refresh, waiting for each picture's turn"); }
             return true;
         }
         // A redraw for the menu or the overlay leaves a kept picture to be shown and counted.
-        if has_picture { self.skipped.shown(); }
+        if has_picture && self.skipped.shown() { eprintln!("nightjar: pacing: trying no-wait presents again (hold {:?})", self.skipped.hold()); }
         let presented = flipped.returned_us;
         let scan = flipped.scan;
-        let watches = has_picture && self.no_wait_present && self.pacer.skips_instead_of_waiting(self.plan.display.refresh_hz);
+        let watches = has_picture && self.no_wait_present && !self.skipped.waits() && self.pacer.skips_instead_of_waiting(self.plan.display.refresh_hz);
         let mut flip = if (self.timing_csv.is_some() || watches) && picture.is_some() { phase::present_stats(renderer) } else { Default::default() };
         (flip.held_wait_us, flip.issued_us) = (self.held_wait_us.take(), flipped.issued_us);
         if watches {

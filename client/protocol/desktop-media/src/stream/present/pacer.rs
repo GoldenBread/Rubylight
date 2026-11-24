@@ -634,12 +634,15 @@ pub struct SkippedPicture {
     missed_often: bool,
     /// Pictures until misses count, on a new stream or display.
     pub(super) settling: u32,
+    /// Refusals kept coming even once the hold passed a whole refresh: wait for each picture's
+    /// turn (`SDL_RenderPresent`) until a clean window lets no-wait presents try again.
+    waiting: bool,
 }
 
 impl SkippedPicture {
     pub fn new(hold: std::time::Duration) -> Self {
         let hold_us = hold.as_micros() as u64;
-        Self { due_us: None, in_a_row: 0, hold_us, base_us: hold_us, recent: 0, pictures: 0, refused: 0, missed_of: 0, missed: 0, missed_often: false, settling: MISSED_OF }
+        Self { due_us: None, in_a_row: 0, hold_us, base_us: hold_us, recent: 0, pictures: 0, refused: 0, missed_of: 0, missed: 0, missed_often: false, settling: MISSED_OF, waiting: false }
     }
 
     /// Another display or stream rate: what the hold grew to says nothing about its deadline.
@@ -652,6 +655,7 @@ impl SkippedPicture {
         self.missed = 0;
         self.missed_often = false;
         self.settling = MISSED_OF;
+        self.waiting = false;
     }
 
     /// A refresh showed the last picture again although this one was on its way: it came too late
@@ -682,7 +686,11 @@ impl SkippedPicture {
         self.refused += u32::from(refused);
         if self.pictures >= PICTURES_SHORTEN {
             if self.refused <= REFUSED_SHORTEN {
-                self.hold_us = self.hold_us.saturating_sub(HOLD_STEP_US).max(self.base_us);
+                if self.waiting {
+                    self.waiting = false;
+                } else {
+                    self.hold_us = self.hold_us.saturating_sub(HOLD_STEP_US).max(self.base_us);
+                }
             }
             self.pictures = 0;
             self.refused = 0;
@@ -694,30 +702,49 @@ impl SkippedPicture {
     }
 
     /// A picture was refused. Refused often on a stream with a picture a refresh, the hold grows
-    /// until they stop: at a whole refresh it always gets its turn, like the present it replaces.
-    /// A stream faster than the display is refused by design. Returns the new hold when it grew.
+    /// until they stop; if refusals still keep coming past a whole refresh (alternating refused
+    /// and shown frames never hit `REFUSED_IN_A_ROW`), wait for each picture's turn until a clean
+    /// window lets no-wait presents try again. A stream faster than the display is refused by
+    /// design. Returns the new hold when it grew.
     pub fn skipped(&mut self, now_us: u64, frame_us: u64, refresh_us: u64) -> Option<std::time::Duration> {
         self.due_us = Some(now_us + frame_us + frame_us / 2);
         self.in_a_row += 1;
         self.count(true);
         self.recent = self.recent << 1 | 1;
-        if self.recent.count_ones() < REFUSED_OF_64_WIDENS || !a_picture_a_refresh(frame_us, refresh_us) || self.hold_us > refresh_us { return None; }
+        if self.recent.count_ones() < REFUSED_OF_64_WIDENS || !a_picture_a_refresh(frame_us, refresh_us) {
+            return None;
+        }
         self.recent = 0;
+        if self.hold_us > refresh_us {
+            self.waiting = true;
+            self.pictures = 0;
+            self.refused = 0;
+            return None;
+        }
         self.hold_us += HOLD_STEP_US;
         Some(self.hold())
     }
 
-    /// A picture was presented: nothing is left to draw.
-    pub fn shown(&mut self) {
+    /// A picture was presented: nothing is left to draw. Returns whether a clean window ended
+    /// waiting mode so no-wait presents can try again.
+    pub fn shown(&mut self) -> bool {
+        let was_waiting = self.waiting;
         self.due_us = None;
         self.in_a_row = 0;
         self.recent <<= 1;
         self.count(false);
+        was_waiting && !self.waiting
+    }
+
+    /// Whether presents have fallen back to waiting for each picture's turn because no-wait
+    /// presents kept being refused even past a whole refresh.
+    pub fn waits(&self) -> bool {
+        self.waiting
     }
 
     /// Whether the next present waits for its turn.
     pub fn must_wait(&self) -> bool {
-        self.in_a_row >= REFUSED_IN_A_ROW
+        self.waiting || self.in_a_row >= REFUSED_IN_A_ROW
     }
 
     pub fn due_us(&self) -> Option<u64> {

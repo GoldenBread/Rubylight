@@ -31,6 +31,9 @@ pub(crate) fn no_wait_sleep_ns(
     const FALLBACK_NS: u64 = 1_000_000;
     /// Wake this far before the estimated next vblank so the retry catches the release cleanly.
     const LEAD_NS: u64 = 500_000;
+    /// Keep retrying shortly after vblank while DWM or the GPU finishes retiring the last flip,
+    /// instead of sleeping almost a whole refresh to the next vblank.
+    const TRAIL_NS: u64 = 1_500_000;
     /// Floor for a calculated sleep so retries never tight-spin on sub-millisecond remainders.
     const MIN_NS: u64 = 500_000;
 
@@ -48,15 +51,26 @@ pub(crate) fn no_wait_sleep_ns(
     if period_ns == 0 {
         return fallback;
     }
-    let elapsed_ticks = now_qpc.saturating_sub(sync as u64);
-    let elapsed_ns = u128::from(elapsed_ticks).saturating_mul(1_000_000_000) / u128::from(qpc_freq);
-    // Ignore stale frame statistics (older than 4 refreshes).
-    if elapsed_ns > u128::from(period_ns) * 4 {
-        return fallback;
-    }
-    let into_refresh = (elapsed_ns % u128::from(period_ns)) as u64;
-    let to_vblank = period_ns.saturating_sub(into_refresh);
-    if to_vblank <= LEAD_NS + MIN_NS {
+    let sync = sync as u64;
+    let (into_refresh, to_vblank) = if now_qpc < sync {
+        let ahead_ns =
+            u128::from(sync - now_qpc).saturating_mul(1_000_000_000) / u128::from(qpc_freq);
+        if ahead_ns > u128::from(period_ns) {
+            return fallback;
+        }
+        let ahead = ahead_ns as u64;
+        (period_ns.saturating_sub(ahead), ahead)
+    } else {
+        let elapsed_ns =
+            u128::from(now_qpc - sync).saturating_mul(1_000_000_000) / u128::from(qpc_freq);
+        // Ignore stale frame statistics (older than 4 refreshes).
+        if elapsed_ns > u128::from(period_ns) * 4 {
+            return fallback;
+        }
+        let into = (elapsed_ns % u128::from(period_ns)) as u64;
+        (into, period_ns.saturating_sub(into))
+    };
+    if into_refresh <= TRAIL_NS || to_vblank <= LEAD_NS + MIN_NS {
         MIN_NS.min(rem_ns)
     } else {
         (to_vblank - LEAD_NS).min(rem_ns)
@@ -180,5 +194,119 @@ mod tests {
             no_wait_sleep_ns(Duration::ZERO, 100.0, Some(sync), 1_020_000, freq),
             0
         );
+    }
+
+    #[test]
+    fn no_wait_present_retries_shortly_after_vblank_instead_of_sleeping_a_refresh() {
+        // 10 MHz QPC, 100 Hz display (10 ms period = 100_000 ticks).
+        let freq = 10_000_000u64;
+        let sync = 1_000_000i64;
+        // Right at vblank and up through the 1.5 ms post-vblank window -> 500 us retry, not 9.4 ms.
+        for ticks_after in [0u64, 1_000, 10_000, 15_000] {
+            assert_eq!(
+                no_wait_sleep_ns(
+                    Duration::from_millis(10),
+                    100.0,
+                    Some(sync),
+                    sync as u64 + ticks_after,
+                    freq,
+                ),
+                500_000,
+                "ticks_after={ticks_after}"
+            );
+        }
+        // Same after wrapping across a refresh boundary (10.1 ms after last reported sync).
+        assert_eq!(
+            no_wait_sleep_ns(Duration::from_millis(10), 100.0, Some(sync), 1_101_000, freq),
+            500_000
+        );
+        // Clamped to remaining budget inside the post-vblank window.
+        assert_eq!(
+            no_wait_sleep_ns(Duration::from_micros(200), 100.0, Some(sync), 1_001_000, freq),
+            200_000
+        );
+        // Past the 1.5 ms window (1.6 ms into refresh) -> sleeps once to next_vblank - 500 us.
+        assert_eq!(
+            no_wait_sleep_ns(Duration::from_millis(10), 100.0, Some(sync), 1_016_000, freq),
+            7_900_000
+        );
+    }
+
+    #[test]
+    fn no_wait_present_handles_future_sync_qpc_without_sleeping_a_refresh() {
+        // 10 MHz QPC, 100 Hz display (10 ms period = 100_000 ticks).
+        let freq = 10_000_000u64;
+        // Sync 4 ms ahead -> sleeps 3.5 ms (500 us lead).
+        assert_eq!(
+            no_wait_sleep_ns(Duration::from_millis(10), 100.0, Some(1_040_000), 1_000_000, freq),
+            3_500_000
+        );
+        // Sync 0.3 ms ahead -> 500 us floor.
+        assert_eq!(
+            no_wait_sleep_ns(Duration::from_millis(10), 100.0, Some(1_003_000), 1_000_000, freq),
+            500_000
+        );
+        // Sync 9.5 ms ahead (0.5 ms after the previous vblank) -> post-vblank 500 us retry.
+        assert_eq!(
+            no_wait_sleep_ns(Duration::from_millis(10), 100.0, Some(1_095_000), 1_000_000, freq),
+            500_000
+        );
+        // Sync more than a refresh ahead -> 1 ms fallback.
+        assert_eq!(
+            no_wait_sleep_ns(Duration::from_millis(10), 100.0, Some(1_200_000), 1_000_000, freq),
+            1_000_000
+        );
+    }
+
+    /// Alternating refused and shown frames never hit `REFUSED_IN_A_ROW`: once refusals keep
+    /// coming past a whole refresh on a 1:1 stream, Balanced falls back to waiting presents
+    /// instead of staying trapped at half frame rate, and probes no-wait again after a clean
+    /// window.
+    #[test]
+    fn alternating_refusals_past_a_refresh_wait_for_turns_and_probe_again() {
+        let (frame, refresh) = (8_333, 8_333);
+        let mut skipped = super::super::SkippedPicture::new(super::super::REFUSED_HOLD);
+        for _ in 0..200 {
+            skipped.skipped(0, frame, refresh);
+            if skipped.waits() {
+                break;
+            }
+            assert!(!skipped.shown());
+        }
+        assert_eq!(skipped.hold_us, 8_500);
+        assert!(skipped.waits(), "sustained alternating refusals past a refresh enter waiting mode");
+        assert!(skipped.must_wait());
+        // First shown() resets in_a_row but waiting mode stays active through PICTURES_SHORTEN - 1.
+        for _ in 0..super::super::PICTURES_SHORTEN - 1 {
+            assert!(!skipped.shown());
+            assert!(skipped.waits());
+            assert!(skipped.must_wait());
+        }
+        assert!(skipped.shown(), "probes no-wait presents again after a clean window");
+        assert!(!skipped.waits());
+        assert!(!skipped.must_wait());
+        assert_eq!(skipped.hold_us, 8_500, "keeps the longest hold on the first probe back");
+        // Another clean window shortens the hold as usual.
+        for _ in 0..super::super::PICTURES_SHORTEN {
+            assert!(!skipped.shown());
+        }
+        assert_eq!(skipped.hold_us, 8_000);
+        // Display change clears waiting mode too.
+        while !skipped.waits() {
+            skipped.skipped(0, frame, refresh);
+            if !skipped.waits() {
+                skipped.shown();
+            }
+        }
+        skipped.restart();
+        assert!(!skipped.waits());
+        assert!(!skipped.must_wait());
+        // A stream faster than the display is refused by design and never enters waiting mode.
+        let mut faster = super::super::SkippedPicture::new(super::super::REFUSED_HOLD);
+        for _ in 0..500 {
+            faster.skipped(0, 8_333, 16_666);
+            assert!(!faster.shown());
+        }
+        assert!(!faster.waits());
     }
 }
