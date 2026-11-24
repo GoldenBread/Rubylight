@@ -125,8 +125,9 @@ fn pack_half_row_neon(row: &mut [[u16; 4]], planes: [&[f32]; 3]) {
             x += 4;
         }
     }
-    for i in x..len {
-        row[i] = [half(planes[0][i]), half(planes[1][i]), half(planes[2][i]), 0x3c00];
+    while x < len {
+        row[x] = [half(planes[0][x]), half(planes[1][x]), half(planes[2][x]), 0x3c00];
+        x += 1;
     }
 }
 
@@ -146,8 +147,9 @@ fn pack_half_luma_row_neon(row: &mut [[u16; 4]], luma: &[f32]) {
             x += 4;
         }
     }
-    for i in x..len {
-        row[i] = [half(luma[i]), 0, 0, 0x3c00];
+    while x < len {
+        row[x] = [half(luma[x]), 0, 0, 0x3c00];
+        x += 1;
     }
 }
 

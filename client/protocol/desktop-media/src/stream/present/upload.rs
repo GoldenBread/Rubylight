@@ -170,7 +170,7 @@ impl VideoTexture {
         let hdr = hdr_properties(self.hdr_frame && space != SDL_COLORSPACE_SRGB_LINEAR, white_level, metadata);
         let key = macos_cache::CacheKey {
             renderer: renderer as usize,
-            format: format.0,
+            format: format.0 as u32,
             width,
             height,
             space: space.0,

@@ -440,6 +440,7 @@ impl PlanesPass {
     /// `draw` for a set in the decoder's images: copies it into the plane textures on the GPU,
     /// signals the reuse timeline behind the copy and gives the set back with that value, so the
     /// decoder can write it again as soon as the copy is done, not after the draw.
+    #[allow(clippy::too_many_arguments)]
     unsafe fn draw_shared(&mut self, renderer: *mut SDL_Renderer, target: *mut SDL_Texture, lease: &Lease, decode_value: u64, images: &SharedImages, parameters: &[u32; 8], stages: &mut Stages<2>) -> Result<(), String> {
         let step = Instant::now();
         // SAFETY: Caller guarantees `renderer` and `target` are live on the calling thread.
@@ -476,6 +477,7 @@ impl PlanesPass {
     /// `draw` for a set sampled in place: takes the picture's lease over, makes the set readable
     /// and gives the set it replaces back behind the draws recorded so far (`Handover::show`),
     /// then draws from it (now, into `target`, or at present time).
+    #[allow(clippy::too_many_arguments)]
     unsafe fn draw_sampled(&mut self, renderer: *mut SDL_Renderer, target: *mut SDL_Texture, lease: &Lease, decode_value: u64, images: &Arc<SharedImages>, parameters: &[u32; 8], stages: &mut Stages<2>) -> Result<(), String> {
         let step = Instant::now();
         // SAFETY: Caller guarantees `renderer` and `target` are live on the calling thread.
