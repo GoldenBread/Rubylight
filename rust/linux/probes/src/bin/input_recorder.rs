@@ -136,8 +136,10 @@ fn describe(event: &Event) -> Option<String> {
 /// an input device of a HID device the host names `rubylight-...`: a DualSense, DualShock 4,
 /// Switch Pro or Steam pad over uhid, each with its motion and touchpad devices, whose own
 /// `phys` the kernel's drivers leave empty) and records its buttons and axes. A device this
-/// user may not open is logged as such.
+/// user may not open yet is tried again: udev grants the seat's access a moment after the
+/// device appears. It is logged once if it stays refused.
 fn watch_pads(log: &Log) {
+    let mut refused = std::collections::BTreeMap::<std::path::PathBuf, u32>::new();
     // A device the kernel removes frees its path, which a new device may take (hid-steam makes
     // its input devices again when a program lets go of the controller's hidraw node).
     let opened = std::sync::Arc::new(std::sync::Mutex::new(std::collections::BTreeSet::new()));
@@ -166,8 +168,12 @@ fn watch_pads(log: &Log) {
             let file = match file {
                 Ok(file) => file,
                 Err(error) if phys.starts_with("rubylight-") => {
-                    opened.lock().unwrap().insert(path.clone());
-                    write(log, &format!("pad refused {node} {phys}: {error}"));
+                    // Ten tries, a second: then it is the device's access, not a race.
+                    let tries = refused.entry(path.clone()).or_default();
+                    *tries += 1;
+                    if *tries == 10 {
+                        write(log, &format!("pad refused {node} {phys}: {error}"));
+                    }
                     continue;
                 }
                 Err(_) => continue,
