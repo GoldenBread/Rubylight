@@ -213,3 +213,32 @@ fn shared_preferences_codecs_round_trip() {
     let sa = am.serialize();
     assert_eq!(AxisMap::deserialize(Some(&sa)), am);
 }
+
+#[test]
+fn axis_map_deserialize_handles_i32_min_and_disabled_zero() {
+    assert_eq!(
+        AxisMap::deserialize(Some("1,-2147483648,2,3,4,5,6,1,2,4,8")),
+        AxisMap::default()
+    );
+
+    let disabled_x = AxisMap::deserialize(Some("1,0,2,3,4,5,6,1,2,4,8"));
+    assert_eq!(disabled_x.axes[0], 0);
+}
+
+#[test]
+fn emulated_combos_wrapping_timestamp_delta_does_not_panic() {
+    let (map_sel, emu_sel) =
+        apply_emulated_combos_on_down(button::PLAY, 0, false, true, false, i64::MAX, -10, 0);
+    assert_eq!(map_sel, button::BACK);
+    assert_eq!(emu_sel, EMULATING_SELECT);
+
+    let (map_tp, emu_tp) =
+        apply_emulated_combos_on_down(button::BACK, 0, true, true, true, i64::MAX, -10, 0);
+    assert_eq!(map_tp, button::TOUCHPAD);
+    assert_eq!(emu_tp, EMULATING_TOUCHPAD);
+
+    let (map_sp, emu_sp) =
+        apply_emulated_combos_on_down(button::PLAY, 0, false, false, false, i64::MAX, 0, -10);
+    assert_eq!(map_sp, button::SPECIAL);
+    assert_eq!(emu_sp, EMULATING_SPECIAL);
+}

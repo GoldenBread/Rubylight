@@ -174,7 +174,10 @@ impl AxisMap {
             let Ok(entry) = parts[i + 1].parse::<i32>() else {
                 return Self::default();
             };
-            let src = entry.abs() - 1;
+            let Some(abs_entry) = entry.checked_abs() else {
+                return Self::default();
+            };
+            let src = abs_entry - 1;
             let inv = entry < 0;
             if !(-1..6).contains(&src) || (src >= 0 && (i < 4) != (src < 4)) || (i >= 4 && inv) {
                 return Self::default();

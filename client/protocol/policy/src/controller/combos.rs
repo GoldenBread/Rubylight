@@ -46,7 +46,7 @@ pub fn apply_emulated_combos_on_down(
     if !has_select {
         if input_map == (button::PLAY | button::LB)
             || (input_map == button::PLAY
-                && event_time_ms - last_lb_up_ms <= MAXIMUM_BUMPER_UP_DELAY_MS)
+                && event_time_ms.wrapping_sub(last_lb_up_ms) <= MAXIMUM_BUMPER_UP_DELAY_MS)
         {
             input_map &= !(button::PLAY | button::LB);
             input_map |= button::BACK;
@@ -55,7 +55,7 @@ pub fn apply_emulated_combos_on_down(
     } else if needs_clickpad
         && (input_map == (button::BACK | button::LB)
             || (input_map == button::BACK
-                && event_time_ms - last_lb_up_ms <= MAXIMUM_BUMPER_UP_DELAY_MS))
+                && event_time_ms.wrapping_sub(last_lb_up_ms) <= MAXIMUM_BUMPER_UP_DELAY_MS))
     {
         input_map &= !(button::BACK | button::LB);
         input_map |= button::TOUCHPAD;
@@ -71,7 +71,7 @@ pub fn apply_emulated_combos_on_down(
             }
         } else if input_map == (button::PLAY | button::RB)
             || (input_map == button::PLAY
-                && event_time_ms - last_rb_up_ms <= MAXIMUM_BUMPER_UP_DELAY_MS)
+                && event_time_ms.wrapping_sub(last_rb_up_ms) <= MAXIMUM_BUMPER_UP_DELAY_MS)
         {
             input_map &= !(button::PLAY | button::RB);
             input_map |= button::SPECIAL;
