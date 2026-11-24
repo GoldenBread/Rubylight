@@ -1,0 +1,115 @@
+name: Rubylight Linux
+permissions: {}
+on:
+  push:
+    # linux/** is the Linux host's lane while it lives on branches; the same
+    # jobs and path filter as main. Only main saves the compiled-dependency
+    # caches.
+    branches: [main, 'linux/**']
+    # The same paths as rust-windows.yml: the Linux crates share rust/core,
+    # Nightjar's protocol crate (by path) and the lock file with the Windows
+    # host. Docs and Markdown alone run nothing.
+    paths: ['rust/**', '!rust/**/*.md', 'client/protocol/**', '!client/protocol/**/*.md', 'tests/**', '!tests/**/*.md', 'Cargo.*', 'rust-toolchain.toml', '.cargo/**', 'clippy.toml', 'third-party/**', 'tools/arch_check.py', 'tools/arch_baselines.json', 'tools/code_map.py', 'docs/code-map.md', '.github/workflows/rust-linux.yml']
+  pull_request:
+    paths: ['rust/**', '!rust/**/*.md', 'client/protocol/**', '!client/protocol/**/*.md', 'tests/**', '!tests/**/*.md', 'Cargo.*', 'rust-toolchain.toml', '.cargo/**', 'clippy.toml', 'third-party/**', 'tools/arch_check.py', 'tools/arch_baselines.json', 'tools/code_map.py', 'docs/code-map.md', '.github/workflows/rust-linux.yml']
+  workflow_dispatch:
+concurrency:
+  group: rubylight-linux-${{ github.ref }}
+  cancel-in-progress: true
+env:
+  # The toolchain rust-toolchain.toml pins (rustup installs it on first use,
+  # with rustfmt and clippy); no debug info: linking it dominated the build.
+  CARGO_PROFILE_DEV_DEBUG: 0
+  CARGO_TERM_COLOR: always
+  # Development files the Linux crates build against: libva and libva-drm
+  # (linux/graphics' bindgen build script, pkg-config), libpipewire-0.3 and
+  # libspa-0.2 (pipewire-sys and libspa-sys, system-deps), libclang (bindgen)
+  # and libdrm (libva-drm links it). libva-dev and libpipewire-0.3-dev pull in
+  # libdrm-dev and libspa-0.2-dev. X11 (x11rb), Vulkan (ash) and uinput/uhid
+  # are pure Rust or loaded at run time: nothing to install for them.
+  LINUX_PACKAGES: build-essential pkg-config libclang-dev libva-dev libdrm-dev libpipewire-0.3-dev libspa-0.2-dev
+jobs:
+  # Formatting, the architecture and code-map checks, and clippy.
+  lint:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - name: System packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends $LINUX_PACKAGES
+      - name: Rust toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+      - name: Format
+        run: cargo fmt -- --check
+      - name: Architecture and code map
+        run: |
+          python3 tools/arch_check.py
+          python3 tools/code_map.py check
+      # Compiled dependencies, one cache per job (rust-cache keys on the job
+      # id); only main saves.
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      # The workspace minus the two crates that do not build on Linux
+      # (butterpollo-setup and butterpollo-probes are Windows-only); the
+      # Windows crates compile to their non-Windows stubs here.
+      - name: Clippy
+        run: cargo clippy --workspace --exclude butterpollo-setup --exclude butterpollo-probes --all-targets -- -D warnings
+  # The tests that need no GPU, display or device: hardware tests are
+  # #[ignore]d and stay so.
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    env:
+      RUST_TEST_THREADS: 8
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - name: System packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends $LINUX_PACKAGES
+      - name: Rust toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      # --no-fail-fast: one failing test binary must not hide the others.
+      # web::coop::tests::each_game_with_an_exe_shows_its_coop_status is
+      # skipped: it reads Windows-only game locations and fails on Linux
+      # (every other test of butterpollo-web runs).
+      - name: Test
+        run: >-
+          cargo test --no-fail-fast
+          -p butterpollo-host-tests -p rubylight-interop
+          -p butterpollo-linux-io -p butterpollo-linux-graphics -p butterpollo-linux-display
+          -p butterpollo-config -p butterpollo-media-policy
+          -p butterpollo-stream -p butterpollo-session -p butterpollo-web
+          -- --skip web::coop::tests::each_game_with_an_exe_shows_its_coop_status
+  # The release host binary, so that a link failure shows (libva, libva-drm,
+  # libpipewire and libdrm are linked).
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - name: System packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends $LINUX_PACKAGES
+      - name: Rust toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Build the host
+        run: cargo build --release -p butterpollo
+      - name: Linked libraries
+        run: ldd target/release/butterpollo
