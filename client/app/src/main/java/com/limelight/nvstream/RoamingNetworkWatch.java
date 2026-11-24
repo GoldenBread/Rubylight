@@ -9,94 +9,142 @@ import android.net.NetworkCapabilities;
 import android.os.Build;
 
 import com.limelight.LimeLog;
+import com.limelight.nvstream.jni.HandleReaper;
 import com.limelight.nvstream.jni.MoonBridge;
+import com.limelight.nvstream.jni.NightjarPolicyJni;
+
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 
 /**
- * While a stream runs, follows the default network. It tells the engine about each
- * default-network change and whether the new network is metered: with client roaming
- * (Experimental) on both sides the engine can move the stream (docs/protocol/client-roaming.md),
- * and never moves onto a network not reported here; otherwise it only answers whether the
- * connection carries on. It tells the listener when the stream's network is lost and when one
- * returns, so a stream whose connection cannot carry on reconnects at once; a network back
- * before its address toward the PC is asked about again as its addresses arrive.
- * The callbacks run on ConnectivityManager's thread, never the stream's.
+ * While a stream runs, follows the default network via {@link ConnectivityManager.NetworkCallback}
+ * and delegates tracking state transitions to {@code nightjar_policy::roaming::RoamingTracker} via
+ * {@link NightjarPolicyJni}.
  */
 final class RoamingNetworkWatch {
     private final ConnectivityManager connMgr;
-    private final RoamingNetworkTracker tracker;
+    private final long trackerHandle;
+    private final HandleReaper.Token reaper;
     private final ConnectivityManager.NetworkCallback callback;
+
     private RoamingNetworkWatch(ConnectivityManager connMgr, Network streamNetwork,
                                 NvConnectionListener listener) {
         this.connMgr = connMgr;
-        tracker = new RoamingNetworkTracker(streamNetwork, new RoamingNetworkTracker.Reporter() {
-            @Override
-            public int networkChanged(boolean metered) {
-                // Without roaming on both sides the engine only tells whether the connection carries on.
-                int change = MoonBridge.networkChanged(metered);
-                LimeLog.info("Roaming: the default network changed (" + (metered ? "metered" : "not metered") +
-                        "), " + (change == MoonBridge.NETWORK_ROAMED ? "roaming" :
-                        change == MoonBridge.NETWORK_CANNOT_CONTINUE ? "not roaming, the connection cannot carry on" :
-                        "not roaming, the connection carries on"));
-                return change;
-            }
-
-            @Override
-            public void streamNetworkLost() {
-                LimeLog.warning("The stream's network was lost");
-                listener.streamNetworkLost();
-            }
-
-            @Override
-            public void streamNetworkReturned(int change, boolean metered) {
-                listener.streamNetworkReturned(change, metered);
-            }
-        });
+        this.trackerHandle = NightjarPolicyJni.roamingCreate(
+                streamNetwork != null, streamNetwork != null ? streamNetwork.getNetworkHandle() : 0L);
+        this.reaper = HandleReaper.register(this, trackerHandle, NightjarPolicyJni::roamingDestroy);
         callback = new ConnectivityManager.NetworkCallback() {
             @Override
             public void onAvailable(Network network) {
-                // From Android 8 onCapabilitiesChanged always follows; before that, ask.
                 if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
                     NetworkCapabilities caps = connMgr.getNetworkCapabilities(network);
                     if (caps != null) {
-                        tracker.capabilities(network, caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED));
+                        handleCapabilities(network, caps);
                     }
                 }
             }
 
             @Override
             public void onCapabilitiesChanged(Network network, NetworkCapabilities caps) {
-                tracker.capabilities(network, caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED));
+                handleCapabilities(network, caps);
             }
 
             @Override
             public void onLinkPropertiesChanged(Network network, LinkProperties properties) {
-                // Only the addresses: DNS and other updates do not move the route.
-                java.util.Set<java.net.InetAddress> addresses = new java.util.HashSet<>();
-                for (LinkAddress address : properties.getLinkAddresses()) {
-                    addresses.add(address.getAddress());
-                }
-                // A NAT64 prefix (Android 11 and later): the network translates IPv4 (464XLAT).
-                boolean nat64 = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && properties.getNat64Prefix() != null;
-                tracker.addresses(network, addresses, nat64);
+                handleAddresses(network, properties);
             }
 
             @Override
             public void onLost(Network network) {
-                tracker.lost(network);
+                boolean lost;
+                synchronized (RoamingNetworkWatch.this) {
+                    lost = NightjarPolicyJni.roamingOnLost(trackerHandle, network.getNetworkHandle());
+                }
+                if (lost) {
+                    LimeLog.warning("The stream's network was lost");
+                    listener.streamNetworkLost();
+                }
+            }
+
+            private void handleCapabilities(Network network, NetworkCapabilities caps) {
+                long networkId = network.getNetworkHandle();
+                boolean notMetered = caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED);
+                int step;
+                boolean metered;
+                boolean returned;
+                int change;
+                boolean emitReturn;
+                synchronized (RoamingNetworkWatch.this) {
+                    step = NightjarPolicyJni.roamingOnCapabilities(trackerHandle, networkId, notMetered);
+                    if (step == NightjarPolicyJni.ROAMING_CAP_IGNORE) {
+                        return;
+                    }
+                    metered = step == NightjarPolicyJni.ROAMING_CAP_ASK_METERED
+                            || step == NightjarPolicyJni.ROAMING_CAP_RETURNED_ASK_METERED;
+                    returned = step == NightjarPolicyJni.ROAMING_CAP_RETURNED_ASK_NOT_METERED
+                            || step == NightjarPolicyJni.ROAMING_CAP_RETURNED_ASK_METERED;
+                    change = askEngine(metered);
+                    emitReturn = NightjarPolicyJni.roamingRecordChange(
+                            trackerHandle, networkId, metered, returned, change, System.nanoTime() / 1_000_000L);
+                }
+                if (emitReturn) {
+                    listener.streamNetworkReturned(change, metered);
+                }
+            }
+
+            private void handleAddresses(Network network, LinkProperties properties) {
+                long networkId = network.getNetworkHandle();
+                String addressesKey = canonicalAddresses(properties);
+                boolean nat64 = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && properties.getNat64Prefix() != null;
+                long nowMs = System.nanoTime() / 1_000_000L;
+                int change;
+                boolean metered;
+                boolean emitReturn;
+                synchronized (RoamingNetworkWatch.this) {
+                    int step = NightjarPolicyJni.roamingOnAddresses(trackerHandle, networkId, addressesKey, nat64, nowMs);
+                    if (step == NightjarPolicyJni.ROAMING_ADDR_IGNORE) {
+                        return;
+                    }
+                    metered = step == NightjarPolicyJni.ROAMING_ADDR_ASK_METERED;
+                    change = askEngine(metered);
+                    emitReturn = NightjarPolicyJni.roamingRecordAddressChange(trackerHandle, change);
+                }
+                if (emitReturn) {
+                    listener.streamNetworkReturned(change, metered);
+                }
             }
         };
     }
 
-    /** The default network now, to pass to start() as the one the stream starts on; may be null. */
+    private static int askEngine(boolean metered) {
+        int change = MoonBridge.networkChanged(metered);
+        LimeLog.info("Roaming: the default network changed (" + (metered ? "metered" : "not metered") +
+                "), " + (change == MoonBridge.NETWORK_ROAMED ? "roaming" :
+                change == MoonBridge.NETWORK_CANNOT_CONTINUE ? "not roaming, the connection cannot carry on" :
+                "not roaming, the connection carries on"));
+        return change;
+    }
+
+    private static String canonicalAddresses(LinkProperties properties) {
+        List<String> list = new ArrayList<>();
+        for (LinkAddress address : properties.getLinkAddresses()) {
+            if (address.getAddress() != null) {
+                String text = address.getAddress().getHostAddress();
+                if (text != null && !list.contains(text)) {
+                    list.add(text);
+                }
+            }
+        }
+        Collections.sort(list);
+        return String.join(" ", list);
+    }
+
     static Network defaultNetwork(Context context) {
         ConnectivityManager connMgr = (ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE);
         return connMgr == null ? null : connMgr.getActiveNetwork();
     }
 
-    /**
-     * Starts reporting network changes, or returns null (with a warning) where it cannot: then
-     * the stream does not roam onto another network.
-     */
     static RoamingNetworkWatch start(Context context, Network streamNetwork, NvConnectionListener listener) {
         ConnectivityManager connMgr = (ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE);
         if (connMgr == null) {
@@ -108,18 +156,20 @@ final class RoamingNetworkWatch {
             connMgr.registerDefaultNetworkCallback(watch.callback);
         } catch (RuntimeException e) {
             LimeLog.warning("Roaming: could not follow network changes, not roaming: " + e);
+            watch.reaper.close();
             return null;
         }
         return watch;
     }
 
-    /** The stream ends: no report reaches the engine after this returns. */
-    void stop() {
-        tracker.stop();
+    synchronized void stop() {
+        NightjarPolicyJni.roamingStop(trackerHandle);
         try {
             connMgr.unregisterNetworkCallback(callback);
         } catch (RuntimeException e) {
             LimeLog.warning("Roaming: could not stop following network changes: " + e);
+        } finally {
+            reaper.close();
         }
     }
 }

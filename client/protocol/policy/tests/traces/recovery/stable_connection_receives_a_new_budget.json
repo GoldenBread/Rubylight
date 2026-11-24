@@ -1,7 +1,7 @@
 {
   "source": "StreamRecoveryPolicyTest.stableConnectionReceivesANewBudget",
   "rust": "recovery::StreamRecoveryPolicy",
-  "java": "com.limelight.StreamRecoveryPolicy",
+  "java": "com.limelight.policy.RecoveryPolicyTrace",
   "new": [5, 1000],
   "calls": [
     {"call": "allows_attempt", "args": [70000, -1], "expect": false},

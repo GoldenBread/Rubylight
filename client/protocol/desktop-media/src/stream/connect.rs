@@ -40,16 +40,13 @@ pub fn termination_text(code: i32) -> Option<String> {
 /// (`RustHostLastFailure`): its termination reasons, as moonlight-common-c maps them, and the
 /// HRESULTs passed through as they are (0x80004005, the generic failure). Lost connections,
 /// socket errors and this device's own failures are not.
-pub fn host_ended_stream(code: i32) -> bool {
-    use nightjar_core::session::error;
-    matches!(code, error::UNEXPECTED_EARLY | error::PROTECTED_CONTENT | error::FRAME_CONVERSION) || code < -0xFFFF
-}
+pub use nightjar_policy::launch::host_ended_stream;
 
 /// A start that failed: `error`, today's words, and for a failure in the handshake the PC's own
 /// reason where it keeps one for this device (`RustHostLastFailure`: no codec it can encode,
 /// encryption not agreed). `reason` asks the PC; other stages never do. Other hosts give none.
 pub(super) fn start_failure_text(error: String, stage: Stage, reason: impl FnOnce() -> Option<String>) -> String {
-    let reason = if matches!(stage, Stage::RtspHandshake) { reason().filter(|r| !r.trim().is_empty()) } else { None };
+    let reason = if nightjar_policy::launch::refused_in_handshake(Some(stage.name())) { reason().filter(|r| !r.trim().is_empty()) } else { None };
     doctor::with_host_reason(error, reason.as_deref())
 }
 
@@ -460,8 +457,7 @@ const RECOVERY_UNREACHABLE: &str = en("The PC could not be reached.");
 /// What an automatic recovery that gives up says, the same on both apps: why its last attempt
 /// failed, or that the PC could not be reached, then that it stopped and the game was not quit.
 fn recovery_gave_up(last_failure: Option<&str>) -> String {
-    let cause = last_failure.filter(|m| !m.is_empty()).unwrap_or(tr(RECOVERY_UNREACHABLE));
-    format!("{cause}\n\n{}", tr(RECOVERY_STOPPED))
+    nightjar_policy::recovery::recovery_gave_up(last_failure, tr(RECOVERY_UNREACHABLE), tr(RECOVERY_STOPPED))
 }
 
 fn connect_with_recovery(plan: &mut LaunchPlan, shared: Arc<Shared>, interrupt: &Interrupt) -> Result<(Session, Facts), ConnectError> {
@@ -497,51 +493,25 @@ fn connect_with_recovery(plan: &mut LaunchPlan, shared: Arc<Shared>, interrupt: 
 /// before its address toward the PC (DHCP), so the attempt waits for a route instead of failing
 /// at once and backing off.
 fn wait_for_route(address: &str, port: u16, remaining_ms: u64, interrupt: &Interrupt) -> Result<(), ConnectError> {
-    let started = Instant::now();
-    let mut wait = recovery::RouteWait::new(recovery::now_ms() + remaining_ms);
-    loop {
-        if interrupt.is_interrupted() { return Err("Cancelled.".into()); }
-        let checked = Instant::now();
-        let problem = route_problem(address, port);
-        match wait.next(recovery::now_ms(), problem.is_none()) {
-            Some(0) => {
-                if wait.unreachable_checks() > 0 {
-                    eprintln!("nightjar: recovery: the PC is reachable again after {} ms", started.elapsed().as_millis());
-                }
-                return Ok(());
+    let outcome = recovery::wait_for_route(
+        recovery::now_ms() + remaining_ms,
+        &recovery::now_ms,
+        &|| recovery::route_problem(address, port),
+        &|| interrupt.is_interrupted(),
+        &|ms| {
+            let until = Instant::now() + Duration::from_millis(ms);
+            while Instant::now() < until {
+                if interrupt.is_interrupted() { return false; }
+                std::thread::sleep(Duration::from_millis(20).min(until.saturating_duration_since(Instant::now())));
             }
-            None => {
-                eprintln!("nightjar: recovery: the PC stayed unreachable until the recovery window ended: {}",
-                    problem.unwrap_or_default());
-                return Ok(());
-            }
-            Some(delay) => {
-                if wait.unreachable_checks() == 1 {
-                    eprintln!("nightjar: recovery: no route to the PC yet ({}), checking every {} ms",
-                        problem.unwrap_or_default(), recovery::ROUTE_RETRY_MS);
-                }
-                let until = checked + Duration::from_millis(delay);
-                while Instant::now() < until {
-                    if interrupt.is_interrupted() { return Err("Cancelled.".into()); }
-                    std::thread::sleep(Duration::from_millis(20).min(until.saturating_duration_since(Instant::now())));
-                }
-            }
-        }
-    }
-}
-
-/// Why there is no route toward the PC's HTTP port yet ([`recovery::route_missing`], or the
-/// name does not resolve), or None to go on with the attempt: an answer, refused included, and
-/// also a check that timed out or failed otherwise.
-fn route_problem(address: &str, port: u16) -> Option<String> {
-    let remote = match (address, port).to_socket_addrs().map(|mut found| found.next()) {
-        Ok(Some(remote)) => remote,
-        Ok(None) => return Some(format!("{address} did not resolve")),
-        Err(error) => return Some(error.to_string()),
-    };
-    match std::net::TcpStream::connect_timeout(&remote, Duration::from_millis(recovery::ROUTE_PROBE_TIMEOUT_MS)) {
-        Err(error) if recovery::route_missing(&error) => Some(error.to_string()),
-        _ => None,
+            true
+        },
+        &|msg| eprintln!("nightjar: {msg}"),
+        &|msg| eprintln!("nightjar: {msg}"),
+    );
+    match outcome {
+        recovery::RouteWaitOutcome::Cancelled => Err("Cancelled.".into()),
+        recovery::RouteWaitOutcome::Reachable | recovery::RouteWaitOutcome::Exhausted => Ok(()),
     }
 }
 
@@ -1662,6 +1632,8 @@ mod capability_tests {
     /// failed attempt, that the PC could not be reached.
     #[test]
     fn a_recovery_that_gives_up_says_why_the_last_attempt_failed() {
+        assert_eq!(RECOVERY_STOPPED, nightjar_policy::recovery::RECOVERY_STOPPED);
+        assert_eq!(RECOVERY_UNREACHABLE, nightjar_policy::recovery::RECOVERY_UNREACHABLE);
         let text = recovery_gave_up(Some("Could not start the stream: connection refused"));
         assert!(text.starts_with("Could not start the stream: connection refused\n\n"), "{text}");
         assert!(text.ends_with(RECOVERY_STOPPED), "{text}");

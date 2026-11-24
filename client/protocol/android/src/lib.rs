@@ -21,6 +21,7 @@ pub mod hosts;
 pub mod hosts_meta;
 pub mod http;
 pub mod http_folders;
+pub mod http_launch;
 pub mod http_probes;
 pub mod identity;
 pub mod internet;
@@ -34,6 +35,8 @@ pub mod pin;
 mod platform;
 pub mod policy;
 pub mod policy_quality;
+pub mod policy_recovery;
+pub mod policy_roaming;
 mod renderers;
 pub mod sharp_color;
 pub mod simple_profile;
@@ -269,16 +272,6 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_hostSaidGoodb
     }
 }
 
-/// An address from Java; null or one that does not parse is none.
-fn java_address(env: &mut JNIEnv, text: &JString) -> Option<std::net::IpAddr> {
-    if text.is_null() {
-        return None;
-    }
-    env.get_string(text)
-        .ok()
-        .and_then(|text| String::from(text).parse().ok())
-}
-
 /// [`nightjar_core::connectivity::test_client_connectivity`] for the connection test dialogs:
 /// the flags of the ports that did not answer, 0 for none, -1 (`ML_TEST_RESULT_INCONCLUSIVE`)
 /// when the test could not run. Blocks for up to three seconds.
@@ -326,25 +319,6 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_findExternalA
             std::ptr::null_mut()
         }
     }
-}
-
-/// One round of [`nightjar_core::host_loss`] for `HostLossWatch`, which runs it over both engines:
-/// blocks for about 750 ms. Returns [`nightjar_core::host_loss::Round::code`]. `gateway` may be
-/// null; a host that does not parse proves nothing.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_hostLossRound(
-    mut env: JNIEnv,
-    _: JClass,
-    host: JString,
-    port: jint,
-    gateway: JString,
-) -> jint {
-    use nightjar_core::host_loss::{Round, probe_round};
-    let Some(host) = java_address(&mut env, &host) else {
-        return Round::SilentLinkUnknown.code();
-    };
-    let gateway = java_address(&mut env, &gateway);
-    probe_round(std::net::SocketAddr::new(host, port as u16), gateway).code()
 }
 
 /// The address the running session connected to, as text (`HostLossWatch` asks it, never DNS);

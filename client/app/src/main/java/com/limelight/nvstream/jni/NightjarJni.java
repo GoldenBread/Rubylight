@@ -114,13 +114,36 @@ public final class NightjarJni {
 
     public static native int networkChanged(boolean metered);
 
+    public interface HostLossCallback {
+        String gatewayToward();
+        boolean isStopped();
+        void log(String line);
+    }
+
+    public interface RouteWaitCallback {
+        long nowMs();
+        String probe(String host, int port);
+        boolean isCancelled();
+        boolean sleep(long ms);
+        void logInfo(String line);
+        void logWarn(String line);
+    }
+
     public static native boolean hostSaidGoodbye();
 
     public static native String getHostAddress();
 
-    public static native int hostLossRound(String host, int port, String gateway);
+    public static native long hostLossWatchCreate();
 
-    public static native int hostLossAfterGoodbye(boolean onLink, int round, long waitedMs);
+    public static native void hostLossWatchStop(long handle);
+
+    public static native void hostLossWatchDestroy(long handle);
+
+    public static native int hostLossWatchGoodbye(long handle, String host, int port, HostLossCallback callback);
+
+    public static native String routeProblem(String host, int port);
+
+    public static native int routeWait(String host, int port, long deadlineMs, RouteWaitCallback callback);
 
     public static native void sendMouseMove(short deltaX, short deltaY);
 

@@ -15,6 +15,8 @@ import com.limelight.nvstream.StreamConfiguration;
 import com.limelight.nvstream.http.ComputerDetails;
 import com.limelight.nvstream.http.NvApp;
 import com.limelight.nvstream.jni.MoonBridge;
+import com.limelight.nvstream.jni.NightjarJni;
+import com.limelight.nvstream.jni.NightjarPolicyJni;
 import com.limelight.preferences.PreferenceConfiguration;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -36,6 +38,11 @@ public class GameRecoveryTest {
     /** Game's workers that wait for the stream's stop, then post the hand-off to the UI thread. */
     private static final java.util.Set<String> HANDOFF_WORKERS =
             java.util.Set.of("Stream reconnect", "Automatic stream recovery");
+
+    private static void setBudget(Game game, int attempts, long startedAt) {
+        game.recoveryAttempts = attempts;
+        game.recoveryStartedAt = startedAt;
+    }
 
     /** A recovery that gives up says why its last attempt failed, then that it stopped (desktop's recovery_gave_up). */
     @Test public void aRecoveryThatGivesUpSaysWhyTheLastAttemptFailed() {
@@ -275,15 +282,14 @@ public class GameRecoveryTest {
         Game game = recoveryGame();
         long started = SystemClock.elapsedRealtime();
         game.setIntent(new Intent().putExtra("RecoveryAttempts", 1).putExtra("RecoveryStarted", started));
-        StreamRecoveryPolicy policy = new StreamRecoveryPolicy(1, started);
-        ReflectionHelpers.setField(game, "recoveryPolicy", policy);
+        setBudget(game, 1, started);
         ReflectionHelpers.setField(game, "connected", false);
         ReflectionHelpers.setField(game, "connecting", true);
         RecoveryBridge.connectivityTests = 0;
         try {
             game.stageFailed("Control stream establishment", MoonBridge.ML_PORT_FLAG_UDP_47999, 110);
             assertNotNull(ReflectionHelpers.getField(game, "pendingRecovery"));
-            assertEquals(2, policy.attempts());
+            assertEquals(2, game.recoveryAttempts);
             assertEquals(0, RecoveryBridge.connectivityTests);
             assertNull(ReflectionHelpers.getField(game, "streamMenu"));
         } finally {
@@ -578,7 +584,7 @@ public class GameRecoveryTest {
         java.util.List<Boolean> asked = new java.util.ArrayList<>();
         ReflectionHelpers.setField(game, "conn", movedTo("TV", asked));
         long now = SystemClock.elapsedRealtime();
-        ReflectionHelpers.setField(game, "recoveryPolicy", new StreamRecoveryPolicy(StreamRecoveryPolicy.MAX_ATTEMPTS, now));
+        setBudget(game, NightjarPolicyJni.recoveryMaxAttempts(), now);
         ReflectionHelpers.setField(game.streamRecovery, "connectedAt", now);
         try {
             game.connectionTerminated(-1);
@@ -601,7 +607,7 @@ public class GameRecoveryTest {
             @Override public boolean hasEndedSession() { return false; }
         });
         long now = SystemClock.elapsedRealtime();
-        ReflectionHelpers.setField(game, "recoveryPolicy", new StreamRecoveryPolicy(StreamRecoveryPolicy.MAX_ATTEMPTS, now));
+        setBudget(game, NightjarPolicyJni.recoveryMaxAttempts(), now);
         ReflectionHelpers.setField(game.streamRecovery, "connectedAt", now);
         try {
             game.connectionTerminated(-1);
@@ -1366,7 +1372,7 @@ public class GameRecoveryTest {
             @Override public boolean hasEndedSession() { return false; }
         });
         long now = SystemClock.elapsedRealtime();
-        ReflectionHelpers.setField(game, "recoveryPolicy", new StreamRecoveryPolicy(StreamRecoveryPolicy.MAX_ATTEMPTS, now));
+        setBudget(game, NightjarPolicyJni.recoveryMaxAttempts(), now);
         ReflectionHelpers.setField(game.streamRecovery, "connectedAt", now);
         try {
             game.connectionTerminated(-1);
@@ -1461,7 +1467,7 @@ public class GameRecoveryTest {
         game.setIntent(new Intent().putExtra(Game.EXTRA_APP_ID, 2147483501)
                 .putExtra("RecoveryAttempts", 2).putExtra("RecoveryStarted", started)
                 .putExtra("rubylight.outputDisplay", 42).putExtra("rubylight.outputResumeOnly", true));
-        ReflectionHelpers.setField(game, "recoveryPolicy", new StreamRecoveryPolicy(2, started));
+        setBudget(game, 2, started);
         try {
             game.onPause();
             long leftAt = SystemClock.elapsedRealtime();
@@ -1484,17 +1490,16 @@ public class GameRecoveryTest {
             // The resume is not an attempt: it carries the budget as the trip began and its own deadline.
             assertArrayEquals(new long[] {2, started, leftAt, 0}, retry.getLongArrayExtra("rubylight.tripBudget"));
             assertEquals(returnedAt, retry.getLongExtra("rubylight.tripResumeStarted", 0));
-            StreamRecoveryPolicy old = ReflectionHelpers.getField(game, "recoveryPolicy");
-            assertEquals(2, old.attempts());
-            assertEquals(started, old.startedAt());
+            assertEquals(2, game.recoveryAttempts);
+            assertEquals(started, game.recoveryStartedAt);
             Game replacement = Robolectric.buildActivity(Game.class).get();
             assertNull(org.robolectric.Shadows.shadowOf(game).getNextStartedActivity());
             // The failure being recovered keeps its two attempts; its window starts later by the time away.
             long createdAt = SystemClock.elapsedRealtime();
-            StreamRecoveryPolicy restored = startStream(replacement, retry);
+            startStream(replacement, retry);
             assertTrue(ReflectionHelpers.callInstanceMethod(replacement.streamRecovery, "isResumeOnlyStream"));
-            assertEquals(2, restored.attempts());
-            assertEquals(started + (createdAt - leftAt), restored.startedAt());
+            assertEquals(2, replacement.recoveryAttempts);
+            assertEquals(started + (createdAt - leftAt), replacement.recoveryStartedAt);
             assertEquals(2, replacement.getIntent().getIntExtra("RecoveryAttempts", 0));
             assertFalse(replacement.getIntent().hasExtra("rubylight.tripBudget"));
         } finally {
@@ -1503,10 +1508,9 @@ public class GameRecoveryTest {
     }
 
     /** The replacement activity starts with {@code intent}: the budget onCreate reads. */
-    private static StreamRecoveryPolicy startStream(Game stream, Intent intent) {
+    private static void startStream(Game stream, Intent intent) {
         stream.setIntent(intent);
         stream.streamRecovery.readRecoveryBudget(SystemClock.elapsedRealtime());
-        return ReflectionHelpers.getField(stream, "recoveryPolicy");
     }
 
     /**
@@ -1516,13 +1520,14 @@ public class GameRecoveryTest {
     private Game leaveAndReturn(Game stream, long awayMs) throws InterruptedException {
         long leftAt = SystemClock.elapsedRealtime();
         Intent retry = leaveAndComeBack(stream, awayMs);
-        StreamRecoveryPolicy before = ReflectionHelpers.getField(stream, "recoveryPolicy");
+        int beforeAttempts = stream.recoveryAttempts;
+        long beforeStartedAt = stream.recoveryStartedAt;
         Game resumed = establishedGame();
         long createdAt = SystemClock.elapsedRealtime();
-        StreamRecoveryPolicy budget = startStream(resumed, retry);
+        startStream(resumed, retry);
         assertTrue(ReflectionHelpers.callInstanceMethod(resumed.streamRecovery, "isResumeOnlyStream"));
-        assertEquals("the trip spent none of the failure budget", before.attempts(), budget.attempts());
-        assertEquals(before.attempts() == 0 ? 0 : before.startedAt() + (createdAt - leftAt), budget.startedAt());
+        assertEquals("the trip spent none of the failure budget", beforeAttempts, resumed.recoveryAttempts);
+        assertEquals(beforeAttempts == 0 ? 0 : beforeStartedAt + (createdAt - leftAt), resumed.recoveryStartedAt);
         resumed.streamRecovery.onStreamConnected(SystemClock.elapsedRealtime());
         return resumed;
     }
@@ -1531,16 +1536,16 @@ public class GameRecoveryTest {
     private static Intent leaveAndComeBack(Game stream, long awayMs) throws InterruptedException {
         stream.onPause();
         stream.onStop();
-        StreamRecoveryPolicy before = ReflectionHelpers.getField(stream, "recoveryPolicy");
+        int beforeAttempts = stream.recoveryAttempts;
+        long beforeStartedAt = stream.recoveryStartedAt;
         org.robolectric.shadows.ShadowSystemClock.advanceBy(java.time.Duration.ofMillis(awayMs));
         long returnedAt = SystemClock.elapsedRealtime();
         stream.onResume();
         assertNotNull("the return was refused", ReflectionHelpers.getField(stream, "pendingRecovery"));
         // Its fixed one-second delay, whatever the failure budget holds.
         Intent retry = awaitRecoveryLaunch(stream, 1);
-        StreamRecoveryPolicy after = ReflectionHelpers.getField(stream, "recoveryPolicy");
-        assertEquals("the resume took an attempt", before.attempts(), after.attempts());
-        assertEquals(before.startedAt(), after.startedAt());
+        assertEquals("the resume took an attempt", beforeAttempts, stream.recoveryAttempts);
+        assertEquals(beforeStartedAt, stream.recoveryStartedAt);
         cleanupRecovery(stream);
         assertEquals(returnedAt, retry.getLongExtra("rubylight.tripResumeStarted", 0));
         return retry;
@@ -1569,24 +1574,23 @@ public class GameRecoveryTest {
         long blip = SystemClock.elapsedRealtime();
         Game stream = establishedGame();
         stream.setIntent(new Intent().putExtra("RecoveryAttempts", 1).putExtra("RecoveryStarted", blip));
-        ReflectionHelpers.setField(stream, "recoveryPolicy", new StreamRecoveryPolicy(1, blip));
+        setBudget(stream, 1, blip);
         org.robolectric.shadows.ShadowSystemClock.advanceBy(java.time.Duration.ofSeconds(3));
         stream.streamRecovery.onStreamConnected(SystemClock.elapsedRealtime());
         try {
             org.robolectric.shadows.ShadowSystemClock.advanceBy(java.time.Duration.ofSeconds(20));
             stream = leaveAndReturn(stream, 5000);
             // The blip's budget is back, its window run only by the 3 s startup and the 20 s connected.
-            StreamRecoveryPolicy budget = ReflectionHelpers.getField(stream, "recoveryPolicy");
-            assertEquals(1, budget.attempts());
-            assertEquals(23000, SystemClock.elapsedRealtime() - budget.startedAt());
+            assertEquals(1, stream.recoveryAttempts);
+            assertEquals(23000, SystemClock.elapsedRealtime() - stream.recoveryStartedAt);
             for (int trip = 0; trip < 3; trip++) {
                 org.robolectric.shadows.ShadowSystemClock.advanceBy(java.time.Duration.ofSeconds(20));
                 stream = leaveAndReturn(stream, 5000);
             }
             // 40 s connected in all by the second trip: as without the trips, the blip's budget is
             // done and a failure now has a full one.
-            assertTrue(SystemClock.elapsedRealtime() - blip > StreamRecoveryPolicy.WINDOW_MS);
-            assertEquals(0, ((StreamRecoveryPolicy) ReflectionHelpers.getField(stream, "recoveryPolicy")).attempts());
+            assertTrue(SystemClock.elapsedRealtime() - blip > NightjarPolicyJni.recoveryWindowMs());
+            assertEquals(0, stream.recoveryAttempts);
             org.robolectric.shadows.ShadowSystemClock.advanceBy(java.time.Duration.ofSeconds(5));
             long failedAt = SystemClock.elapsedRealtime();
             ReflectionHelpers.setField(stream, "conn", new MuteConnection() {
@@ -1609,7 +1613,7 @@ public class GameRecoveryTest {
         long blip = SystemClock.elapsedRealtime();
         Game stream = establishedGame();
         stream.setIntent(new Intent().putExtra("RecoveryAttempts", 1).putExtra("RecoveryStarted", blip));
-        ReflectionHelpers.setField(stream, "recoveryPolicy", new StreamRecoveryPolicy(1, blip));
+        setBudget(stream, 1, blip);
         org.robolectric.shadows.ShadowSystemClock.advanceBy(java.time.Duration.ofSeconds(3));
         stream.streamRecovery.onStreamConnected(SystemClock.elapsedRealtime());
         try {
@@ -1639,8 +1643,8 @@ public class GameRecoveryTest {
         Intent resume = leaveAndComeBack(establishedGame(), 10000);
         // The replacement activity before connectionStarted, its budget read as onCreate does.
         Game resumed = recoveryGame();
-        StreamRecoveryPolicy budget = startStream(resumed, resume);
-        assertEquals(0, budget.attempts());
+        startStream(resumed, resume);
+        assertEquals(0, resumed.recoveryAttempts);
         ReflectionHelpers.setField(resumed, "connected", false);
         ReflectionHelpers.setField(resumed, "connecting", true);
         RecoveryBridge.connectivityTests = 0;
@@ -1692,7 +1696,7 @@ public class GameRecoveryTest {
             }
             // Failures at 0, 16, 33 and 52 s: the fourth attempt would end past the minute.
             assertEquals(3, recoveries);
-            assertTrue(SystemClock.elapsedRealtime() - firstFailure < StreamRecoveryPolicy.WINDOW_MS);
+            assertTrue(SystemClock.elapsedRealtime() - firstFailure < NightjarPolicyJni.recoveryWindowMs());
             assertFalse(stream.isFinishing());
             android.app.Dialog dialog = ReflectionHelpers.getField(stream, "streamMenu");
             assertNotNull(dialog);
@@ -1708,10 +1712,9 @@ public class GameRecoveryTest {
         org.robolectric.shadows.ShadowSystemClock.advanceBy(java.time.Duration.ofSeconds(100));
         long started = SystemClock.elapsedRealtime() - 5000;
         Game stream = establishedGame();
-        ReflectionHelpers.setField(stream, "recoveryPolicy", new StreamRecoveryPolicy(2, started));
+        setBudget(stream, 2, started);
         Game resumed = leaveAndReturn(stream, 10000);
-        StreamRecoveryPolicy budget = ReflectionHelpers.getField(resumed, "recoveryPolicy");
-        long budgetStart = budget.startedAt();
+        long budgetStart = resumed.recoveryStartedAt;
         // connectionStarted has not come yet.
         ReflectionHelpers.setField(resumed, "connected", false);
         ReflectionHelpers.setField(resumed, "connecting", true);
@@ -1768,7 +1771,7 @@ public class GameRecoveryTest {
         Game game = establishedGame();
         // Paused for the 10 s away it would have room for one more attempt; counted, it has none.
         long started = SystemClock.elapsedRealtime() - 40000;
-        ReflectionHelpers.setField(game, "recoveryPolicy", new StreamRecoveryPolicy(4, started));
+        setBudget(game, 4, started);
         ReflectionHelpers.setField(game, "conn", new MuteConnection() {
             @Override public boolean hasEndedSession() { return false; }
         });
@@ -1794,12 +1797,11 @@ public class GameRecoveryTest {
         org.robolectric.shadows.ShadowSystemClock.advanceBy(java.time.Duration.ofSeconds(100));
         Game game = establishedGame();
         long started = SystemClock.elapsedRealtime() - 58000;
-        ReflectionHelpers.setField(game, "recoveryPolicy", new StreamRecoveryPolicy(4, started));
+        setBudget(game, 4, started);
         // Two minutes locked: the return still resumes, and the nearly spent window stays nearly spent.
         Game resumed = leaveAndReturn(game, 120000);
-        StreamRecoveryPolicy budget = ReflectionHelpers.getField(resumed, "recoveryPolicy");
-        assertEquals(4, budget.attempts());
-        assertEquals(58000, SystemClock.elapsedRealtime() - budget.startedAt());
+        assertEquals(4, resumed.recoveryAttempts);
+        assertEquals(58000, SystemClock.elapsedRealtime() - resumed.recoveryStartedAt);
         ReflectionHelpers.setField(resumed, "conn", new MuteConnection() {
             @Override public boolean hasEndedSession() { return false; }
         });
@@ -2105,10 +2107,9 @@ public class GameRecoveryTest {
             config.networkGraceSeconds = 30;
             assertEquals("a drop tolerance decides", plain, noticeAfterLoss(game, overlay));
             config.networkGraceSeconds = 0;
-            ReflectionHelpers.setField(game, "recoveryPolicy",
-                    new StreamRecoveryPolicy(StreamRecoveryPolicy.MAX_ATTEMPTS, SystemClock.elapsedRealtime()));
+            setBudget(game, NightjarPolicyJni.recoveryMaxAttempts(), SystemClock.elapsedRealtime());
             assertEquals("the retry budget is used up", plain, noticeAfterLoss(game, overlay));
-            ReflectionHelpers.setField(game, "recoveryPolicy", new StreamRecoveryPolicy(0, 0));
+            setBudget(game, 0, 0);
             assertEquals(game.getString(R.string.stream_network_lost_reconnecting), noticeAfterLoss(game, overlay));
         } finally {
             cleanupRecovery(game);
@@ -2124,26 +2125,14 @@ public class GameRecoveryTest {
         return text;
     }
 
-    // Only an immediate no-route error waits; a check that times out (a slow link, or a closed
-    // port on Windows) or is refused goes on to the attempt.
-    @Test public void onlyAnImmediateNoRouteErrorWaitsForTheRoute() {
-        assertTrue(Game.routeMissing(new java.net.UnknownHostException("pc.test")));
-        assertTrue(Game.routeMissing(new java.net.NoRouteToHostException("EHOSTUNREACH")));
-        // What Android throws for EADDRNOTAVAIL: no errno cause.
-        assertTrue(Game.routeMissing(new java.net.BindException("Address not available")));
-        for (int errno : new int[] {android.system.OsConstants.ENETUNREACH, android.system.OsConstants.EHOSTUNREACH,
-                android.system.OsConstants.EADDRNOTAVAIL}) {
-            assertTrue("errno " + errno, Game.routeMissing(connectFailure(errno)));
+    // Route problem checks delegate to nightjar_core::route::route_problem (whose unit tests cover
+    // OS no-route errnos); verify JNI round-trip for reachable loopback and unresolvable host.
+    @Test public void onlyAnImmediateNoRouteErrorWaitsForTheRoute() throws Exception {
+        NightjarJni.ensureLibraryLoaded();
+        assertNotNull(NightjarJni.routeProblem("invalid.invalid.", 47989));
+        try (java.net.ServerSocket listener = new java.net.ServerSocket(0, 1, java.net.InetAddress.getLoopbackAddress())) {
+            assertNull(NightjarJni.routeProblem("127.0.0.1", listener.getLocalPort()));
         }
-        assertFalse(Game.routeMissing(new java.net.SocketTimeoutException("connect timed out")));
-        assertFalse(Game.routeMissing(connectFailure(android.system.OsConstants.ECONNREFUSED)));
-        assertFalse(Game.routeMissing(new java.net.ConnectException("connect failed")));
-    }
-
-    private static java.net.ConnectException connectFailure(int errno) {
-        java.net.ConnectException failure = new java.net.ConnectException("connect failed");
-        failure.initCause(new android.system.ErrnoException("connect", errno));
-        return failure;
     }
 
     private static Intent awaitRecoveryLaunch(Game game, int delaySeconds) throws InterruptedException {
@@ -2354,7 +2343,7 @@ public class GameRecoveryTest {
             long started = SystemClock.elapsedRealtime();
             game.setIntent(new Intent().putExtra("RecoveryAttempts", attempts).putExtra("RecoveryStarted", started)
                     .putExtra(Game.EXTRA_APP_ID, 73).putExtra(Game.EXTRA_PC_UUID, "pc-88"));
-            ReflectionHelpers.setField(game, "recoveryPolicy", new StreamRecoveryPolicy(attempts, started));
+            setBudget(game, attempts, started);
             PreferenceConfiguration config = ReflectionHelpers.getField(game, "prefConfig");
             config.autoReconnect = false;
             RecoveryBridge.connectivityTests = 0;

@@ -1,71 +1,86 @@
 package com.limelight.nvstream;
 
 import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertNull;
-import static org.junit.Assert.assertTrue;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.LongSupplier;
 
 import org.junit.Test;
 
 import com.limelight.nvstream.jni.MoonBridge;
+import com.limelight.nvstream.jni.NightjarPolicyJni;
 
-/** Client roaming: which default-network callbacks reach the engine as a network change. */
+/** Client roaming: verifies {@code nightjar_policy::roaming::RoamingTracker} across JNI. */
 public class RoamingNetworkTrackerTest {
-    // Stand-ins for android.net.Network: the tracker only compares them.
-    private static final Object WIFI = "wifi";
-    private static final Object OTHER_WIFI = "other wifi";
-    private static final Object CELLULAR = "cellular";
+    private static final long WIFI = 1L;
+    private static final long OTHER_WIFI = 2L;
+    private static final long CELLULAR = 3L;
 
-    private final List<Boolean> reports = new ArrayList<>();
-
-    private RoamingNetworkTracker tracker(Object streamNetwork) {
-        return new RoamingNetworkTracker(streamNetwork, metered -> {
-            reports.add(metered);
-            return MoonBridge.NETWORK_CARRIES_ON;
-        });
+    interface Reporter {
+        int networkChanged(boolean metered);
+        default void streamNetworkLost() {}
+        default void streamNetworkReturned(int change, boolean metered) {}
     }
 
-    @Test public void theStreamsOwnNetworkAndItsCapabilityUpdatesAreNoChange() {
-        RoamingNetworkTracker tracker = tracker(WIFI);
-        // Registering delivers the current default network; then its signal or bandwidth changes.
-        tracker.capabilities(WIFI, true);
-        tracker.capabilities(WIFI, true);
-        tracker.capabilities(WIFI, false);
-        assertEquals(new ArrayList<Boolean>(), reports);
+    private static final class JniTracker implements AutoCloseable {
+        private final long handle;
+        private final Reporter reporter;
+        private final LongSupplier clock;
+
+        JniTracker(Long streamNetwork, Reporter reporter) {
+            this(streamNetwork, reporter, () -> System.nanoTime() / 1_000_000L);
+        }
+
+        JniTracker(Long streamNetwork, Reporter reporter, LongSupplier clock) {
+            this.handle = NightjarPolicyJni.roamingCreate(streamNetwork != null, streamNetwork != null ? streamNetwork : 0L);
+            this.reporter = reporter;
+            this.clock = clock;
+        }
+
+        void capabilities(long network, boolean notMetered) {
+            int step = NightjarPolicyJni.roamingOnCapabilities(handle, network, notMetered);
+            if (step == NightjarPolicyJni.ROAMING_CAP_IGNORE) return;
+            boolean metered = step == NightjarPolicyJni.ROAMING_CAP_ASK_METERED
+                    || step == NightjarPolicyJni.ROAMING_CAP_RETURNED_ASK_METERED;
+            boolean returned = step == NightjarPolicyJni.ROAMING_CAP_RETURNED_ASK_NOT_METERED
+                    || step == NightjarPolicyJni.ROAMING_CAP_RETURNED_ASK_METERED;
+            int change = reporter.networkChanged(metered);
+            if (NightjarPolicyJni.roamingRecordChange(handle, network, metered, returned, change, clock.getAsLong())) {
+                reporter.streamNetworkReturned(change, metered);
+            }
+        }
+
+        void addresses(long network, String addresses) {
+            addresses(network, addresses, false);
+        }
+
+        void addresses(long network, String addresses, boolean nat64) {
+            int step = NightjarPolicyJni.roamingOnAddresses(handle, network, addresses, nat64, clock.getAsLong());
+            if (step == NightjarPolicyJni.ROAMING_ADDR_IGNORE) return;
+            boolean metered = step == NightjarPolicyJni.ROAMING_ADDR_ASK_METERED;
+            int change = reporter.networkChanged(metered);
+            if (NightjarPolicyJni.roamingRecordAddressChange(handle, change)) {
+                reporter.streamNetworkReturned(change, metered);
+            }
+        }
+
+        void lost(long network) {
+            if (NightjarPolicyJni.roamingOnLost(handle, network)) {
+                reporter.streamNetworkLost();
+            }
+        }
+
+        void stop() {
+            NightjarPolicyJni.roamingStop(handle);
+        }
+
+        @Override public void close() {
+            NightjarPolicyJni.roamingDestroy(handle);
+        }
     }
 
-    @Test public void aNewDefaultNetworkIsReportedOnceWithWhetherItIsMetered() {
-        RoamingNetworkTracker tracker = tracker(WIFI);
-        tracker.capabilities(CELLULAR, false);
-        tracker.capabilities(CELLULAR, false);
-        tracker.capabilities(OTHER_WIFI, true);
-        assertEquals(java.util.Arrays.asList(true, false), reports);
-    }
-
-    @Test public void theSameNetworkComingBackAfterItWasLostIsAChange() {
-        RoamingNetworkTracker tracker = tracker(WIFI);
-        tracker.lost(WIFI);
-        tracker.capabilities(WIFI, true);
-        tracker.capabilities(WIFI, true);
-        assertEquals(java.util.Arrays.asList(false), reports);
-        // Losing a network that is not the current one changes nothing.
-        tracker.lost(CELLULAR);
-        tracker.capabilities(WIFI, true);
-        assertEquals(java.util.Arrays.asList(false), reports);
-    }
-
-    @Test public void withoutTheStartNetworkTheFirstOneSeenIsTheBaseline() {
-        RoamingNetworkTracker tracker = tracker(null);
-        tracker.capabilities(WIFI, true);
-        assertEquals(new ArrayList<Boolean>(), reports);
-        tracker.capabilities(CELLULAR, false);
-        assertEquals(java.util.Arrays.asList(true), reports);
-    }
-
-    /** Records the loss and return reports, answering networkChanged with {@code answer}. */
-    private static class Events implements RoamingNetworkTracker.Reporter {
+    private static class Events implements Reporter {
         final List<String> seen = new ArrayList<>();
         int answer = MoonBridge.NETWORK_CARRIES_ON;
 
@@ -79,145 +94,181 @@ public class RoamingNetworkTrackerTest {
         }
     }
 
-    // The sweep's Wi-Fi blip: network 108 lost, network 109 back (a new object), the engine's
-    // answer passed on as it is: here the connection carries on (same address, or no route yet).
-    @Test public void aLostNetworkComingBackIsAReturnWithTheEnginesAnswer() {
-        Events events = new Events();
-        RoamingNetworkTracker tracker = new RoamingNetworkTracker(WIFI, events);
-        tracker.lost(WIFI);
-        tracker.lost(WIFI);
-        tracker.capabilities(OTHER_WIFI, true);
-        // Validation later updates the same network's capabilities: no second return.
-        tracker.capabilities(OTHER_WIFI, true);
-        assertEquals(java.util.Arrays.asList("lost", "changed", "returned " + MoonBridge.NETWORK_CARRIES_ON), events.seen);
-
-        events.seen.clear();
-        events.answer = MoonBridge.NETWORK_CANNOT_CONTINUE;
-        tracker.lost(OTHER_WIFI);
-        tracker.capabilities(CELLULAR, false);
-        assertEquals(java.util.Arrays.asList("lost", "changed metered",
-                "returned " + MoonBridge.NETWORK_CANNOT_CONTINUE + " metered"), events.seen);
+    @Test public void theStreamsOwnNetworkAndItsCapabilityUpdatesAreNoChange() {
+        List<Boolean> reports = new ArrayList<>();
+        try (JniTracker tracker = new JniTracker(WIFI, m -> { reports.add(m); return MoonBridge.NETWORK_CARRIES_ON; })) {
+            tracker.capabilities(WIFI, true);
+            tracker.capabilities(WIFI, true);
+            tracker.capabilities(WIFI, false);
+            assertEquals(new ArrayList<Boolean>(), reports);
+        }
     }
 
-    // The sweep's Retroid trace: Wi-Fi back with IPv6 only (no route toward the PC, carries on),
-    // DHCP's IPv4 address later. Each address change asks again, and the answer that the
-    // connection cannot carry on over the new address is the return, so the stream reconnects
-    // at once instead of after its timeout.
+    @Test public void aNewDefaultNetworkIsReportedOnceWithWhetherItIsMetered() {
+        List<Boolean> reports = new ArrayList<>();
+        try (JniTracker tracker = new JniTracker(WIFI, m -> { reports.add(m); return MoonBridge.NETWORK_CARRIES_ON; })) {
+            tracker.capabilities(CELLULAR, false);
+            tracker.capabilities(CELLULAR, false);
+            tracker.capabilities(OTHER_WIFI, true);
+            assertEquals(java.util.Arrays.asList(true, false), reports);
+        }
+    }
+
+    @Test public void theSameNetworkComingBackAfterItWasLostIsAChange() {
+        List<Boolean> reports = new ArrayList<>();
+        try (JniTracker tracker = new JniTracker(WIFI, m -> { reports.add(m); return MoonBridge.NETWORK_CARRIES_ON; })) {
+            tracker.lost(WIFI);
+            tracker.capabilities(WIFI, true);
+            tracker.capabilities(WIFI, true);
+            assertEquals(java.util.Arrays.asList(false), reports);
+            tracker.lost(CELLULAR);
+            tracker.capabilities(WIFI, true);
+            assertEquals(java.util.Arrays.asList(false), reports);
+        }
+    }
+
+    @Test public void withoutTheStartNetworkTheFirstOneSeenIsTheBaseline() {
+        List<Boolean> reports = new ArrayList<>();
+        try (JniTracker tracker = new JniTracker(null, m -> { reports.add(m); return MoonBridge.NETWORK_CARRIES_ON; })) {
+            tracker.capabilities(WIFI, true);
+            assertEquals(new ArrayList<Boolean>(), reports);
+            tracker.capabilities(CELLULAR, false);
+            assertEquals(java.util.Arrays.asList(true), reports);
+        }
+    }
+
+    @Test public void aLostNetworkComingBackIsAReturnWithTheEnginesAnswer() {
+        Events events = new Events();
+        try (JniTracker tracker = new JniTracker(WIFI, events)) {
+            tracker.lost(WIFI);
+            tracker.lost(WIFI);
+            tracker.capabilities(OTHER_WIFI, true);
+            tracker.capabilities(OTHER_WIFI, true);
+            assertEquals(java.util.Arrays.asList("lost", "changed", "returned " + MoonBridge.NETWORK_CARRIES_ON), events.seen);
+
+            events.seen.clear();
+            events.answer = MoonBridge.NETWORK_CANNOT_CONTINUE;
+            tracker.lost(OTHER_WIFI);
+            tracker.capabilities(CELLULAR, false);
+            assertEquals(java.util.Arrays.asList("lost", "changed metered",
+                    "returned " + MoonBridge.NETWORK_CANNOT_CONTINUE + " metered"), events.seen);
+        }
+    }
+
     @Test public void aReturnWithoutARouteYetIsAskedAgainAsItsAddressesArrive() {
         Events events = new Events();
         long[] now = {1000};
-        RoamingNetworkTracker tracker = new RoamingNetworkTracker(WIFI, events, () -> now[0]);
-        tracker.lost(WIFI);
-        tracker.capabilities(OTHER_WIFI, true);
-        tracker.addresses(OTHER_WIFI, "fe80::1");
-        // The same addresses again (a DNS update), or another network's: no question.
-        tracker.addresses(OTHER_WIFI, "fe80::1");
-        tracker.addresses(CELLULAR, "10.0.0.5");
-        now[0] += 7000;
-        events.answer = MoonBridge.NETWORK_CANNOT_CONTINUE;
-        tracker.addresses(OTHER_WIFI, "fe80::1 192.168.1.21");
-        // Reported once: later changes ask nothing.
-        tracker.addresses(OTHER_WIFI, "fe80::1 192.168.1.21 2001:db8::21");
-        assertEquals(java.util.Arrays.asList("lost", "changed", "returned " + MoonBridge.NETWORK_CARRIES_ON,
-                "changed", "changed", "returned " + MoonBridge.NETWORK_CANNOT_CONTINUE), events.seen);
+        try (JniTracker tracker = new JniTracker(WIFI, events, () -> now[0])) {
+            tracker.lost(WIFI);
+            tracker.capabilities(OTHER_WIFI, true);
+            tracker.addresses(OTHER_WIFI, "fe80::1");
+            tracker.addresses(OTHER_WIFI, "fe80::1");
+            tracker.addresses(CELLULAR, "10.0.0.5");
+            now[0] += 7000;
+            events.answer = MoonBridge.NETWORK_CANNOT_CONTINUE;
+            tracker.addresses(OTHER_WIFI, "fe80::1 192.168.1.21");
+            tracker.addresses(OTHER_WIFI, "fe80::1 192.168.1.21 2001:db8::21");
+            assertEquals(java.util.Arrays.asList("lost", "changed", "returned " + MoonBridge.NETWORK_CARRIES_ON,
+                    "changed", "changed", "returned " + MoonBridge.NETWORK_CANNOT_CONTINUE), events.seen);
+        }
     }
 
     @Test public void aReturnIsAskedAgainOnlyUntilTheConnectionsOwnTimeout() {
         Events events = new Events();
         long[] now = {1000};
-        RoamingNetworkTracker tracker = new RoamingNetworkTracker(WIFI, events, () -> now[0]);
-        tracker.lost(WIFI);
-        tracker.capabilities(OTHER_WIFI, false);
-        events.seen.clear();
-        // It turned metered meanwhile: the question says so.
-        tracker.capabilities(OTHER_WIFI, true);
-        tracker.capabilities(OTHER_WIFI, false);
-        tracker.addresses(OTHER_WIFI, "fe80::1");
-        assertEquals(java.util.Arrays.asList("changed metered"), events.seen);
-        now[0] += RoamingNetworkTracker.RECHECK_MS + 1;
-        events.answer = MoonBridge.NETWORK_CANNOT_CONTINUE;
-        tracker.addresses(OTHER_WIFI, "fe80::1 192.168.1.21");
-        assertEquals(java.util.Arrays.asList("changed metered"), events.seen);
+        try (JniTracker tracker = new JniTracker(WIFI, events, () -> now[0])) {
+            tracker.lost(WIFI);
+            tracker.capabilities(OTHER_WIFI, false);
+            events.seen.clear();
+            tracker.capabilities(OTHER_WIFI, true);
+            tracker.capabilities(OTHER_WIFI, false);
+            tracker.addresses(OTHER_WIFI, "fe80::1");
+            assertEquals(java.util.Arrays.asList("changed metered"), events.seen);
+            now[0] += NightjarPolicyJni.recoveryPeerTimeoutMs() + 1;
+            events.answer = MoonBridge.NETWORK_CANNOT_CONTINUE;
+            tracker.addresses(OTHER_WIFI, "fe80::1 192.168.1.21");
+            assertEquals(java.util.Arrays.asList("changed metered"), events.seen);
+        }
     }
 
     @Test public void onlyAReturnTheConnectionCarriedOnOverIsAskedAgain() {
         Events events = new Events();
-        RoamingNetworkTracker tracker = new RoamingNetworkTracker(WIFI, events, () -> 0);
-        // The stream's own network, never lost: its addresses are no question.
-        tracker.addresses(WIFI, "192.168.1.20");
-        // A return that roamed, or cannot carry on, is answered for good.
-        events.answer = MoonBridge.NETWORK_ROAMED;
-        tracker.lost(WIFI);
-        tracker.capabilities(OTHER_WIFI, true);
-        events.seen.clear();
-        tracker.addresses(OTHER_WIFI, "192.168.1.21");
-        assertEquals(new ArrayList<String>(), events.seen);
-        events.answer = MoonBridge.NETWORK_CANNOT_CONTINUE;
-        tracker.lost(OTHER_WIFI);
-        tracker.capabilities(CELLULAR, true);
-        events.seen.clear();
-        tracker.addresses(CELLULAR, "10.0.0.5");
-        assertEquals(new ArrayList<String>(), events.seen);
-        // Lost again before its address came, or the stream ended: nothing asked.
-        events.answer = MoonBridge.NETWORK_CARRIES_ON;
-        tracker.lost(CELLULAR);
-        tracker.capabilities(WIFI, true);
-        tracker.lost(WIFI);
-        events.seen.clear();
-        tracker.addresses(WIFI, "192.168.1.22");
-        tracker.capabilities(WIFI, true);
-        tracker.stop();
-        tracker.addresses(WIFI, "192.168.1.23");
-        assertEquals(java.util.Arrays.asList("changed", "returned " + MoonBridge.NETWORK_CARRIES_ON), events.seen);
+        try (JniTracker tracker = new JniTracker(WIFI, events, () -> 0)) {
+            tracker.addresses(WIFI, "192.168.1.20");
+            events.answer = MoonBridge.NETWORK_ROAMED;
+            tracker.lost(WIFI);
+            tracker.capabilities(OTHER_WIFI, true);
+            events.seen.clear();
+            tracker.addresses(OTHER_WIFI, "192.168.1.21");
+            assertEquals(new ArrayList<String>(), events.seen);
+            events.answer = MoonBridge.NETWORK_CANNOT_CONTINUE;
+            tracker.lost(OTHER_WIFI);
+            tracker.capabilities(CELLULAR, true);
+            events.seen.clear();
+            tracker.addresses(CELLULAR, "10.0.0.5");
+            assertEquals(new ArrayList<String>(), events.seen);
+            events.answer = MoonBridge.NETWORK_CARRIES_ON;
+            tracker.lost(CELLULAR);
+            tracker.capabilities(WIFI, true);
+            tracker.lost(WIFI);
+            events.seen.clear();
+            tracker.addresses(WIFI, "192.168.1.22");
+            tracker.capabilities(WIFI, true);
+            tracker.stop();
+            tracker.addresses(WIFI, "192.168.1.23");
+            assertEquals(java.util.Arrays.asList("changed", "returned " + MoonBridge.NETWORK_CARRIES_ON), events.seen);
+        }
     }
 
-    // A NAT64 prefix found after the addresses is news too: the engine is asked again.
     @Test public void aNat64PrefixFoundAfterTheAddressesAsksAgain() {
         Events events = new Events();
-        RoamingNetworkTracker tracker = new RoamingNetworkTracker(WIFI, events, () -> 0);
-        tracker.lost(WIFI);
-        tracker.capabilities(OTHER_WIFI, true);
-        events.seen.clear();
-        tracker.addresses(OTHER_WIFI, "fe80::1", false);
-        tracker.addresses(OTHER_WIFI, "fe80::1", false);
-        tracker.addresses(OTHER_WIFI, "fe80::1", true);
-        assertEquals(java.util.Arrays.asList("changed", "changed"), events.seen);
+        try (JniTracker tracker = new JniTracker(WIFI, events, () -> 0)) {
+            tracker.lost(WIFI);
+            tracker.capabilities(OTHER_WIFI, true);
+            events.seen.clear();
+            tracker.addresses(OTHER_WIFI, "fe80::1", false);
+            tracker.addresses(OTHER_WIFI, "fe80::1", false);
+            tracker.addresses(OTHER_WIFI, "fe80::1", true);
+            assertEquals(java.util.Arrays.asList("changed", "changed"), events.seen);
+        }
     }
 
-    // The engine's "carries on" stands on other addresses.
     @Test public void anEngineThatTellsKeepsItsOwnAnswer() {
         Events events = new Events();
-        RoamingNetworkTracker tracker = new RoamingNetworkTracker(WIFI, events, () -> 0);
-        tracker.addresses(WIFI, "192.168.1.20");
-        tracker.lost(WIFI);
-        tracker.capabilities(CELLULAR, false);
-        tracker.addresses(CELLULAR, "10.0.0.5");
-        assertEquals(java.util.Arrays.asList("lost", "changed metered",
-                "returned " + MoonBridge.NETWORK_CARRIES_ON + " metered", "changed metered"), events.seen);
+        try (JniTracker tracker = new JniTracker(WIFI, events, () -> 0)) {
+            tracker.addresses(WIFI, "192.168.1.20");
+            tracker.lost(WIFI);
+            tracker.capabilities(CELLULAR, false);
+            tracker.addresses(CELLULAR, "10.0.0.5");
+            assertEquals(java.util.Arrays.asList("lost", "changed metered",
+                    "returned " + MoonBridge.NETWORK_CARRIES_ON + " metered", "changed metered"), events.seen);
+        }
     }
 
     @Test public void aNewNetworkWhileTheStreamsOwnStaysIsNoReturn() {
         Events events = new Events();
-        RoamingNetworkTracker tracker = new RoamingNetworkTracker(WIFI, events);
-        tracker.capabilities(OTHER_WIFI, true);
-        // Losing a network that is not the stream's is no loss either.
-        tracker.lost(WIFI);
-        assertEquals(java.util.Arrays.asList("changed"), events.seen);
+        try (JniTracker tracker = new JniTracker(WIFI, events)) {
+            tracker.capabilities(OTHER_WIFI, true);
+            tracker.lost(WIFI);
+            assertEquals(java.util.Arrays.asList("changed"), events.seen);
+        }
     }
 
     @Test public void nothingIsReportedAfterTheStreamEnds() {
-        RoamingNetworkTracker tracker = tracker(WIFI);
-        tracker.stop();
-        tracker.capabilities(CELLULAR, false);
-        tracker.lost(WIFI);
-        tracker.capabilities(WIFI, true);
-        assertEquals(new ArrayList<Boolean>(), reports);
-
+        List<Boolean> reports = new ArrayList<>();
+        try (JniTracker tracker = new JniTracker(WIFI, m -> { reports.add(m); return MoonBridge.NETWORK_CARRIES_ON; })) {
+            tracker.stop();
+            tracker.capabilities(CELLULAR, false);
+            tracker.lost(WIFI);
+            tracker.capabilities(WIFI, true);
+            assertEquals(new ArrayList<Boolean>(), reports);
+        }
         Events events = new Events();
-        RoamingNetworkTracker ended = new RoamingNetworkTracker(WIFI, events);
-        ended.stop();
-        ended.lost(WIFI);
-        ended.capabilities(OTHER_WIFI, true);
-        assertEquals(new ArrayList<String>(), events.seen);
+        try (JniTracker ended = new JniTracker(WIFI, events)) {
+            ended.stop();
+            ended.lost(WIFI);
+            ended.capabilities(OTHER_WIFI, true);
+            assertEquals(new ArrayList<String>(), events.seen);
+        }
     }
 }

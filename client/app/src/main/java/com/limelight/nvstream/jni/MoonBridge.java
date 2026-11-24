@@ -1050,14 +1050,9 @@ public class MoonBridge {
         return RustBridge.isAvailable() ? RustBridge.getHostAddress() : null;
     }
 
-    /** nightjar_core::host_loss, for both engines: one round of connection attempts (about 750 ms), as its code. */
-    public static int hostLossRound(String host, int port, String gateway) {
-        return RustBridge.isAvailable() ? RustBridge.hostLossRound(host, port, gateway) : 3;
-    }
-
-    /** nightjar_core::host_loss::after_goodbye: one round's verdict after the host's goodbye, as its code. */
-    public static int hostLossAfterGoodbye(boolean onLink, int round, long waitedMs) {
-        return RustBridge.isAvailable() ? RustBridge.hostLossAfterGoodbye(onLink, round, waitedMs) : 2;
+    /** nightjar_core::host_loss::watch_goodbye: probes after the host's goodbye. */
+    public static int hostLossWatchGoodbye(long handle, String host, int port, NightjarJni.HostLossCallback callback) {
+        return RustBridge.isAvailable() ? RustBridge.hostLossWatchGoodbye(handle, host, port, callback) : 2;
     }
 
     public static boolean hostLossAvailable() {

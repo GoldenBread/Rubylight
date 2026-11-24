@@ -42,27 +42,34 @@ pub fn offers_quit_on_leave(can_launch: bool, control: Control, role: Role) -> b
     can_launch && control == Control::None && role == Role::Stream
 }
 
-// moonlight-common-c's ML_ERROR_* termination codes.
+// moonlight-common-c's ML_ERROR_* termination codes and Nightjar's CLIENT_ERROR_DECODER.
 const GRACEFUL_TERMINATION: i32 = 0;
 const NO_VIDEO_TRAFFIC: i32 = -100;
 const NO_VIDEO_FRAME: i32 = -101;
 const UNEXPECTED_EARLY_TERMINATION: i32 = -102;
 const PROTECTED_CONTENT: i32 = -103;
 const FRAME_CONVERSION: i32 = -104;
+pub const CLIENT_ERROR_DECODER: i32 = -107;
 
 /// Whether leaving a stream also quits its game. Only a leave the player asks for can quit; a lost
 /// connection, an error or the host ending the stream never does, so the game is still there to
-/// resume.
-pub fn quits_on_leave(quit_on_leave_chosen: bool, role: Role, connected: bool) -> bool {
-    quit_on_leave_chosen && connected && role == Role::Stream
+/// resume. Nor does leaving Dual screen mode's second screen: the game is still on the first.
+pub fn quits_on_leave(
+    quit_on_leave_chosen: bool,
+    role: Role,
+    connected: bool,
+    second_screen: bool,
+) -> bool {
+    quit_on_leave_chosen && connected && role == Role::Stream && !second_screen
 }
 
 /// Whether a stream that ended with `error_code` stops on a dialog the player has to read. That is
 /// only an error that comes with advice: the port test says the network blocks the stream, no
-/// video ever arrived, no complete frame, or the PC could not start or encode the stream. The host
-/// ending the stream or going away, a lost connection, a timeout and a reason only the PC knows
-/// close the stream with a message instead. A network grace period that may have run out and used
-/// up automatic reconnecting also keep the dialog, for its advice and its Reconnect button.
+/// video ever arrived, no complete frame, the PC could not start or encode the stream, or this
+/// device's video decoder failed. The host ending the stream or going away, a lost connection, a
+/// timeout and a reason only the PC knows close the stream with a message instead. A network grace
+/// period that may have run out and used up automatic reconnecting also keep the dialog, for its
+/// advice and its Reconnect button.
 pub fn termination_needs_action(
     error_code: i32,
     port_test_blocked: bool,
@@ -82,7 +89,25 @@ pub fn termination_needs_action(
                 | UNEXPECTED_EARLY_TERMINATION
                 | PROTECTED_CONTENT
                 | FRAME_CONVERSION
+                | CLIENT_ERROR_DECODER
         )
+}
+
+/// Whether the PC itself ended the stream with `error_code`, so it may say why
+/// (`RustHostLastFailure`): moonlight-common-c's codes for the PC's termination reasons, and the
+/// HRESULTs it passes through unchanged (`0x80004005`, the generic failure). Lost connections,
+/// timeouts, socket errors and this device's own failures are not.
+pub fn host_ended_stream(error_code: i32) -> bool {
+    matches!(
+        error_code,
+        UNEXPECTED_EARLY_TERMINATION | PROTECTED_CONTENT | FRAME_CONVERSION
+    ) || error_code < -0xFFFF
+}
+
+/// Whether a start failed in the RTSP handshake, where a PC that refuses the stream keeps why for
+/// the device (`RustHostLastFailure`). Both engines name the stage `"RTSP handshake"`.
+pub fn refused_in_handshake(stage: Option<&str>) -> bool {
+    stage == Some("RTSP handshake")
 }
 
 /// How this device offers Input-only on one PC.
@@ -226,13 +251,27 @@ impl Subject for Traced {
                 Ok(offers_quit_on_leave(flag(args, 0)?, control, role(a.text(2)?)?).into())
             }
             (Traced::Exit, "quits_on_leave") => {
-                let a = Args::new(args, 3)?;
-                Ok(quits_on_leave(flag(args, 0)?, role(a.text(1)?)?, flag(args, 2)?).into())
+                let a = Args::new(args, 4)?;
+                Ok(quits_on_leave(
+                    flag(args, 0)?,
+                    role(a.text(1)?)?,
+                    flag(args, 2)?,
+                    flag(args, 3)?,
+                )
+                .into())
             }
             (Traced::Exit, "termination_needs_action") => {
                 let a = Args::new(args, 4)?;
                 let (blocked, grace, exhausted) = (flag(args, 1)?, flag(args, 2)?, flag(args, 3)?);
                 Ok(termination_needs_action(a.int(0)?, blocked, grace, exhausted).into())
+            }
+            (Traced::Exit, "host_ended_stream") => {
+                let a = Args::new(args, 1)?;
+                Ok(host_ended_stream(a.int(0)?).into())
+            }
+            (Traced::Exit, "refused_in_handshake") => {
+                let a = Args::new(args, 1)?;
+                Ok(refused_in_handshake(a.text(0)?).into())
             }
             (Traced::InputOnly, "mode") => {
                 Args::new(args, 3)?;
@@ -270,5 +309,40 @@ impl Subject for Traced {
             }
             _ => Err(format!("unknown method {method}")),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn second_screen_never_quits_on_leave() {
+        assert!(quits_on_leave(true, Role::Stream, true, false));
+        assert!(!quits_on_leave(true, Role::Stream, true, true));
+    }
+
+    #[test]
+    fn decoder_failure_keeps_the_dialog() {
+        assert!(termination_needs_action(
+            CLIENT_ERROR_DECODER,
+            false,
+            false,
+            false
+        ));
+    }
+
+    #[test]
+    fn host_ended_stream_and_handshake_refusal_match_exit_policy() {
+        assert!(host_ended_stream(UNEXPECTED_EARLY_TERMINATION));
+        assert!(host_ended_stream(PROTECTED_CONTENT));
+        assert!(host_ended_stream(FRAME_CONVERSION));
+        assert!(host_ended_stream(0x8000_4005_u32 as i32));
+        assert!(!host_ended_stream(0));
+        assert!(!host_ended_stream(CLIENT_ERROR_DECODER));
+        assert!(!host_ended_stream(-1));
+        assert!(refused_in_handshake(Some("RTSP handshake")));
+        assert!(!refused_in_handshake(Some("control stream establishment")));
+        assert!(!refused_in_handshake(None));
     }
 }

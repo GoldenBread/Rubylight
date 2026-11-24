@@ -4,7 +4,8 @@
   "java": "com.limelight.LaunchTrace",
   "new": null,
   "calls": [
-    {"call": "quits_on_leave", "args": [true, "stream", true], "expect": true},
-    {"call": "quits_on_leave", "args": [false, "stream", true], "expect": false}
+    {"call": "quits_on_leave", "args": [true, "stream", true, false], "expect": true},
+    {"call": "quits_on_leave", "args": [false, "stream", true, false], "expect": false},
+    {"call": "quits_on_leave", "args": [true, "stream", true, true], "expect": false}
   ]
 }

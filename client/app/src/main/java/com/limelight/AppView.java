@@ -21,6 +21,7 @@ import com.limelight.nvstream.http.HostCapabilities;
 import com.limelight.nvstream.http.NvApp;
 import com.limelight.nvstream.http.NvHTTP;
 import com.limelight.nvstream.http.PairingManager;
+import com.limelight.nvstream.jni.NightjarPolicyJni;
 import com.limelight.preferences.AppQuitOnLeave;
 import com.limelight.preferences.AppStreamSettings;
 import com.limelight.preferences.HostStreamSettings;
@@ -1090,7 +1091,7 @@ public class AppView extends NightjarActivity implements AdapterFragmentCallback
      */
     private void addSmallStreamInputOnlyAction(ActionSheet sheet, AppObject app) {
         if (app.app.getControl() != NvApp.Control.NONE ||
-                !InputOnlyPolicy.keepsRunningGame(hostRunningGame, app.isRunning)) {
+                !NightjarPolicyJni.inputOnlyKeepsRunningGame(hostRunningGame, app.isRunning)) {
             return;
         }
         boolean hostListsInputOnly = false;
@@ -1100,15 +1101,21 @@ public class AppView extends NightjarActivity implements AdapterFragmentCallback
                 break;
             }
         }
-        if (InputOnlyPolicy.mode(PreferenceConfiguration.readPreferences(this).inputOnlyAnyHost, computer.caps,
-                hostListsInputOnly) != InputOnlyPolicy.Mode.SMALL_STREAM) {
+        if (NightjarPolicyJni.inputOnlyMode(PreferenceConfiguration.readPreferences(this).inputOnlyAnyHost,
+                computer.caps.has(HostCapabilities.Feature.REMOTE_SESSION_TILES),
+                hostListsInputOnly) != NightjarPolicyJni.INPUT_ONLY_MODE_SMALL_STREAM) {
             return;
         }
-        int blocker = InputOnlyPolicy.smallStreamBlocker(computer);
+        int blockerCode = NightjarPolicyJni.inputOnlySmallStreamBlocker(
+                computer.pairState == PairingManager.PairState.PAIRED, computer.permission);
+        int blocker = blockerCode == NightjarPolicyJni.INPUT_ONLY_BLOCKER_PAIR ? HostCapabilities.Reason.PAIR.text
+                : blockerCode == NightjarPolicyJni.INPUT_ONLY_BLOCKER_VIEW_PERMISSION ? HostCapabilities.Reason.VIEW_PERMISSION.text
+                : blockerCode == NightjarPolicyJni.INPUT_ONLY_BLOCKER_INPUT_PERMISSION ? R.string.input_only_reason_input_permission : 0;
         com.google.android.material.button.MaterialButton action = sheet.addAction(R.drawable.ic_input_only,
                 getString(R.string.input_only_start), blocker != 0 ? getString(blocker) :
-                        getString(R.string.input_only_small_stream_note, InputOnlyPolicy.estimatedKbps() / 1000f,
-                                InputOnlyPolicy.estimatedMegabytesPerHour()));
+                        getString(R.string.input_only_small_stream_note,
+                                NightjarPolicyJni.inputOnlyEstimatedKbps() / 1000f,
+                                NightjarPolicyJni.inputOnlyEstimatedMegabytesPerHour()));
         action.setEnabled(blocker == 0);
         action.setOnClickListener(v -> {
             sheet.dismiss();

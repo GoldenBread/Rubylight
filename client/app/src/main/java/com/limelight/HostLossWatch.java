@@ -5,61 +5,58 @@ import android.net.LinkProperties;
 import android.net.Network;
 import android.net.NetworkCapabilities;
 import android.net.RouteInfo;
-import android.os.SystemClock;
 
+import com.limelight.nvstream.jni.HandleReaper;
 import com.limelight.nvstream.jni.MoonBridge;
+import com.limelight.nvstream.jni.NightjarJni;
 
 import java.net.Inet4Address;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
+import java.util.function.BooleanSupplier;
+import java.util.function.Function;
 
 /**
- * After this session's host said goodbye: tells a PC that shut down or stopped its host (its server
- * closes) from a host that only ended the stream, so the first ends with a message at once. Runs
- * over both engines; nightjar_core::host_loss decides, from rounds of connection attempts, and says
- * why a silence without a goodbye is never decided here. A PC off this device's link is left to the
- * old behaviour.
+ * After this session's host said goodbye: delegates probing to {@code nightjar_core::host_loss::watch_goodbye}
+ * via {@link NightjarJni}, supplying only Android {@link ConnectivityManager} on-link gateway lookups and
+ * DNS-free IP literal parsing.
  */
 final class HostLossWatch {
-    /** nightjar_core::host_loss::GOODBYE_ROUND_GAP. */
-    static final long ROUND_GAP_MS = 250;
-    /** nightjar_core::host_loss::Goodbye's codes. */
     static final int GOODBYE_WAIT = 0;
     static final int GOODBYE_GONE = 1;
     static final int GOODBYE_UNKNOWN = 2;
 
-    /** The engine and network, replaced in tests. */
-    interface Probes {
-        /** nightjar_core::host_loss: one round of connection attempts, as its code; blocks for about 750 ms. */
-        int round(String address, int port, String gateway);
-        /** nightjar_core::host_loss::after_goodbye: one round's verdict, as its code. */
-        int afterGoodbye(boolean onLink, int round, long waitedMs);
-        /** This session's host's own disconnect ended the connection, not a silence. */
-        boolean saidGoodbye();
-        /** This device's gateway while the PC is on its link, else null. */
-        String gatewayToward(InetAddress host);
-        long now();
-        void sleep(long ms) throws InterruptedException;
+    interface WatchRunner {
+        int run(long watchHandle, String host, int port, NightjarJni.HostLossCallback callback);
     }
 
-    private final Probes probes;
+    private final Function<InetAddress, String> gatewayToward;
+    private final BooleanSupplier saidGoodbye;
+    private final WatchRunner runner;
     private final InetAddress host;
     private final String literal;
     private final int port;
+    private final long watchHandle;
+    private final HandleReaper.Token reaper;
     private volatile boolean stopped;
 
-    /** {@code host}: the address the stream connected to, never looked up again. */
-    HostLossWatch(Probes probes, InetAddress host, int port) {
-        this.probes = probes;
+    HostLossWatch(ConnectivityManager connectivity, InetAddress host, int port) {
+        this(address -> gatewayOn(connectivity, address), MoonBridge::hostSaidGoodbye,
+                NightjarJni::hostLossWatchGoodbye, host, port);
+    }
+
+    HostLossWatch(Function<InetAddress, String> gatewayToward, BooleanSupplier saidGoodbye,
+                  WatchRunner runner, InetAddress host, int port) {
+        this.gatewayToward = gatewayToward;
+        this.saidGoodbye = saidGoodbye;
+        this.runner = runner;
         this.host = host;
         this.literal = literal(host);
         this.port = port;
+        this.watchHandle = NightjarJni.isAvailable() ? NightjarJni.hostLossWatchCreate() : 0;
+        this.reaper = watchHandle > 0 ? HandleReaper.register(this, watchHandle, NightjarJni::hostLossWatchDestroy) : null;
     }
 
-    /**
-     * The engine's address as text, parsed without DNS: null for anything that is no IP literal (a
-     * name would need a lookup, which may give another address or block).
-     */
     static InetAddress parse(String address) {
         if (address == null || address.isEmpty()) return null;
         boolean ipv6 = address.indexOf(':') >= 0;
@@ -75,56 +72,29 @@ final class HostLossWatch {
         }
     }
 
-    /** Never waits: a round under way ends on its own and its answer is dropped. */
     void stop() {
         stopped = true;
+        if (watchHandle > 0) NightjarJni.hostLossWatchStop(watchHandle);
+        if (reaper != null) reaper.close();
     }
 
-    /**
-     * After the connection ended without a reason: GOODBYE_GONE when this session's host said
-     * goodbye and its server closed (the PC shuts down, or its host stopped), and GOODBYE_UNKNOWN for
-     * the old behaviour: a silence, a server that still listens, a PC off this link. On the caller's
-     * thread, which may wait through a host's exit window (about 2 s, 4 s while this device's link is
-     * quiet); stop() ends it early.
-     */
     int afterGoodbye() {
-        if (stopped || !probes.saidGoodbye()) return GOODBYE_UNKNOWN;
-        long started = probes.now();
-        try {
-            while (!stopped) {
-                String gateway = probes.gatewayToward(host);
-                if (gateway == null) {
-                    LimeLog.info("Host check after the goodbye: the PC is not on this device's link");
-                    return GOODBYE_UNKNOWN;
-                }
-                int round = probes.round(literal, port, gateway);
-                if (stopped) break;
-                long waited = probes.now() - started;
-                int verdict = probes.afterGoodbye(true, round, waited);
-                LimeLog.info("Host check after the goodbye, " + waited + " ms in: round " + round + ", verdict " + verdict);
-                if (verdict != GOODBYE_WAIT) {
-                    if (verdict == GOODBYE_GONE) LimeLog.info("The PC is gone: it said goodbye and closed its server");
-                    return verdict;
-                }
-                probes.sleep(ROUND_GAP_MS);
-            }
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
-        return GOODBYE_UNKNOWN;
+        if (stopped || !saidGoodbye.getAsBoolean()) return GOODBYE_UNKNOWN;
+        int verdict = runner.run(watchHandle, literal, port, new NightjarJni.HostLossCallback() {
+            @Override public String gatewayToward() { return gatewayToward.apply(host); }
+            @Override public boolean isStopped() { return stopped; }
+            @Override public void log(String line) { LimeLog.info(line); }
+        });
+        if (verdict == GOODBYE_GONE) LimeLog.info("The PC is gone: it said goodbye and closed its server");
+        return verdict;
     }
 
-    /** The address as text, without a zone: a link-local one then proves nothing, as it should. */
     private static String literal(InetAddress host) {
         String text = host.getHostAddress();
         int zone = text.indexOf('%');
         return zone < 0 ? text : text.substring(0, zone);
     }
 
-    /**
-     * The default gateway when {@code host} is on a link of these routes, else null: a route that
-     * goes through a gateway, an IPv6 or a tunnel's says nothing about this device's own link.
-     */
     static String gatewayToward(Iterable<RouteInfo> routes, InetAddress host) {
         boolean onLink = false;
         InetAddress gateway = null;
@@ -138,39 +108,17 @@ final class HostLossWatch {
         return onLink && gateway != null ? gateway.getHostAddress() : null;
     }
 
-    /** RouteInfo.hasGateway() before Android 10, where it is hidden: no gateway reads as 0.0.0.0 or ::. */
     private static boolean hasGateway(RouteInfo route) {
         InetAddress gateway = route.getGateway();
         return gateway != null && !gateway.isAnyLocalAddress();
     }
 
-    /** The real engine and this device's network. */
-    static final class Live implements Probes {
-        private final ConnectivityManager connectivity;
-
-        Live(ConnectivityManager connectivity) {
-            this.connectivity = connectivity;
-        }
-
-        @Override public int round(String address, int port, String gateway) {
-            return MoonBridge.hostLossRound(address, port, gateway);
-        }
-        @Override public int afterGoodbye(boolean onLink, int round, long waitedMs) {
-            return MoonBridge.hostLossAfterGoodbye(onLink, round, waitedMs);
-        }
-        @Override public boolean saidGoodbye() { return MoonBridge.hostSaidGoodbye(); }
-        @Override public String gatewayToward(InetAddress host) {
-            Network network = connectivity.getActiveNetwork();
-            return network == null ? null : gatewayOn(network, host);
-        }
-
-        private String gatewayOn(Network network, InetAddress host) {
-            NetworkCapabilities capabilities = connectivity.getNetworkCapabilities(network);
-            LinkProperties link = connectivity.getLinkProperties(network);
-            if (capabilities == null || link == null || capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) return null;
-            return HostLossWatch.gatewayToward(link.getRoutes(), host);
-        }
-        @Override public long now() { return SystemClock.elapsedRealtime(); }
-        @Override public void sleep(long ms) throws InterruptedException { Thread.sleep(ms); }
+    private static String gatewayOn(ConnectivityManager connectivity, InetAddress host) {
+        Network network = connectivity.getActiveNetwork();
+        if (network == null) return null;
+        NetworkCapabilities capabilities = connectivity.getNetworkCapabilities(network);
+        LinkProperties link = connectivity.getLinkProperties(network);
+        if (capabilities == null || link == null || capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) return null;
+        return gatewayToward(link.getRoutes(), host);
     }
 }

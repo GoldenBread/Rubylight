@@ -1,7 +1,7 @@
 {
   "source": "GameRecoveryTest.nativeStartupTimeoutQueuesNextRecoveryWithoutAConnectivityProbe",
   "rust": "recovery::StreamRecoveryPolicy",
-  "java": "com.limelight.StreamRecoveryPolicy",
+  "java": "com.limelight.policy.RecoveryPolicyTrace",
   "new": [1, 100],
   "calls": [
     {"call": "transient_startup", "args": ["Control stream establishment", 512, 110], "expect": true},

@@ -1,7 +1,7 @@
 {
   "source": "StreamRecoveryPolicyTest.noReconnectBeforeTheFirstVideo",
   "rust": "recovery::StreamRecoveryPolicy",
-  "java": "com.limelight.StreamRecoveryPolicy",
+  "java": "com.limelight.policy.RecoveryPolicyTrace",
   "new": null,
   "calls": [
     {"call": "recovers_termination", "args": [-100, false], "expect": false},

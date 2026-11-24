@@ -1,7 +1,7 @@
 {
   "source": "GameRecoveryTest.usedUpAutomaticReconnectingKeepsTheDialogWithItsReconnectButton",
   "rust": "recovery::StreamRecoveryPolicy",
-  "java": "com.limelight.StreamRecoveryPolicy",
+  "java": "com.limelight.policy.RecoveryPolicyTrace",
   "new": [5, 100],
   "calls": [
     {"call": "transient_termination", "args": [-1], "expect": true},

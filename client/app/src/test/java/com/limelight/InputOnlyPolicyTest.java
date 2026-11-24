@@ -4,6 +4,7 @@ import com.limelight.nvstream.http.ComputerDetails;
 import com.limelight.nvstream.http.HostCapabilities;
 import com.limelight.nvstream.http.PairingManager;
 import com.limelight.nvstream.http.TestHosts;
+import com.limelight.nvstream.jni.NightjarPolicyJni;
 
 import org.junit.Test;
 
@@ -17,60 +18,69 @@ public class InputOnlyPolicyTest {
         return pc;
     }
 
+    private static int mode(boolean anyHostEnabled, HostCapabilities caps, boolean hostListsInputOnly) {
+        return NightjarPolicyJni.inputOnlyMode(
+                anyHostEnabled, caps.has(HostCapabilities.Feature.REMOTE_SESSION_TILES), hostListsInputOnly);
+    }
+
+    private static int blocker(ComputerDetails pc) {
+        return NightjarPolicyJni.inputOnlySmallStreamBlocker(
+                pc.pairState == PairingManager.PairState.PAIRED, pc.permission);
+    }
+
     @Test public void hostsWithTheirOwnInputOnlyModeKeepIt() {
         for (String host : new String[] {"rubylight-serverinfo.xml", "vibepollo-serverinfo.xml", "butterpollo-serverinfo.xml"}) {
             HostCapabilities caps = TestHosts.fixture(host);
-            assertEquals(host, InputOnlyPolicy.Mode.NATIVE, InputOnlyPolicy.mode(true, caps, false));
-            assertEquals(host, InputOnlyPolicy.Mode.NATIVE, InputOnlyPolicy.mode(false, caps, false));
+            assertEquals(host, NightjarPolicyJni.INPUT_ONLY_MODE_NATIVE, mode(true, caps, false));
+            assertEquals(host, NightjarPolicyJni.INPUT_ONLY_MODE_NATIVE, mode(false, caps, false));
         }
     }
 
     @Test public void aListedInputOnlyAppWinsOnAnyHost() {
-        // Apollo lists its Remote Input app only while its input-only mode is on.
         HostCapabilities apollo = TestHosts.fixture("apollo-input-only-serverinfo.xml");
-        assertEquals(InputOnlyPolicy.Mode.NATIVE, InputOnlyPolicy.mode(true, apollo, true));
-        assertEquals(InputOnlyPolicy.Mode.NATIVE, InputOnlyPolicy.mode(true, HostCapabilities.UNKNOWN, true));
+        assertEquals(NightjarPolicyJni.INPUT_ONLY_MODE_NATIVE, mode(true, apollo, true));
+        assertEquals(NightjarPolicyJni.INPUT_ONLY_MODE_NATIVE, mode(true, HostCapabilities.UNKNOWN, true));
     }
 
     @Test public void hostsWithoutTheModeGetTheSmallStreamOnlyWhenTheSettingIsOn() {
         for (String host : new String[] {"sunshine-serverinfo.xml", "gamestream-serverinfo.xml", "apollo-serverinfo.xml"}) {
             HostCapabilities caps = TestHosts.fixture(host);
-            assertEquals(host, InputOnlyPolicy.Mode.SMALL_STREAM, InputOnlyPolicy.mode(true, caps, false));
-            assertEquals(host, InputOnlyPolicy.Mode.OFF, InputOnlyPolicy.mode(false, caps, false));
+            assertEquals(host, NightjarPolicyJni.INPUT_ONLY_MODE_SMALL_STREAM, mode(true, caps, false));
+            assertEquals(host, NightjarPolicyJni.INPUT_ONLY_MODE_OFF, mode(false, caps, false));
         }
-        assertEquals(InputOnlyPolicy.Mode.SMALL_STREAM, InputOnlyPolicy.mode(true, HostCapabilities.UNKNOWN, false));
-        assertEquals(InputOnlyPolicy.Mode.OFF, InputOnlyPolicy.mode(false, HostCapabilities.UNKNOWN, false));
+        assertEquals(NightjarPolicyJni.INPUT_ONLY_MODE_SMALL_STREAM, mode(true, HostCapabilities.UNKNOWN, false));
+        assertEquals(NightjarPolicyJni.INPUT_ONLY_MODE_OFF, mode(false, HostCapabilities.UNKNOWN, false));
     }
 
     @Test public void anUnpairedPcMustPairFirst() {
-        assertEquals(HostCapabilities.Reason.PAIR.text,
-                InputOnlyPolicy.smallStreamBlocker(pc(PairingManager.PairState.NOT_PAIRED, -1)));
-        assertEquals(HostCapabilities.Reason.PAIR.text,
-                InputOnlyPolicy.smallStreamBlocker(pc(null, -1)));
+        assertEquals(NightjarPolicyJni.INPUT_ONLY_BLOCKER_PAIR,
+                blocker(pc(PairingManager.PairState.NOT_PAIRED, -1)));
+        assertEquals(NightjarPolicyJni.INPUT_ONLY_BLOCKER_PAIR,
+                blocker(pc(null, -1)));
     }
 
     @Test public void missingPermissionsSayWhichOne() {
-        assertEquals(HostCapabilities.Reason.VIEW_PERMISSION.text, InputOnlyPolicy.smallStreamBlocker(
+        assertEquals(NightjarPolicyJni.INPUT_ONLY_BLOCKER_VIEW_PERMISSION, blocker(
                 pc(PairingManager.PairState.PAIRED, ComputerDetails.PERMISSION_INPUT | ComputerDetails.PERMISSION_LIST)));
-        assertEquals(R.string.input_only_reason_input_permission, InputOnlyPolicy.smallStreamBlocker(
+        assertEquals(NightjarPolicyJni.INPUT_ONLY_BLOCKER_INPUT_PERMISSION, blocker(
                 pc(PairingManager.PairState.PAIRED, ComputerDetails.PERMISSION_VIEW | ComputerDetails.PERMISSION_LAUNCH)));
-        assertEquals(0, InputOnlyPolicy.smallStreamBlocker(
+        assertEquals(NightjarPolicyJni.INPUT_ONLY_BLOCKER_NONE, blocker(
                 pc(PairingManager.PairState.PAIRED, ComputerDetails.PERMISSION_VIEW | ComputerDetails.PERMISSION_CONTROLLER)));
     }
 
     @Test public void aPairedHostWithoutPermissionsCanStart() {
-        assertEquals(0, InputOnlyPolicy.smallStreamBlocker(pc(PairingManager.PairState.PAIRED, -1)));
+        assertEquals(NightjarPolicyJni.INPUT_ONLY_BLOCKER_NONE, blocker(pc(PairingManager.PairState.PAIRED, -1)));
     }
 
     @Test public void theSmallStreamNeverReplacesARunningGame() {
-        assertTrue(InputOnlyPolicy.keepsRunningGame(false, false));
-        assertTrue(InputOnlyPolicy.keepsRunningGame(true, true));
-        assertFalse(InputOnlyPolicy.keepsRunningGame(true, false));
+        assertTrue(NightjarPolicyJni.inputOnlyKeepsRunningGame(false, false));
+        assertTrue(NightjarPolicyJni.inputOnlyKeepsRunningGame(true, true));
+        assertFalse(NightjarPolicyJni.inputOnlyKeepsRunningGame(true, false));
     }
 
     @Test public void theEstimateCountsErrorCorrectionAndAudio() {
-        assertEquals(696, InputOnlyPolicy.estimatedKbps());
-        assertEquals(313, InputOnlyPolicy.estimatedMegabytesPerHour());
-        assertTrue(InputOnlyPolicy.estimatedKbps() < 1000);
+        assertEquals(696, NightjarPolicyJni.inputOnlyEstimatedKbps());
+        assertEquals(313, NightjarPolicyJni.inputOnlyEstimatedMegabytesPerHour());
+        assertTrue(NightjarPolicyJni.inputOnlyEstimatedKbps() < 1000);
     }
 }

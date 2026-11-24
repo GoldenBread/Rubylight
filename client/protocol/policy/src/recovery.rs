@@ -11,7 +11,15 @@ use crate::trace::{self, Args, Subject};
 pub const MAX_ATTEMPTS: u32 = 5;
 pub const WINDOW_MS: u64 = 60_000;
 pub const STABLE_MS: u64 = 30_000;
+/// The resume after the user's own trip: the first retry's delay, never counted as an attempt.
+pub const TRIP_RESUME_DELAY_MS: u64 = 1_000;
 const DELAYS_MS: [u64; MAX_ATTEMPTS as usize] = [1000, 2000, 4000, 8000, 12000];
+
+/// How an automatic recovery that gives up ends, after why its last attempt failed.
+pub const RECOVERY_STOPPED: &str =
+    "Automatic reconnecting stopped. Your game was not quit; check the connection and try again.";
+/// Why a recovery gave up when no attempt got as far as failing: the PC never answered within its minute.
+pub const RECOVERY_UNREACHABLE: &str = "The PC could not be reached.";
 
 /// A retry budget that survives replacing the stream activity.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -59,6 +67,24 @@ impl StreamRecoveryPolicy {
         }
     }
 
+    /// The budget left after the user's own trip away (Home, Files, a lock) that began at
+    /// `left_at_ms`: the trip spends nothing. With no failure being recovered the budget is full;
+    /// a window already running pauses for the time away instead of running on.
+    pub fn after_user_trip(
+        attempts: u32,
+        started_at_ms: u64,
+        left_at_ms: u64,
+        now_ms: u64,
+    ) -> Self {
+        if attempts == 0 {
+            return Self::default();
+        }
+        Self::new(
+            attempts,
+            started_at_ms.saturating_add(now_ms.saturating_sub(left_at_ms)),
+        )
+    }
+
     pub fn attempts(&self) -> u32 {
         self.attempts
     }
@@ -66,6 +92,129 @@ impl StreamRecoveryPolicy {
     pub fn started_at_ms(&self) -> u64 {
         self.started_at_ms
     }
+}
+
+/// How long the stream had been connected before a user trip, kept only if a recovery budget was
+/// already running.
+pub fn trip_connected_before(attempts: u32, connected_for_ms: u64) -> u64 {
+    if attempts > 0 { connected_for_ms } else { 0 }
+}
+
+/// The cause a recovery that gives up names: the last failure's, else `unreachable`.
+pub fn gave_up_cause<'a>(last_failure: Option<&'a str>, unreachable: &'a str) -> &'a str {
+    last_failure
+        .filter(|m| !m.is_empty())
+        .unwrap_or(unreachable)
+}
+
+/// What an automatic recovery that gives up says: why its last attempt failed, then that it
+/// stopped and the game was not quit.
+pub fn gave_up_text(cause: &str, stopped: &str) -> String {
+    if cause.is_empty() {
+        stopped.to_owned()
+    } else {
+        format!("{cause}\n\n{stopped}")
+    }
+}
+
+/// Combined give-up text for both Desktop and Android.
+pub fn recovery_gave_up(last_failure: Option<&str>, unreachable: &str, stopped: &str) -> String {
+    gave_up_text(gave_up_cause(last_failure, unreachable), stopped)
+}
+
+/// Where automatic bitrate starts after a reconnect: on an `automatic` reconnect of a stream whose
+/// automatic bitrate owned the rate, the rate it had cut to; `None` after a bitrate the player set.
+pub fn reconnect_bitrate_start(
+    automatic: bool,
+    automatic_owned: bool,
+    manual: bool,
+    kbps: u32,
+) -> Option<u32> {
+    (automatic && automatic_owned && !manual && kbps > 0).then_some(kbps)
+}
+
+/// Where automatic bitrate's first claim starts: the encoder's rate, or an earlier cut when lower.
+pub fn automatic_bitrate_start(encoder_kbps: u32, resume_kbps: Option<u32>) -> u32 {
+    resume_kbps
+        .filter(|&kbps| kbps > 0 && kbps < encoder_kbps)
+        .unwrap_or(encoder_kbps)
+}
+
+/// Whether video started: this connection showed a picture, or an earlier one of its automatic
+/// reconnect chain did.
+pub fn video_started(decoder_received_video: bool, chain_video_shown: bool) -> bool {
+    decoder_received_video || chain_video_shown
+}
+
+/// Whether this stream start is a recovery attempt or a resume after a user trip.
+pub fn is_recovery_attempt(attempts: u32, trip_resume: bool) -> bool {
+    attempts > 0 || trip_resume
+}
+
+/// Whether this start only resumes an existing game (never launches a new one).
+pub fn is_resume_only_stream(attempts: u32, trip_resume: bool, output_resume_only: bool) -> bool {
+    is_recovery_attempt(attempts, trip_resume) || output_resume_only
+}
+
+/// Whether handing off starts the next screen in this stream's own task before finishing.
+pub fn hand_off_in_place(task_root: bool, multi_window: bool, picture_in_picture: bool) -> bool {
+    task_root && multi_window && !picture_in_picture
+}
+
+/// Whether a lost connection would reconnect automatically right now (spends nothing).
+#[allow(clippy::too_many_arguments)]
+pub fn can_auto_recover(
+    auto_reconnect: bool,
+    displayed_failure: bool,
+    connected: bool,
+    foreground: bool,
+    video_started: bool,
+    finishing_or_destroyed: bool,
+    handoff_or_pending: bool,
+    stream_role: bool,
+    control_action: bool,
+    has_resume_target: bool,
+    policy: StreamRecoveryPolicy,
+    now_ms: u64,
+    connected_at_ms: Option<u64>,
+) -> bool {
+    auto_reconnect
+        && !displayed_failure
+        && connected
+        && foreground
+        && video_started
+        && !finishing_or_destroyed
+        && !handoff_or_pending
+        && stream_role
+        && !control_action
+        && has_resume_target
+        && policy.allows_attempt(now_ms, connected_at_ms)
+}
+
+/// Whether leaving the stream should keep a resume intent for when the user returns.
+#[allow(clippy::too_many_arguments)]
+pub fn can_remember_resume(
+    already_remembered: bool,
+    auto_reconnect: bool,
+    connected: bool,
+    displayed_failure: bool,
+    finishing_or_destroyed: bool,
+    cancelled_on_pause: bool,
+    handoff_in_progress: bool,
+    recovery_app_id: i32,
+    stream_role: bool,
+    control_action: bool,
+) -> bool {
+    !already_remembered
+        && auto_reconnect
+        && connected
+        && !displayed_failure
+        && !finishing_or_destroyed
+        && !cancelled_on_pause
+        && !handoff_in_progress
+        && recovery_app_id != 0
+        && stream_role
+        && !control_action
 }
 
 /// Native media timeouts and transport errors. Graceful (0), protected content (-103),
@@ -117,7 +266,9 @@ pub fn transient_startup(stage: Option<&str>, port_flags: i32, error: i32) -> bo
     // Native startup reports positive errno values; positive host status codes stay manual, so
     // only known transport errors pass. Only RTSP and control startup carry port flags.
     (error <= 0 || transient_termination(error))
-        && (RETRYABLE_STAGES.iter().any(|s| stage.eq_ignore_ascii_case(s))
+        && (RETRYABLE_STAGES
+            .iter()
+            .any(|s| stage.eq_ignore_ascii_case(s))
             || (port_flags != 0 && !stage.to_lowercase().contains("video")))
 }
 
@@ -145,7 +296,10 @@ pub fn network_grace_choice_s(stored_ms: u32) -> u32 {
     NETWORK_GRACE_CHOICES_S
         .into_iter()
         .filter(|&s| s > 0)
-        .min_by_key(|&s| (u64::from(s) * 1000).abs_diff(u64::from(stored_ms)) * 2 + u64::from(s * 1000 < stored_ms))
+        .min_by_key(|&s| {
+            (u64::from(s) * 1000).abs_diff(u64::from(stored_ms)) * 2
+                + u64::from(s * 1000 < stored_ms)
+        })
         .unwrap_or(0)
 }
 
@@ -190,7 +344,10 @@ pub struct RouteWait {
 impl RouteWait {
     /// `deadline_ms`: when the recovery gives up (its window ends).
     pub fn new(deadline_ms: u64) -> Self {
-        Self { deadline_ms, unreachable: 0 }
+        Self {
+            deadline_ms,
+            unreachable: 0,
+        }
     }
 
     /// After a route check at `now_ms`: `Some(0)` to start the attempt, `Some(delay)` before the
@@ -275,13 +432,22 @@ fn classify(method: &str, args: &Value) -> Option<Result<Value, String>> {
         "transient_termination" => Args::new(args, 1)
             .and_then(|a| a.int(0))
             .map(|code| transient_termination(code).into()),
-        "recovers_termination" => Args::new(args, 2)
-            .and_then(|a| Ok(recovers_termination(a.int(0)?, a.flag(1)?).into())),
+        "recovers_termination" => {
+            Args::new(args, 2).and_then(|a| Ok(recovers_termination(a.int(0)?, a.flag(1)?).into()))
+        }
         "transport_termination" => Args::new(args, 1)
             .and_then(|a| a.int(0))
             .map(|code| transport_termination(code).into()),
         "transient_startup" => Args::new(args, 3)
             .and_then(|a| Ok(transient_startup(a.text(0)?, a.int(1)?, a.int(2)?).into())),
+        "after_user_trip" => Args::new(args, 4).and_then(|a| {
+            let p =
+                StreamRecoveryPolicy::after_user_trip(a.int(0)?, a.int(1)?, a.int(2)?, a.int(3)?);
+            Ok(Value::Array(vec![
+                p.attempts().into(),
+                p.started_at_ms().into(),
+            ]))
+        }),
         _ => return None,
     };
     Some(result)
@@ -350,7 +516,9 @@ impl Subject for Backoff {
                 Ok(trace::optional_ms(delay))
             }
             "attempts" => Args::new(args, 0).map(|_| self.attempts().into()),
-            "allows_attempt" => Args::new(args, 1).and_then(|a| Ok(self.allows_attempt(a.int(0)?).into())),
+            "allows_attempt" => {
+                Args::new(args, 1).and_then(|a| Ok(self.allows_attempt(a.int(0)?).into()))
+            }
             "retry_now" => {
                 Args::new(args, 0)?;
                 self.retry_now();
@@ -376,7 +544,14 @@ impl Subject for TracedRouteWait {
     fn call(&mut self, method: &str, args: &Value) -> Result<Value, String> {
         if method == "reconnects_at_once" {
             let a = Args::new(args, 5)?;
-            return Ok(reconnects_at_once(a.flag(0)?, a.flag(1)?, a.flag(2)?, a.flag(3)?, a.int(4)?).into());
+            return Ok(reconnects_at_once(
+                a.flag(0)?,
+                a.flag(1)?,
+                a.flag(2)?,
+                a.flag(3)?,
+                a.int(4)?,
+            )
+            .into());
         }
         let wait = self.0.as_mut().ok_or("no instance (new is null)")?;
         match method {
@@ -430,5 +605,87 @@ mod network_grace_tests {
         assert!(backoff.allows_attempt(near_end));
         assert!(!backoff.allows_attempt(WINDOW_MS));
         assert_eq!(backoff.next_delay(near_end), Some(0));
+    }
+
+    #[test]
+    fn user_trip_spends_nothing_and_pauses_running_window() {
+        let idle = StreamRecoveryPolicy::after_user_trip(0, 0, 5_000, 120_000);
+        assert_eq!((idle.attempts(), idle.started_at_ms()), (0, 0));
+        assert_eq!(trip_connected_before(0, 12_000), 0);
+
+        let paused = StreamRecoveryPolicy::after_user_trip(2, 1_000, 10_000, 70_000);
+        assert_eq!((paused.attempts(), paused.started_at_ms()), (2, 61_000));
+        assert_eq!(trip_connected_before(2, 12_000), 12_000);
+    }
+
+    #[test]
+    fn give_up_and_bitrate_helpers_match_both_clients() {
+        assert_eq!(
+            gave_up_cause(None, RECOVERY_UNREACHABLE),
+            RECOVERY_UNREACHABLE
+        );
+        assert_eq!(
+            gave_up_cause(Some(""), RECOVERY_UNREACHABLE),
+            RECOVERY_UNREACHABLE
+        );
+        assert_eq!(
+            gave_up_cause(Some("refused"), RECOVERY_UNREACHABLE),
+            "refused"
+        );
+        assert_eq!(
+            recovery_gave_up(None, RECOVERY_UNREACHABLE, RECOVERY_STOPPED),
+            format!("{RECOVERY_UNREACHABLE}\n\n{RECOVERY_STOPPED}")
+        );
+        assert_eq!(gave_up_text("", RECOVERY_STOPPED), RECOVERY_STOPPED);
+        assert_eq!(
+            reconnect_bitrate_start(true, true, false, 12_000),
+            Some(12_000)
+        );
+        assert_eq!(reconnect_bitrate_start(false, true, false, 12_000), None);
+        assert_eq!(reconnect_bitrate_start(true, false, false, 12_000), None);
+        assert_eq!(reconnect_bitrate_start(true, true, true, 12_000), None);
+        assert_eq!(reconnect_bitrate_start(true, true, false, 0), None);
+        assert_eq!(automatic_bitrate_start(30_000, Some(12_000)), 12_000);
+        assert_eq!(automatic_bitrate_start(20_000, Some(30_000)), 20_000);
+        assert_eq!(automatic_bitrate_start(30_000, None), 30_000);
+        assert_eq!(automatic_bitrate_start(30_000, Some(0)), 30_000);
+        assert!(hand_off_in_place(true, true, false));
+        assert!(!hand_off_in_place(true, true, true));
+        assert!(can_auto_recover(
+            true,
+            false,
+            true,
+            true,
+            true,
+            false,
+            false,
+            true,
+            false,
+            true,
+            StreamRecoveryPolicy::default(),
+            1_000,
+            Some(0),
+        ));
+        assert!(!can_auto_recover(
+            false,
+            false,
+            true,
+            true,
+            true,
+            false,
+            false,
+            true,
+            false,
+            true,
+            StreamRecoveryPolicy::default(),
+            1_000,
+            Some(0),
+        ));
+        assert!(can_remember_resume(
+            false, true, true, false, false, false, false, 42, true, false
+        ));
+        assert!(!can_remember_resume(
+            true, true, true, false, false, false, false, 42, true, false
+        ));
     }
 }

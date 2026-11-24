@@ -127,8 +127,12 @@ final class RustBridge {
     static int networkChanged(boolean metered) { return NightjarJni.networkChanged(metered); }
     static boolean hostSaidGoodbye() { return NightjarJni.hostSaidGoodbye(); }
     static String getHostAddress() { return NightjarJni.getHostAddress(); }
-    static int hostLossRound(String host, int port, String gateway) { return NightjarJni.hostLossRound(host, port, gateway); }
-    static int hostLossAfterGoodbye(boolean onLink, int round, long waitedMs) { return NightjarJni.hostLossAfterGoodbye(onLink, round, waitedMs); }
+    static long hostLossWatchCreate() { return NightjarJni.hostLossWatchCreate(); }
+    static void hostLossWatchStop(long handle) { NightjarJni.hostLossWatchStop(handle); }
+    static void hostLossWatchDestroy(long handle) { NightjarJni.hostLossWatchDestroy(handle); }
+    static int hostLossWatchGoodbye(long handle, String host, int port, NightjarJni.HostLossCallback callback) {
+        return NightjarJni.hostLossWatchGoodbye(handle, host, port, callback);
+    }
     static void sendMouseMove(short deltaX, short deltaY) { NightjarJni.sendMouseMove(deltaX, deltaY); }
     static void sendMousePosition(short x, short y, short referenceWidth, short referenceHeight) { NightjarJni.sendMousePosition(x, y, referenceWidth, referenceHeight); }
     static void sendMouseMoveAsMousePosition(short deltaX, short deltaY, short referenceWidth, short referenceHeight) { NightjarJni.sendMouseMoveAsMousePosition(deltaX, deltaY, referenceWidth, referenceHeight); }

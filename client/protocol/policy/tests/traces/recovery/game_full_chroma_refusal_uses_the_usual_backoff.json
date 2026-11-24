@@ -1,7 +1,7 @@
 {
   "source": "GameRecoveryTest.aFullChromaRefusalAtStartReconnectsOnceWithoutItInsteadOfAnError",
   "rust": "recovery::StreamRecoveryPolicy",
-  "java": "com.limelight.StreamRecoveryPolicy",
+  "java": "com.limelight.policy.RecoveryPolicyTrace",
   "new": [0, 100],
   "calls": [
     {"call": "next_delay", "args": [100, -1], "expect": 1000},

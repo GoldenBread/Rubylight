@@ -8,7 +8,6 @@ import android.widget.Toast;
 import androidx.annotation.VisibleForTesting;
 import androidx.appcompat.app.AlertDialog;
 
-import com.limelight.ContinueHerePolicy;
 import com.limelight.LimeLog;
 import com.limelight.R;
 import com.limelight.binding.PlatformBinding;
@@ -90,7 +89,8 @@ public final class ContinueHereGate {
     /** Whether {@code move} asks about starting {@code app}. */
     @VisibleForTesting
     static boolean asks(boolean offered, boolean plainStart, StreamMove move, NvApp app) {
-        return move.playingOn != null && ContinueHerePolicy.asksOnSelect(offered, plainStart,
+        return move.playingOn != null && com.limelight.nvstream.jni.NightjarPolicyJni.continueHereAsksOnSelect(
+                offered, plainStart,
                 reachesTheRunningGame(app.getControl()) || app.matchesRunningApp(move.playingAppId, move.playingAppUuid));
     }
 

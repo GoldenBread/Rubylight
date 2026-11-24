@@ -1,7 +1,7 @@
 {
   "source": "Game.java waitForRouteToHost and streamNetworkReturned; desktop connect_with_recovery and network_returned. reconnects_at_once(cannot_continue, metered, mobile_allowed, auto_reconnect, network_grace_ms): a network back on the same address or without a route yet (the engine says it carries on, roamed or not) never reconnects; a metered one without Continue on mobile data neither; the desktop default tolerance of 3 s is below the 10 s timeout and changes nothing",
   "rust": "recovery::RouteWait",
-  "java": "com.limelight.NetworkReturnRecovery",
+  "java": null,
   "new": [72025],
   "calls": [
     {"call": "reconnects_at_once", "args": [true, false, false, true, 0], "expect": true},

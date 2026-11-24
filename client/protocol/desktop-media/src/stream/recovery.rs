@@ -1,10 +1,10 @@
 //! Which failures reconnect automatically. The retry budget is nightjar-policy's [`Backoff`] on the
 //! session clock: it outlives each stream, so a stream's own start cannot be its time base.
 
+pub use nightjar_core::route::{RouteWaitOutcome, route_problem, wait_for_route};
 use nightjar_core::session::{self, Stage};
 pub use nightjar_policy::recovery::{
-    reconnects_at_once, recovers_termination, transient_termination, Backoff, RouteWait, PEER_TIMEOUT_MS,
-    ROUTE_PROBE_TIMEOUT_MS, ROUTE_RETRY_MS,
+    Backoff, PEER_TIMEOUT_MS, reconnects_at_once, recovers_termination, transient_termination,
 };
 
 pub fn now_ms() -> u64 {
@@ -36,17 +36,10 @@ pub fn transient_http(error: &nightjar_core::http::Error) -> bool {
         | ErrorKind::HostUnreachable))
 }
 
-/// A route check's immediate no-route error: no address toward the PC (yet). A check that
-/// times out (a slow link, or a closed port, which Windows retries before it says so) or fails
-/// otherwise is no reason to wait: the attempt itself decides, loudly.
-pub fn route_missing(error: &std::io::Error) -> bool {
-    use std::io::ErrorKind;
-    matches!(error.kind(), ErrorKind::NetworkUnreachable | ErrorKind::HostUnreachable | ErrorKind::AddrNotAvailable)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nightjar_core::route::route_missing;
     use nightjar_policy::recovery::{STABLE_MS, WINDOW_MS};
 
     #[test]
@@ -54,26 +47,50 @@ mod tests {
         let android = nightjar_policy::recovery::RETRYABLE_STAGES;
         assert_eq!(RETRYABLE_START_STAGES.len(), android.len());
         for (ours, theirs) in RETRYABLE_START_STAGES.iter().zip(android) {
-            assert!(ours.name().eq_ignore_ascii_case(theirs), "{ours:?} / {theirs}");
+            assert!(
+                ours.name().eq_ignore_ascii_case(theirs),
+                "{ours:?} / {theirs}"
+            );
         }
         for stage in RETRYABLE_START_STAGES {
             assert!(transient_start(stage, 110), "{stage:?}");
             assert!(!transient_start(stage, 403), "{stage:?}");
-            assert!(nightjar_policy::recovery::transient_startup(Some(stage.name()), 0, 110), "{stage:?}");
+            assert!(
+                nightjar_policy::recovery::transient_startup(Some(stage.name()), 0, 110),
+                "{stage:?}"
+            );
         }
-        for stage in [Stage::VideoStreamInit, Stage::VideoStreamStart, Stage::AudioStreamInit, Stage::AudioStreamStart, Stage::PlatformInit] {
+        for stage in [
+            Stage::VideoStreamInit,
+            Stage::VideoStreamStart,
+            Stage::AudioStreamInit,
+            Stage::AudioStreamStart,
+            Stage::PlatformInit,
+        ] {
             assert!(!transient_start(stage, 110), "{stage:?}");
-            assert!(!nightjar_policy::recovery::transient_startup(Some(stage.name()), 0, 110), "{stage:?}");
+            assert!(
+                !nightjar_policy::recovery::transient_startup(Some(stage.name()), 0, 110),
+                "{stage:?}"
+            );
         }
     }
 
     #[test]
     fn only_an_immediate_no_route_error_waits_for_the_route() {
         use std::io::{Error, ErrorKind};
-        for kind in [ErrorKind::NetworkUnreachable, ErrorKind::HostUnreachable, ErrorKind::AddrNotAvailable] {
+        for kind in [
+            ErrorKind::NetworkUnreachable,
+            ErrorKind::HostUnreachable,
+            ErrorKind::AddrNotAvailable,
+        ] {
             assert!(route_missing(&Error::from(kind)), "{kind:?}");
         }
-        for kind in [ErrorKind::TimedOut, ErrorKind::ConnectionRefused, ErrorKind::ConnectionReset, ErrorKind::Other] {
+        for kind in [
+            ErrorKind::TimedOut,
+            ErrorKind::ConnectionRefused,
+            ErrorKind::ConnectionReset,
+            ErrorKind::Other,
+        ] {
             assert!(!route_missing(&Error::from(kind)), "{kind:?}");
         }
         // The OS's own codes map the same way: Windows' WSAENETUNREACH, WSAEHOSTUNREACH,
@@ -81,7 +98,10 @@ mod tests {
         #[cfg(windows)]
         let (unreachable, timed_out) = ([10051, 10065, 10049], 10060);
         #[cfg(not(windows))]
-        let (unreachable, timed_out) = ([libc::ENETUNREACH, libc::EHOSTUNREACH, libc::EADDRNOTAVAIL], libc::ETIMEDOUT);
+        let (unreachable, timed_out) = (
+            [libc::ENETUNREACH, libc::EHOSTUNREACH, libc::EADDRNOTAVAIL],
+            libc::ETIMEDOUT,
+        );
         for code in unreachable {
             assert!(route_missing(&Error::from_raw_os_error(code)), "{code}");
         }

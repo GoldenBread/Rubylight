@@ -159,4 +159,88 @@ public final class NightjarPolicyJni {
     public static native int classifyPairingHttpRefusal(boolean fromLink, boolean oneTime);
     public static native int classifyInviteError(String msg);
     public static native boolean isTunnelAddress(String ip);
+
+    // Recovery, Exit, ContinueHere, InputOnly, Roaming (`protocol/android/src/policy_recovery.rs`)
+    public static final int INPUT_ONLY_SMALL_WIDTH = 640;
+    public static final int INPUT_ONLY_SMALL_HEIGHT = 360;
+    public static final int INPUT_ONLY_SMALL_FPS = 30;
+    public static final int INPUT_ONLY_SMALL_BITRATE_KBPS = 500;
+    public static final int INPUT_ONLY_MODE_NATIVE = 0;
+    public static final int INPUT_ONLY_MODE_SMALL_STREAM = 1;
+    public static final int INPUT_ONLY_MODE_OFF = 2;
+    public static final int INPUT_ONLY_BLOCKER_NONE = 0;
+    public static final int INPUT_ONLY_BLOCKER_PAIR = 1;
+    public static final int INPUT_ONLY_BLOCKER_VIEW_PERMISSION = 2;
+    public static final int INPUT_ONLY_BLOCKER_INPUT_PERMISSION = 3;
+    public static final int RESUME_REFUSAL_NONE = 0;
+    public static final int RESUME_REFUSAL_SESSION_CHANGED = 1;
+    public static final int RESUME_REFUSAL_BROWSER_STREAM = 2;
+    public static final int ROAMING_CAP_IGNORE = 0;
+    public static final int ROAMING_CAP_ASK_NOT_METERED = 1;
+    public static final int ROAMING_CAP_ASK_METERED = 2;
+    public static final int ROAMING_CAP_RETURNED_ASK_NOT_METERED = 3;
+    public static final int ROAMING_CAP_RETURNED_ASK_METERED = 4;
+    public static final int ROAMING_ADDR_IGNORE = -1;
+    public static final int ROAMING_ADDR_ASK_NOT_METERED = 0;
+    public static final int ROAMING_ADDR_ASK_METERED = 1;
+
+    public static native int recoveryMaxAttempts();
+    public static native long recoveryWindowMs();
+    public static native long recoveryTripResumeDelayMs();
+    public static native int recoveryPeerTimeoutMs();
+    public static native long[] recoveryNextDelay(int attempts, long startedAtMs, long nowMs, long connectedAtMs);
+    public static native long[] recoveryResetAfterStableConnection(int attempts, long startedAtMs, long nowMs, long connectedAtMs);
+    public static native long[] recoveryAfterUserTrip(int attempts, long startedAtMs, long leftAtMs, long nowMs);
+    public static native long recoveryTripConnectedBefore(int attempts, long connectedForMs);
+    public static native boolean recoveryRecoversTermination(int code, boolean videoStarted);
+    public static native boolean recoveryTransientTermination(int code);
+    public static native boolean recoveryTransportTermination(int code);
+    public static native boolean recoveryTransientStartup(String stage, int portFlags, int error);
+    public static native boolean recoveryReconnectsAtOnce(boolean cannotContinue, boolean metered, boolean mobileAllowed,
+                                                          boolean autoReconnect, int networkGraceMs);
+    public static native String recoveryGaveUpCause(String lastFailure, String unreachable);
+    public static native String recoveryGaveUpText(String cause, String stopped);
+    public static native int recoveryAutomaticBitrateStart(int encoderKbps, int resumeKbps);
+    public static native int recoveryReconnectBitrateStart(boolean automatic, boolean automaticOwned, boolean manual, int kbps);
+    public static native boolean recoveryVideoStarted(boolean decoderReceivedVideo, boolean chainVideoShown);
+    public static native boolean recoveryIsAttempt(int attempts, boolean tripResume);
+    public static native boolean recoveryIsResumeOnly(int attempts, boolean tripResume, boolean outputResumeOnly);
+    public static native boolean recoveryHandOffInPlace(boolean taskRoot, boolean multiWindow, boolean pictureInPicture);
+    public static native boolean recoveryCanAutoRecover(
+            boolean autoReconnect, boolean displayedFailure, boolean connected, boolean foreground,
+            boolean videoStarted, boolean finishingOrDestroyed, boolean handoffOrPending,
+            boolean streamRole, boolean controlAction, boolean hasResumeTarget,
+            int attempts, long startedAtMs, long nowMs, long connectedAtMs);
+    public static native boolean recoveryCanRememberResume(
+            boolean alreadyRemembered, boolean autoReconnect, boolean connected, boolean displayedFailure,
+            boolean finishingOrDestroyed, boolean cancelledOnPause, boolean handoffInProgress,
+            int recoveryAppId, boolean streamRole, boolean controlAction);
+
+    public static native boolean continueHereAsksOnSelect(boolean offered, boolean plainStart, boolean sameGame);
+    public static native boolean continueHereReadsMoveAfterEnd(boolean offered, boolean leftOnPurpose, boolean recoveryFollows);
+    public static native boolean continueHereRecovers(boolean transientFailure, boolean moved);
+    public static native boolean continueHereCameBack(boolean moved, boolean owns);
+    public static native boolean continueHereJoinsAfterRead(boolean too, boolean sameGame, boolean pressFailed);
+    public static native int continueHereResumeRefusal(boolean join, int code, String message);
+
+    public static native boolean exitQuitsOnLeave(boolean quitOnLeaveChosen, int roleOrdinal, boolean connected, boolean secondScreen);
+    public static native boolean exitTerminationNeedsAction(int errorCode, boolean portTestBlocked,
+                                                              boolean networkGraceGaveUp, boolean recoveryExhausted);
+    public static native boolean exitHostEndedStream(int errorCode);
+    public static native boolean exitRefusedInHandshake(String stage);
+
+    public static native int inputOnlyMode(boolean anyHostEnabled, boolean remoteSessionTiles, boolean hostListsInputOnly);
+    public static native int inputOnlySmallStreamBlocker(boolean paired, long permission);
+    public static native boolean inputOnlyKeepsRunningGame(boolean hostRunningGame, boolean thisGameRunning);
+    public static native int inputOnlyEstimatedKbps();
+    public static native int inputOnlyEstimatedMegabytesPerHour();
+
+    public static native long roamingCreate(boolean hasStreamNetwork, long streamNetworkId);
+    public static native void roamingDestroy(long handle);
+    public static native int roamingOnCapabilities(long handle, long networkId, boolean notMetered);
+    public static native boolean roamingRecordChange(long handle, long networkId, boolean metered, boolean returned, int change, long nowMs);
+    public static native int roamingOnAddresses(long handle, long networkId, String addressesKey, boolean nat64, long nowMs);
+    public static native boolean roamingRecordAddressChange(long handle, int change);
+    public static native boolean roamingOnLost(long handle, long networkId);
+    public static native void roamingStop(long handle);
 }

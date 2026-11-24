@@ -2,6 +2,7 @@ package com.limelight;
 
 import com.limelight.nvstream.http.NvApp;
 import com.limelight.nvstream.jni.MoonBridge;
+import com.limelight.nvstream.jni.NightjarPolicyJni;
 
 import org.junit.Test;
 
@@ -15,58 +16,50 @@ import static org.junit.Assert.*;
 
 public class StreamExitPolicyTest {
     @Test public void leavingQuitsOnlyAGameThePlayerChoseToQuit() {
-        assertTrue(StreamExitPolicy.quitsOnLeave(true, NvApp.Role.STREAM, true, false));
-        assertFalse(StreamExitPolicy.quitsOnLeave(false, NvApp.Role.STREAM, true, false));
+        assertTrue(NightjarPolicyJni.exitQuitsOnLeave(true, NvApp.Role.STREAM.ordinal(), true, false));
+        assertFalse(NightjarPolicyJni.exitQuitsOnLeave(false, NvApp.Role.STREAM.ordinal(), true, false));
     }
 
     @Test public void aStreamThatIsNoLongerConnectedLeavesWithoutQuitting() {
-        assertFalse(StreamExitPolicy.quitsOnLeave(true, NvApp.Role.STREAM, false, false));
+        assertFalse(NightjarPolicyJni.exitQuitsOnLeave(true, NvApp.Role.STREAM.ordinal(), false, false));
     }
 
     @Test public void remoteMonitorAndInputSessionsAreNeverQuitOnLeave() {
-        assertFalse(StreamExitPolicy.quitsOnLeave(true, NvApp.Role.REMOTE_MONITOR, true, false));
-        assertFalse(StreamExitPolicy.quitsOnLeave(true, NvApp.Role.INPUT_ONLY, true, false));
+        assertFalse(NightjarPolicyJni.exitQuitsOnLeave(true, NvApp.Role.REMOTE_MONITOR.ordinal(), true, false));
+        assertFalse(NightjarPolicyJni.exitQuitsOnLeave(true, NvApp.Role.INPUT_ONLY.ordinal(), true, false));
     }
 
     @Test public void leavingTheSecondScreenNeverQuitsTheGameOfTheFirst() {
-        assertFalse(StreamExitPolicy.quitsOnLeave(true, NvApp.Role.STREAM, true, true));
+        assertFalse(NightjarPolicyJni.exitQuitsOnLeave(true, NvApp.Role.STREAM.ordinal(), true, true));
     }
 
     @Test public void theHostEndingTheStreamNeverNeedsADialog() {
-        assertFalse(StreamExitPolicy.terminationNeedsAction(MoonBridge.ML_ERROR_GRACEFUL_TERMINATION, false, false, false));
-        assertFalse(StreamExitPolicy.terminationNeedsAction(MoonBridge.ML_ERROR_GRACEFUL_TERMINATION, true, false, false));
+        assertFalse(NightjarPolicyJni.exitTerminationNeedsAction(MoonBridge.ML_ERROR_GRACEFUL_TERMINATION, false, false, false));
+        assertFalse(NightjarPolicyJni.exitTerminationNeedsAction(MoonBridge.ML_ERROR_GRACEFUL_TERMINATION, true, false, false));
     }
 
     @Test public void aLostConnectionOrAHostThatWentAwayReturnsToTheList() {
-        // -1: ENet disconnect or timeout with no reason; the rest are socket errors (ETIMEDOUT,
-        // ECONNRESET, WSAETIMEDOUT) and the Java transport's own failures.
         for (int code : new int[] {-1, 32, 54, 104, 110, 111, 113, 10053, 10054, 10060}) {
-            assertFalse("code " + code, StreamExitPolicy.terminationNeedsAction(code, false, false, false));
+            assertFalse("code " + code, NightjarPolicyJni.exitTerminationNeedsAction(code, false, false, false));
         }
     }
 
     @Test public void aReasonOnlyThePcKnowsReturnsToTheList() {
-        // Host termination reasons: the HTTP-like codes some hosts send and NVST_DISCONN_* values.
         for (int code : new int[] {503, 404, 0x80030020, 0xc0000005}) {
-            assertFalse("code " + code, StreamExitPolicy.terminationNeedsAction(code, false, false, false));
+            assertFalse("code " + code, NightjarPolicyJni.exitTerminationNeedsAction(code, false, false, false));
         }
     }
 
     @Test public void errorsWithAdviceKeepTheDialog() {
-        assertTrue(StreamExitPolicy.terminationNeedsAction(MoonBridge.ML_ERROR_NO_VIDEO_TRAFFIC, false, false, false));
-        assertTrue(StreamExitPolicy.terminationNeedsAction(MoonBridge.ML_ERROR_NO_VIDEO_FRAME, false, false, false));
-        assertTrue(StreamExitPolicy.terminationNeedsAction(MoonBridge.ML_ERROR_UNEXPECTED_EARLY_TERMINATION, false, false, false));
-        assertTrue(StreamExitPolicy.terminationNeedsAction(MoonBridge.ML_ERROR_PROTECTED_CONTENT, false, false, false));
-        assertTrue(StreamExitPolicy.terminationNeedsAction(MoonBridge.ML_ERROR_FRAME_CONVERSION, false, false, false));
-        // A failed decoder says what to change before the stream starts again.
-        assertTrue(StreamExitPolicy.terminationNeedsAction(MoonBridge.CLIENT_ERROR_DECODER, false, false, false));
+        assertTrue(NightjarPolicyJni.exitTerminationNeedsAction(MoonBridge.ML_ERROR_NO_VIDEO_TRAFFIC, false, false, false));
+        assertTrue(NightjarPolicyJni.exitTerminationNeedsAction(MoonBridge.ML_ERROR_NO_VIDEO_FRAME, false, false, false));
+        assertTrue(NightjarPolicyJni.exitTerminationNeedsAction(MoonBridge.ML_ERROR_UNEXPECTED_EARLY_TERMINATION, false, false, false));
+        assertTrue(NightjarPolicyJni.exitTerminationNeedsAction(MoonBridge.ML_ERROR_PROTECTED_CONTENT, false, false, false));
+        assertTrue(NightjarPolicyJni.exitTerminationNeedsAction(MoonBridge.ML_ERROR_FRAME_CONVERSION, false, false, false));
+        assertTrue(NightjarPolicyJni.exitTerminationNeedsAction(MoonBridge.CLIENT_ERROR_DECODER, false, false, false));
     }
 
     @Test public void aDecoderGivenUpWithVulkanOnNamesTheSettingInEveryLanguage() throws Exception {
-        assertEquals(R.string.decoder_failed_vulkan, StreamExitPolicy.decoderFailureMessage(true));
-        assertEquals(R.string.decoder_failed, StreamExitPolicy.decoderFailureMessage(false));
-        // The TV's 4K HEVC decoder failed into Vulkan's buffers: the dialog tells the player which
-        // switch to turn off, by the name the settings show in that language.
         File[] dirs = new File("src/main/res").listFiles((dir, name) ->
                 name.matches("values(-[a-z]{2}(-r[A-Z]{2})?)?") && new File(dir, name + "/strings.xml").exists());
         assertNotNull(dirs);
@@ -88,19 +81,15 @@ public class StreamExitPolicyTest {
     }
 
     @Test public void onlyTerminationsThePcSentAskItForTheReason() {
-        // 0x80004005 (the generic failure, passed through as is) and moonlight-common-c's codes
-        // for the PC's own reasons, including a stop before the first picture.
         for (int code : new int[] {0x80004005, 0x80030020, 0xc0000005,
                 MoonBridge.ML_ERROR_UNEXPECTED_EARLY_TERMINATION, MoonBridge.ML_ERROR_PROTECTED_CONTENT,
                 MoonBridge.ML_ERROR_FRAME_CONVERSION}) {
-            assertTrue("code " + Integer.toHexString(code), StreamExitPolicy.hostEndedStream(code));
+            assertTrue("code " + Integer.toHexString(code), NightjarPolicyJni.exitHostEndedStream(code));
         }
-        // The host closing normally, lost connections, socket errors, no video and this device's
-        // renderer or decoder: the PC has nothing to add, and an unreachable one would delay the error.
         for (int code : new int[] {MoonBridge.ML_ERROR_GRACEFUL_TERMINATION, -1, 32, 110, 10054, 503,
                 MoonBridge.ML_ERROR_NO_VIDEO_TRAFFIC, MoonBridge.ML_ERROR_NO_VIDEO_FRAME,
                 MoonBridge.CLIENT_ERROR_VULKAN_RENDERER, MoonBridge.CLIENT_ERROR_DECODER}) {
-            assertFalse("code " + code, StreamExitPolicy.hostEndedStream(code));
+            assertFalse("code " + code, NightjarPolicyJni.exitHostEndedStream(code));
         }
     }
 
@@ -121,27 +110,26 @@ public class StreamExitPolicyTest {
     }
 
     @Test public void aBlockedPortTestKeepsTheDialogForAnyError() {
-        assertTrue(StreamExitPolicy.terminationNeedsAction(-1, true, false, false));
-        assertTrue(StreamExitPolicy.terminationNeedsAction(110, true, false, false));
-        assertTrue(StreamExitPolicy.terminationNeedsAction(503, true, false, false));
+        assertTrue(NightjarPolicyJni.exitTerminationNeedsAction(-1, true, false, false));
+        assertTrue(NightjarPolicyJni.exitTerminationNeedsAction(110, true, false, false));
+        assertTrue(NightjarPolicyJni.exitTerminationNeedsAction(503, true, false, false));
     }
 
     @Test public void aGraceTimeThatMayHaveRunOutKeepsTheDialogForItsAdvice() {
-        assertTrue(StreamExitPolicy.terminationNeedsAction(-1, false, true, false));
-        assertTrue(StreamExitPolicy.terminationNeedsAction(110, false, true, false));
-        assertFalse(StreamExitPolicy.terminationNeedsAction(MoonBridge.ML_ERROR_GRACEFUL_TERMINATION, false, true, true));
+        assertTrue(NightjarPolicyJni.exitTerminationNeedsAction(-1, false, true, false));
+        assertTrue(NightjarPolicyJni.exitTerminationNeedsAction(110, false, true, false));
+        assertFalse(NightjarPolicyJni.exitTerminationNeedsAction(MoonBridge.ML_ERROR_GRACEFUL_TERMINATION, false, true, true));
     }
 
     @Test public void usedUpAutomaticReconnectingKeepsTheDialogForItsReconnectButton() {
-        assertTrue(StreamExitPolicy.terminationNeedsAction(-1, false, false, true));
-        assertTrue(StreamExitPolicy.terminationNeedsAction(110, false, false, true));
-        assertFalse(StreamExitPolicy.terminationNeedsAction(MoonBridge.ML_ERROR_GRACEFUL_TERMINATION, false, false, true));
+        assertTrue(NightjarPolicyJni.exitTerminationNeedsAction(-1, false, false, true));
+        assertTrue(NightjarPolicyJni.exitTerminationNeedsAction(110, false, false, true));
+        assertFalse(NightjarPolicyJni.exitTerminationNeedsAction(MoonBridge.ML_ERROR_GRACEFUL_TERMINATION, false, false, true));
     }
 
     @Test public void onlyAStartRefusedInTheHandshakeAsksThePcWhy() {
-        // The name both engines give the stage (nightjar-core's Stage::RtspHandshake, moonlight-common-c's LiGetStageName).
-        assertTrue(StreamExitPolicy.refusedInHandshake("RTSP handshake"));
-        assertFalse(StreamExitPolicy.refusedInHandshake("video stream establishment"));
-        assertFalse(StreamExitPolicy.refusedInHandshake(null));
+        assertTrue(NightjarPolicyJni.exitRefusedInHandshake("RTSP handshake"));
+        assertFalse(NightjarPolicyJni.exitRefusedInHandshake("video stream establishment"));
+        assertFalse(NightjarPolicyJni.exitRefusedInHandshake(null));
     }
 }

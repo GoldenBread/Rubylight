@@ -8,13 +8,14 @@ import com.limelight.nvstream.http.ComputerDetails;
 import com.limelight.nvstream.http.NvApp;
 import com.limelight.nvstream.http.NvHTTP;
 import com.limelight.nvstream.jni.MoonBridge;
+import com.limelight.nvstream.jni.NightjarJni;
+import com.limelight.nvstream.jni.NightjarPolicyJni;
 import com.limelight.utils.LaunchSource;
 import com.limelight.ui.NavigationDialogBuilder;
 import android.content.ComponentName;
 import android.content.Intent;
 import android.os.SystemClock;
 import android.widget.Toast;
-import java.io.IOException;
 
 /** Getting a dropped or stopped stream back: automatic recovery and reconnects, the trip budget, resuming a stopped stream, the packed-chroma fallback, the route to the host and the reconnect dialog. */
 final class GameRecovery {
@@ -253,7 +254,7 @@ final class GameRecovery {
 
     /** Whether {@link #handOff} starts the next screen in this stream's own task before this one finishes. */
     static boolean handsOffInPlace(boolean taskRoot, boolean multiWindow, boolean pictureInPicture) {
-        return taskRoot && multiWindow && !pictureInPicture;
+        return NightjarPolicyJni.recoveryHandOffInPlace(taskRoot, multiWindow, pictureInPicture);
     }
 
     /**
@@ -268,11 +269,15 @@ final class GameRecovery {
     }
 
     boolean isRecoveryAttempt() {
-        return game.getIntent().getIntExtra(EXTRA_RECOVERY_ATTEMPTS, 0) > 0 || isTripResume();
+        return NightjarPolicyJni.recoveryIsAttempt(
+                game.getIntent().getIntExtra(EXTRA_RECOVERY_ATTEMPTS, 0), isTripResume());
     }
 
     boolean isResumeOnlyStream() {
-        return isRecoveryAttempt() || game.getIntent().getBooleanExtra(EXTRA_OUTPUT_RESUME_ONLY, false);
+        return NightjarPolicyJni.recoveryIsResumeOnly(
+                game.getIntent().getIntExtra(EXTRA_RECOVERY_ATTEMPTS, 0),
+                isTripResume(),
+                game.getIntent().getBooleanExtra(EXTRA_OUTPUT_RESUME_ONLY, false));
     }
 
     void cancelAutomaticRecovery() {
@@ -286,13 +291,23 @@ final class GameRecovery {
 
     /** {@code userTrip}: the user left (Home, Files, a lock), so no connection failure caused this stop. */
     void rememberStreamForResume(boolean userTrip) {
-        if (game.stoppedStreamResumeIntent != null || game.prefConfig == null || !game.prefConfig.autoReconnect ||
-                !game.connected || game.displayedFailureDialog || game.isFinishing() || game.isDestroyed() ||
-                game.recoveryCancelledOnPause || game.recoveryHandoffInProgress || game.recoveryAppId == 0 ||
-                game.app == null || game.app.getRole() != NvApp.Role.STREAM || game.app.isControlAction()) return;
+        if (!NightjarPolicyJni.recoveryCanRememberResume(
+                game.stoppedStreamResumeIntent != null,
+                game.prefConfig != null && game.prefConfig.autoReconnect,
+                game.connected,
+                game.displayedFailureDialog,
+                game.isFinishing() || game.isDestroyed(),
+                game.recoveryCancelledOnPause,
+                game.recoveryHandoffInProgress,
+                game.recoveryAppId,
+                game.app != null && game.app.getRole() == NvApp.Role.STREAM,
+                game.app != null && game.app.isControlAction())) return;
         // Count only time actually connected, never time spent locked or in another app.
         long now = SystemClock.elapsedRealtime();
-        game.recoveryPolicy.resetAfterStableConnection(now, connectedAt);
+        long[] reset = NightjarPolicyJni.recoveryResetAfterStableConnection(
+                game.recoveryAttempts, game.recoveryStartedAt, now, connectedAt);
+        game.recoveryAttempts = (int) reset[0];
+        game.recoveryStartedAt = reset[1];
         long connectedFor = connectedAt >= 0 ? now - connectedAt : 0;
         connectedAt = -1;
         game.stoppedStreamResumeIntent = createStreamHandoffIntent(LaunchSource.RETURN)
@@ -300,7 +315,7 @@ final class GameRecovery {
         // A failure already reported as the user left is a failure: its resume spends the budget.
         if (userTrip && !game.streamTerminated) {
             game.stoppedStreamResumeIntent.putExtra(EXTRA_TRIP_BUDGET,
-                    new long[] {game.recoveryPolicy.attempts(), game.recoveryPolicy.startedAt(), now, connectedFor});
+                    new long[] {game.recoveryAttempts, game.recoveryStartedAt, now, connectedFor});
         }
     }
 
@@ -317,15 +332,18 @@ final class GameRecovery {
     void readRecoveryBudget(long now) {
         long[] trip = game.getIntent().getLongArrayExtra(EXTRA_TRIP_BUDGET);
         if (trip == null) {
-            game.recoveryPolicy = new StreamRecoveryPolicy(game.getIntent().getIntExtra(EXTRA_RECOVERY_ATTEMPTS, 0),
-                    game.getIntent().getLongExtra(EXTRA_RECOVERY_STARTED, 0));
+            game.recoveryAttempts = Math.max(0, Math.min(NightjarPolicyJni.recoveryMaxAttempts(),
+                    game.getIntent().getIntExtra(EXTRA_RECOVERY_ATTEMPTS, 0)));
+            game.recoveryStartedAt = Math.max(0L, game.getIntent().getLongExtra(EXTRA_RECOVERY_STARTED, 0));
             return;
         }
-        game.recoveryPolicy = StreamRecoveryPolicy.afterUserTrip((int) trip[0], trip[1], trip[2], now);
-        connectedBeforeTrip = game.recoveryPolicy.attempts() > 0 ? trip[3] : 0;
+        long[] after = NightjarPolicyJni.recoveryAfterUserTrip((int) trip[0], trip[1], trip[2], now);
+        game.recoveryAttempts = (int) after[0];
+        game.recoveryStartedAt = after[1];
+        connectedBeforeTrip = NightjarPolicyJni.recoveryTripConnectedBefore(game.recoveryAttempts, trip[3]);
         game.getIntent().removeExtra(EXTRA_TRIP_BUDGET);
-        game.getIntent().putExtra(EXTRA_RECOVERY_ATTEMPTS, game.recoveryPolicy.attempts())
-                .putExtra(EXTRA_RECOVERY_STARTED, game.recoveryPolicy.startedAt());
+        game.getIntent().putExtra(EXTRA_RECOVERY_ATTEMPTS, game.recoveryAttempts)
+                .putExtra(EXTRA_RECOVERY_STARTED, game.recoveryStartedAt);
     }
 
     /**
@@ -363,7 +381,7 @@ final class GameRecovery {
 
     /** The cause a recovery that gives up names: the last failure's, else that the PC could not be reached. */
     static String gaveUpCause(String lastFailure, String unreachable) {
-        return lastFailure == null || lastFailure.isEmpty() ? unreachable : lastFailure;
+        return NightjarPolicyJni.recoveryGaveUpCause(lastFailure, unreachable);
     }
 
     boolean tryAutomaticRecovery() {
@@ -492,10 +510,15 @@ final class GameRecovery {
         retry.removeExtra(EXTRA_RECOVERY_AUTO_BITRATE);
         retry.removeExtra(EXTRA_RECOVERY_QUALITY_STEP);
         boolean hint = game.rateChanges != null && game.rateChanges.automaticOn();
+        int autoStart = NightjarPolicyJni.recoveryReconnectBitrateStart(
+                automatic,
+                game.adaptiveBitrate != null || game.pyroWaveBitrate != null || hint,
+                game.sessionManualBitrate > 0,
+                game.currentBitrate);
         if (game.sessionManualBitrate > 0) {
             retry.putExtra(EXTRA_RECOVERY_MANUAL_BITRATE, game.sessionManualBitrate);
-        } else if (automatic && (game.adaptiveBitrate != null || game.pyroWaveBitrate != null || hint) && game.currentBitrate > 0) {
-            retry.putExtra(EXTRA_RECOVERY_AUTO_BITRATE, game.currentBitrate);
+        } else if (autoStart > 0) {
+            retry.putExtra(EXTRA_RECOVERY_AUTO_BITRATE, autoStart);
         }
         AdaptiveQualityController quality = game.adaptiveQuality;
         if (automatic && quality != null && quality.current() != quality.ceiling()) {
@@ -530,7 +553,7 @@ final class GameRecovery {
 
     /** Where automatic bitrate's first claim starts: the encoder's rate, or the earlier cut when that is lower. */
     static int automaticBitrateStart(int encoderKbps, int resumeKbps) {
-        return resumeKbps > 0 && resumeKbps < encoderKbps ? resumeKbps : encoderKbps;
+        return NightjarPolicyJni.recoveryAutomaticBitrateStart(encoderKbps, resumeKbps);
     }
 
     /**
@@ -541,8 +564,9 @@ final class GameRecovery {
      */
     boolean videoStarted() {
         MediaCodecDecoderRenderer videoRenderer = game.decoderRenderer;
-        return (videoRenderer != null && videoRenderer.hasReceivedVideo()) ||
-                game.getIntent().getBooleanExtra(EXTRA_RECOVERY_VIDEO, false);
+        return NightjarPolicyJni.recoveryVideoStarted(
+                videoRenderer != null && videoRenderer.hasReceivedVideo(),
+                game.getIntent().getBooleanExtra(EXTRA_RECOVERY_VIDEO, false));
     }
 
     /**
@@ -550,13 +574,23 @@ final class GameRecovery {
      * checks, and an attempt left in the budget. Spends nothing.
      */
     boolean recoversAutomatically() {
-        if (game.prefConfig == null || !game.prefConfig.autoReconnect || game.displayedFailureDialog || !game.connected || !game.foreground ||
-                !videoStarted() ||
-                game.isFinishing() || game.isDestroyed() || game.recoveryHandoffInProgress || game.pendingRecovery != null ||
-                game.app == null || game.app.getRole() != NvApp.Role.STREAM || game.app.isControlAction()) return false;
-        int resumeId = game.recoveryAppId != 0 ? game.recoveryAppId :
-                game.app.getControl() == NvApp.Control.NONE ? game.app.getAppId() : 0;
-        return resumeId != 0 && game.recoveryPolicy.allowsAttempt(SystemClock.elapsedRealtime(), connectedAt);
+        int resumeId = game.app == null ? 0 : (game.recoveryAppId != 0 ? game.recoveryAppId :
+                game.app.getControl() == NvApp.Control.NONE ? game.app.getAppId() : 0);
+        return NightjarPolicyJni.recoveryCanAutoRecover(
+                game.prefConfig != null && game.prefConfig.autoReconnect,
+                game.displayedFailureDialog,
+                game.connected,
+                game.foreground,
+                videoStarted(),
+                game.isFinishing() || game.isDestroyed(),
+                game.recoveryHandoffInProgress || game.pendingRecovery != null,
+                game.app != null && game.app.getRole() == NvApp.Role.STREAM,
+                game.app != null && game.app.isControlAction(),
+                resumeId != 0,
+                game.recoveryAttempts,
+                game.recoveryStartedAt,
+                SystemClock.elapsedRealtime(),
+                connectedAt);
     }
 
     private boolean queueAutomaticRecovery(final Intent retry, boolean ignoreAutoReconnectSetting) {
@@ -580,20 +614,25 @@ final class GameRecovery {
         long delay;
         final long deadlineFrom;
         if (tripResume) {
-            delay = StreamRecoveryPolicy.TRIP_RESUME_DELAY_MS;
+            delay = NightjarPolicyJni.recoveryTripResumeDelayMs();
             deadlineFrom = now;
             retry.putExtra(Game.EXTRA_TRIP_RESUME_STARTED, now);
         } else {
-            delay = game.recoveryPolicy.nextDelay(now, connectedAt);
+            long[] step = NightjarPolicyJni.recoveryNextDelay(
+                    game.recoveryAttempts, game.recoveryStartedAt, now, connectedAt);
+            delay = step[0];
+            game.recoveryAttempts = (int) step[1];
+            game.recoveryStartedAt = step[2];
             if (delay < 0) {
                 game.recoveryBudgetExhausted = true;
                 return false;
             }
             if (immediate) delay = 0;
-            deadlineFrom = game.recoveryPolicy.startedAt();
-            retry.putExtra(EXTRA_RECOVERY_ATTEMPTS, game.recoveryPolicy.attempts())
-                    .putExtra(EXTRA_RECOVERY_STARTED, game.recoveryPolicy.startedAt());
+            deadlineFrom = game.recoveryStartedAt;
+            retry.putExtra(EXTRA_RECOVERY_ATTEMPTS, game.recoveryAttempts)
+                    .putExtra(EXTRA_RECOVERY_STARTED, game.recoveryStartedAt);
         }
+        final long windowMs = NightjarPolicyJni.recoveryWindowMs();
         final String routeHost = game.getIntent().getStringExtra(Game.EXTRA_HOST);
         final int routePort = game.getIntent().getIntExtra(Game.EXTRA_PORT, NvHTTP.DEFAULT_HTTP_PORT);
 
@@ -603,7 +642,7 @@ final class GameRecovery {
         if (game.spinner != null) game.spinner.dismiss();
         game.spinner = game.streamConnection.showConnecting(tripResume ?
                 game.getString(R.string.stream_reconnecting) :
-                game.getString(R.string.stream_recovery_attempt, game.recoveryPolicy.attempts(), StreamRecoveryPolicy.MAX_ATTEMPTS));
+                game.getString(R.string.stream_recovery_attempt, game.recoveryAttempts, NightjarPolicyJni.recoveryMaxAttempts()));
         retry.putExtra(Game.EXTRA_MICROPHONE_MUTED, game.getIntent().getBooleanExtra(Game.EXTRA_MICROPHONE_MUTED, false));
         pendingRecoveryIntent = retry;
         final int generation = game.foregroundGeneration;
@@ -619,7 +658,7 @@ final class GameRecovery {
                 try {
                     // Never overlap the native global connection with a previous stop.
                     if (stopping != null) stopping.join(10000);
-                    waitForRouteToHost(routeHost, routePort, deadlineFrom + StreamRecoveryPolicy.WINDOW_MS, recovery);
+                    waitForRouteToHost(routeHost, routePort, deadlineFrom + windowMs, recovery);
                 } catch (InterruptedException interrupted) {
                     Thread.currentThread().interrupt();
                     return;
@@ -627,7 +666,7 @@ final class GameRecovery {
                 game.runOnUiThread(() -> {
                     if (!game.foreground || generation != game.foregroundGeneration || recovery != recoveryGeneration || game.isFinishing() || game.isDestroyed()) return;
                     if ((stopping != null && stopping.isAlive()) ||
-                            SystemClock.elapsedRealtime() - deadlineFrom >= StreamRecoveryPolicy.WINDOW_MS) {
+                            SystemClock.elapsedRealtime() - deadlineFrom >= windowMs) {
                         game.recoveryHandoffInProgress = false;
                         if (game.spinner != null) { game.spinner.dismiss(); game.spinner = null; }
                         showReconnectDialog(R.string.conn_terminated_title,
@@ -644,53 +683,37 @@ final class GameRecovery {
     }
 
     /**
-     * On a recovery's worker: returns once the PC is reachable, at {@code deadline}, or when the
-     * recovery is cancelled. A network is often back before its address toward the PC (DHCP),
-     * so the attempt waits for a route instead of failing at once and backing off.
+     * On a recovery's worker: delegates route wait to {@code nightjar_core::route::wait_for_route}
+     * via {@link NightjarJni}.
      */
     private void waitForRouteToHost(String host, int port, long deadline, int recovery) throws InterruptedException {
         if (host == null) return;
-        NetworkReturnRecovery wait = new NetworkReturnRecovery(deadline);
-        long waitStarted = SystemClock.elapsedRealtime();
-        while (recovery == recoveryGeneration && !game.isFinishing() && !game.isDestroyed()) {
-            long checkedAt = SystemClock.elapsedRealtime();
-            String unreachable = routeProbe.problem(host, port);
-            long next = wait.next(SystemClock.elapsedRealtime(), unreachable == null);
-            if (next == 0) {
-                if (wait.unreachableChecks() > 0) {
-                    LimeLog.info("Recovery: the PC is reachable again after " +
-                            (SystemClock.elapsedRealtime() - waitStarted) + " ms");
+        NightjarJni.ensureLibraryLoaded();
+        NightjarJni.routeWait(host, port, deadline, new NightjarJni.RouteWaitCallback() {
+            @Override public long nowMs() { return SystemClock.elapsedRealtime(); }
+            @Override public String probe(String h, int p) { return routeProbe.problem(h, p); }
+            @Override public boolean isCancelled() {
+                return recovery != recoveryGeneration || game.isFinishing() || game.isDestroyed();
+            }
+            @Override public boolean sleep(long ms) {
+                try {
+                    Thread.sleep(Math.max(0, ms));
+                    return true;
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return false;
                 }
-                return;
             }
-            if (next < 0) {
-                LimeLog.warning("Recovery: the PC stayed unreachable until the recovery window ended: " + unreachable);
-                return;
-            }
-            if (wait.unreachableChecks() == 1) {
-                LimeLog.info("Recovery: no route to the PC yet (" + unreachable + "), checking every " +
-                        NetworkReturnRecovery.RETRY_MS + " ms");
-            }
-            Thread.sleep(Math.max(0, next - (SystemClock.elapsedRealtime() - checkedAt)));
+            @Override public void logInfo(String line) { LimeLog.info(line); }
+            @Override public void logWarn(String line) { LimeLog.warning(line); }
+        });
+        if (Thread.currentThread().isInterrupted()) {
+            throw new InterruptedException();
         }
     }
 
     // A recovery's route check toward the PC (tests replace it).
-    private Game.RouteProbe routeProbe = GameRecovery::routeProblem;
-
-    /**
-     * Why there is no route toward the PC's HTTP port yet, or null to go on with the attempt: an
-     * answer, refused included, and also a check that timed out or failed otherwise (a slow link
-     * is not a missing one; the attempt itself decides, loudly).
-     */
-    private static String routeProblem(String host, int port) {
-        try (java.net.Socket socket = new java.net.Socket()) {
-            socket.connect(new java.net.InetSocketAddress(host, port), NetworkReturnRecovery.PROBE_TIMEOUT_MS);
-            return null;
-        } catch (java.io.IOException e) {
-            return Game.routeMissing(e) ? e.toString() : null;
-        }
-    }
+    private Game.RouteProbe routeProbe = NightjarJni::routeProblem;
 
     /**
      * What an automatic recovery that gives up says, as desktop's recovery_gave_up: why its last attempt failed,
@@ -701,7 +724,7 @@ final class GameRecovery {
     }
 
     static String gaveUpText(String cause, String stopped) {
-        return cause == null || cause.isEmpty() ? stopped : cause + "\n\n" + stopped;
+        return NightjarPolicyJni.recoveryGaveUpText(cause, stopped);
     }
 
     void showReconnectDialog(int title, String message) {

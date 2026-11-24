@@ -231,7 +231,9 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarPolicyJni_abrCeil
     _: JClass,
     handle: jlong,
 ) -> jint {
-    ABR_SLAB.with(handle, |s| s.controller.ceiling_kbps() as jint).unwrap_or(0)
+    ABR_SLAB
+        .with(handle, |s| s.controller.ceiling_kbps() as jint)
+        .unwrap_or(0)
 }
 
 #[unsafe(no_mangle)]
@@ -240,7 +242,9 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarPolicyJni_abrFloo
     _: JClass,
     handle: jlong,
 ) -> jint {
-    ABR_SLAB.with(handle, |s| s.controller.floor_kbps() as jint).unwrap_or(0)
+    ABR_SLAB
+        .with(handle, |s| s.controller.floor_kbps() as jint)
+        .unwrap_or(0)
 }
 
 #[unsafe(no_mangle)]
@@ -546,67 +550,4 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarPolicyJni_pyroAbr
     handle: jlong,
 ) {
     PYROWAVE_SLAB.with(handle, |c| c.suspend());
-}
-
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_hostLossAfterGoodbye(
-    _: JNIEnv,
-    _: JClass,
-    on_link: jboolean,
-    round: jint,
-    waited_ms: jlong,
-) -> jint {
-    host_loss_after_goodbye(on_link == JNI_TRUE, round, waited_ms)
-}
-
-fn host_loss_after_goodbye(on_link: bool, round: jint, waited_ms: jlong) -> jint {
-    use nightjar_core::host_loss::{after_goodbye, Round};
-    let waited = std::time::Duration::from_millis(waited_ms.max(0) as u64);
-    after_goodbye(on_link, Round::from_code(round), waited).code()
-}
-
-#[cfg(test)]
-mod host_loss_tests {
-    use super::host_loss_after_goodbye;
-    use nightjar_core::host_loss::{Goodbye, HOST_EXIT_WINDOW, QUIET_LINK_WAIT, Round};
-
-    const EXIT_MS: i64 = HOST_EXIT_WINDOW.as_millis() as i64;
-    const QUIET_MS: i64 = QUIET_LINK_WAIT.as_millis() as i64;
-
-    #[test]
-    fn the_codes_from_java_reach_the_shared_verdict() {
-        assert_eq!(
-            host_loss_after_goodbye(true, Round::SilentLinkUp.code(), 0),
-            Goodbye::Gone.code()
-        );
-        assert_eq!(
-            host_loss_after_goodbye(true, Round::Refused.code(), 0),
-            Goodbye::Gone.code()
-        );
-        assert_eq!(
-            host_loss_after_goodbye(true, Round::Answered.code(), 0),
-            Goodbye::Wait.code()
-        );
-        assert_eq!(
-            host_loss_after_goodbye(true, Round::Answered.code(), EXIT_MS),
-            Goodbye::Unknown.code()
-        );
-    }
-
-    #[test]
-    fn what_java_cannot_tell_is_the_old_behaviour() {
-        assert_eq!(
-            host_loss_after_goodbye(false, Round::SilentLinkUp.code(), 0),
-            Goodbye::Unknown.code()
-        );
-        assert_eq!(host_loss_after_goodbye(true, 99, 0), Goodbye::Wait.code());
-        assert_eq!(
-            host_loss_after_goodbye(true, 99, QUIET_MS),
-            Goodbye::Unknown.code()
-        );
-        assert_eq!(
-            host_loss_after_goodbye(true, Round::Answered.code(), -5),
-            Goodbye::Wait.code()
-        );
-    }
 }

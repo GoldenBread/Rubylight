@@ -1,7 +1,7 @@
 {
   "source": "StreamRecoveryPolicyTest.increasingDelaysAndBudgetSurviveActivityReplacement",
   "rust": "recovery::StreamRecoveryPolicy",
-  "java": "com.limelight.StreamRecoveryPolicy",
+  "java": "com.limelight.policy.RecoveryPolicyTrace",
   "new": [0, 0],
   "calls": [
     {"call": "next_delay", "args": [10000, -1], "expect": 1000},

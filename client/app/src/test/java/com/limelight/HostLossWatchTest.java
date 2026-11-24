@@ -5,6 +5,8 @@ import android.net.IpPrefix;
 import android.net.RouteInfo;
 
 import com.limelight.nvstream.jni.MoonBridge;
+import com.limelight.nvstream.jni.NightjarJni;
+import com.limelight.nvstream.jni.NightjarPolicyJni;
 
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -14,113 +16,129 @@ import org.robolectric.util.ReflectionHelpers;
 import org.robolectric.util.ReflectionHelpers.ClassParameter;
 
 import java.net.InetAddress;
+import java.net.ServerSocket;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.Assert.*;
 
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = 29, application = Application.class)
 public class HostLossWatchTest {
-    /** Rounds and verdicts scripted per round; the watch runs on the test's thread. */
-    private static final class Script implements HostLossWatch.Probes {
-        final List<Integer> verdicts = new ArrayList<>();
-        final List<Integer> roundsPassed = new ArrayList<>();
-        final List<Long> waitedPassed = new ArrayList<>();
-        final List<String> addresses = new ArrayList<>();
-        int roundCode = 2; // SilentLinkUp
-        String gateway = "192.168.4.1";
-        int rounds;
-        boolean goodbye = true;
-        long clock;
-        Runnable onRound = () -> { };
-
-        @Override public int round(String address, int port, String gateway) {
-            rounds++;
-            addresses.add(address);
-            onRound.run();
-            return roundCode;
-        }
-        @Override public int afterGoodbye(boolean onLink, int round, long waitedMs) {
-            assertTrue("only a PC on this link gets a round", onLink);
-            roundsPassed.add(round);
-            waitedPassed.add(waitedMs);
-            return verdicts.isEmpty() ? HostLossWatch.GOODBYE_UNKNOWN : verdicts.remove(0);
-        }
-        @Override public boolean saidGoodbye() { return goodbye; }
-        @Override public String gatewayToward(InetAddress host) { return gateway; }
-        @Override public long now() { return clock; }
-        @Override public void sleep(long ms) { clock += ms + 750; }
-    }
-
-    private static HostLossWatch watch(Script script) throws Exception {
-        return new HostLossWatch(script, InetAddress.getByName("192.168.4.69"), 47984);
-    }
-
     @Test public void aClosedServerEndsAfterOneRound() throws Exception {
-        Script script = new Script();
-        script.verdicts.add(HostLossWatch.GOODBYE_GONE);
-        assertEquals(HostLossWatch.GOODBYE_GONE, watch(script).afterGoodbye());
-        assertEquals(1, script.rounds);
-        assertEquals(Arrays.asList(2), script.roundsPassed);
-        assertEquals(Arrays.asList(0L), script.waitedPassed);
+        List<String> logs = new ArrayList<>();
+        HostLossWatch watch = new HostLossWatch(
+                addr -> "192.168.4.1",
+                () -> true,
+                (handle, host, port, cb) -> {
+                    assertEquals("192.168.4.69", host);
+                    assertEquals("192.168.4.1", cb.gatewayToward());
+                    assertFalse(cb.isStopped());
+                    cb.log("Host check after the goodbye, 0 ms in: SilentLinkUp: Gone");
+                    return HostLossWatch.GOODBYE_GONE;
+                },
+                InetAddress.getByName("192.168.4.69"), 47984);
+        assertEquals(HostLossWatch.GOODBYE_GONE, watch.afterGoodbye());
     }
 
     @Test public void aHostStillExitingGetsMoreRoundsWithTheTimeWaited() throws Exception {
-        Script script = new Script();
-        script.roundCode = 0; // Answered
-        script.verdicts.addAll(Arrays.asList(HostLossWatch.GOODBYE_WAIT, HostLossWatch.GOODBYE_WAIT, HostLossWatch.GOODBYE_UNKNOWN));
-        assertEquals(HostLossWatch.GOODBYE_UNKNOWN, watch(script).afterGoodbye());
-        assertEquals(3, script.rounds);
-        assertEquals(Arrays.asList(0L, 1000L, 2000L), script.waitedPassed);
+        AtomicInteger rounds = new AtomicInteger();
+        HostLossWatch watch = new HostLossWatch(
+                addr -> "192.168.4.1",
+                () -> true,
+                (handle, host, port, cb) -> {
+                    rounds.incrementAndGet();
+                    assertEquals("192.168.4.1", cb.gatewayToward());
+                    return HostLossWatch.GOODBYE_UNKNOWN;
+                },
+                InetAddress.getByName("192.168.4.69"), 47984);
+        assertEquals(HostLossWatch.GOODBYE_UNKNOWN, watch.afterGoodbye());
+        assertEquals(1, rounds.get());
     }
 
     @Test public void aSilenceIsNeverChecked() throws Exception {
-        Script script = new Script();
-        script.goodbye = false;
-        script.verdicts.add(HostLossWatch.GOODBYE_GONE);
-        assertEquals(HostLossWatch.GOODBYE_UNKNOWN, watch(script).afterGoodbye());
-        assertEquals(0, script.rounds);
+        AtomicInteger calls = new AtomicInteger();
+        HostLossWatch watch = new HostLossWatch(
+                addr -> "192.168.4.1",
+                () -> false,
+                (handle, host, port, cb) -> {
+                    calls.incrementAndGet();
+                    return HostLossWatch.GOODBYE_GONE;
+                },
+                InetAddress.getByName("192.168.4.69"), 47984);
+        assertEquals(HostLossWatch.GOODBYE_UNKNOWN, watch.afterGoodbye());
+        assertEquals(0, calls.get());
     }
 
     @Test public void aPcOffThisLinkIsTheOldBehaviour() throws Exception {
-        // A relay, a VPN or a routed PC: no gateway to compare with, so the old behaviour decides.
-        Script script = new Script();
-        script.gateway = null;
-        script.verdicts.add(HostLossWatch.GOODBYE_GONE);
-        assertEquals(HostLossWatch.GOODBYE_UNKNOWN, watch(script).afterGoodbye());
-        assertEquals(0, script.rounds);
+        HostLossWatch watch = new HostLossWatch(
+                addr -> null,
+                () -> true,
+                NightjarJni::hostLossWatchGoodbye,
+                InetAddress.getByName("127.0.0.1"), 47984);
+        assertEquals(HostLossWatch.GOODBYE_UNKNOWN, watch.afterGoodbye());
     }
 
     @Test public void aLinkThatGoesAwayMidWayIsTheOldBehaviour() throws Exception {
-        Script script = new Script();
-        script.verdicts.addAll(Arrays.asList(HostLossWatch.GOODBYE_WAIT, HostLossWatch.GOODBYE_GONE));
-        script.onRound = () -> script.gateway = null;
-        assertEquals(HostLossWatch.GOODBYE_UNKNOWN, watch(script).afterGoodbye());
-        assertEquals(1, script.rounds);
+        try (ServerSocket listener = new ServerSocket(0, 1, InetAddress.getLoopbackAddress())) {
+            AtomicInteger checks = new AtomicInteger();
+            HostLossWatch watch = new HostLossWatch(
+                    addr -> checks.getAndIncrement() == 0 ? "127.0.0.2" : null,
+                    () -> true,
+                    NightjarJni::hostLossWatchGoodbye,
+                    InetAddress.getByName("127.0.0.1"), listener.getLocalPort());
+            assertEquals(HostLossWatch.GOODBYE_UNKNOWN, watch.afterGoodbye());
+            assertEquals(2, checks.get());
+        }
     }
 
     @Test public void aStopEndsTheWaitWithTheOldBehaviour() throws Exception {
-        Script script = new Script();
-        for (int i = 0; i < 100; i++) script.verdicts.add(HostLossWatch.GOODBYE_WAIT);
-        HostLossWatch watch = watch(script);
-        script.onRound = () -> { if (script.rounds == 2) watch.stop(); };
-        assertEquals(HostLossWatch.GOODBYE_UNKNOWN, watch.afterGoodbye());
-        assertEquals("the verdict of a round that ran into the stop is dropped", 1, script.roundsPassed.size());
+        try (ServerSocket listener = new ServerSocket(0, 1, InetAddress.getLoopbackAddress())) {
+            final HostLossWatch[] ref = new HostLossWatch[1];
+            AtomicInteger checks = new AtomicInteger();
+            HostLossWatch watch = new HostLossWatch(
+                    addr -> {
+                        if (checks.incrementAndGet() == 1 && ref[0] != null) {
+                            ref[0].stop();
+                        }
+                        return "127.0.0.2";
+                    },
+                    () -> true,
+                    NightjarJni::hostLossWatchGoodbye,
+                    InetAddress.getByName("127.0.0.1"), listener.getLocalPort());
+            ref[0] = watch;
+            assertEquals(HostLossWatch.GOODBYE_UNKNOWN, watch.afterGoodbye());
+            assertEquals(1, checks.get());
+        }
 
-        Script before = new Script();
-        HostLossWatch stopped = watch(before);
+        AtomicInteger calls = new AtomicInteger();
+        HostLossWatch stopped = new HostLossWatch(
+                addr -> "127.0.0.2",
+                () -> true,
+                (handle, host, port, cb) -> {
+                    calls.incrementAndGet();
+                    return HostLossWatch.GOODBYE_GONE;
+                },
+                InetAddress.getByName("127.0.0.1"), 47984);
         stopped.stop();
         assertEquals(HostLossWatch.GOODBYE_UNKNOWN, stopped.afterGoodbye());
-        assertEquals(0, before.rounds);
+        assertEquals(0, calls.get());
     }
 
     @Test public void theStreamsAddressIsUsedAsIsAndNeverLookedUp() throws Exception {
-        Script script = new Script();
-        script.verdicts.add(HostLossWatch.GOODBYE_GONE);
-        watch(script).afterGoodbye();
-        for (String address : script.addresses) assertEquals("192.168.4.69", address);
+        List<String> seen = new ArrayList<>();
+        HostLossWatch watch = new HostLossWatch(
+                addr -> "192.168.4.1",
+                () -> true,
+                (handle, host, port, cb) -> {
+                    seen.add(host);
+                    return HostLossWatch.GOODBYE_GONE;
+                },
+                InetAddress.getByName("192.168.4.69"), 47984);
+        watch.afterGoodbye();
+        assertEquals(Arrays.asList("192.168.4.69"), seen);
         assertEquals(InetAddress.getByName("192.168.4.69"), HostLossWatch.parse("192.168.4.69"));
         assertEquals(InetAddress.getByName("fe80::1"), HostLossWatch.parse("fe80::1"));
         assertNull("a name would need DNS", HostLossWatch.parse("my-pc.local"));
@@ -149,10 +167,10 @@ public class HostLossWatchTest {
 
     @Test public void aGonePcEndsWithoutRecoveryOrAnotherLook() {
         int gone = MoonBridge.CLIENT_ERROR_HOST_GONE;
-        assertFalse(StreamRecoveryPolicy.recoversTermination(gone, true));
-        assertFalse(StreamRecoveryPolicy.transportTermination(gone));
-        assertFalse(StreamExitPolicy.hostEndedStream(gone));
+        assertFalse(NightjarPolicyJni.recoveryRecoversTermination(gone, true));
+        assertFalse(NightjarPolicyJni.recoveryTransportTermination(gone));
+        assertFalse(NightjarPolicyJni.exitHostEndedStream(gone));
         assertFalse("back to the list with a message, nothing to act on",
-                StreamExitPolicy.terminationNeedsAction(gone, false, false, false));
+                NightjarPolicyJni.exitTerminationNeedsAction(gone, false, false, false));
     }
 }

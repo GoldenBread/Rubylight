@@ -157,7 +157,8 @@ public class Game extends Activity implements SurfaceHolder.Callback, TextureVie
     boolean surfaceCreated = false;
     boolean attemptedConnection = false;
     volatile Thread connectionStopThread;
-    StreamRecoveryPolicy recoveryPolicy = new StreamRecoveryPolicy(0, 0);
+    int recoveryAttempts;
+    long recoveryStartedAt;
     int recoveryAppId;
     String recoveryAppUuid;
     Runnable pendingRecovery;
@@ -1385,18 +1386,6 @@ public class Game extends Activity implements SurfaceHolder.Callback, TextureVie
     }
 
     interface RouteProbe { String problem(String host, int port); }
-
-    /** An immediate no-route error: no address toward the PC (yet), or its name does not resolve. */
-    static boolean routeMissing(java.io.IOException e) {
-        // Android's socket layer throws NoRouteToHostException for EHOSTUNREACH and
-        // BindException ("Address not available") for EADDRNOTAVAIL, without the errno.
-        if (e instanceof java.net.UnknownHostException || e instanceof java.net.NoRouteToHostException ||
-                e instanceof java.net.BindException) return true;
-        if (!(e.getCause() instanceof android.system.ErrnoException)) return false;
-        int errno = ((android.system.ErrnoException) e.getCause()).errno;
-        return errno == android.system.OsConstants.ENETUNREACH || errno == android.system.OsConstants.EHOSTUNREACH ||
-                errno == android.system.OsConstants.EADDRNOTAVAIL;
-    }
 
     // What became of each value asked for, in plain words.
     static String rateChangeText(Context context, RateChangeResult result) {

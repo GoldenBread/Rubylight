@@ -708,8 +708,8 @@ final class GameMenuActions {
         boolean chosen = AppQuitOnLeave.isEnabled(game, game.getIntent().getStringExtra(Game.EXTRA_PC_UUID),
                 game.app.getAppUuid(), game.app.getAppId());
         // A plain disconnect never waits for a host request; its callbacks check the activity.
-        if (!StreamExitPolicy.quitsOnLeave(chosen, game.app.getRole(), game.connected,
-                DualScreen.isSecond(game.getIntent()))) {
+        if (!com.limelight.nvstream.jni.NightjarPolicyJni.exitQuitsOnLeave(chosen, game.app.getRole().ordinal(),
+                game.connected, DualScreen.isSecond(game.getIntent()))) {
             if (game.connected && game.conn != null) game.conn.announceDisconnect();
             game.finish();
             return;

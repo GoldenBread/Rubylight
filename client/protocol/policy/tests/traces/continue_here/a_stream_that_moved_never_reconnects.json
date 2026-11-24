@@ -1,7 +1,7 @@
 {
   "source": "ContinueHerePolicyTest",
   "rust": "continue_here::ContinueHerePolicy",
-  "java": "com.limelight.ContinueHerePolicy",
+  "java": "com.limelight.policy.ContinueHereTrace",
   "new": null,
   "calls": [
     {"call": "recovers", "args": [true, true], "expect": false},

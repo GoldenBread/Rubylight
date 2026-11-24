@@ -36,7 +36,7 @@ public class PolicyTraceTest {
     private static final File TRACES = new File("../protocol/policy/tests/traces");
     /** Every module folder, each with at least one Java trace, so a renamed or emptied folder fails. */
     private static final List<String> MODULES = Arrays.asList("bitrate", "client_hint", "continue_here", "health", "launch", "pyrowave", "quality", "recovery", "stick");
-    private static final String RECOVERY = "{\"rust\": \"recovery::StreamRecoveryPolicy\", \"java\": \"com.limelight.StreamRecoveryPolicy\","
+    private static final String RECOVERY = "{\"rust\": \"recovery::StreamRecoveryPolicy\", \"java\": \"com.limelight.policy.RecoveryPolicyTrace\","
             + " \"new\": [0, 0], \"calls\": [{\"call\": \"next_delay\", \"args\": [%s, -1], \"expect\": 1000}]}";
 
     @Test public void everyTraceMatchesTheJavaPolicy() throws Exception {
@@ -73,7 +73,7 @@ public class PolicyTraceTest {
     }
 
     @Test public void aWrongExpectationFails() throws Exception {
-        String trace = "{\"rust\": \"recovery::StreamRecoveryPolicy\", \"java\": \"com.limelight.StreamRecoveryPolicy\","
+        String trace = "{\"rust\": \"recovery::StreamRecoveryPolicy\", \"java\": \"com.limelight.policy.RecoveryPolicyTrace\","
                 + " \"new\": [0, 0], \"calls\": [{\"call\": \"next_delay\", \"args\": [5, -1], \"expect\": %d}]}";
         replay(new JSONObject(String.format(trace, 1000)));
         AssertionError error = assertThrows(AssertionError.class,

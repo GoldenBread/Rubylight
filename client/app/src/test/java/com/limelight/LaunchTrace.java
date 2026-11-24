@@ -5,6 +5,7 @@ import com.limelight.nvstream.http.HostCapabilities;
 import com.limelight.nvstream.http.NvApp;
 import com.limelight.nvstream.http.PairingManager;
 import com.limelight.nvstream.http.TestHosts;
+import com.limelight.nvstream.jni.NightjarPolicyJni;
 
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -31,13 +32,13 @@ final class LaunchTrace {
                 NvApp.Control.valueOf(control.toUpperCase(Locale.ROOT)), role(role));
     }
 
-    static boolean quitsOnLeave(boolean quitOnLeaveChosen, String role, boolean connected) {
-        return StreamExitPolicy.quitsOnLeave(quitOnLeaveChosen, role(role), connected, false);
+    static boolean quitsOnLeave(boolean quitOnLeaveChosen, String role, boolean connected, boolean secondScreen) {
+        return NightjarPolicyJni.exitQuitsOnLeave(quitOnLeaveChosen, role(role).ordinal(), connected, secondScreen);
     }
 
     static boolean terminationNeedsAction(int errorCode, boolean portTestBlocked,
                                           boolean networkGraceGaveUp, boolean recoveryExhausted) {
-        return StreamExitPolicy.terminationNeedsAction(errorCode, portTestBlocked, networkGraceGaveUp,
+        return NightjarPolicyJni.exitTerminationNeedsAction(errorCode, portTestBlocked, networkGraceGaveUp,
                 recoveryExhausted);
     }
 
@@ -54,7 +55,10 @@ final class LaunchTrace {
             if (caps.has(HostCapabilities.Feature.REMOTE_SESSION_TILES) != remoteSessionTiles) {
                 throw new AssertionError(caps + " does not stand for remote session tiles " + remoteSessionTiles);
             }
-            modes.put(caps, InputOnlyPolicy.mode(anyHostEnabled, caps, hostListsInputOnly).name().toLowerCase(Locale.ROOT));
+            int mode = NightjarPolicyJni.inputOnlyMode(
+                    anyHostEnabled, caps.has(HostCapabilities.Feature.REMOTE_SESSION_TILES), hostListsInputOnly);
+            modes.put(caps, mode == NightjarPolicyJni.INPUT_ONLY_MODE_NATIVE ? "native"
+                    : mode == NightjarPolicyJni.INPUT_ONLY_MODE_SMALL_STREAM ? "small_stream" : "off");
         }
         return agreed(modes);
     }
@@ -71,33 +75,34 @@ final class LaunchTrace {
             ComputerDetails pc = new ComputerDetails();
             pc.pairState = state;
             pc.permission = permission;
-            blockers.put(state, blocker(InputOnlyPolicy.smallStreamBlocker(pc)));
+            blockers.put(state, blocker(NightjarPolicyJni.inputOnlySmallStreamBlocker(
+                    pc.pairState == PairingManager.PairState.PAIRED, pc.permission)));
         }
         return agreed(blockers);
     }
 
     static boolean keepsRunningGame(boolean hostRunningGame, boolean thisGameRunning) {
-        return InputOnlyPolicy.keepsRunningGame(hostRunningGame, thisGameRunning);
+        return NightjarPolicyJni.inputOnlyKeepsRunningGame(hostRunningGame, thisGameRunning);
     }
 
     static int estimatedKbps() {
-        return InputOnlyPolicy.estimatedKbps();
+        return NightjarPolicyJni.inputOnlyEstimatedKbps();
     }
 
     static int estimatedMegabytesPerHour() {
-        return InputOnlyPolicy.estimatedMegabytesPerHour();
+        return NightjarPolicyJni.inputOnlyEstimatedMegabytesPerHour();
     }
 
     private static NvApp.Role role(String role) {
         return NvApp.Role.valueOf(role.toUpperCase(Locale.ROOT));
     }
 
-    private static String blocker(int text) {
-        if (text == 0) return null;
-        if (text == HostCapabilities.Reason.PAIR.text) return "pair";
-        if (text == HostCapabilities.Reason.VIEW_PERMISSION.text) return "view_permission";
-        if (text == R.string.input_only_reason_input_permission) return "input_permission";
-        throw new AssertionError("unknown blocker text " + text);
+    private static String blocker(int code) {
+        if (code == NightjarPolicyJni.INPUT_ONLY_BLOCKER_NONE) return null;
+        if (code == NightjarPolicyJni.INPUT_ONLY_BLOCKER_PAIR) return "pair";
+        if (code == NightjarPolicyJni.INPUT_ONLY_BLOCKER_VIEW_PERMISSION) return "view_permission";
+        if (code == NightjarPolicyJni.INPUT_ONLY_BLOCKER_INPUT_PERMISSION) return "input_permission";
+        throw new AssertionError("unknown blocker code " + code);
     }
 
     /** The one result every input gave; null results count too. */

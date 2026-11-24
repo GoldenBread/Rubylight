@@ -1,7 +1,7 @@
 {
   "source": "StreamRecoveryPolicyTest.gracefulPermanentAndUnknownErrorsDoNotRetry",
   "rust": "recovery::StreamRecoveryPolicy",
-  "java": "com.limelight.StreamRecoveryPolicy",
+  "java": "com.limelight.policy.RecoveryPolicyTrace",
   "new": null,
   "calls": [
     {"call": "transient_termination", "args": [0], "expect": false},

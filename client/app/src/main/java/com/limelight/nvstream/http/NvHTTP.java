@@ -9,13 +9,10 @@ import android.os.Build;
 import com.limelight.BuildConfig;
 import com.limelight.nvstream.ConnectionContext;
 import com.limelight.nvstream.PyroWavePace;
-import com.limelight.nvstream.StreamConfiguration;
 import com.limelight.nvstream.jni.HandleReaper;
 import com.limelight.nvstream.jni.Json;
-import com.limelight.nvstream.jni.MoonBridge;
 import com.limelight.nvstream.jni.NightjarHttpJni;
 import com.limelight.preferences.HostDisplayChoice;
-import com.limelight.utils.ClipboardSync;
 
 import org.xmlpull.v1.XmlPullParserException;
 
@@ -30,9 +27,6 @@ import java.security.PrivateKey;
 import java.security.cert.CertificateEncodingException;
 import java.security.cert.X509Certificate;
 import java.util.LinkedList;
-import java.util.List;
-import java.util.ListIterator;
-import java.util.Locale;
 import java.util.function.IntConsumer;
 
 public class NvHTTP implements AutoCloseable {
@@ -169,35 +163,16 @@ public class NvHTTP implements AutoCloseable {
         String xml = serverInfo == null ? "" : serverInfo;
         try {
             Json.Obj snap = unwrapOkObj(NightjarHttpJni.parseServerInfoXml(xml, DEFAULT_HTTP_PORT, false), true);
-            applyCapabilities(details, snap);
+            NvHttpJson.applyCapabilities(details, snap);
         } catch (Json.SyntaxException e) {
             throw new XmlPullParserException(e.getMessage());
         }
     }
 
     private ComputerDetails detailsFromSnapshot(Json.Obj snap) throws XmlPullParserException {
-        try {
-            ComputerDetails details = new ComputerDetails();
-            details.name = snap.optString("hostname", "UNKNOWN");
-            details.uuid = snap.getString("unique_id");
-            details.httpsPort = snap.getInt("https_port");
-            details.macAddress = optNullString(snap, "mac_address");
-            details.localAddress = makeTuple(optNullString(snap, "local_ip"), httpPort);
-            details.externalPort = snap.getInt("external_port");
-            details.remoteAddress = makeTuple(optNullString(snap, "external_ip"), details.externalPort);
-            details.pairState = snap.getBoolean("paired")
-                    ? PairingManager.PairState.PAIRED : PairingManager.PairState.NOT_PAIRED;
-            details.runningGameId = snap.getInt("current_game");
-            details.sessionIdle = snap.getBoolean("session_idle");
-            details.runningGameUuid = optNullString(snap, "current_game_uuid");
-            applyCapabilities(details, snap);
-            details.nvidiaServer = snap.getBoolean("nvidia_server");
-            hostCaps = details.caps;
-            details.state = ComputerDetails.State.ONLINE;
-            return details;
-        } catch (Json.SyntaxException e) {
-            throw new XmlPullParserException(e.getMessage());
-        }
+        ComputerDetails details = NvHttpJson.detailsFromSnapshot(snap, httpPort);
+        hostCaps = details.caps;
+        return details;
     }
 
     /**
@@ -205,56 +180,7 @@ public class NvHTTP implements AutoCloseable {
      * Rust {@code server_info_json} object produced by {@code HostManager}.
      */
     public static void applyServerInfoSnapshot(ComputerDetails target, Json.Obj snap, int httpPort) {
-        if (target == null || snap == null) return;
-        String name = snap.optString("hostname", "UNKNOWN");
-        if (!name.isEmpty() && !"UNKNOWN".equals(name)) {
-            target.name = name;
-        }
-        String uid = optNullString(snap, "unique_id");
-        if (uid != null && !uid.isEmpty()) target.uuid = uid;
-        int https = snap.optInt("https_port", 0);
-        if (https != 0) target.httpsPort = https;
-        String mac = optNullString(snap, "mac_address");
-        if (mac != null) target.macAddress = mac;
-        String localIp = optNullString(snap, "local_ip");
-        if (localIp != null && !localIp.startsWith("127.")) {
-            ComputerDetails.AddressTuple local = makeTuple(localIp, httpPort);
-            if (local != null) target.localAddress = local;
-        }
-        target.externalPort = snap.optInt("external_port", httpPort);
-        ComputerDetails.AddressTuple remote = makeTuple(optNullString(snap, "external_ip"), target.externalPort);
-        if (remote != null) target.remoteAddress = remote;
-        target.pairState = snap.optBoolean("paired", false)
-                ? PairingManager.PairState.PAIRED : PairingManager.PairState.NOT_PAIRED;
-        target.runningGameId = snap.optInt("current_game", 0);
-        target.sessionIdle = snap.optBoolean("session_idle", false);
-        target.runningGameUuid = optNullString(snap, "current_game_uuid");
-        applyCapabilities(target, snap);
-        target.nvidiaServer = snap.optBoolean("nvidia_server", false);
-        target.state = ComputerDetails.State.ONLINE;
-    }
-
-    private static void applyCapabilities(ComputerDetails details, Json.Obj snap) {
-        details.caps = HostCapabilities.fromSnapshotJson(snap.getObject("capabilities"));
-        details.permission = snap.isNull("permission") ? -1 : snap.getLong("permission");
-        details.encoderBitrateSupported = snap.getBoolean("encoder_bitrate_supported");
-        details.encoderBitrateKbps = snap.getInt("encoder_bitrate_kbps");
-        details.initialEncoderBitrateKbps = snap.getInt("initial_encoder_bitrate_kbps");
-        Json.Arr cmds = snap.getArray("server_commands");
-        details.serverCommands.clear();
-        for (int i = 0; i < cmds.length(); i++) {
-            details.serverCommands.add(cmds.getString(i));
-        }
-        details.frameLimiterEnabled = snap.getBoolean("frame_limiter_enabled");
-        details.virtualDisplayFrameLimiterEnabled = snap.getBoolean("virtual_display_frame_limiter_enabled");
-        details.frameLimiterFpsLimitMilliHz = snap.getLong("frame_limiter_fps_limit_millihz");
-        details.pyroWaveHostLinkMbps = snap.getLong("pyrowave_host_link_mbps");
-        details.pyroWaveBandwidthProbeBytes = snap.getInt("pyrowave_bandwidth_probe_bytes");
-        details.pyroWaveBurstProbe = snap.getBoolean("pyrowave_burst_probe");
-        details.pyroWaveCriticalFecPercentage = snap.getInt("pyrowave_critical_fec_percentage");
-        details.pyroWaveMinParityShards = snap.getInt("pyrowave_min_parity_shards");
-        details.packed444Modes = snap.isNull("packed444_modes") ? -1 : snap.getInt("packed444_modes");
-        details.hostLastFailure = snap.isNull("last_failure") ? "" : snap.getString("last_failure");
+        NvHttpJson.applyServerInfoSnapshot(target, snap, httpPort);
     }
 
     private Json.Obj parseSnapshot(String serverInfo) throws XmlPullParserException, IOException {
@@ -262,7 +188,7 @@ public class NvHTTP implements AutoCloseable {
     }
 
     public String getServerVersion(String serverInfo) throws XmlPullParserException, IOException {
-        return optNullString(parseSnapshot(serverInfo), "app_version");
+        return NvHttpJson.optNullString(parseSnapshot(serverInfo), "app_version");
     }
 
     public PairingManager.PairState getPairState() throws IOException, XmlPullParserException {
@@ -287,7 +213,7 @@ public class NvHTTP implements AutoCloseable {
     }
 
     public String getGpuType(String serverInfo) throws XmlPullParserException, IOException {
-        return optNullString(parseSnapshot(serverInfo), "gpu_type");
+        return NvHttpJson.optNullString(parseSnapshot(serverInfo), "gpu_type");
     }
 
     public boolean supports4K(String serverInfo) throws XmlPullParserException, IOException {
@@ -343,7 +269,7 @@ public class NvHTTP implements AutoCloseable {
 
     public NetworkPathInfo getNetworkPath() throws IOException {
         try {
-            Json.Obj reply = unwrapOk(NightjarHttpJni.getNetworkPath(handle, hostCaps.toJson()), false);
+            Json.Obj reply = NvHttpJson.unwrapOk(NightjarHttpJni.getNetworkPath(handle, hostCaps.toJson()), false);
             return new NetworkPathInfo(NetworkPathInfo.Kind.valueOf(reply.getString("ok")));
         } catch (XmlPullParserException | Json.SyntaxException e) {
             throw new IOException("Invalid route response", e);
@@ -352,7 +278,7 @@ public class NvHTTP implements AutoCloseable {
 
     public String getInternetPlay() throws IOException {
         try {
-            return unwrapOk(NightjarHttpJni.getInternetPlay(handle, hostCaps.toJson()), false).getString("ok");
+            return NvHttpJson.unwrapOk(NightjarHttpJni.getInternetPlay(handle, hostCaps.toJson()), false).getString("ok");
         } catch (XmlPullParserException | Json.SyntaxException e) {
             throw new IOException("Invalid internet play response", e);
         }
@@ -360,7 +286,7 @@ public class NvHTTP implements AutoCloseable {
 
     public boolean supportsFoundationAbr() throws IOException {
         try {
-            return unwrapOk(NightjarHttpJni.supportsFoundationAbr(handle), false).optBoolean("ok", false);
+            return NvHttpJson.unwrapOk(NightjarHttpJni.supportsFoundationAbr(handle), false).optBoolean("ok", false);
         } catch (XmlPullParserException e) {
             throw new IOException(e.getMessage(), e);
         }
@@ -422,7 +348,7 @@ public class NvHTTP implements AutoCloseable {
     double probePyroWaveBandwidthBytes(int expectedBytes, IntConsumer progress) throws IOException {
         try {
             NightjarHttpJni.PercentProgress cb = progress == null ? null : progress::accept;
-            return unwrapOk(NightjarHttpJni.probeBandwidth(handle, expectedBytes, cb), false)
+            return NvHttpJson.unwrapOk(NightjarHttpJni.probeBandwidth(handle, expectedBytes, cb), false)
                     .getDouble("ok");
         } catch (XmlPullParserException | Json.SyntaxException e) {
             throw new IOException(e.getMessage(), e);
@@ -431,7 +357,7 @@ public class NvHTTP implements AutoCloseable {
 
     public boolean supportsFoundationBandwidthTest() throws IOException {
         try {
-            return unwrapOk(NightjarHttpJni.supportsFoundationBandwidthTest(handle), false).optBoolean("ok", false);
+            return NvHttpJson.unwrapOk(NightjarHttpJni.supportsFoundationBandwidthTest(handle), false).optBoolean("ok", false);
         } catch (XmlPullParserException e) {
             throw new IOException(e.getMessage(), e);
         }
@@ -453,7 +379,7 @@ public class NvHTTP implements AutoCloseable {
 
     public double probeLinkMbps() throws IOException {
         try {
-            return unwrapOk(NightjarHttpJni.probeLinkMbps(handle), false).getDouble("ok");
+            return NvHttpJson.unwrapOk(NightjarHttpJni.probeLinkMbps(handle), false).getDouble("ok");
         } catch (XmlPullParserException | Json.SyntaxException e) {
             throw new IOException(e.getMessage(), e);
         }
@@ -470,7 +396,7 @@ public class NvHTTP implements AutoCloseable {
 
     public double probeServerLatency() throws IOException, XmlPullParserException {
         try {
-            return unwrapOk(NightjarHttpJni.probeServerLatency(handle, SHORT_CONNECTION_TIMEOUT), true)
+            return NvHttpJson.unwrapOk(NightjarHttpJni.probeServerLatency(handle, SHORT_CONNECTION_TIMEOUT), true)
                     .getDouble("ok");
         } catch (Json.SyntaxException e) {
             throw new IOException(e.getMessage(), e);
@@ -499,7 +425,7 @@ public class NvHTTP implements AutoCloseable {
         int n;
         while ((n = r.read(buf)) != -1) sb.append(buf, 0, n);
         try {
-            Json.Arr arr = unwrapOk(NightjarHttpJni.parseAppListXml(sb.toString(), caps.toJson()), true)
+            Json.Arr arr = NvHttpJson.unwrapOk(NightjarHttpJni.parseAppListXml(sb.toString(), caps.toJson()), true)
                     .getArray("ok");
             LinkedList<NvApp> list = new LinkedList<>();
             boolean monitorCatalogue = false;
@@ -523,7 +449,7 @@ public class NvHTTP implements AutoCloseable {
 
     public String getAppListRaw() throws IOException {
         try {
-            return unwrapOk(NightjarHttpJni.getAppListRaw(handle), false).getString("ok");
+            return NvHttpJson.unwrapOk(NightjarHttpJni.getAppListRaw(handle), false).getString("ok");
         } catch (XmlPullParserException | Json.SyntaxException e) {
             throw new IOException(e.getMessage(), e);
         }
@@ -550,7 +476,7 @@ public class NvHTTP implements AutoCloseable {
     }
 
     public void unpair() throws IOException {
-        try { unwrapOk(NightjarHttpJni.unpair(handle), false); }
+        try { NvHttpJson.unwrapOk(NightjarHttpJni.unpair(handle), false); }
         catch (XmlPullParserException e) { throw new IOException(e.getMessage(), e); }
     }
 
@@ -561,53 +487,23 @@ public class NvHTTP implements AutoCloseable {
     }
 
     public static HostDisplayChoice launchDisplayChoice(ConnectionContext context, NvApp.Role role) {
-        if (!context.hostCaps.has(HostCapabilities.Feature.HOST_DISPLAY_MODES)) {
-            return HostDisplayChoice.HOST_DEFAULT;
-        }
-        HostDisplayChoice c = context.streamConfig.getHostDisplay() != null
-                ? context.streamConfig.getHostDisplay() : context.hostDisplay;
-        return c == null ? HostDisplayChoice.HOST_DEFAULT : c.forRole(role);
+        return NvHttpLaunch.launchDisplayChoice(context, role);
     }
 
     public static boolean wantsVirtualDisplay(ConnectionContext context, NvApp.Role role) {
-        return role != NvApp.Role.INPUT_ONLY
-                && launchDisplayChoice(context, role).requestsVirtualDisplay(context.streamConfig.getVirtualDisplay());
+        return NvHttpLaunch.wantsVirtualDisplay(context, role);
     }
 
     public static int getStreamFrameRateMilliHz(ConnectionContext context) {
-        StreamConfiguration sc = context.streamConfig;
-        int streamFps = Math.max(0, sc.getRefreshRate());
-        int launchFps = Math.max(0, sc.getLaunchRefreshRate());
-        if (context.hostCaps.has(HostCapabilities.Feature.FRACTIONAL_REFRESH)) {
-            int explicit = sc.getLaunchRefreshRateX100();
-            int frac = (explicit >= 100 && explicit <= 100_000) ? explicit : 0;
-            if (frac == 0) {
-                int display = sc.getClientRefreshRateX100();
-                if (display >= 100 && display <= 100_000 && (display + 50) / 100 == launchFps) {
-                    frac = display;
-                }
-            }
-            if (frac > 0 && (frac + 50) / 100 == streamFps) {
-                return frac * 10;
-            }
-        }
-        return streamFps * 1000;
+        return NvHttpLaunch.getStreamFrameRateMilliHz(context);
     }
 
     public static boolean asksClipboardSync(ConnectionContext context) {
-        NvApp app = context.streamConfig.getApp();
-        return app != null && app.getRole() == NvApp.Role.STREAM && context.streamConfig.getClipboardSync()
-                && getLaunchQuery(context, app.getAppId(), false).contains("&rlClipboardSync=1");
+        return NvHttpLaunch.asksClipboardSync(context);
     }
 
     static String getLaunchQuery(ConnectionContext context, int appId, boolean enableHdr) {
-        try {
-            String req = buildLaunchRequestJson(context, appId, enableHdr);
-            return unwrapOk(NightjarHttpJni.buildLaunchQuery(
-                    req, context.hostCaps.toJson(), context.isNvidiaServerSoftware), false).getString("ok");
-        } catch (IOException | XmlPullParserException | Json.SyntaxException e) {
-            throw new IllegalStateException(e);
-        }
+        return NvHttpLaunch.getLaunchQuery(context, appId, enableHdr);
     }
 
     public boolean launchApp(ConnectionContext context, String verb, int appId, boolean enableHdr)
@@ -617,7 +513,7 @@ public class NvHTTP implements AutoCloseable {
 
     boolean launchApp(ConnectionContext context, String verb, int appId, boolean enableHdr, long readTimeoutMs)
             throws IOException, XmlPullParserException {
-        String req = buildLaunchRequestJson(context, appId, enableHdr);
+        String req = NvHttpLaunch.buildLaunchRequestJson(context, appId, enableHdr);
         Json.Obj ok = unwrapOkObj(NightjarHttpJni.launchApp(
                 handle, verb, req, context.hostCaps.toJson(), context.isNvidiaServerSoftware,
                 (int) Math.max(1, Math.min(Integer.MAX_VALUE, readTimeoutMs))), true);
@@ -625,30 +521,30 @@ public class NvHTTP implements AutoCloseable {
             throw new HostHttpResponseException(ok.optInt("status", 0), ok.optString("body", ""));
         }
         if (!ok.optBoolean("ok", false)) return false;
-        context.rtspSessionUrl = optNullString(ok, "session_url");
+        context.rtspSessionUrl = NvHttpJson.optNullString(ok, "session_url");
         return true;
     }
 
     public boolean disconnectRole(NvApp.Role role) throws IOException, XmlPullParserException {
-        return unwrapOk(NightjarHttpJni.disconnectRole(handle, role.ordinal()), true, true).optBoolean("ok", false);
+        return NvHttpJson.unwrapOk(NightjarHttpJni.disconnectRole(handle, role.ordinal()), true, true).optBoolean("ok", false);
     }
 
     public boolean quitApp() throws IOException, XmlPullParserException {
-        return unwrapOk(NightjarHttpJni.quitApp(handle), true).optBoolean("ok", false);
+        return NvHttpJson.unwrapOk(NightjarHttpJni.quitApp(handle), true).optBoolean("ok", false);
     }
 
     public String getClipboard() throws IOException {
-        try { return unwrapOk(NightjarHttpJni.getClipboard(handle), false).getString("ok"); }
+        try { return NvHttpJson.unwrapOk(NightjarHttpJni.getClipboard(handle), false).getString("ok"); }
         catch (XmlPullParserException | Json.SyntaxException e) { throw new IOException(e.getMessage(), e); }
     }
 
     public int setBitrate(int kbps) throws IOException, XmlPullParserException {
-        try { return unwrapOk(NightjarHttpJni.setBitrate(handle, kbps), false, true).getInt("ok"); }
+        try { return NvHttpJson.unwrapOk(NightjarHttpJni.setBitrate(handle, kbps), false, true).getInt("ok"); }
         catch (Json.SyntaxException e) { throw new IOException(e.getMessage(), e); }
     }
 
     public void sendClipboard(String text) throws IOException {
-        try { unwrapOk(NightjarHttpJni.sendClipboard(handle, text), false); }
+        try { NvHttpJson.unwrapOk(NightjarHttpJni.sendClipboard(handle, text), false); }
         catch (XmlPullParserException e) { throw new IOException(e.getMessage(), e); }
     }
 
@@ -659,134 +555,17 @@ public class NvHTTP implements AutoCloseable {
             catch (IOException e) { sinkErr[0] = e; throw e; }
         };
         try {
-            Json.Obj reply = unwrapClipboard(NightjarHttpJni.getClipboardImage(handle, sink), sinkErr[0]);
+            Json.Obj reply = NvHttpJson.unwrapClipboard(NightjarHttpJni.getClipboardImage(handle, sink), sinkErr[0]);
             return !reply.isNull("ok");
         } catch (Json.SyntaxException e) { throw new IOException(e); }
     }
 
     public void sendClipboardImage(File png) throws IOException {
-        try { unwrapClipboard(NightjarHttpJni.sendClipboardImageFile(handle, png.getAbsolutePath()), null); }
+        try { NvHttpJson.unwrapClipboard(NightjarHttpJni.sendClipboardImageFile(handle, png.getAbsolutePath()), null); }
         catch (Json.SyntaxException e) { throw new IOException(e); }
     }
 
     static Json.Obj unwrapOkObj(String raw, boolean xmlErrors) throws IOException, XmlPullParserException {
-        try { return unwrapOk(raw, xmlErrors).getObject("ok"); }
-        catch (Json.SyntaxException e) { throw new IOException("Malformed JNI JSON reply", e); }
-    }
-
-    static Json.Obj unwrapOk(String raw, boolean xmlErrors) throws IOException, XmlPullParserException {
-        return unwrapOk(raw, xmlErrors, false);
-    }
-
-    static Json.Obj unwrapOk(String raw, boolean xmlErrors, boolean illegalArgument)
-            throws IOException, XmlPullParserException {
-        try {
-            Json.Obj obj = Json.parseObject(raw);
-            if (!obj.has("error")) return obj;
-            Json.Obj err = obj.getObject("error");
-            String kind = err.optString("kind");
-            String msg = err.optString("message", "Request failed");
-            if ("launch_timeout".equals(kind)) throw new LaunchTimeoutException(err.optInt("seconds", 120));
-            if ("not_found".equals(kind)) throw new FileNotFoundException(msg);
-            if ("unsupported_version".equals(kind)) throw new HardwareMetrics.UnsupportedVersionException();
-            if (illegalArgument && "invalid_argument".equals(kind)) throw new IllegalArgumentException(msg);
-            if ("malformed".equals(kind) && xmlErrors && !isWireLimitError(msg)) {
-                throw new XmlPullParserException(msg);
-            }
-            if ("status".equals(kind)) {
-                int code = err.has("error_code") ? err.getInt("error_code") : err.optInt("http_status", 500);
-                throw new HostHttpResponseException(code, err.optString("error_message", msg));
-            }
-            if (err.has("http_status")) throw new HostHttpResponseException(err.getInt("http_status"), msg);
-            throw new IOException(msg);
-        } catch (Json.SyntaxException e) { throw new IOException("Malformed JNI JSON reply", e); }
-    }
-
-    private static Json.Obj unwrapClipboard(String raw, IOException sinkErr) throws IOException {
-        Json.Obj obj = Json.parseObject(raw);
-        if (!obj.has("error")) return obj;
-        if (sinkErr != null) throw sinkErr;
-        Json.Obj err = obj.getObject("error");
-        if ("clipboard_rejected".equals(err.optString("kind"))) {
-            throw new ClipboardImageException(
-                    ClipboardImageException.Reason.valueOf(err.getString("reason")), err.optString("message", ""));
-        }
-        try { unwrapOk(raw, false); } catch (XmlPullParserException e) { throw new IOException(e.getMessage(), e); }
-        return obj;
-    }
-
-    private static String buildLaunchRequestJson(ConnectionContext ctx, int appId, boolean enableHdr) {
-        StreamConfiguration sc = ctx.streamConfig;
-        NvApp app = sc.getApp();
-        NvApp.Role role = app != null ? app.getRole() : NvApp.Role.STREAM;
-        MoonBridge.AudioConfiguration audio = sc.getAudioConfiguration();
-        String audioKind = audio == null ? "STEREO"
-                : audio.channelCount == 12 ? "SURROUND_714"
-                : audio.channelCount == 8 ? "SURROUND_71"
-                : audio.channelCount == 6 ? "SURROUND_51" : "STEREO";
-        Json.Obj j = Json.obj()
-                .put("app_id", appId)
-                .put("app_uuid", app != null ? app.getAppUuid() : "")
-                .put("role", role.name())
-                .put("small_stream_input_only", app != null && app.isSmallStreamInputOnly())
-                .put("mic_only", app != null && app.isMicOnly())
-                .put("width", ctx.negotiatedWidth).put("height", ctx.negotiatedHeight)
-                .put("fps", sc.getLaunchRefreshRate())
-                .put("launch_refresh_rate_x100", sc.getLaunchRefreshRateX100())
-                .put("client_refresh_rate_x100", sc.getClientRefreshRateX100())
-                .put("virtual_display", sc.getVirtualDisplay())
-                .put("virtual_display_scale", sc.getVirtualDisplayScale())
-                .put("virtual_display_dpi", sc.getVirtualDisplayDpi())
-                .put("host_display", launchDisplayChoice(ctx, role).name())
-                .put("vrr", sc.getVrr()).put("sops", sc.getSops())
-                .put("play_local_audio", sc.getPlayLocalAudio())
-                .put("hdr", enableHdr).put("ten_bit_sdr", !enableHdr && ctx.negotiated10Bit)
-                .put("audio_surround", audioKind)
-                .put("ri_key_hex", bytesToHex(ctx.riKey.getEncoded())).put("ri_key_id", ctx.riKeyId)
-                .put("prepared_controllers", ctx.preparedControllers == null ? "" : ctx.preparedControllers)
-                .put("gamepad_mask", sc.getAttachedGamepadMask())
-                .put("persist_gamepads", sc.getPersistGamepadsAfterDisconnect())
-                .put("rate_change", ctx.rateChange).put("confirm_replace", ctx.confirmReplace)
-                .put("clipboard_sync", ctx.streamConfig.getClipboardSync());
-        if (ctx.fecChoice != null) j.put("fec", ctx.fecChoice.wireValue);
-        if (sc.getDisplayLuminance() != null) {
-            j.put("display_luminance", Json.obj()
-                    .put("max_nits", sc.getDisplayLuminance().maxNits)
-                    .put("min_nits", sc.getDisplayLuminance().minNits)
-                    .put("max_full_frame_nits", sc.getDisplayLuminance().maxFullFrameNits)
-                    .put("estimated_from_ratio", sc.getDisplayLuminance().estimatedFromRatio));
-        }
-        if (sc.getRtxHdr() != null) j.put("rtx_hdr", sc.getRtxHdr().booleanValue());
-        if (sc.getRtxVideo() != null) j.put("rtx_video", sc.getRtxVideo().booleanValue());
-        return j.toString();
-    }
-
-    private static ComputerDetails.AddressTuple makeTuple(String address, int port) {
-        if (address == null || address.isEmpty()) return null;
-        try { return new ComputerDetails.AddressTuple(address, port); }
-        catch (IllegalArgumentException e) { return null; }
-    }
-
-    private static boolean isWireLimitError(String msg) {
-        if (msg == null) return false;
-        String lower = msg.toLowerCase(Locale.ROOT);
-        return lower.contains("exceed") || lower.contains("too large") || lower.contains("limit")
-                || lower.contains("truncated") || lower.contains("connection closed")
-                || lower.contains("content-length") || lower.contains("chunk");
-    }
-
-    private static String optNullString(Json.Obj obj, String key) {
-        return !obj.has(key) || obj.isNull(key) ? null : obj.optString(key, null);
-    }
-
-    private static final char[] HEX = "0123456789ABCDEF".toCharArray();
-    private static String bytesToHex(byte[] bytes) {
-        char[] out = new char[bytes.length * 2];
-        for (int i = 0; i < bytes.length; i++) {
-            int v = bytes[i] & 0xFF;
-            out[i * 2] = HEX[v >>> 4];
-            out[i * 2 + 1] = HEX[v & 0x0F];
-        }
-        return new String(out);
+        return NvHttpJson.unwrapOkObj(raw, xmlErrors);
     }
 }

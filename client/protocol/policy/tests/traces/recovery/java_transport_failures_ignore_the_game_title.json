@@ -1,7 +1,7 @@
 {
   "source": "StreamRecoveryPolicyTest.javaTransportFailuresDoNotInterpretTheGameTitleAsADecoderStage",
   "rust": "recovery::StreamRecoveryPolicy",
-  "java": "com.limelight.StreamRecoveryPolicy",
+  "java": "com.limelight.policy.RecoveryPolicyTrace",
   "new": null,
   "calls": [
     {"call": "transient_startup", "args": ["Video Game", 3, 0], "expect": true},

@@ -1096,8 +1096,7 @@ final class GameAdaptation {
                             new EncoderBitrateUnsupported();
                 }
                 // Claim bitrate ownership on hosts with their own controller, without probing a new rate.
-                int applied = game.conn.setBitrate(details == null ? target :
-                        GameRecovery.automaticBitrateStart(details.encoderBitrateKbps, resumeKbps));
+                int applied = game.conn.setBitrate(details == null ? target : com.limelight.nvstream.jni.NightjarPolicyJni.recoveryAutomaticBitrateStart(details.encoderBitrateKbps, resumeKbps));
                 game.runOnUiThread(() -> {
                     if (game.connected && !game.isFinishing()) {
                         if (game.adaptiveBitrate == controller && game.pyroWaveBitrate == pyroController) {

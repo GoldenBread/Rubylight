@@ -38,7 +38,6 @@ import javax.crypto.SecretKey;
 
 import org.xmlpull.v1.XmlPullParserException;
 
-import com.limelight.ContinueHerePolicy;
 import com.limelight.LimeLog;
 import com.limelight.BuildConfig;
 import com.limelight.R;
@@ -67,7 +66,6 @@ import com.limelight.nvstream.http.ComputerDetails;
 import com.limelight.nvstream.http.FecChoice;
 import com.limelight.nvstream.http.HardwareMetrics;
 import com.limelight.nvstream.http.HostCapabilities;
-import com.limelight.ContinueHerePolicy;
 import com.limelight.nvstream.http.HostHttpResponseException;
 import com.limelight.nvstream.http.LimelightCryptoProvider;
 import com.limelight.nvstream.http.LaunchConfirmation;
@@ -76,6 +74,7 @@ import com.limelight.nvstream.http.NvHTTP;
 import com.limelight.nvstream.http.PairingManager;
 import com.limelight.nvstream.input.MouseButtonPacket;
 import com.limelight.nvstream.jni.MoonBridge;
+import com.limelight.nvstream.jni.NightjarPolicyJni;
 import com.limelight.nvstream.wol.WakeTargets;
 import com.limelight.preferences.HostDisplayChoice;
 import com.limelight.preferences.PreferenceConfiguration;
@@ -1428,10 +1427,10 @@ public class NvConnection {
                     context.connListener.launchActionCompleted(e.getErrorMessage());
                     return false;
                 }
-                String refusal = "resume".equals(verb) ? ContinueHerePolicy.resumeRefusal(
-                        context.streamConfig.isJoinRunning(), e.getErrorCode(), e.getErrorMessage()) : null;
-                if (refusal != null) {
-                    throw new LocalLaunchFailure(e.getErrorCode(), ContinueHerePolicy.SESSION_CHANGED.equals(refusal) ?
+                int refusal = "resume".equals(verb) ? NightjarPolicyJni.continueHereResumeRefusal(
+                        context.streamConfig.isJoinRunning(), e.getErrorCode(), e.getErrorMessage()) : NightjarPolicyJni.RESUME_REFUSAL_NONE;
+                if (refusal != NightjarPolicyJni.RESUME_REFUSAL_NONE) {
+                    throw new LocalLaunchFailure(e.getErrorCode(), refusal == NightjarPolicyJni.RESUME_REFUSAL_SESSION_CHANGED ?
                             R.string.stream_recovery_session_changed : R.string.continue_here_browser_stream, e.getErrorMessage());
                 }
                 if (context.streamConfig.isResumeOnly() || context.streamConfig.isJoinRunning() ||
@@ -2162,7 +2161,7 @@ public class NvConnection {
 
     /** {@link #streamMovedTo(boolean)}, with a PC that was asked and did not answer in time as a failure. */
     String readStreamMovedTo(boolean recoveryFollows) throws IOException {
-        if (!ContinueHerePolicy.readsMoveAfterEnd(offersContinueHere(), false, recoveryFollows)) {
+        if (!NightjarPolicyJni.continueHereReadsMoveAfterEnd(offersContinueHere(), false, recoveryFollows)) {
             return null;
         }
         NativeApiClient client = nativeClient();

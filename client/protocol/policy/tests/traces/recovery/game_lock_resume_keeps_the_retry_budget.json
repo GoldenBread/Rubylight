@@ -1,7 +1,7 @@
 {
   "source": "GameRecoveryTest.lockResumePreservesCapturedIdentityOutputAndExistingRetryBudget",
   "rust": "recovery::StreamRecoveryPolicy",
-  "java": "com.limelight.StreamRecoveryPolicy",
+  "java": "com.limelight.policy.RecoveryPolicyTrace",
   "new": [2, 5100],
   "calls": [
     {"call": "reset_after_stable_connection", "args": [10100, 10100], "expect": null},

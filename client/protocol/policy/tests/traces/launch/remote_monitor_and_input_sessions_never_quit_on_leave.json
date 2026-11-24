@@ -4,7 +4,7 @@
   "java": "com.limelight.LaunchTrace",
   "new": null,
   "calls": [
-    {"call": "quits_on_leave", "args": [true, "remote_monitor", true], "expect": false},
-    {"call": "quits_on_leave", "args": [true, "input_only", true], "expect": false}
+    {"call": "quits_on_leave", "args": [true, "remote_monitor", true, false], "expect": false},
+    {"call": "quits_on_leave", "args": [true, "input_only", true, false], "expect": false}
   ]
 }

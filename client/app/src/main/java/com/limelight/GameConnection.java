@@ -35,6 +35,7 @@ import com.limelight.nvstream.http.LaunchConfirmation;
 import com.limelight.nvstream.http.NvApp;
 import com.limelight.nvstream.http.NvHTTP;
 import com.limelight.nvstream.jni.MoonBridge;
+import com.limelight.nvstream.jni.NightjarPolicyJni;
 import com.limelight.pin.PinGate;
 import com.limelight.preferences.ControllersChoice;
 import com.limelight.preferences.GlPreferences;
@@ -522,17 +523,17 @@ final class GameConnection {
         // PC's display mode and its speakers alone.
         boolean smallStream = game.app.isSmallStreamInputOnly();
         StreamConfiguration config = new StreamConfiguration.Builder()
-                .setResolution(smallStream ? InputOnlyPolicy.SMALL_WIDTH : game.prefConfig.width,
-                        smallStream ? InputOnlyPolicy.SMALL_HEIGHT : game.prefConfig.height)
-                .setLaunchRefreshRate(smallStream ? InputOnlyPolicy.SMALL_FPS : game.prefConfig.fps)
+                .setResolution(smallStream ? NightjarPolicyJni.INPUT_ONLY_SMALL_WIDTH : game.prefConfig.width,
+                        smallStream ? NightjarPolicyJni.INPUT_ONLY_SMALL_HEIGHT : game.prefConfig.height)
+                .setLaunchRefreshRate(smallStream ? NightjarPolicyJni.INPUT_ONLY_SMALL_FPS : game.prefConfig.fps)
                 .setLaunchRefreshRateX100(smallStream ? 0 : game.prefConfig.launchRefreshRateX100)
-                .setRefreshRate(smallStream ? InputOnlyPolicy.SMALL_FPS : chosenFrameRate)
+                .setRefreshRate(smallStream ? NightjarPolicyJni.INPUT_ONLY_SMALL_FPS : chosenFrameRate)
                 .setApp(game.app)
                 .setResumeOnly(game.streamRecovery.isResumeOnlyStream())
                 .setJoinRunning(game.streamRecovery.isJoinRunningStream())
                 .setAllowIdleSessionEnd(!game.getIntent().getBooleanExtra(Game.EXTRA_RECOVERY_MEDIA_FAILURE, false))
                 .setNeverReplace(com.limelight.console.OpenPlay.isAutoStart(game.getIntent()))
-                .setBitrate(smallStream ? InputOnlyPolicy.SMALL_BITRATE_KBPS : game.prefConfig.bitrate)
+                .setBitrate(smallStream ? NightjarPolicyJni.INPUT_ONLY_SMALL_BITRATE_KBPS : game.prefConfig.bitrate)
                 .setProbeFirstBitrate(!smallStream && game.prefConfig.probesFirstBitrate())
                 .setAutomaticBitrate(!smallStream && game.prefConfig.automaticBitrate)
                 .setBitrateLimit(StreamRateChanges.clientLimitKbps(game.prefConfig.layers == null ? null : game.prefConfig.layers.network,
@@ -894,7 +895,7 @@ final class GameConnection {
         }
         android.net.ConnectivityManager connectivity =
                 (android.net.ConnectivityManager) game.getSystemService(android.content.Context.CONNECTIVITY_SERVICE);
-        hostLossWatch = new HostLossWatch(new HostLossWatch.Live(connectivity), host, game.conn.hostHttpsPort());
+        hostLossWatch = new HostLossWatch(connectivity, host, game.conn.hostHttpsPort());
     }
 
     void stopConnection() {
@@ -1025,13 +1026,13 @@ final class GameConnection {
         // Experimental full chroma refused by the PC (or no mode in common): not a network failure.
         final boolean packedRefused = errorCode == MoonBridge.CLIENT_ERROR_PACKED_444_REFUSED;
         final boolean transientRecoveryFailure = !packedRefused && game.streamRecovery.isRecoveryAttempt() &&
-                StreamRecoveryPolicy.transientStartup(stage, portFlags, errorCode);
+                NightjarPolicyJni.recoveryTransientStartup(stage, portFlags, errorCode);
         final int portTestResult = portFlags == 0 || transientRecoveryFailure || packedRefused ?
                 MoonBridge.ML_TEST_RESULT_INCONCLUSIVE :
                 MoonBridge.testClientConnectivity(ServerHelper.CONNECTION_TEST_SERVER, 443, portFlags);
         // A PC that refused the stream in its handshake (no codec it can encode, encryption not agreed) keeps why for
         // this device; a recovery's attempt that is retried does not ask. Other hosts give none.
-        final String hostRefusal = !packedRefused && !transientRecoveryFailure && StreamExitPolicy.refusedInHandshake(stage)
+        final String hostRefusal = !packedRefused && !transientRecoveryFailure && NightjarPolicyJni.exitRefusedInHandshake(stage)
                 && game.conn != null ? game.conn.hostFailureReason() : null;
         if (hostRefusal != null) LimeLog.severe("The PC reported: " + hostRefusal);
 
@@ -1139,12 +1140,12 @@ final class GameConnection {
         // checks would wait on a PC that is gone.
         final HostLossWatch hostLoss = hostLossWatch;
         final boolean hostGone = !exitRequested && game.connected && hostLoss != null &&
-                StreamRecoveryPolicy.transportTermination(reportedErrorCode) &&
+                NightjarPolicyJni.recoveryTransportTermination(reportedErrorCode) &&
                 hostLoss.afterGoodbye() == HostLossWatch.GOODBYE_GONE;
         // Some hosts close the transport before their graceful termination packet arrives.
         // Verify an idle host before either retrying or showing an error, even with recovery off.
         final boolean endedSession = !hostGone && !exitRequested && game.connected &&
-                StreamRecoveryPolicy.transportTermination(reportedErrorCode) &&
+                NightjarPolicyJni.recoveryTransportTermination(reportedErrorCode) &&
                 game.conn != null && game.conn.hasEndedSession();
         final int errorCode = hostGone ? MoonBridge.CLIENT_ERROR_HOST_GONE : exitRequested || endedSession ?
                 MoonBridge.ML_ERROR_GRACEFUL_TERMINATION : reportedErrorCode;
@@ -1152,22 +1153,22 @@ final class GameConnection {
         // Another device pressed Continue here: this stream must not come back. A stream that reconnects does not wait
         // for the answer here, on a link that may be dead: its resume stops at the running-game check and asks there.
         final boolean mayHaveMoved = !hostGone && !exitRequested && game.conn != null && (reportedErrorCode == MoonBridge.ML_ERROR_GRACEFUL_TERMINATION
-                || StreamRecoveryPolicy.transientTermination(reportedErrorCode));
+                || NightjarPolicyJni.recoveryTransientTermination(reportedErrorCode));
         final boolean recoveryFollows = game.prefConfig != null && game.prefConfig.autoReconnect
-                && StreamRecoveryPolicy.recoversTermination(errorCode, game.streamRecovery.videoStarted());
+                && NightjarPolicyJni.recoveryRecoversTermination(errorCode, game.streamRecovery.videoStarted());
         final String movedTo = mayHaveMoved ? game.conn.streamMovedTo(recoveryFollows) : null;
         final NativeApiClient moveClient = movedTo != null ? game.conn.nativeApiClient() : null;
         if (movedTo != null) LimeLog.info("Connection terminated: the stream moved to " + movedTo);
         // The PC's own words for a failure it ended the stream on, where it says them.
-        final String hostFailure = !exitRequested && StreamExitPolicy.hostEndedStream(errorCode) &&
+        final String hostFailure = !exitRequested && NightjarPolicyJni.exitHostEndedStream(errorCode) &&
                 game.conn != null ? game.conn.hostFailureReason() : null;
         if (hostFailure != null) LimeLog.severe("The PC reported: " + hostFailure);
         final int portFlags = MoonBridge.getPortFlagsFromTerminationErrorCode(errorCode);
         // A stream that never had video does not reconnect: its error (and the port test) shows at once.
         // Nor does a guest the player removed or blocked, whose time ran out or whose game ended: the PC chose it.
         final boolean guestEnded = com.limelight.nativeapi.NativeGuests.ended(hostFailure);
-        final boolean transientFailure = !guestEnded && ContinueHerePolicy.recovers(
-                StreamRecoveryPolicy.recoversTermination(errorCode, game.streamRecovery.videoStarted()), movedTo != null);
+        final boolean transientFailure = !guestEnded && NightjarPolicyJni.continueHereRecovers(
+                NightjarPolicyJni.recoveryRecoversTermination(errorCode, game.streamRecovery.videoStarted()), movedTo != null);
         // A renderer failure on this device says nothing about the network
         final int portTestResult = errorCode == MoonBridge.ML_ERROR_GRACEFUL_TERMINATION || hostGone ||
                 errorCode == MoonBridge.CLIENT_ERROR_VULKAN_RENDERER || errorCode == MoonBridge.CLIENT_ERROR_DECODER ||
@@ -1192,7 +1193,7 @@ final class GameConnection {
                     game.finish();
                     return;
                 }
-                if (transientFailure && !StreamRecoveryPolicy.transportTermination(errorCode)) {
+                if (transientFailure && !NightjarPolicyJni.recoveryTransportTermination(errorCode)) {
                     // Keep explicit media/early failures visible if a later recovery attempt
                     // finds the host idle. Transport startup retries carry this same flag.
                     game.getIntent().putExtra(Game.EXTRA_RECOVERY_MEDIA_FAILURE, true);
@@ -1210,7 +1211,7 @@ final class GameConnection {
                         if (late != null) LimeLog.info("Connection terminated: the stream moved to " + late);
                         game.runOnUiThread(() -> {
                             if (game.isFinishing() || game.isDestroyed()) return;
-                            endTerminatedStream(errorCode, late, lateClient, ContinueHerePolicy.recovers(transientFailure, late != null),
+                            endTerminatedStream(errorCode, late, lateClient, NightjarPolicyJni.continueHereRecovers(transientFailure, late != null),
                                     recoveryExhausted && late == null, hostFailure, portFlags, portTestResult);
                         });
                     }, "Stream move").start();
@@ -1292,8 +1293,8 @@ final class GameConnection {
                         case MoonBridge.CLIENT_ERROR_DECODER:
                             MediaCodecDecoderRenderer decoder = game.decoderRenderer;
                             String reason = decoder != null ? decoder.getDecoderFailure() : null;
-                            message = game.getResources().getString(StreamExitPolicy.decoderFailureMessage(
-                                            decoder != null && decoder.decoderFailedWithVulkan()),
+                            message = game.getResources().getString((decoder != null && decoder.decoderFailedWithVulkan()) ?
+                                            R.string.decoder_failed_vulkan : R.string.decoder_failed,
                                     reason != null ? reason : game.getResources().getString(R.string.vulkan_failure_unknown));
                             break;
 
@@ -1330,8 +1331,7 @@ final class GameConnection {
                         NetworkGrace.mayHaveGivenUp(game.prefConfig.networkGraceSeconds, errorCode);
                 // The PC's reason is worth reading: it often says what to change.
                 if (game.foreground && (game.stoppedStreamResumeIntent != null || hostFailure != null ||
-                        StreamExitPolicy.terminationNeedsAction(errorCode, portTestBlocked,
-                                graceGaveUp, recoveryExhausted))) {
+                        NightjarPolicyJni.exitTerminationNeedsAction(errorCode, portTestBlocked, graceGaveUp, recoveryExhausted))) {
                     game.streamRecovery.showReconnectDialog(R.string.conn_terminated_title, message);
                 } else if (game.foreground) {
                     // The host went away or the connection was lost: nothing to act on, so
@@ -1395,7 +1395,7 @@ final class GameConnection {
             // return it cannot carry on over, recovers it).
             streamNetworkLost = true;
             game.notificationOverlayView.setText(game.getString(game.streamRecovery.recoversAutomatically() &&
-                    game.prefConfig.networkGraceSeconds * 1000 <= NetworkReturnRecovery.PEER_TIMEOUT_MS ?
+                    game.prefConfig.networkGraceSeconds * 1000 <= NightjarPolicyJni.recoveryPeerTimeoutMs() ?
                     R.string.stream_network_lost_reconnecting : R.string.stream_network_lost));
             game.requestedNotificationOverlayVisibility = View.VISIBLE;
             if (!game.isHidingOverlays) game.notificationOverlayView.setVisibility(View.VISIBLE);
@@ -1415,7 +1415,7 @@ final class GameConnection {
             // and its own timeout decides if it cannot.
             // Like a drop, only a stream whose video started reconnects (desktop: reconnects_on_its_own).
             if (!game.connected || game.displayedFailureDialog || game.isFinishing() || game.isDestroyed() || game.prefConfig == null ||
-                    !game.streamRecovery.videoStarted() || !NetworkReturnRecovery.reconnectsAtOnce(change == MoonBridge.NETWORK_CANNOT_CONTINUE, metered,
+                    !game.streamRecovery.videoStarted() || !NightjarPolicyJni.recoveryReconnectsAtOnce(change == MoonBridge.NETWORK_CANNOT_CONTINUE, metered,
                             game.prefConfig.roamingMetered, game.prefConfig.autoReconnect,
                             game.prefConfig.networkGraceSeconds * 1000)) return;
             // The connection cannot carry on over this network and would only time out first.
@@ -1509,7 +1509,7 @@ final class GameConnection {
                 }
                 if (game.app.isSmallStreamInputOnly() && game.externalPresentation == null) {
                     ((TextView) game.findViewById(R.id.inputOnlyStatus)).setText(game.getString(
-                            R.string.input_only_small_stream_status, InputOnlyPolicy.estimatedKbps() / 1000f));
+                            R.string.input_only_small_stream_status, NightjarPolicyJni.inputOnlyEstimatedKbps() / 1000f));
                 }
                 game.findViewById(R.id.inputOnlyStatus).setVisibility(
                         game.app.getRole() == NvApp.Role.INPUT_ONLY || game.externalPresentation != null ? View.VISIBLE : View.GONE);
@@ -1619,7 +1619,7 @@ final class GameConnection {
                     if (!prompt.isShowing() || game.isFinishing() || game.isDestroyed()) return;
                     if (answer == null || answer.movedTo != null) {
                         watchMovedPrompt(prompt, client, readsLeft - 1);
-                    } else if (ContinueHerePolicy.cameBack(false, answer.ownedHere)) {
+                    } else if (NightjarPolicyJni.continueHereCameBack(false, answer.ownedHere)) {
                         LimeLog.info("The move failed; the game is this device's again");
                         prompt.dismiss();
                         showCameBackPrompt(client);
@@ -1659,7 +1659,7 @@ final class GameConnection {
         readWhoPlays(client, "Came back read", read -> {
             if (read != null && playsThisGame(read)) {
                 showWhoPlaysPrompt(read, client);
-            } else if (read != null && ContinueHerePolicy.joinsAfterRead(false, false, read.pressFailed)) {
+            } else if (read != null && NightjarPolicyJni.continueHereJoinsAfterRead(false, false, read.pressFailed)) {
                 joinTheGame(read);
             } else {
                 resumeTheGame();
@@ -1670,7 +1670,7 @@ final class GameConnection {
     /** Stream here too on "did not move", asked again for the same reason. A PC that does not say never gets a join: {@code /resume} would join whatever runs. */
     private void joinOrResume(NativeApiClient client) {
         readWhoPlays(client, "Stream too read", read -> {
-            if (read != null && ContinueHerePolicy.joinsAfterRead(true, playsThisGame(read), read.pressFailed)) {
+            if (read != null && NightjarPolicyJni.continueHereJoinsAfterRead(true, playsThisGame(read), read.pressFailed)) {
                 joinTheGame(read);
             } else {
                 resumeTheGame();
@@ -1700,7 +1700,7 @@ final class GameConnection {
             streamed = new NvApp("app", game.recoveryAppId, false);
             streamed.setAppUuid(game.recoveryAppUuid);
         }
-        return read.playingOn != null && streamed != null && ContinueHerePolicy.asksOnSelect(true, true,
+        return read.playingOn != null && streamed != null && NightjarPolicyJni.continueHereAsksOnSelect(true, true,
                 streamed.matchesRunningApp(read.playingAppId, read.playingAppUuid));
     }
 
@@ -1848,9 +1848,8 @@ final class GameConnection {
         if (!game.attemptedConnection) {
             if (game.streamRecovery.isRecoveryAttempt()) {
                 long deadlineFrom = game.streamRecovery.isTripResume() ?
-                        game.getIntent().getLongExtra(Game.EXTRA_TRIP_RESUME_STARTED, 0) : game.recoveryPolicy.startedAt();
-                long remaining = StreamRecoveryPolicy.WINDOW_MS -
-                        (SystemClock.elapsedRealtime() - deadlineFrom);
+                        game.getIntent().getLongExtra(Game.EXTRA_TRIP_RESUME_STARTED, 0) : game.recoveryStartedAt;
+                long remaining = NightjarPolicyJni.recoveryWindowMs() - (SystemClock.elapsedRealtime() - deadlineFrom);
                 if (remaining <= 0) {
                     if (game.spinner != null) { game.spinner.dismiss(); game.spinner = null; }
                     game.streamRecovery.showReconnectDialog(R.string.conn_terminated_title, game.getString(R.string.stream_recovery_exhausted));

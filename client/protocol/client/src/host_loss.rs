@@ -52,7 +52,12 @@ pub enum Round {
 }
 
 impl Round {
-    const ALL: [Round; 4] = [Round::Answered, Round::Refused, Round::SilentLinkUp, Round::SilentLinkUnknown];
+    const ALL: [Round; 4] = [
+        Round::Answered,
+        Round::Refused,
+        Round::SilentLinkUp,
+        Round::SilentLinkUnknown,
+    ];
 
     /// The round as a number, for a caller that passes it across a JNI call.
     pub fn code(self) -> i32 {
@@ -61,7 +66,10 @@ impl Round {
 
     /// A code that is no round proves nothing.
     pub fn from_code(code: i32) -> Round {
-        usize::try_from(code).ok().and_then(|i| Self::ALL.get(i).copied()).unwrap_or(Round::SilentLinkUnknown)
+        usize::try_from(code)
+            .ok()
+            .and_then(|i| Self::ALL.get(i).copied())
+            .unwrap_or(Round::SilentLinkUnknown)
     }
 }
 
@@ -121,6 +129,9 @@ pub fn watch_goodbye(
             return after_goodbye(false, Round::SilentLinkUnknown, started.elapsed());
         };
         let round = probe_round(host, Some(toward));
+        if stopped() {
+            return Goodbye::Unknown;
+        }
         let verdict = after_goodbye(true, round, started.elapsed());
         log(&format!(
             "Host check after the goodbye, {} ms in: {round:?}: {verdict:?}",
@@ -214,21 +225,47 @@ mod tests {
         // A refusal from the PC, or a PC (or its closed port) that keeps quiet on a working link.
         assert_eq!(after_goodbye(true, Round::Refused, NOW), Goodbye::Gone);
         assert_eq!(after_goodbye(true, Round::SilentLinkUp, NOW), Goodbye::Gone);
-        assert_eq!(after_goodbye(true, Round::SilentLinkUp, Duration::from_secs(3)), Goodbye::Gone);
+        assert_eq!(
+            after_goodbye(true, Round::SilentLinkUp, Duration::from_secs(3)),
+            Goodbye::Gone
+        );
     }
 
     #[test]
     fn a_server_still_open_after_the_exit_window_only_ended_the_stream() {
         assert_eq!(after_goodbye(true, Round::Answered, NOW), Goodbye::Wait);
-        assert_eq!(after_goodbye(true, Round::Answered, HOST_EXIT_WINDOW - Duration::from_millis(1)), Goodbye::Wait);
-        assert_eq!(after_goodbye(true, Round::Answered, HOST_EXIT_WINDOW), Goodbye::Unknown);
+        assert_eq!(
+            after_goodbye(
+                true,
+                Round::Answered,
+                HOST_EXIT_WINDOW - Duration::from_millis(1)
+            ),
+            Goodbye::Wait
+        );
+        assert_eq!(
+            after_goodbye(true, Round::Answered, HOST_EXIT_WINDOW),
+            Goodbye::Unknown
+        );
     }
 
     #[test]
     fn a_quiet_link_gets_more_rounds_then_the_old_behaviour() {
-        assert_eq!(after_goodbye(true, Round::SilentLinkUnknown, NOW), Goodbye::Wait);
-        assert_eq!(after_goodbye(true, Round::SilentLinkUnknown, QUIET_LINK_WAIT - Duration::from_millis(1)), Goodbye::Wait);
-        assert_eq!(after_goodbye(true, Round::SilentLinkUnknown, QUIET_LINK_WAIT), Goodbye::Unknown);
+        assert_eq!(
+            after_goodbye(true, Round::SilentLinkUnknown, NOW),
+            Goodbye::Wait
+        );
+        assert_eq!(
+            after_goodbye(
+                true,
+                Round::SilentLinkUnknown,
+                QUIET_LINK_WAIT - Duration::from_millis(1)
+            ),
+            Goodbye::Wait
+        );
+        assert_eq!(
+            after_goodbye(true, Round::SilentLinkUnknown, QUIET_LINK_WAIT),
+            Goodbye::Unknown
+        );
     }
 
     #[test]
@@ -255,11 +292,23 @@ mod tests {
         let host = listener.local_addr().unwrap();
         let never = || false;
         let started = Instant::now();
-        assert_eq!(watch_goodbye(host, &on_link, &never, &|_| {}), Goodbye::Unknown);
-        assert!(started.elapsed() >= HOST_EXIT_WINDOW, "a host still exiting gets its window");
+        assert_eq!(
+            watch_goodbye(host, &on_link, &never, &|_| {}),
+            Goodbye::Unknown
+        );
+        assert!(
+            started.elapsed() >= HOST_EXIT_WINDOW,
+            "a host still exiting gets its window"
+        );
         let started = Instant::now();
-        assert_eq!(watch_goodbye(host, &|_| None, &never, &|_| {}), Goodbye::Unknown);
-        assert!(started.elapsed() < ROUND_TIMEOUT, "off the link nothing is asked");
+        assert_eq!(
+            watch_goodbye(host, &|_| None, &never, &|_| {}),
+            Goodbye::Unknown
+        );
+        assert!(
+            started.elapsed() < ROUND_TIMEOUT,
+            "off the link nothing is asked"
+        );
     }
 
     // Windows answers a connection to a closed loopback port only after its retries, past a round.
@@ -274,7 +323,9 @@ mod tests {
             drop(listener);
         });
         let rounds = std::sync::Mutex::new(Vec::new());
-        let verdict = watch_goodbye(host, &on_link, &|| false, &|line| rounds.lock().unwrap().push(line.to_owned()));
+        let verdict = watch_goodbye(host, &on_link, &|| false, &|line| {
+            rounds.lock().unwrap().push(line.to_owned())
+        });
         exit.join().unwrap();
         assert_eq!(verdict, Goodbye::Gone, "{:?}", rounds.lock().unwrap());
     }
@@ -286,7 +337,10 @@ mod tests {
         let asked = std::sync::atomic::AtomicUsize::new(0);
         let stopped = || asked.fetch_add(1, std::sync::atomic::Ordering::SeqCst) >= 1;
         let started = Instant::now();
-        assert_eq!(watch_goodbye(host, &on_link, &stopped, &|_| {}), Goodbye::Unknown);
+        assert_eq!(
+            watch_goodbye(host, &on_link, &stopped, &|_| {}),
+            Goodbye::Unknown
+        );
         assert!(started.elapsed() < HOST_EXIT_WINDOW);
     }
 
@@ -323,7 +377,10 @@ mod tests {
         let (sender, answers) = mpsc::channel();
         sender.send(Answer::Gateway).unwrap();
         sender.send(Answer::Host(Ok(()))).unwrap();
-        assert_eq!(decide(&answers, Instant::now() + Duration::from_secs(5)), Round::Answered);
+        assert_eq!(
+            decide(&answers, Instant::now() + Duration::from_secs(5)),
+            Round::Answered
+        );
 
         let (sender, answers) = mpsc::channel();
         sender

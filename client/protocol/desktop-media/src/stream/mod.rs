@@ -296,17 +296,9 @@ pub struct LaunchPlan {
     pub resume_quality: Option<Reconfigure>,
 }
 
-/// Where automatic bitrate starts after a reconnect, as Android's `GameRecovery.putSessionBitrate`
-/// decides it: on an `automatic` reconnect of a stream whose automatic bitrate owned the rate, the
-/// rate it had cut to; none after a bitrate the player set, which the plan's settings carry.
-pub(super) fn reconnect_bitrate_start(automatic: bool, automatic_owned: bool, manual: bool, kbps: u32) -> Option<u32> {
-    (automatic && automatic_owned && !manual && kbps > 0).then_some(kbps)
-}
-
-/// Automatic bitrate's first rate: the encoder's, or an earlier cut when that is lower.
-pub(super) fn automatic_bitrate_start(encoder_kbps: u32, resume_kbps: Option<u32>) -> u32 {
-    resume_kbps.filter(|&kbps| kbps > 0 && kbps < encoder_kbps).unwrap_or(encoder_kbps)
-}
+/// Where automatic bitrate starts after a reconnect and at first claim, shared with Android via
+/// `nightjar-policy`.
+pub(super) use nightjar_policy::recovery::{automatic_bitrate_start, reconnect_bitrate_start};
 
 /// The stream's negotiated shape.
 #[derive(Clone, Debug)]
@@ -1415,7 +1407,7 @@ impl Streaming {
     /// picture yet when it drops again keeps reconnecting until its budget is spent; a stream that
     /// never showed video does not reconnect (Moonlight V+ PC 6792aeed).
     pub fn video_started(&self) -> bool {
-        self.first_frame || self.plan.video_shown
+        nightjar_policy::recovery::video_started(self.first_frame, self.plan.video_shown)
     }
 
     fn connected_ms(&self) -> u64 {

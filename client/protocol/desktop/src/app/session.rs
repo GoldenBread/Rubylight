@@ -372,7 +372,7 @@ impl App {
             // moonlight-qt's --quit-after or --no-quit-after on the command line stands for the game's own choice.
             let given = self.cli.as_ref().filter(|cli| cli.host == host).and_then(|cli| cli.launch.options.quit_after);
             let chosen = streaming.quit_on_leave || given.unwrap_or_else(|| self.hosts.get(host).is_some_and(|h| h.record.quits_on_leave(&app.uuid, app.id)));
-            if nightjar_policy::launch::quits_on_leave(chosen, ui::policy_role(streaming.facts.role), true) {
+            if nightjar_policy::launch::quits_on_leave(chosen, ui::policy_role(streaming.facts.role), true, second_screen::this_process()) {
                 eprintln!("nightjar: quitting {} on the PC, as chosen for leaving its stream", app.name);
                 self.launcher.toast(trf("Quitting {} on the PC…", &[&app.name]));
                 self.quitting_on_leave = Some((host, app.name.clone()));
