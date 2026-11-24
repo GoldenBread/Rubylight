@@ -1,3 +1,0 @@
-## desktop
-- Fixed phase-lock frame timing on Linux under gamescope (including Steam Deck Game Mode), X11 with EGL, Wayland at 1:1 refresh, KMS, and the GPU (Vulkan) renderer by reading EGL sync control, Wayland presentation feedback, KMS flip times, and unprivileged DRM vblank timestamps.
-- Added non-blocking EGL V-Sync presents on Linux X11 so 1:1 V-Sync streams do not lock into a two-refresh swapchain backlog under Mesa DRI3 and gamescope, and enabled DRM VRR detection under gamescope so fixed-refresh handheld panels fall back from Real VRR to V-Sync while docked VRR displays keep Real VRR.

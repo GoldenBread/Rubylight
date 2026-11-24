@@ -1,0 +1,3 @@
+• Lighter stream receive path with cached encryption keys, faster FEC recovery, and fewer allocations across video, audio, and control queues.
+• Smoother Android playback with lower-overhead MediaCodec, Vulkan pacing, GLES and PyroWave shaders, direct JNI callbacks, and AAudio output.
+• PyroWave HDR now works on Android 11 devices (such as NVIDIA SHIELD TV) where the system refuses BT.2020 PQ through the public window dataspace call. Thanks to Griffin Christenson (@griff12, #152).
