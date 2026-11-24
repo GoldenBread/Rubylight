@@ -6,7 +6,10 @@
 
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use serde_json::{json, Value};
+use jni::JNIEnv;
+use jni::objects::{JByteArray, JClass, JString};
+use jni::sys::{jboolean, jint, jstring};
+use serde_json::{Value, json};
 
 use nightjar_core::control::SendError;
 use nightjar_core::usb::{AttachError, Attachment, Forwarder, Phase, UsbDevice, UsbMessage};
@@ -243,6 +246,102 @@ pub fn open(fd: i32, path: &str) -> Result<Arc<dyn UsbDevice>, String> {
 #[cfg(not(any(target_os = "linux", target_os = "android")))]
 pub fn open(_: i32, _: &str) -> Result<Arc<dyn UsbDevice>, String> {
     Err("usbfs is Linux's".into())
+}
+
+/// Attaches the device Java's `UsbDeviceConnection` has open (`fd`, its node `path`) to the
+/// stream's host: the request id, or a `USB_*` code.
+#[unsafe(no_mangle)]
+#[allow(clippy::too_many_arguments)]
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_usbAttach(
+    mut env: JNIEnv,
+    _: JClass,
+    fd: jint,
+    path: JString,
+    name: JString,
+    address: JString,
+    http_port: jint,
+    https_port: jint,
+    server_certificate_pem: JString,
+    unique_id: JString,
+    client_certificate_der: JByteArray,
+    client_private_key_pkcs8: JByteArray,
+) -> jint {
+    let bytes = |array: &JByteArray| {
+        (!array.is_null())
+            .then(|| env.convert_byte_array(array).ok())
+            .flatten()
+    };
+    let (certificate, key) = (
+        bytes(&client_certificate_der),
+        bytes(&client_private_key_pkcs8),
+    );
+    let endpoint = (|| {
+        Some(crate::native_api::Endpoint {
+            address: crate::string(&mut env, &address)?,
+            http_port: u16::try_from(http_port).ok()?,
+            https_port: u16::try_from(https_port).unwrap_or(0),
+            server_certificate_pem: crate::string(&mut env, &server_certificate_pem)?,
+            unique_id: crate::string(&mut env, &unique_id)?,
+            client_certificate_der: certificate?,
+            client_private_key_pkcs8: key?,
+        })
+    })();
+    let (Some(endpoint), Some(path), Some(name)) = (
+        endpoint,
+        crate::string(&mut env, &path),
+        crate::string(&mut env, &name),
+    ) else {
+        platform::error("USB: usbAttach without its host or device");
+        return INVALID;
+    };
+    let device = match open(fd, &path) {
+        Ok(device) => device,
+        Err(e) => {
+            platform::error(&format!("USB: {name} at {path} did not open: {e}"));
+            return DEVICE_FAILED;
+        }
+    };
+    let make = move || {
+        let host = crate::native_api::client(&endpoint).map_err(|e| e.to_string())?;
+        let send = |message| {
+            crate::engine::with_session(Err(nightjar_core::control::SendError::Stopped), |s| {
+                s.send(message)
+            })
+        };
+        let changed = || {
+            if let Some(bridge) = crate::bridge::get() {
+                bridge.post(bridge.m.usb_changed, &[]);
+            }
+        };
+        Ok(nightjar_core::usb::Forwarder::for_host(
+            std::sync::Arc::new(host),
+            send,
+            changed,
+        ))
+    };
+    attach(make, device, &name)
+}
+
+/// Detaches an attachment `usbAttach` made; false when it is not attached.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_usbDetach(
+    _: JNIEnv,
+    _: JClass,
+    request_id: jint,
+) -> jboolean {
+    crate::jbool(u32::try_from(request_id).is_ok_and(detach))
+}
+
+/// This stream's attachments as JSON, oldest first: `[]` without any.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_usbList(
+    env: JNIEnv,
+    _: JClass,
+) -> jstring {
+    match env.new_string(list_json()) {
+        Ok(list) => list.into_raw(),
+        Err(_) => std::ptr::null_mut(),
+    }
 }
 
 #[cfg(test)]

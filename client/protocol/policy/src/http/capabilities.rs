@@ -1122,6 +1122,13 @@ impl HostCapabilities {
         self.availability(feature).is_supported()
     }
 
+    /// Whether the host grants at least one bit in `mask` (or reports no permissions at all).
+    pub fn has_permission(&self, mask: u32) -> bool {
+        self.evidence
+            .as_ref()
+            .is_none_or(|e| e.has_permission(mask))
+    }
+
     /// The image enhancements the host offers to turn on or off per stream
     /// (`rubylight_protocol::nvidia_enhance` bits), 0 for a host without any.
     pub fn nvidia_enhancements(&self) -> u8 {

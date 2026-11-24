@@ -3,9 +3,9 @@
 
 pub use nightjar_core::route::{RouteWaitOutcome, route_problem, wait_for_route};
 use nightjar_core::session::{self, Stage};
-pub use nightjar_policy::recovery::{
-    Backoff, PEER_TIMEOUT_MS, reconnects_at_once, recovers_termination, transient_termination,
-};
+#[cfg(test)]
+use nightjar_policy::recovery::PEER_TIMEOUT_MS;
+pub use nightjar_policy::recovery::{Backoff, recovers_termination, transient_termination};
 
 pub fn now_ms() -> u64 {
     session::now_us() / 1000
@@ -28,12 +28,7 @@ pub fn transient_start(stage: Stage, code: i32) -> bool {
 }
 
 pub fn transient_http(error: &nightjar_core::http::Error) -> bool {
-    use std::io::ErrorKind;
-    matches!(error, nightjar_core::http::Error::Io(e) if matches!(e.kind(),
-        ErrorKind::TimedOut | ErrorKind::ConnectionReset | ErrorKind::ConnectionAborted
-        | ErrorKind::ConnectionRefused | ErrorKind::NotConnected | ErrorKind::BrokenPipe
-        | ErrorKind::UnexpectedEof | ErrorKind::NetworkDown | ErrorKind::NetworkUnreachable
-        | ErrorKind::HostUnreachable))
+    nightjar_core::connect::launch::is_retryable_http_error(error)
 }
 
 #[cfg(test)]

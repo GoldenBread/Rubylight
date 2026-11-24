@@ -39,5 +39,9 @@ public final class NightjarAndroidConfigurer extends AndroidConfigurer {
         builder.doNotAcquireClass(NightjarHostsJni.FlowTransport.class.getName());
         builder.doNotAcquireClass(NightjarHostsJni.FlowSleeper.class.getName());
         builder.doNotAcquireClass(NightjarHostsJni.FlowStepListener.class.getName());
+        builder.doNotAcquireClass(NightjarSessionJni.class.getName());
+        builder.doNotAcquireClass(NightjarSessionJni.NegotiationCallback.class.getName());
+        builder.doNotAcquireClass(NightjarSessionJni.LinkProbe.class.getName());
+        builder.doNotAcquireClass(NightjarSessionJni.HostCallback.class.getName());
     }
 }

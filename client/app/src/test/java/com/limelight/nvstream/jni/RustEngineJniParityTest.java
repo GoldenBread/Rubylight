@@ -46,6 +46,7 @@ public class RustEngineJniParityTest {
         AUTHORIZED_JNI_HOLDERS.put("Java_com_limelight_nvstream_jni_NightjarConsoleJni_", NightjarConsoleJni.class);
         AUTHORIZED_JNI_HOLDERS.put("Java_com_limelight_nvstream_jni_NightjarDiscoveryJni_", NightjarDiscoveryJni.class);
         AUTHORIZED_JNI_HOLDERS.put("Java_com_limelight_nvstream_jni_NightjarHostsJni_", NightjarHostsJni.class);
+        AUTHORIZED_JNI_HOLDERS.put("Java_com_limelight_nvstream_jni_NightjarSessionJni_", NightjarSessionJni.class);
     }
 
     /** A Rust name that differs from the Java one for the same startConnection parameter. */
@@ -251,6 +252,7 @@ public class RustEngineJniParityTest {
                 "com/limelight/nvstream/jni/NightjarConsoleJni",
                 "com/limelight/nvstream/jni/NightjarDiscoveryJni",
                 "com/limelight/nvstream/jni/NightjarHostsJni",
+                "com/limelight/nvstream/jni/NightjarSessionJni",
                 "com/limelight/nvstream/mdns/MdnsDiscoveryAgent",
                 "com/limelight/nvstream/wol/WakeOnLanSender",
                 "com/limelight/nvstream/wol/WakeTargets",
@@ -682,14 +684,16 @@ public class RustEngineJniParityTest {
         try (Stream<Path> walk = Files.walk(mainJava.toPath())) {
             for (Path p : walk.filter(p -> p.toString().endsWith(".java")).toArray(Path[]::new)) {
                 String name = p.getFileName().toString();
-                if (name.equals("NightjarHostsJni.java") || name.equals("NightjarPolicyJni.java")) {
+                if (name.equals("NightjarHostsJni.java")
+                        || name.equals("NightjarPolicyJni.java")
+                        || name.equals("NightjarSessionJni.java")) {
                     continue;
                 }
                 allMain.append(new String(Files.readAllBytes(p), StandardCharsets.UTF_8)).append('\n');
             }
         }
         String body = allMain.toString();
-        for (Class<?> holder : new Class<?>[] { NightjarHostsJni.class, NightjarPolicyJni.class }) {
+        for (Class<?> holder : new Class<?>[] { NightjarHostsJni.class, NightjarPolicyJni.class, NightjarSessionJni.class }) {
             String cls = holder.getSimpleName();
             TreeSet<String> dead = new TreeSet<>();
             for (Method m : holder.getDeclaredMethods()) {

@@ -3,6 +3,7 @@
 
 pub mod audio;
 pub mod color;
+pub mod connect;
 pub mod connectivity;
 pub mod console;
 pub mod control;

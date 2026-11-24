@@ -5,7 +5,9 @@ use jni::objects::{JClass, JString};
 use jni::sys::{JNI_FALSE, jboolean, jint, jlong, jlongArray, jstring};
 use nightjar_policy::continue_here;
 use nightjar_policy::launch::{self, InputOnlyBlocker, InputOnlyMode, Role};
-use nightjar_policy::recovery::{self, MAX_ATTEMPTS, StreamRecoveryPolicy, TRIP_RESUME_DELAY_MS, WINDOW_MS};
+use nightjar_policy::recovery::{
+    self, MAX_ATTEMPTS, StreamRecoveryPolicy, TRIP_RESUME_DELAY_MS, WINDOW_MS,
+};
 
 use crate::native_api;
 use crate::policy::{jbool, non_neg_u32, non_neg_u64, shifted_u64};

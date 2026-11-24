@@ -52,6 +52,28 @@
 -keepclassmembers interface com.limelight.nvstream.jni.NightjarHostsJni$FlowStepListener {
     void onStep(java.lang.String);
 }
+# Looked up by name from protocol/android/src/{connect.rs}.
+-keepclassmembers class com.limelight.nvstream.jni.NightjarSessionJni {
+    <methods>;
+}
+-keepclassmembers interface com.limelight.nvstream.jni.NightjarSessionJni$NegotiationCallback {
+    int preparePackedModes(int);
+    int prepareVideoFormats(int, int);
+    long pickHdrFormat(int, int, boolean, boolean);
+    int videoCapabilities(int, int);
+}
+-keepclassmembers interface com.limelight.nvstream.jni.NightjarSessionJni$LinkProbe {
+    java.lang.String probeLinkMbps();
+    java.lang.String probePace(int, int, int, int);
+}
+-keepclassmembers interface com.limelight.nvstream.jni.NightjarSessionJni$HostCallback {
+    java.lang.String serverInfo(boolean);
+    boolean hasEndedSession();
+    java.lang.String launch(java.lang.String, int, boolean, boolean);
+    java.lang.String quitApp();
+    int confirmReplace(boolean);
+    boolean isStopped();
+}
 # Looked up by name from protocol/android/src/policy_roaming.rs.
 -keepclassmembers interface com.limelight.nvstream.jni.NightjarJni$HostLossCallback {
     java.lang.String gatewayToward();

@@ -451,7 +451,6 @@
       "client/app/src/main/java/com/limelight/grid/assets/ScaledBitmap.java",
       "client/app/src/main/java/com/limelight/nvstream/AdaptiveBitrateController.java",
       "client/app/src/main/java/com/limelight/nvstream/ConnectionContext.java",
-      "client/app/src/main/java/com/limelight/nvstream/NvConnection.java",
       "client/app/src/main/java/com/limelight/nvstream/NvConnectionListener.java",
       "client/app/src/main/java/com/limelight/nvstream/PyroWaveBitrateController.java",
       "client/app/src/main/java/com/limelight/nvstream/StreamConfiguration.java",
