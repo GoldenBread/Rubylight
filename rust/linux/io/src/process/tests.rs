@@ -413,8 +413,14 @@ fn links_are_not_followed_and_folders_are_made_with_their_permissions() {
     assert_eq!(mode(&readable), 0o700);
     assert_eq!(mode(&record), 0o600);
     let open = open_unfollowed(&readable, true).unwrap();
-    assert_eq!(open_file_writers(&open).unwrap(), [own.clone()]);
-    assert_eq!(open_file_child_movers(&open).unwrap(), [own.clone()]);
+    assert_eq!(
+        open_file_writers(&open).unwrap(),
+        std::slice::from_ref(&own)
+    );
+    assert_eq!(
+        open_file_child_movers(&open).unwrap(),
+        std::slice::from_ref(&own)
+    );
     assert_eq!(open_file_movers(&open).unwrap(), [own]);
     assert!(restrict(&readable, "O:BAD:P(A;OICI;FA;;;SY)").is_err());
     std::fs::remove_dir_all(folder).unwrap();

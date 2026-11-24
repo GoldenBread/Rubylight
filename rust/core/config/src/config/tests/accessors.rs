@@ -28,7 +28,7 @@ fn a_shared_folder_is_a_folder_on_a_drive() {
         r"E:\",
         r"C:\Users\Player\My Games",
     ] {
-        assert!(super::valid_folder_root(root), "{root}");
+        assert!(super::folders::valid_drive_root(root), "{root}");
     }
     for root in [
         "",
@@ -45,7 +45,20 @@ fn a_shared_folder_is_a_folder_on_a_drive() {
         r"D:\Games:secret",
         r"D:\..",
     ] {
-        assert!(!super::valid_folder_root(root), "{root}");
+        assert!(!super::folders::valid_drive_root(root), "{root}");
+    }
+    for root in ["/srv/games", "/home/player/My Games", "/"] {
+        assert!(super::folders::valid_unix_root(root), "{root}");
+    }
+    for root in [
+        "",
+        "games",
+        "./games",
+        "/srv/../etc",
+        "/srv/games/.",
+        r"D:\Games",
+    ] {
+        assert!(!super::folders::valid_unix_root(root), "{root}");
     }
     let config = |path: &str| {
         let list = serde_json::json!([{"id": "games", "name": "Games", "path": path}]);
@@ -53,7 +66,12 @@ fn a_shared_folder_is_a_folder_on_a_drive() {
             .unwrap()
             .shared_folders()
     };
-    assert_eq!(config(r"D:\Games").len(), 1);
+    let local = if cfg!(windows) {
+        r"D:\Games"
+    } else {
+        "/srv/games"
+    };
+    assert_eq!(config(local).len(), 1);
     assert!(config(r"\\server\games").is_empty());
     assert!(config("games").is_empty());
 }

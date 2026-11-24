@@ -139,6 +139,12 @@ impl Drop for Folders {
     }
 }
 
+/// A link at `link` to the folder `target`: a junction on Windows, a symbolic link elsewhere.
+#[cfg(not(windows))]
+fn junction(target: &std::path::Path, link: &std::path::Path) {
+    std::os::unix::fs::symlink(target, link).unwrap();
+}
+#[cfg(windows)]
 fn junction(target: &std::path::Path, link: &std::path::Path) {
     let status = std::process::Command::new("cmd")
         .args(["/C", "mklink", "/J"])
@@ -286,18 +292,41 @@ async fn a_folder_is_browsed_folders_first_and_its_files_downloaded_exactly() {
 
 /// Denies everyone reading `path` (a folder's listing or a file's data, not
 /// what is below it) until dropped. The test's own folders stay its to fix.
+/// `path` unreadable to everyone until dropped: a deny entry on Windows, no permission bits
+/// elsewhere (which a test running as root would not notice).
+#[cfg(windows)]
 struct Denied(PathBuf);
+#[cfg(windows)]
 impl Denied {
     fn new(path: &std::path::Path) -> Self {
         icacls(path, "/deny");
         Self(path.into())
     }
 }
+#[cfg(windows)]
 impl Drop for Denied {
     fn drop(&mut self) {
         icacls(&self.0, "/remove:d");
     }
 }
+#[cfg(not(windows))]
+struct Denied(PathBuf, std::fs::Permissions);
+#[cfg(not(windows))]
+impl Denied {
+    fn new(path: &std::path::Path) -> Self {
+        use std::os::unix::fs::PermissionsExt;
+        let before = std::fs::metadata(path).unwrap().permissions();
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o000)).unwrap();
+        Self(path.into(), before)
+    }
+}
+#[cfg(not(windows))]
+impl Drop for Denied {
+    fn drop(&mut self) {
+        let _ = std::fs::set_permissions(&self.0, self.1.clone());
+    }
+}
+#[cfg(windows)]
 fn icacls(path: &std::path::Path, change: &str) {
     let mut command = std::process::Command::new("icacls");
     command.arg(path).arg(change);

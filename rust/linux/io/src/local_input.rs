@@ -7,6 +7,10 @@ use anyhow::Result;
 pub struct Watch {
     _watching: (),
 }
+/// Ends what the value holds, at the point the host drops it. It watches nothing on Linux yet, so there is nothing to stop.
+impl Drop for Watch {
+    fn drop(&mut self) {}
+}
 
 /// Calls `on_input` when someone uses the PC's own keyboard or mouse. Fails on Linux, where
 /// local input is not watched yet; `on_input` is never called.

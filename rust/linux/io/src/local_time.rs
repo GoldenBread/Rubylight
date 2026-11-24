@@ -3,6 +3,10 @@
 /// The wall-clock time on this PC at `unix` (Unix seconds), as Unix seconds as if that clock
 /// were UTC, by the time zone's rule on that date: the opposite of
 /// [`crate::playnite::local_to_utc`]. `None` when the moment cannot be converted.
+#[allow(
+    clippy::useless_conversion,
+    reason = "narrower C types on 32-bit Linux"
+)]
 pub fn utc_to_local(unix: u64) -> Option<i64> {
     let moment = libc::time_t::try_from(unix).ok()?;
     // SAFETY: an all-zero `tm` is a valid value (its zone name pointer, if any, is null).

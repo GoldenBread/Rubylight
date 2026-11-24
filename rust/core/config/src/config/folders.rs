@@ -14,11 +14,20 @@ pub fn valid_folder_id(id: &str) -> bool {
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
 }
-/// Whether `path` can be a shared folder: absolute, on a drive of this PC,
-/// such as `D:\Games`. A network share (`\\server\share`), a device or
+/// Whether `path` can be a shared folder on this PC's OS: [`valid_drive_root`] on
+/// Windows, [`valid_unix_root`] elsewhere.
+pub fn valid_folder_root(path: &str) -> bool {
+    if cfg!(windows) {
+        valid_drive_root(path)
+    } else {
+        valid_unix_root(path)
+    }
+}
+/// Whether `path` can be a shared folder on Windows: absolute, on a drive of
+/// this PC, such as `D:\Games`. A network share (`\\server\share`), a device or
 /// verbatim path (`\\.\`, `\\?\`), a relative path, `.` or `..`, and a
 /// colon past the drive (an alternate data stream) are refused.
-pub fn valid_folder_root(path: &str) -> bool {
+pub fn valid_drive_root(path: &str) -> bool {
     let bytes = path.as_bytes();
     bytes.len() >= 3
         && bytes[0].is_ascii_alphabetic()
@@ -28,6 +37,15 @@ pub fn valid_folder_root(path: &str) -> bool {
         && !path[3..]
             .split(['\\', '/'])
             .any(|part| part == "." || part == "..")
+}
+
+/// Whether `path` can be a shared folder on Linux: absolute, such as
+/// `/srv/games`, with no `.` or `..` part. Whether it is a network mount is
+/// the platform's to tell when the folder is opened.
+pub fn valid_unix_root(path: &str) -> bool {
+    path.starts_with('/')
+        && !path.contains('\0')
+        && !path.split('/').any(|part| part == "." || part == "..")
 }
 
 /// One entry of `shared_folders`.

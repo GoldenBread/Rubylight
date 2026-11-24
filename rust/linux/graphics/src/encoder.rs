@@ -66,6 +66,10 @@ impl Drop for Encoded {
 pub struct Encoder {
     _private: (),
 }
+/// Ends what the value holds, at the point the host drops it. It holds no encoder session on Linux yet, so there is nothing to close.
+impl Drop for Encoder {
+    fn drop(&mut self) {}
+}
 impl Encoder {
     /// Best-effort pace-based frame cap; the cap in effect, `None` without one.
     pub fn set_frame_cap(&mut self, _bytes: u64, _floor: u64) -> Option<u64> {

@@ -7,11 +7,10 @@ mod shaders;
 fn main() {
     let out = PathBuf::from(env::var("OUT_DIR").unwrap());
     shaders::compile(&out);
-    if env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
-        return;
+    if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
+        #[cfg(windows)]
+        generate_abi(&out);
     }
-    #[cfg(windows)]
-    generate_abi(&out);
 }
 
 #[cfg(windows)]

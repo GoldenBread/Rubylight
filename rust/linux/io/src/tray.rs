@@ -37,6 +37,10 @@ pub fn show_app(icon: Icon, app: Option<&str>, summary: Option<&str>) {
 pub struct Tray {
     _shown: (),
 }
+/// Ends what the value holds, at the point the host drops it. It shows no icon on Linux yet, so there is nothing to remove.
+impl Drop for Tray {
+    fn drop(&mut self) {}
+}
 
 impl Tray {
     pub fn new(icon: PathBuf, port: u16) -> Result<(Self, mpsc::Receiver<Action>)> {

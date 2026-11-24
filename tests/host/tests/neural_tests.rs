@@ -1,4 +1,7 @@
 //! Neural Rendering unit/integration tests extracted from `butterpollo_stream::neural`.
+//! Neural Rendering runs Windows games through the Radeon driver, so these tests run on Windows
+//! only.
+#![cfg(windows)]
 
 #[path = "neural_tests/common.rs"]
 mod common;

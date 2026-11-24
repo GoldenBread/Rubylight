@@ -12,6 +12,10 @@ pub const SETUP_LOCK_TIMEOUT: Duration = Duration::from_secs(120);
 pub struct NamedLock {
     _thread: PhantomData<*const ()>,
 }
+/// Ends what the value holds, at the point the host drops it. It holds no lock on Linux, so there is nothing to release.
+impl Drop for NamedLock {
+    fn drop(&mut self) {}
+}
 impl NamedLock {
     /// Take the lock `name`, waiting up to `timeout`. Nothing else on Linux takes it, so it is
     /// always free.

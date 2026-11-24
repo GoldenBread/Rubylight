@@ -346,7 +346,6 @@ fn the_users_optiscaler_with_a_left_provider_folder_gets_it_taken_over() {
     assert_eq!(snapshot(folder), expected);
 }
 
-#[cfg(windows)]
 /// A folder open in a program (read and write sharing, no delete sharing):
 /// it can't be removed until dropped.
 fn hold_folder(path: &Path) -> std::fs::File {
@@ -360,7 +359,6 @@ fn hold_folder(path: &Path) -> std::fs::File {
         .unwrap()
 }
 
-#[cfg(windows)]
 #[test]
 fn a_folder_of_the_hosts_that_cannot_go_is_named_and_taken_over_later() {
     let temp = tempdir();

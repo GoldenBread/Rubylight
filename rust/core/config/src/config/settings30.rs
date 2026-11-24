@@ -162,18 +162,28 @@ mod tests {
         assert_eq!(c.dd_manual_rotation(), 270);
         assert_eq!(c.nucleus_path(), Some(PathBuf::from("D:\\Tools\\Nucleus")));
         assert_eq!(c.nucleus_coop_players(), 2);
-        let folders = config(
-            "shared_folders = [{\"id\": \"games\", \"name\": \"Games\", \"path\": \"D:\\\\Games\"}, {\"id\": \"saves-2\", \"name\": \"Saves\", \"path\": \"E:\\\\Saves\"}]",
-        )
-        .shared_folders();
+        // A folder of this PC as its OS writes one.
+        let (games, saves) = if cfg!(windows) {
+            ("D:\\Games", "E:\\Saves")
+        } else {
+            ("/srv/games", "/home/player/saves")
+        };
+        let list = serde_json::json!([
+            {"id": "games", "name": "Games", "path": games},
+            {"id": "saves-2", "name": "Saves", "path": saves},
+        ]);
+        let folders = config(&format!("shared_folders = {list}")).shared_folders();
         assert_eq!(
             folders
                 .iter()
                 .map(|f| (f.id.as_str(), f.path.to_str().unwrap()))
                 .collect::<Vec<_>>(),
-            [("games", "D:\\Games"), ("saves-2", "E:\\Saves")]
+            [("games", games), ("saves-2", saves)]
         );
-        let twice = "[{\"id\": \"a\", \"name\": \"A\", \"path\": \"C:\\\\A\"}, {\"id\": \"a\", \"name\": \"B\", \"path\": \"C:\\\\B\"}]";
+        let twice = serde_json::json!([
+            {"id": "a", "name": "A", "path": games},
+            {"id": "a", "name": "B", "path": saves},
+        ]);
         assert!(
             config(&format!("shared_folders = {twice}"))
                 .shared_folders()

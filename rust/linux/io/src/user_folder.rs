@@ -464,6 +464,10 @@ impl UserFolder {
     }
 
     /// The bytes the user may still write to the folder's volume and the volume's size.
+    #[allow(
+        clippy::useless_conversion,
+        reason = "narrower C types on 32-bit Linux"
+    )]
     pub fn volume_bytes(&self) -> Result<(u64, u64), UserFolderError> {
         let path = c_path(&self.base())?;
         // SAFETY: an all-zero `statvfs` is a valid value the call overwrites.

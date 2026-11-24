@@ -6,7 +6,6 @@ use butterpollo_session::state::App;
 use butterpollo_stream::neural::folder::{Request, Response, Writer, handle};
 use butterpollo_stream::neural::*;
 
-#[cfg(windows)]
 /// A game that runs outside a stream holds its DLLs: turning frame
 /// generation off then stops at the first, before anything changed, and
 /// says to close the game, so the game still launches with OptiScaler.ini
@@ -67,7 +66,6 @@ fn a_removal_while_the_game_runs_changes_nothing_and_says_to_close_it() {
     assert_eq!(snapshot(folder), before);
 }
 
-#[cfg(windows)]
 /// A DLL the game holds anywhere in the removal stops it before any DLL
 /// goes: in the full package one after OptiScaler's proxy, and in add-on
 /// mode, with no proxy of ours to go first, one provider DLL of several,
@@ -151,7 +149,6 @@ fn a_held_dll_stops_the_removal_before_any_dll_goes() {
     assert_eq!(snapshot(folder), before);
 }
 
-#[cfg(windows)]
 /// An update cut short (a file the game holds open) leaves each file it
 /// replaces in one of its two forms, both the host's: the game does not
 /// launch on half an update, the next launch with the release cached

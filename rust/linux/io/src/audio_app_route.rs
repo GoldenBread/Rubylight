@@ -65,6 +65,10 @@ pub fn recover(_directory: &Path) -> Result<()> {
 
 /// Programs the host stops: routed again once this drops. It holds nothing on Linux.
 pub struct Closing(());
+/// Ends what the value holds, at the point the host drops it. It puts back no route on Linux, since none was taken.
+impl Drop for Closing {
+    fn drop(&mut self) {}
+}
 
 /// The host is about to stop the processes `pids` gives: their programs go back to their own
 /// devices. Nothing was moved on Linux, so there is nothing to put back.

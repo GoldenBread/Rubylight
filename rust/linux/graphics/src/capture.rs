@@ -85,6 +85,10 @@ pub fn primary_display() -> Option<String> {
 /// Per-thread platform initialisation a capture or encoder thread holds for its lifetime.
 /// Linux needs none: the guard holds nothing.
 pub struct ComGuard;
+/// Ends what the value holds, at the point the host drops it. Linux has no COM, so there is nothing to uninitialize.
+impl Drop for ComGuard {
+    fn drop(&mut self) {}
+}
 
 impl ComGuard {
     pub fn new() -> Result<Self> {
@@ -227,6 +231,10 @@ pub fn panel_driver(config: &butterpollo_config::config::Config) -> crate::radeo
 /// Linux threads keep their priority: the value holds nothing.
 pub struct Priority {
     _private: (),
+}
+/// Ends what the value holds, at the point the host drops it. It raised no priority on Linux, so there is nothing to lower.
+impl Drop for Priority {
+    fn drop(&mut self) {}
 }
 
 impl Default for Priority {
@@ -429,6 +437,10 @@ pub fn run_wgc_worker_with(
 pub enum Capture {
     /// Holds no device: the place of a lost capture while a new one is made.
     Closed,
+}
+/// Ends what the value holds, at the point the host drops it. It holds no capture session on Linux yet, so there is nothing to close.
+impl Drop for Capture {
+    fn drop(&mut self) {}
 }
 
 /// The desktop pointer a lost capture last saw, for the capture replacing it.

@@ -17,6 +17,10 @@ pub struct Ending {
 pub struct SessionEndWatch {
     _listening: (),
 }
+/// Ends what the value holds, at the point the host drops it. It listens to nothing on Linux, so there is nothing to stop.
+impl Drop for SessionEndWatch {
+    fn drop(&mut self) {}
+}
 
 impl SessionEndWatch {
     /// Start listening. `on_end` is called once with how the session ends; it is never

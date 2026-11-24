@@ -73,6 +73,7 @@ async fn background_launches_run_in_nucleus_and_only_their_owner_returns() -> Re
     h.finish().await
 }
 
+#[cfg(windows)]
 /// A stream's launch for client `index` of the harness, under `uuid`.
 fn parked_launch(h: &Harness, index: usize, uuid: &str) -> Launch {
     let mut client = h.h.paired.read().unwrap().clients[index].clone();
@@ -121,6 +122,8 @@ async fn a_streams_controllers_know_whether_its_app_starts_through_steam() -> Re
     h.finish().await
 }
 
+// Nucleus Co-op parks controllers through XInput, on Windows only.
+#[cfg(windows)]
 /// #56: a desktop stream that ended parks its controller, which keeps the
 /// first XInput slot, and the background game started next read that pad
 /// instead of the player's. A new background session releases parked
@@ -201,6 +204,8 @@ async fn a_new_background_stream_releases_parked_controllers_first() -> Result<(
     h.finish().await
 }
 
+// Nucleus Co-op parks controllers through XInput, on Windows only.
+#[cfg(windows)]
 /// #56: a new co-op session plugs its players' pads too, so it releases the
 /// controllers that streams which ended still park first.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -345,6 +350,8 @@ async fn a_quit_after_the_stream_ended_ends_the_background_stream() -> Result<()
     h.finish().await
 }
 
+// Nucleus Co-op parks controllers through XInput, on Windows only.
+#[cfg(windows)]
 /// A one-player game without a hub handler streams in the background with
 /// Rubylight's own handler, written once at the launch: the stream is a
 /// Nucleus player's like any other, with nothing added on its way.

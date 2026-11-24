@@ -29,7 +29,6 @@ async fn github_gets_the_updaters_client() {
     assert!(error.is_builder(), "{error:#}");
 }
 
-#[cfg(windows)]
 /// The whole download against a server of its own: the pinned release, its
 /// checksum list (itself pinned) checked against GitHub's digests before
 /// any archive comes, both archives, then the cache. An older release in
