@@ -1,0 +1,118 @@
+# Maintainer: RamazanKara (https://github.com/RamazanKara/Rubylight)
+#
+# Builds Rubylight's Linux host from the git checkout this file sits in
+# (rust/linux/packaging/arch), without downloading the source:
+#   cd rust/linux/packaging/arch && makepkg -f
+# Keep the build out of the checkout with BUILDDIR, PKGDEST and CARGO_TARGET_DIR, e.g.
+#   BUILDDIR=$PWD/../../../../target/agent-pkg/build PKGDEST=... CARGO_TARGET_DIR=... makepkg -f
+# The package is meant to be installed with `pacman -U`; another distribution's package follows
+# the same layout (docs/linux-host-spike.md, "Packaging"):
+#   /usr/bin/butterpollo                          the host
+#   /usr/share/rubylight/assets/                  --assets' parent: web/ (the console build),
+#                                                 cover images, remote-session/
+#   /usr/lib/systemd/user/rubylight.service       the user unit
+#   /usr/lib/udev/rules.d/70..72-rubylight-*      the encoder clock, pads and uinput/uhid rules
+#   /usr/lib/modules-load.d/rubylight.conf        uinput and uhid
+#   /usr/share/licenses/rubylight/                GPL-3.0 text, NOTICE, THIRD_PARTY.md, Cargo.lock
+# Profile and logs: $XDG_CONFIG_HOME/rubylight, else ~/.config/rubylight.
+#
+# The web console is built with npm when `npm` is installed (makedepends npm); without it the
+# host serves its built-in console page and says so below. GPL-3.0-only: derived work keeps
+# the licence, the credit to RamazanKara and the upstream credits in NOTICE.
+
+pkgname=rubylight
+pkgver=6.3.2.r19236.g46baf0d58
+pkgrel=1
+pkgdesc='Moonlight game-streaming host (Rubylight, binary butterpollo) for the signed-in desktop user'
+arch=(x86_64)
+url='https://github.com/RamazanKara/Rubylight'
+license=(GPL-3.0-only)
+# Derived from `readelf -d butterpollo` (libva, libva-drm, libpipewire-0.3, libdrm are linked;
+# the rest of the Rust code is static, X11 goes through x11rb without libX11) and the programs
+# the host starts: gamescope (the session a game runs in), systemd-inhibit and logind (sleep
+# and session end: systemd), and the VA-API driver of the GPU, which mesa provides.
+depends=(
+  gcc-libs
+  glibc
+  libdrm
+  libpipewire
+  libva
+  mesa
+  pipewire
+  gamescope
+  systemd
+  xorg-xwayland
+)
+makedepends=(cargo git)
+optdepends=(
+  'wl-clipboard: clipboard sharing with a Wayland desktop'
+  'xdg-desktop-portal: streaming the desktop itself (screen capture portal)'
+  'xdg-utils: opening a launcher (Steam, Heroic, Lutris) URLs for library games'
+  'pipewire-pulse: audio capture and per-app routing through PipeWire'
+  'npm: build the web console when building the package'
+)
+# The PyroWave codec library (client/scripts/build-pyrowave-sdk.sh) is not packaged: the host
+# opens libpyrowave-shared.so from BUTTERPOLLO_PYROWAVE_LIB, then beside butterpollo, then the
+# loader's path (/usr/lib); without it PyroWave is not offered and the log says so.
+install=rubylight.install
+options=(!lto)
+source=()
+sha256sums=()
+
+_repo() { cd "$startdir/../../../.." && pwd; }
+
+pkgver() {
+  local repo
+  repo=$(_repo)
+  local version
+  version=$(sed -n 's/^version = "\(.*\)"/\1/p' "$repo/Cargo.toml" | head -1)
+  # Dots only: the version, then the commit count and short hash of the checkout.
+  printf '%s.r%s.g%s' "$version" "$(git -C "$repo" rev-list --count HEAD)" \
+    "$(git -C "$repo" rev-parse --short HEAD)"
+}
+
+build() {
+  local repo
+  repo=$(_repo)
+  cd "$repo"
+  export CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-"$srcdir/target"}
+  cargo build --release --locked -p butterpollo --bin butterpollo
+  if command -v npm >/dev/null; then
+    # Built in a copy: the checkout's node_modules stays untouched.
+    rm -rf "$srcdir/web"
+    mkdir -p "$srcdir/web"
+    (cd "$repo/rust/web" && tar --exclude=node_modules --exclude=dist -cf - .) | tar -xf - -C "$srcdir/web"
+    (cd "$srcdir/web" && npm ci --no-audit --no-fund && npm run build)
+  else
+    warning 'npm is not installed: the package gets the built-in console page, not the web app'
+  fi
+}
+
+package() {
+  local repo
+  repo=$(_repo)
+  local target=${CARGO_TARGET_DIR:-"$srcdir/target"}
+  local packaging="$repo/rust/linux/packaging"
+
+  install -Dm755 "$target/release/butterpollo" "$pkgdir/usr/bin/butterpollo"
+
+  # --assets is assets/web; its parent holds the covers and remote-session pictures.
+  local assets="$pkgdir/usr/share/rubylight/assets"
+  install -dm755 "$assets/web"
+  install -Dm644 -t "$assets" "$repo"/rust/assets/package/*.png "$repo/rust/assets/package/apollo.ico"
+  cp -r "$repo/rust/assets/package/remote-session" "$assets/remote-session"
+  if [[ -f $srcdir/web/dist/index.html ]]; then
+    cp -r "$srcdir/web/dist/." "$assets/web/"
+  fi
+  chmod -R u+rwX,go+rX,go-w "$assets"
+
+  install -Dm644 -t "$pkgdir/usr/lib/udev/rules.d" "$packaging"/udev/*.rules
+  install -Dm644 "$packaging/systemd/rubylight.service" \
+    "$pkgdir/usr/lib/systemd/user/rubylight.service"
+  printf 'uinput\nuhid\n' | install -Dm644 /dev/stdin "$pkgdir/usr/lib/modules-load.d/rubylight.conf"
+
+  install -Dm644 "$repo/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm644 "$repo/NOTICE" "$pkgdir/usr/share/licenses/$pkgname/NOTICE"
+  install -Dm644 "$repo/rust/THIRD_PARTY.md" "$pkgdir/usr/share/licenses/$pkgname/THIRD_PARTY.md"
+  install -Dm644 "$repo/Cargo.lock" "$pkgdir/usr/share/licenses/$pkgname/Cargo.lock"
+}

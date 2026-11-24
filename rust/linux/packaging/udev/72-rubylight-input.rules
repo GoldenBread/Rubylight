@@ -1,0 +1,24 @@
+# Gives the user signed in at the PC's seat the two kernel devices Rubylight makes its virtual
+# controllers with: /dev/uinput (the Xbox 360 pad, rust/linux/io/src/input/) and /dev/uhid (the
+# DualSense, DualShock 4, Switch Pro, Steam Deck and Steam Controller pads, hid_pad.rs and
+# uhid_pad.rs). `uaccess` makes logind add an ACL for the seat's active user (and remove it when
+# the seat changes hands); the node's owner and group stay root's, so no one is added to a
+# group and a user not at the seat gets nothing.
+#
+# Security: a program that can open /dev/uinput can type and click into every window of the
+# seat, and one that can open /dev/uhid can present itself as any HID device (a keyboard too).
+# On a Wayland desktop that is more than the user's programs otherwise have: the compositor
+# keeps them from injecting input into one another, and this rule lets every program the seat
+# user runs, games included, go around it. On X11 any program of theirs could already do so
+# (XTEST). It does not reach remote logins, services or other seats. On a PC where that is too
+# much, drop this rule and use a group instead: GROUP="rubylight-input", MODE="0660" (and add
+# the one user to it). That is no narrower for the user's own programs, which all share the
+# group, but it ends the access for anyone else at the seat and needs a new login after
+# `usermod`.
+#
+# The static_node option makes systemd-tmpfiles create the nodes before the modules load, so
+# the tag applies at boot; /usr/lib/modules-load.d/rubylight.conf loads the modules.
+# Another rule may set a group on the same nodes (ydotool's 80-uinput.rules does); the ACL of
+# `uaccess` stays beside it.
+KERNEL=="uinput", SUBSYSTEM=="misc", OPTIONS+="static_node=uinput", TAG+="uaccess"
+KERNEL=="uhid", SUBSYSTEM=="misc", OPTIONS+="static_node=uhid", TAG+="uaccess"

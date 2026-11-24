@@ -1,6 +1,6 @@
 # Lets the video group raise an AMD GPU's clocks while Rubylight streams, and put them back to
 # automatic afterwards (rust/linux/graphics/src/encoder_clock.rs). Only the performance level
-# file changes group. Install with
+# file changes group. Install with (a package puts it in /usr/lib/udev/rules.d)
 #   sudo install -m 644 70-rubylight-encoder-clock.rules /etc/udev/rules.d/
 #   sudo udevadm control --reload && sudo udevadm trigger --subsystem-match=drm --action=change
 ACTION=="add|change", SUBSYSTEM=="drm", KERNEL=="card[0-9]*", ENV{DEVTYPE}=="drm_minor", DRIVERS=="amdgpu", \

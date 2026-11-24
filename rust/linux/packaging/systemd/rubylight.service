@@ -1,0 +1,32 @@
+# Rubylight's host for the user signed in at the PC: it captures that user's session (the
+# desktop through the portal, games inside a gamescope of their own), so it runs as a user
+# unit in their graphical session and is not a system service.
+#   systemctl --user enable --now rubylight.service
+# Its profile (settings, pairings, logs) is ~/.config/rubylight. The web console is on
+# https://localhost:47990 (the port is `port` + 1 in sunshine.conf; the default `port` is 47989).
+[Unit]
+Description=Rubylight game-streaming host
+Documentation=https://github.com/RamazanKara/Rubylight
+After=graphical-session.target pipewire.service
+Wants=pipewire.service
+PartOf=graphical-session.target
+# Without a display the host would stream nothing.
+ConditionEnvironment=|WAYLAND_DISPLAY
+ConditionEnvironment=|DISPLAY
+
+[Service]
+Type=simple
+# The tray is a Windows feature; the console is the interface here.
+ExecStart=/usr/bin/butterpollo --no-tray
+Environment=RUST_LOG=info
+# "Restart host" in the console exits with 75 (sysexits EX_TEMPFAIL) under systemd, which
+# Restart=on-failure answers; a stop (SIGTERM) or a clean exit leaves the unit stopped.
+Restart=on-failure
+RestartSec=2
+# The host finishes its own shutdown within 17 s (game files, display, ports), then systemd
+# ends what is left (a game, gamescope).
+TimeoutStopSec=25
+KillMode=mixed
+
+[Install]
+WantedBy=graphical-session.target

@@ -12,9 +12,12 @@ use std::{
 };
 
 mod download;
+mod platform;
 mod release;
 mod schedule;
 mod warnings;
+use platform::supported;
+pub use platform::{disabled_reason, install_supported};
 
 #[cfg(test)]
 use release::MAX_INSTALLER;
@@ -49,23 +52,10 @@ pub fn now() -> u64 {
         .as_secs()
 }
 
-/// The host installs its own updates: an installed Windows service.
-pub fn install_supported(h: &Shared) -> bool {
-    supported(h)
-}
-
-fn supported(h: &Shared) -> bool {
-    let profile = butterpollo_session::paths::installed_profile();
-    butterpollo_win_io::process::is_system()
-        && std::fs::canonicalize(&h.directory)
-            .ok()
-            .zip(std::fs::canonicalize(profile).ok())
-            .is_some_and(|(a, b)| a == b)
-}
-
 pub fn status(h: &Shared) -> Value {
     let mut state = h.updates.lock().unwrap().clone();
     state["install_supported"] = json!(supported(h));
+    state["disabled_reason"] = json!(disabled_reason());
     state["updates"] = json!(match h.config.read().unwrap().updates() {
         butterpollo_config::config::UpdatesMode::Off => "off",
         butterpollo_config::config::UpdatesMode::TellMe => "tell_me",
@@ -138,6 +128,7 @@ pub fn next_check_at(interval: i64, checked_at: u64, failures: u64, now: u64) ->
 }
 
 fn next_check(h: &Shared) -> Option<u64> {
+    platform::checks_on()?;
     let schedule = {
         let config = h.config.read().unwrap();
         schedule::Schedule {
@@ -239,7 +230,7 @@ pub fn busy(h: &Shared) -> bool {
 /// now; false when it already did.
 pub fn queue(h: &Shared, automatic: bool, immediately: bool, by: Option<&str>) -> Result<bool> {
     if !supported(h) {
-        bail!("Install Rubylight as a Windows service to use in-app updates");
+        bail!("{}", platform::refusal());
     }
     let config = h.config.read().unwrap();
     let prereleases = config.boolean("notify_pre_releases", false);

@@ -1,0 +1,27 @@
+post_install() {
+    echo "==> Rubylight is installed."
+    echo "    Enable the host for your user (run as yourself, not root):"
+    echo "      systemctl --user enable --now rubylight.service"
+    echo "    The service needs your graphical session's WAYLAND_DISPLAY or DISPLAY in the user"
+    echo "    manager: KDE, GNOME and Hyprland's uwsm import them; otherwise run"
+    echo "      systemctl --user import-environment WAYLAND_DISPLAY DISPLAY"
+    echo "    The web console is at https://localhost:47990 (create the sign-in on first visit)."
+    echo "    Open TCP 47984, 47989, 47990, 48010 and UDP 47998-48000, 48002, 48010 for Moonlight clients."
+    echo "    Controllers need /dev/uinput and /dev/uhid: the package's udev rule gives them to the"
+    echo "    seat user; log in again (or run: sudo udevadm trigger --subsystem-match=misc) once."
+    echo "    Optional: the PyroWave codec needs libpyrowave-shared.so in /usr/lib (or beside the host);"
+    echo "    build it with client/scripts/build-pyrowave-sdk.sh from the source and install the .so there."
+    udevadm control --reload 2>/dev/null || true
+    udevadm trigger --subsystem-match=misc --subsystem-match=drm --action=change 2>/dev/null || true
+    modprobe -a uinput uhid 2>/dev/null || true
+}
+
+post_upgrade() {
+    post_install
+    echo "==> Restart the host to run the new version: systemctl --user restart rubylight.service"
+}
+
+post_remove() {
+    echo "==> Rubylight's profile (pairings, settings, logs) stays in ~/.config/rubylight."
+    udevadm control --reload 2>/dev/null || true
+}

@@ -59,6 +59,10 @@ fn release_metadata(mut release: Value) -> Value {
 /// also reports the result in a notification, even an update already
 /// announced.
 pub fn trigger_update(h: &Shared, tell: bool) {
+    if let Some(reason) = crate::updater::disabled_reason() {
+        tracing::info!(reason, "release check skipped");
+        return;
+    }
     let mut state = h.updates.lock().unwrap();
     if state["checking"] == true {
         return;

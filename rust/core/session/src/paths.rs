@@ -22,12 +22,47 @@ pub fn installed_profile() -> PathBuf {
 /// A portable host uses an existing `config` folder beside its executable,
 /// or `%LocalAppData%\ButterpolloRust\config` otherwise.
 pub fn portable_profile() -> Result<PathBuf> {
+    #[cfg(target_os = "linux")]
+    return linux_profile_at(
+        &std::env::current_exe()?,
+        std::env::var_os("XDG_CONFIG_HOME").as_deref(),
+        std::env::var_os("HOME").as_deref(),
+    );
+    #[cfg(not(target_os = "linux"))]
     portable_profile_at(
         &std::env::current_exe()?,
         std::env::var_os("LOCALAPPDATA").as_deref(),
     )
 }
 
+/// On Linux the profile is an existing `config` folder beside the executable (a copy run from
+/// its own folder), or `$XDG_CONFIG_HOME/rubylight`, else `~/.config/rubylight`: the host runs as
+/// the signed-in user, and its log and state files live in the profile as on Windows.
+#[cfg(any(target_os = "linux", test))]
+fn linux_profile_at(
+    executable: &Path,
+    xdg_config_home: Option<&OsStr>,
+    home: Option<&OsStr>,
+) -> Result<PathBuf> {
+    let beside = executable
+        .parent()
+        .context("package directory unavailable")?
+        .join("config");
+    if beside.is_dir() {
+        return Ok(beside);
+    }
+    let base = match xdg_config_home.filter(|value| !value.is_empty()) {
+        Some(base) => PathBuf::from(base),
+        None => PathBuf::from(
+            home.filter(|value| !value.is_empty())
+                .context("HOME is unavailable")?,
+        )
+        .join(".config"),
+    };
+    Ok(base.join("rubylight"))
+}
+
+#[cfg_attr(target_os = "linux", allow(dead_code))]
 fn portable_profile_at(executable: &Path, local_app_data: Option<&OsStr>) -> Result<PathBuf> {
     let directory = executable
         .parent()
@@ -65,6 +100,27 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn linux_profiles_follow_xdg_config_home() {
+        let root = tempfile::tempdir().unwrap();
+        let exe = root.path().join("butterpollo");
+        let xdg = root.path().join("xdg");
+        assert_eq!(
+            linux_profile_at(&exe, Some(xdg.as_os_str()), Some(OsStr::new("/home/u"))).unwrap(),
+            xdg.join("rubylight")
+        );
+        assert_eq!(
+            linux_profile_at(&exe, Some(OsStr::new("")), Some(OsStr::new("/home/u"))).unwrap(),
+            Path::new("/home/u/.config/rubylight")
+        );
+        assert!(linux_profile_at(&exe, None, None).is_err());
+        std::fs::create_dir(root.path().join("config")).unwrap();
+        assert_eq!(
+            linux_profile_at(&exe, Some(xdg.as_os_str()), None).unwrap(),
+            root.path().join("config")
+        );
     }
 
     #[test]

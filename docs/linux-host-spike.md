@@ -173,3 +173,19 @@ Phases, each with the check that ends it:
 Out of scope: Radeon controls and AMD Direct Capture (ADLX has no Linux counterpart), the RTSS limiter, Lossless Scaling, Playnite, Nucleus Co-op, RTX HDR and RTX Video, the 1000 Hz VRR virtual display, and Intel.
 
 Open before phase 2 can land upstream: the maintainer's agreement. The seam touches about 750 call sites in crates that are being restructured, and the 3.0 plan gives each 3.x track a go-ahead of its own.
+
+## Packaging
+
+The layout a Linux package follows (the Arch one is `rust/linux/packaging/arch/PKGBUILD`):
+
+| Path | What |
+| --- | --- |
+| `/usr/bin/butterpollo` | The host. Without `--assets` it looks for `assets/web` beside the binary, then `../share/rubylight/assets/web` (`rust/host/src/cli.rs`). |
+| `/usr/share/rubylight/assets/` | `web/` (the console build; an empty folder gives the built-in console page), the cover images and `remote-session/`. |
+| `$XDG_CONFIG_HOME/rubylight` (`~/.config/rubylight`) | The profile: `sunshine.conf`, pairings, apps, logs. A `config` folder beside the binary wins, as on Windows (`rust/core/session/src/paths.rs`). |
+| `/usr/lib/systemd/user/rubylight.service` | The user unit (`systemctl --user enable --now rubylight.service`), `--no-tray`, `Restart=on-failure`. SIGTERM stops the host cleanly; as the unit's own process (`SYSTEMD_EXEC_PID` is its pid) "restart host" exits with 75 for the unit to restart it, instead of the host starting a copy that the unit's stop would kill. |
+| `/usr/lib/udev/rules.d/70..72-rubylight-*.rules` | Encoder clock (`video` group), pad devices, and `uaccess` on `/dev/uinput` and `/dev/uhid` for the seat user. |
+| `/usr/lib/modules-load.d/rubylight.conf` | `uinput` and `uhid`. |
+| `/usr/share/licenses/rubylight/` | `LICENSE`, `NOTICE`, `THIRD_PARTY.md`, `Cargo.lock`. |
+
+The updater is off on Linux with its reason (`updater::disabled_reason`): no release check, no download, "Rubylight on Linux is updated with your package manager" in the console's update panel and `/api/updates`. The PyroWave library is not packaged; the host loads `libpyrowave-shared.so` from `BUTTERPOLLO_PYROWAVE_LIB`, beside the binary, or the loader's path (`/usr/lib`).

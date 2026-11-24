@@ -248,11 +248,24 @@ pub fn run() -> Result<()> {
         return smoke(&args);
     }
     let assets = args.assets.clone().unwrap_or_else(|| {
-        std::env::current_exe()
+        let folder = std::env::current_exe()
             .unwrap()
             .parent()
             .unwrap()
-            .join("assets/web")
+            .to_owned();
+        let beside = folder.join("assets/web");
+        // An installed Linux host is `<prefix>/bin/butterpollo` with its files in
+        // `<prefix>/share/rubylight/assets` (docs/linux-host-spike.md, "Packaging").
+        #[cfg(target_os = "linux")]
+        if !beside.is_dir()
+            && let Some(prefix) = folder.parent()
+        {
+            let shared = prefix.join("share/rubylight/assets/web");
+            if shared.is_dir() {
+                return shared;
+            }
+        }
+        beside
     });
     if let Some(creds) = &args.creds {
         // The service's profile, unless another one is named.

@@ -141,9 +141,10 @@
           {#if updates.next_check_at != null}
             <dt>Next check</dt><dd>{updates.deferred ? 'After the stream' : updates.next_check_at * 1000 <= Date.now() ? 'Shortly' : when(updates.next_check_at)}</dd>
           {/if}
-          <dt>Automatic installation</dt><dd>{!updates.install_supported ? 'Unavailable — requires the Windows service' : updates.update_check_interval <= 0 ? 'Off — automatic update checks are disabled' : updates.auto_update ? 'On — installs when idle' : 'Off — notify me first'}</dd>
+          <dt>Automatic installation</dt><dd>{updates.disabled_reason ? 'Unavailable — updated by your package manager' : !updates.install_supported ? 'Unavailable — requires the Windows service' : updates.update_check_interval <= 0 ? 'Off — automatic update checks are disabled' : updates.auto_update ? 'On — installs when idle' : 'Off — notify me first'}</dd>
         </dl>
-        {#if !updates.install_supported}<p class="notice">In-app installation requires the installed Windows service. Use the release page for portable builds.</p>{/if}
+        {#if updates.disabled_reason}<p class="notice">{updates.disabled_reason}</p>
+        {:else if !updates.install_supported}<p class="notice">In-app installation requires the installed Windows service. Use the release page for portable builds.</p>{/if}
         <Disclosure variant="inline" title="How installing works">
           <p class="about"><strong>Install when idle</strong> waits for streams, pending connections and running apps to stop, then installs after one minute of idle time. <strong>Install now</strong> installs right away: the stream ends, games started from Moonlight close, and you can connect again once Rubylight has restarted. Settings and paired devices stay in place.</p>
         </Disclosure>

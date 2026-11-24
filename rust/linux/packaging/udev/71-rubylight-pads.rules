@@ -5,7 +5,7 @@
 # access by default; games that drive the pad through SDL or Steam open its hidraw device.
 # The name is the HID device's (HID_PHYS); its input devices' own `phys` is empty, so each
 # level imports it from its parent: input device from the HID device, event node from the input
-# device. Install with
+# device. Install with (a package puts it in /usr/lib/udev/rules.d)
 #   sudo install -m 644 71-rubylight-pads.rules /etc/udev/rules.d/ && sudo udevadm control --reload
 SUBSYSTEM=="input", KERNEL=="input*", IMPORT{parent}="HID_PHYS"
 SUBSYSTEM=="input", KERNEL=="event*|js*|mouse*", IMPORT{parent}="HID_PHYS"

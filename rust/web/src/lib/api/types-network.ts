@@ -236,6 +236,8 @@ export interface UpdatesState {
   update_available?: boolean;
   latest_version?: string | null;
   install_supported: boolean;
+  /** Why the host never updates itself (Linux: its package manager does); null otherwise. */
+  disabled_reason?: string | null;
   auto_update: boolean;
   update_check_interval: number;
   /** HH:MM when the automatic check runs once a day at that time; null when the interval decides. */
