@@ -9,12 +9,14 @@ import android.view.WindowManager;
 import androidx.annotation.VisibleForTesting;
 
 import com.limelight.LimeLog;
+import com.limelight.nvstream.jni.HandleReaper;
+import com.limelight.nvstream.jni.NightjarPolicyJni;
 
 import java.util.List;
 
 public final class DisplayFrameRatePolicy {
     public static boolean useAdaptiveRefreshRate(int sdk, boolean vrr, boolean arrSupported) {
-        return vrr && sdk >= 36 && arrSupported;
+        return NightjarPolicyJni.displayIntGate(0, sdk, arrSupported ? 1 : 0, 0, 0, 0, 0, vrr, 0f) == 1;
     }
 
     /** Tests stand in for the device's screens with this; null asks Android. */
@@ -24,10 +26,6 @@ public final class DisplayFrameRatePolicy {
     @VisibleForTesting
     public static Boolean arrScreenOverride;
 
-    /**
-     * Whether the screen streams start on reports adaptive refresh (ARR, Android 16): the Settings screens show
-     * "Fixed timing on adaptive screens" there. The stream asks its own screen (MediaCodecDecoderRenderer).
-     */
     public static boolean arrScreen(Context context) {
         if (arrScreenOverride != null) return arrScreenOverride;
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.BAKLAVA) return false;
@@ -35,24 +33,10 @@ public final class DisplayFrameRatePolicy {
         return display != null && display.hasArrSupport();
     }
 
-    /**
-     * Whether a screen is timed as adaptive: it has ARR, and either VRR is on or "Fixed timing on adaptive
-     * screens" is off. An ARR panel presents at any multiple of its tearing-effect signal after its minimum frame
-     * interval (source.android.com/docs/core/graphics/arr), so the refresh is a fixed grid only where that signal
-     * runs at the top rate; the setting says it does. Then phase-lock reports, the PC's-frame-times grid and the
-     * display queue take-back run as on a fixed refresh.
-     */
     public static boolean adaptiveInUse(boolean arrSupported, boolean vrr, boolean arrFixedTiming) {
-        return arrSupported && (vrr || !arrFixedTiming);
+        return NightjarPolicyJni.displayBoolGate(0, 0, arrSupported, vrr, arrFixedTiming, false, false, false);
     }
 
-    /**
-     * Whether Variable refresh rate can be turned on: always on the Android versions we run on, where the stream picks the
-     * screen's mode. A screen with ARR (Android 16) follows the stream (useAdaptiveRefreshRate); any
-     * other runs at its top rate, with frames on its refresh grid (ArrState.PANEL_WITHOUT_ARR). Where
-     * this is false the setting is greyed and reads as off, in the main settings and in a PC, game or
-     * profile layer alike; the saved choice is kept.
-     */
     public static boolean vrrOffered(Context context) {
         if (vrrOfferedOverride != null) return vrrOfferedOverride;
         return true;
@@ -63,84 +47,38 @@ public final class DisplayFrameRatePolicy {
         NOT_REQUESTED,
         /** Android's automatic policy decides the refresh rate. */
         IN_USE,
-        /**
-         * VRR was asked for on Android before 16, which has no adaptive refresh API: the maximum
-         * rate is voted; with a host's frame times, a lower multiple of the game's rate once it
-         * holds one that would judder at the maximum, where the screen reaches it without a blank
-         * (vrrContentVote).
-         */
+        /** VRR was asked for on Android before 16, which has no adaptive refresh API. */
         ANDROID_TOO_OLD,
-        /** Android 16 or newer, but this screen does not report ARR support: as above. */
+        /** Android 16 or newer, but this screen does not report ARR support. */
         PANEL_WITHOUT_ARR
     }
 
     /** Why the stream does or does not run on ARR, so the overlay can name the reason for the fallback. */
     public static ArrState arrState(int sdk, boolean vrr, boolean arrSupported) {
-        if (!vrr) return ArrState.NOT_REQUESTED;
-        if (useAdaptiveRefreshRate(sdk, true, arrSupported)) return ArrState.IN_USE;
-        return sdk < 36 ? ArrState.ANDROID_TOO_OLD : ArrState.PANEL_WITHOUT_ARR;
+        switch (NightjarPolicyJni.displayIntGate(0, sdk, arrSupported ? 1 : 0, 0, 0, 0, 0, vrr, 0f)) {
+            case 1: return ArrState.IN_USE;
+            case 2: return ArrState.ANDROID_TOO_OLD;
+            case 3: return ArrState.PANEL_WITHOUT_ARR;
+            default: return ArrState.NOT_REQUESTED;
+        }
     }
 
-    /**
-     * Whether the renderer tracks the content rate, before the stream knows whether ARR serves
-     * VRR. A SurfaceView only. VRR stands in for the setting: without ARR it is the only way the
-     * panel can come down to a seamless multiple of the game's rate (vrrContentVote). Otherwise it needs the setting and "Allow lower
-     * refresh rate", which the settings screen greys it without.
-     */
     public static boolean tracksContentRate(boolean enabled, boolean reduceRefreshRate, boolean vrr,
             boolean textureView) {
-        return !textureView && (vrr || (enabled && reduceRefreshRate));
+        return NightjarPolicyJni.displayBoolGate(1, 0, enabled, reduceRefreshRate, vrr, textureView, false, false);
     }
 
-    /**
-     * Whether the surface's frame rate vote follows the content rate the host's frame times
-     * show. It needs the setting or VRR, a host that announced clock sync (Rubylight; any other
-     * host sends no usable frame times) and a surface that can vote seamlessly: API 30 or newer,
-     * a SurfaceView, and not ARR, whose stream rate vote leaves the cadence to Android. VRR
-     * without ARR (Android before 16, a panel without ARR) follows the content rate with
-     * vrrContentVote, which keeps the panel maximum unless the game's rate would judder at it
-     * and a lower multiple is seamless (or a lower refresh rate is allowed).
-     */
     public static boolean followsContentRate(int sdk, boolean enabled, boolean hostAnnouncesClockSync,
             boolean arr, boolean vrr, boolean textureView) {
-        return (enabled || vrr) && hostAnnouncesClockSync && sdk >= Build.VERSION_CODES.R && !arr && !textureView;
+        return NightjarPolicyJni.displayBoolGate(
+                2, sdk, enabled, hostAnnouncesClockSync, arr, vrr, textureView, false);
     }
 
-    /**
-     * The content vote with VRR and no ARR. With a lower refresh rate allowed (mayReduce) it is
-     * the vote without VRR: the game's rate, up to the panel maximum. Without that it overrides
-     * the setting only where the panel maximum (VRR's base vote) would judder: when that is not
-     * a whole multiple of the game's rate, the vote is the highest multiple that is, if the
-     * screen reaches it without a blank (seamlessHz, see seamlessRates), snapped to that mode's
-     * rate. Even frame timing then costs a little more wait for the next refresh. Otherwise it
-     * stays at the panel maximum. So 60, 30 or 24 fps on a 120 panel stays at 120; 90 or 45 fps
-     * on a 90/120 panel gets 90; 50 fps with no 100 Hz mode stays at 120; and a fixed panel never
-     * gets a vote it cannot follow.
-     */
     public static float vrrContentVote(float contentHz, float panelMaxHz, boolean mayReduce, float[] seamlessHz) {
-        if (mayReduce) return contentVote(contentHz, panelMaxHz, true, panelMaxHz);
-        if (contentHz <= 0 || panelMaxHz <= 0) return panelMaxHz;
-        // Within a frame rate's measuring error (59.94 against 60) a rate counts as reached.
-        float tolerance = rateTolerance(panelMaxHz);
-        int multiple = (int) Math.floor((panelMaxHz + tolerance) / contentHz);
-        if (multiple < 1) return panelMaxHz;
-        float vote = contentHz * multiple;
-        if (vote >= panelMaxHz - tolerance) return panelMaxHz;
-        for (float rate : seamlessHz) {
-            if (Math.abs(rate - vote) <= rateTolerance(vote)) return rate;
-        }
-        return panelMaxHz;
+        return NightjarPolicyJni.displayRateCalc(
+                0, contentHz, panelMaxHz, 0f, mayReduce, seamlessHz != null ? seamlessHz : new float[0]);
     }
 
-    private static float rateTolerance(float hz) {
-        return Math.max(0.5f, 0.01f * hz);
-    }
-
-    /**
-     * The rates the screen reaches from its current mode without a blank: the mode's own rate
-     * and, from Android 12, its alternatives. Android 11 lists none, so only the current rate
-     * counts there: a switch that might blank is never voted.
-     */
     public static float[] seamlessRates(Display display) {
         if (display == null) return new float[0];
         Display.Mode mode = display.getMode();
@@ -152,125 +90,98 @@ public final class DisplayFrameRatePolicy {
         return rates;
     }
 
-    /**
-     * The rate to vote for content running at contentHz. With "Allow lower refresh rate" off
-     * (mayReduce false) the vote never drops below baseHz, the vote the stream would make
-     * without the content rate, so it cannot pull the panel under the mode that setting
-     * keeps. It never exceeds the panel's maximum when that is known.
-     */
     public static float contentVote(float contentHz, float baseHz, boolean mayReduce, float panelMaxHz) {
-        float vote = mayReduce ? contentHz : Math.max(contentHz, baseHz);
-        return panelMaxHz > 0 ? Math.min(vote, panelMaxHz) : vote;
+        return NightjarPolicyJni.displayRateCalc(1, contentHz, baseHz, panelMaxHz, mayReduce, null);
     }
 
-    /**
-     * The vote under ARR: the stream rate, never above the panel maximum. An explicit rate,
-     * not 0: Android 15 and newer hold games (Nightjar declares one) at 60 Hz unless they ask
-     * for a frame rate, and a 0 vote clears the request.
-     */
     public static float arrVote(float streamHz, float panelMaxHz) {
-        if (streamHz <= 0) return panelMaxHz;
-        return panelMaxHz > 0 ? Math.min(streamHz, panelMaxHz) : streamHz;
+        return NightjarPolicyJni.displayRateCalc(2, streamHz, panelMaxHz, 0f, false, null);
     }
 
     /**
      * Under ARR, whether the compositor shows about half the frames the decoder rendered while
-     * the display runs at about half the stream rate or less: the sign of Android holding the
-     * stream at half its rate (a 60 Hz cap on a 120 fps stream). Fed once a second; it flags
-     * after 3 s in a row and clears on the first sample that is not half.
+     * the display runs at about half the stream rate or less.
      */
-    public static final class ArrHalfRateCheck {
+    public static final class ArrHalfRateCheck implements AutoCloseable {
         public static final long HOLD_MS = 3000;
         /** Below this the counts are too coarse to call half. */
         public static final float MIN_RENDERED_FPS = 40;
         public static final float LOW = 0.4f;
         public static final float HIGH = 0.6f;
 
-        private long halfSinceMs = -1;
-        private boolean flagged;
+        private final long handle;
+        private final HandleReaper.Token reaper;
 
-        /**
-         * @param presentedFps the compositor-confirmed rate, -1 when the device does not report
-         *                     it: then nothing is judged (the rendered rate cannot show a cap)
-         * @param displayHz    the rate the display reports to the app, which shows a frame rate
-         *                     override such as the 60 Hz game default; 0 when unknown
-         * @param streamHz     the stream's frame rate; 0 when unknown
-         * Either rate unknown: nothing is judged, since half the frames alone may be Wi-Fi pairs.
-         */
+        public ArrHalfRateCheck() {
+            this.handle = NightjarPolicyJni.pacingSlabCreate(NightjarPolicyJni.PACING_SLAB_ARR_HALF_RATE);
+            this.reaper = HandleReaper.register(
+                    this,
+                    handle,
+                    h -> NightjarPolicyJni.pacingSlabDestroy(NightjarPolicyJni.PACING_SLAB_ARR_HALF_RATE, h));
+        }
+
+        @Override
+        public void close() {
+            reaper.close();
+        }
+
         public static boolean isHalf(float renderedFps, float presentedFps, float displayHz, float streamHz) {
-            if (presentedFps < 0 || renderedFps < MIN_RENDERED_FPS || displayHz <= 0 || streamHz <= 0) return false;
-            if (presentedFps < renderedFps * LOW || presentedFps > renderedFps * HIGH) return false;
-            // Wi-Fi often delivers frames in pairs, and a screen at the full rate then shows only
-            // the newer of each: half the frames, with nothing holding the screen down. Only a
-            // display at about half the stream rate (a vsync interval about twice the frame
-            // interval) is Android's cap.
-            return displayHz <= streamHz * HIGH;
+            return NightjarPolicyJni.arrHalfRateStep(0, -1, 0, renderedFps, presentedFps, displayHz, streamHz);
         }
 
         /** Takes one sample; returns whether the check is flagged now. */
         public boolean update(long nowMs, float renderedFps, float presentedFps, float displayHz, float streamHz) {
-            if (!isHalf(renderedFps, presentedFps, displayHz, streamHz)) {
-                halfSinceMs = -1;
-                flagged = false;
-                return false;
-            }
-            if (halfSinceMs < 0) halfSinceMs = nowMs;
-            flagged = nowMs - halfSinceMs >= HOLD_MS;
-            return flagged;
+            return NightjarPolicyJni.arrHalfRateStep(
+                    handle, 0, nowMs, renderedFps, presentedFps, displayHz, streamHz);
         }
 
         public boolean flagged() {
-            return flagged;
+            return NightjarPolicyJni.arrHalfRateStep(handle, 1, 0, 0f, 0f, 0f, 0f);
         }
 
         /** A new surface, stream or stop: start over. */
         public void reset() {
-            halfSinceMs = -1;
-            flagged = false;
+            NightjarPolicyJni.arrHalfRateStep(handle, 2, 0, 0f, 0f, 0f, 0f);
         }
     }
 
     /**
      * Decides when a changed content rate becomes a new vote: a rate within 3% of the last vote
-     * is no change, and votes are at least 2 s apart, so a settling rate cannot make the panel
-     * hop between modes. The rate itself is already steady (the shared content rate tracker
-     * reports one only after it held for 2 s).
+     * is no change, and votes are at least 2 s apart.
      */
-    public static final class ContentRateVote {
+    public static final class ContentRateVote implements AutoCloseable {
         public static final long MIN_INTERVAL_MS = 2000;
         public static final float HYSTERESIS = 0.03f;
 
-        private float voted;
-        private long votedAtMs;
-        private boolean everVoted;
+        private final long handle;
+        private final HandleReaper.Token reaper;
+
+        public ContentRateVote() {
+            this.handle = NightjarPolicyJni.pacingSlabCreate(NightjarPolicyJni.PACING_SLAB_CONTENT_RATE_VOTE);
+            this.reaper = HandleReaper.register(
+                    this,
+                    handle,
+                    h -> NightjarPolicyJni.pacingSlabDestroy(NightjarPolicyJni.PACING_SLAB_CONTENT_RATE_VOTE, h));
+        }
+
+        @Override
+        public void close() {
+            reaper.close();
+        }
 
         /** The rate in Hz to vote now, or 0 for no new vote. */
         public float next(long nowMs, int contentMilliHz) {
-            if (contentMilliHz <= 0) return 0;
-            float hz = contentMilliHz / 1000f;
-            if (voted > 0 && Math.abs(hz - voted) <= voted * HYSTERESIS) return 0;
-            if (everVoted && nowMs - votedAtMs < MIN_INTERVAL_MS) return 0;
-            voted = hz;
-            votedAtMs = nowMs;
-            everVoted = true;
-            return hz;
+            return NightjarPolicyJni.contentRateVoteStep(handle, 0, nowMs, contentMilliHz);
         }
 
-        /**
-         * Whether a content vote should be withdrawn now: the tracker no longer reports a rate
-         * (the game stopped holding one) and the last vote is at least 2 s old. The caller then
-         * votes the stream's base rate again. Ready to vote the next steady rate afterwards.
-         */
+        /** Whether a content vote should be withdrawn now. */
         public boolean withdraw(long nowMs, int contentMilliHz) {
-            if (contentMilliHz > 0 || voted <= 0 || nowMs - votedAtMs < MIN_INTERVAL_MS) return false;
-            voted = 0;
-            votedAtMs = nowMs;
-            return true;
+            return NightjarPolicyJni.contentRateVoteStep(handle, 1, nowMs, contentMilliHz) != 0f;
         }
 
         /** Something else replaced the vote (a new surface, another stream rate): vote again. */
         public void invalidate() {
-            voted = 0;
+            NightjarPolicyJni.contentRateVoteStep(handle, 2, 0, 0);
         }
     }
 
@@ -278,41 +189,18 @@ public final class DisplayFrameRatePolicy {
         return maxRefreshRate(display, 0, 0);
     }
 
-    /**
-     * Whether the stream window pins {@code preferredDisplayModeId} directly to the chosen mode
-     * when Android 16 ARR is not running.
-     *
-     * <p>Phones and tablets on Android 12+ (including ColorOS / realme UI and OriginOS) can drop
-     * back to 60 Hz once the Activity's UI views stop redrawing if the window leaves
-     * {@code preferredDisplayModeId} unset, even when the child {@code SurfaceView} votes 120 Hz
-     * via {@code Surface.setFrameRate()} and even when touch boost had the panel at 120 Hz at
-     * launch. Pinning the mode on internal non-TV displays keeps the request in
-     * {@code DisplayModeDirector}, while Android TV and external HDMI displays keep the
-     * {@code Surface.setFrameRate()}-only path for same-resolution refresh switches (avoiding
-     * HDMI blanking and Chromecast 4K 4K24 mode bugs).
-     */
     public static boolean pinsWindowDisplayMode(int sdk, boolean useArr, boolean useTextureView,
             boolean television, boolean externalDisplay, boolean modeChanged, boolean resolutionChanged) {
-        if (useArr) return false;
-        if (!television && !externalDisplay) return true;
-        if (!modeChanged) return false;
-        return useTextureView || sdk < Build.VERSION_CODES.S || resolutionChanged;
+        return NightjarPolicyJni.displayBoolGate(
+                3, sdk, useArr, useTextureView, television, externalDisplay, modeChanged, resolutionChanged);
     }
 
-    /**
-     * Whether surface frame-rate votes on an internal non-TV {@code SurfaceView} keep the window's
-     * {@code preferredDisplayModeId} aligned with the vote so {@code DisplayModeDirector} neither
-     * blocks a seamless content-rate switch nor drops to 60 Hz when UI views are idle.
-     */
     public static boolean syncsWindowDisplayModeWithVote(boolean useArr, boolean useTextureView,
             boolean television, boolean externalDisplay) {
-        return !useArr && !useTextureView && !television && !externalDisplay;
+        return NightjarPolicyJni.displayBoolGate(
+                4, 0, useArr, useTextureView, television, externalDisplay, false, false);
     }
 
-    /**
-     * The same-resolution display mode on {@code display} matching a surface frame-rate vote, or
-     * {@code null} when none is eligible.
-     */
     public static RefreshSwitchDiagnosis.PanelMode windowModeForVote(int sdk, float voteHz,
             boolean mayReduceRefreshRate, boolean seamlessOnly, Display display) {
         if (display == null) return null;
@@ -320,45 +208,27 @@ public final class DisplayFrameRatePolicy {
                 RefreshSwitchMonitor.activeMode(display), RefreshSwitchMonitor.modes(display));
     }
 
-    /**
-     * Pure version of {@link #windowModeForVote(int, float, boolean, boolean, Display)}: chooses a
-     * same-size mode whose refresh is {@code voteHz} or a whole multiple of it. With
-     * {@code seamlessOnly}, only the active mode or its seamless alternatives are considered so a
-     * mid-stream content vote never triggers a blanking switch. {@code mayReduceRefreshRate} picks
-     * the lowest matching rate, otherwise the highest; within the same nominal rate bucket
-     * (e.g. 59.94 vs 60 Hz), the closer multiple wins.
-     */
     static RefreshSwitchDiagnosis.PanelMode windowModeForVote(int sdk, float voteHz,
             boolean mayReduceRefreshRate, boolean seamlessOnly,
             RefreshSwitchDiagnosis.PanelMode active, List<RefreshSwitchDiagnosis.PanelMode> modes) {
-        if (voteHz <= 0 || active == null || modes == null) return null;
-        RefreshSwitchDiagnosis.PanelMode best = null;
-        for (RefreshSwitchDiagnosis.PanelMode mode : modes) {
-            if (!mode.sameSize(active)) continue;
-            if (!RefreshSwitchDiagnosis.holds(voteHz, mode.hz)) continue;
-            if (seamlessOnly && mode.id != active.id) {
-                if (sdk < Build.VERSION_CODES.S || !active.switchesSeamlesslyTo(mode.hz)) continue;
-            }
-            if (best == null || betterWindowMode(mode.hz, best.hz, voteHz, mayReduceRefreshRate)) {
-                best = mode;
-            }
+        if (voteHz <= 0 || active == null || modes == null || modes.isEmpty()) return null;
+        int n = modes.size();
+        int[] ids = new int[n];
+        int[] ws = new int[n];
+        int[] hs = new int[n];
+        float[] hzs = new float[n];
+        for (int i = 0; i < n; i++) {
+            RefreshSwitchDiagnosis.PanelMode m = modes.get(i);
+            ids[i] = m.id;
+            ws[i] = m.width;
+            hs[i] = m.height;
+            hzs[i] = m.hz;
         }
-        return best;
-    }
-
-    private static boolean betterWindowMode(float candidateHz, float bestHz, float voteHz,
-            boolean mayReduceRefreshRate) {
-        // Two modes within 0.5 Hz of each other represent the same nominal refresh (e.g. 59.94 vs 60);
-        // pick the closer multiple of the voted rate rather than always preferring the higher/lower float.
-        if (Math.abs(candidateHz - bestHz) <= 0.5f) {
-            return multipleError(voteHz, candidateHz) < multipleError(voteHz, bestHz);
-        }
-        return mayReduceRefreshRate ? candidateHz < bestHz : candidateHz > bestHz;
-    }
-
-    private static float multipleError(float base, float rate) {
-        int n = Math.max(1, Math.round(rate / base));
-        return Math.abs(rate - n * base);
+        int flags = (mayReduceRefreshRate ? 1 : 0) | (seamlessOnly ? 2 : 0);
+        int idx = NightjarPolicyJni.displayWindowModeForVote(
+                sdk, voteHz, flags, new int[] {active.id, active.width, active.height},
+                active.hz, active.alternatives, ids, ws, hs, hzs);
+        return idx >= 0 && idx < n ? modes.get(idx) : null;
     }
 
     /**
@@ -397,9 +267,6 @@ public final class DisplayFrameRatePolicy {
         boolean pinWindowMode = pinsWindowDisplayMode(Build.VERSION.SDK_INT, false, useTextureView,
                 television, externalDisplay, modeChanged, resolutionChanged);
         int targetModeId = pinWindowMode ? bestMode.getModeId() : attrs.preferredDisplayModeId;
-        // On internal non-TV displays, pair preferredRefreshRate with preferredDisplayModeId so
-        // vendor display directors that inspect either field see the chosen rate even after UI views go idle.
-        // A SurfaceTexture is composed into the window, so Surface.setFrameRate() cannot vote for it.
         float targetHz = (pinWindowMode && !television && !externalDisplay) || useTextureView ?
                 bestMode.getRefreshRate() : attrs.preferredRefreshRate;
         if (!pinWindowMode && modeChanged) {
@@ -445,63 +312,52 @@ public final class DisplayFrameRatePolicy {
         return false;
     }
 
-    /**
-     * The top rate a stream of streamWidth x streamHeight can run at on this display: the rates
-     * of the current mode's size and of other sizes that still hold the whole stream, the sizes
-     * the display mode choice may switch to above 60 fps. A rate offered only at a smaller size
-     * does not count. VRR asks the PC for this rate: on a TV that lists 1080p at 120 Hz beside 4K
-     * at 60 Hz, a 4K stream asked for 120 fps and either dropped the TV to 1080p or, where the
-     * TV box keeps its mode, sent twice the frames a 60 Hz screen can show. Without a stream
-     * size (0) every mode counts.
-     */
     public static float maxRefreshRate(Display display, int streamWidth, int streamHeight) {
         return maxRefreshRate(RefreshSwitchMonitor.activeMode(display), RefreshSwitchMonitor.modes(display),
                 streamWidth, streamHeight);
     }
 
-    /** As above, from the modes as Android lists them (active: the current mode). */
     static float maxRefreshRate(RefreshSwitchDiagnosis.PanelMode active, List<RefreshSwitchDiagnosis.PanelMode> modes,
                                 int streamWidth, int streamHeight) {
-        float maximum = active.hz;
-        for (RefreshSwitchDiagnosis.PanelMode mode : modes) {
-            if (!modeFitsStream(mode.width, mode.height, active.width, active.height, streamWidth, streamHeight)) {
-                continue;
-            }
-            maximum = Math.max(maximum, mode.hz);
-            // An LTPO panel resting at a low rate can list its top rate only as an alternative.
-            for (float rate : mode.alternatives) {
-                maximum = Math.max(maximum, rate);
-            }
+        if (active == null) return 0f;
+        if (modes == null || modes.isEmpty()) return active.hz;
+        int n = modes.size();
+        int[] ws = new int[n];
+        int[] hs = new int[n];
+        float[] hzs = new float[n];
+        int[] altCounts = new int[n];
+        int totalAlts = 0;
+        for (int i = 0; i < n; i++) {
+            RefreshSwitchDiagnosis.PanelMode m = modes.get(i);
+            ws[i] = m.width;
+            hs[i] = m.height;
+            hzs[i] = m.hz;
+            altCounts[i] = m.alternatives.length;
+            totalAlts += m.alternatives.length;
         }
-        return maximum;
+        float[] allAlts = new float[totalAlts];
+        int offset = 0;
+        for (int i = 0; i < n; i++) {
+            float[] alts = modes.get(i).alternatives;
+            System.arraycopy(alts, 0, allAlts, offset, alts.length);
+            offset += alts.length;
+        }
+        return NightjarPolicyJni.displayMaxRefreshRate(
+                active.width, active.height, active.hz, ws, hs, hzs, altCounts, allAlts,
+                streamWidth, streamHeight);
     }
 
-    /**
-     * Whether a display mode of modeWidth x modeHeight keeps a stream of streamWidth x
-     * streamHeight whole: the current mode's size always does, another size when it is at least
-     * the stream's in both directions (either orientation, since phones list portrait sizes).
-     * Without a stream size (0) every mode does.
-     */
     public static boolean modeFitsStream(int modeWidth, int modeHeight, int currentWidth, int currentHeight,
                                          int streamWidth, int streamHeight) {
-        if (modeWidth == currentWidth && modeHeight == currentHeight) return true;
-        if (streamWidth <= 0 || streamHeight <= 0) return true;
-        return Math.max(modeWidth, modeHeight) >= Math.max(streamWidth, streamHeight) &&
-                Math.min(modeWidth, modeHeight) >= Math.min(streamWidth, streamHeight);
+        return NightjarPolicyJni.displayIntGate(
+                3, modeWidth, modeHeight, currentWidth, currentHeight, streamWidth, streamHeight, false, 0f) != 0;
     }
 
     public static int streamFrameRate(float panelMaxHz) {
-        // Match the host's 1–1000 Hz launch range.
-        return Math.max(1, Math.min(1000, Math.round(panelMaxHz)));
+        return NightjarPolicyJni.displayIntGate(1, 0, 0, 0, 0, 0, 0, false, panelMaxHz);
     }
 
-    /**
-     * Whether a stream's frame rate follows the display: always with VRR, otherwise when it is the
-     * panel's top rate as the defaults, presets and "match screen" pick it (any mode, any size,
-     * {@link #maxRefreshRate(Display)}). The size-limited VRR rate would miss a default of 120 fps
-     * on a TV that lists 1080p at 120 Hz beside 4K at 60 Hz.
-     */
     public static boolean fpsFollowsDisplay(boolean vrr, int fps, float panelMaxHzAnySize) {
-        return vrr || fps == streamFrameRate(panelMaxHzAnySize);
+        return NightjarPolicyJni.displayIntGate(2, fps, 0, 0, 0, 0, 0, vrr, panelMaxHzAnySize) != 0;
     }
 }

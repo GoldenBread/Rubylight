@@ -243,4 +243,45 @@ public final class NightjarPolicyJni {
     public static native boolean roamingRecordAddressChange(long handle, int change);
     public static native boolean roamingOnLost(long handle, long networkId);
     public static native void roamingStop(long handle);
+
+    // Video Pacing, Vsync, RefreshSlots (#119) & DisplayFrameRatePolicy (#168) (`policy_video_pacing.rs`)
+    public static final int PACING_SLAB_HOLD_STAMP = 0;
+    public static final int PACING_SLAB_REFRESH_SLOTS = 1;
+    public static final int PACING_SLAB_ARR_HALF_RATE = 2;
+    public static final int PACING_SLAB_CONTENT_RATE_VOTE = 3;
+
+    public static native long pacingSlabCreate(int kind);
+    public static native void pacingSlabDestroy(int kind, long handle);
+    public static native boolean holdStampStep(long handle, long releaseNs, long vsyncNs, long intervalNs,
+                                               long deadlineNs, int refreshes, boolean everyFrame,
+                                               boolean vsyncOk, long[] out);
+    public static native long vsyncTiming(int op, long a, long b, long c, long d, int e, boolean f);
+    public static native boolean vsyncHeldReportGrid(long vsyncNs, long intervalNs, long anchorNs,
+                                                     int refreshes, long[] out);
+    public static native int vsyncRefreshesPerFrame(double refreshHz, double fps, boolean vrr, boolean fractional);
+
+    public static native boolean framePacingBool(int op, int mode, boolean fa, boolean fb, boolean fc,
+                                                 long a, long b, long c, int fpsMilliHz);
+    public static native long framePacingTimeNs(boolean next, long dueNs, long vsyncNs, int fpsMilliHz);
+    public static native int framePacingIntOp(int op, int a, int b, int c, int d, float hz);
+    public static native float framePacingLimitRefreshHz(float askedHz, float startHz, int fps,
+                                                         boolean batterySaver, boolean thermalCritical, float peakHz);
+
+    public static native long refreshSlotsOp(int op, long handle, long a, long b);
+    public static native boolean refreshSlotsPlan(long handle, long releaseNs, long vsyncNs, long intervalNs,
+                                                  long leadNs, long[] out);
+
+    public static native int displayIntGate(int op, int a, int b, int c, int d, int e, int f, boolean flag, float hz);
+    public static native boolean displayBoolGate(int op, int sdk, boolean a, boolean b, boolean c,
+                                                 boolean d, boolean e, boolean f);
+    public static native float displayRateCalc(int op, float a, float b, float c, boolean mayReduce, float[] seamlessHz);
+    public static native int displayWindowModeForVote(int sdk, float voteHz, int flags, int[] activeMeta, float activeHz,
+                                                      float[] activeAlts, int[] modeIds, int[] modeWs, int[] modeHs,
+                                                      float[] modeHzs);
+    public static native float displayMaxRefreshRate(int activeW, int activeH, float activeHz, int[] modeWs, int[] modeHs,
+                                                     float[] modeHzs, int[] altCounts, float[] allAlts,
+                                                     int streamW, int streamH);
+    public static native boolean arrHalfRateStep(long handle, int op, long nowMs, float rendered, float presented,
+                                                 float displayHz, float streamHz);
+    public static native float contentRateVoteStep(long handle, int op, long nowMs, int contentMilliHz);
 }

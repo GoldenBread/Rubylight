@@ -39,6 +39,7 @@ pub mod policy_connect;
 pub mod policy_quality;
 pub mod policy_recovery;
 pub mod policy_roaming;
+pub mod policy_video_pacing;
 mod renderers;
 pub mod session_actions;
 pub mod sharp_color;
@@ -72,15 +73,6 @@ pub(crate) fn jbool(value: bool) -> jboolean {
 /// Runs an input call on the session: 0 or the C API's error code (-2 without a stream).
 fn input(f: impl FnOnce(&mut InputQueue) -> Result<(), nightjar_core::input::InputError>) -> jint {
     engine::with_session(-2, |s| input_result(s.input(f)))
-}
-
-fn key16(env: &mut JNIEnv, array: &JByteArray) -> [u8; 16] {
-    let mut out = [0u8; 16];
-    if let Ok(bytes) = env.convert_byte_array(array) {
-        let n = bytes.len().min(16);
-        out[..n].copy_from_slice(&bytes[..n]);
-    }
-    out
 }
 
 pub(crate) fn string(env: &mut JNIEnv, value: &JString) -> Option<String> {
@@ -183,8 +175,8 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_startConnecti
         audio_configuration,
         supported_video_formats,
         client_refresh_rate_x100,
-        key16(&mut env, &ri_aes_key),
-        key16(&mut env, &ri_aes_iv),
+        bridge::key16(&mut env, &ri_aes_key),
+        bridge::key16(&mut env, &ri_aes_iv),
         video_capabilities,
         color_space,
         color_range,

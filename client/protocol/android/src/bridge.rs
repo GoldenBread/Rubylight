@@ -76,7 +76,9 @@ pub fn init(env: &mut JNIEnv, class: &JClass) -> jni::errors::Result<()> {
     {
         let guard = BRIDGE.lock().unwrap_or_else(|p| p.into_inner());
         if let Some(existing) = guard.as_ref()
-            && env.is_same_object(existing.class.as_obj(), class).unwrap_or(false)
+            && env
+                .is_same_object(existing.class.as_obj(), class)
+                .unwrap_or(false)
         {
             return Ok(());
         }
@@ -248,4 +250,13 @@ impl Bridge {
             }
         }
     }
+}
+
+pub(crate) fn key16(env: &mut JNIEnv, array: &JByteArray) -> [u8; 16] {
+    let mut out = [0u8; 16];
+    if let Ok(bytes) = env.convert_byte_array(array) {
+        let n = bytes.len().min(16);
+        out[..n].copy_from_slice(&bytes[..n]);
+    }
+    out
 }

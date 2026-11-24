@@ -31,6 +31,7 @@ import com.limelight.R;
 import com.limelight.nvstream.av.video.HostTimingReport;
 import com.limelight.nvstream.av.video.VideoDecoderRenderer;
 import com.limelight.nvstream.jni.MoonBridge;
+import com.limelight.nvstream.jni.NightjarPolicyJni;
 import com.limelight.nvstream.jni.StreamEngine;
 import com.limelight.preferences.PreferenceConfiguration;
 import com.limelight.utils.ProblemReport;
@@ -906,7 +907,6 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
 
     // Its monitor makes replacing a full queue atomic with the display thread's poll.
     private final IntRing outputBufferQueue = new IntRing();
-    private final long[] phaseReportGrid = new long[2];
     private final Hdr10PlusSei.Scratch hdr10PlusScratch = new Hdr10PlusSei.Scratch();
     private int outputBufferQueueLimit = 1;
     // Why the pending restart was requested. Problem reports keep warnings and "Decoder" lines,
@@ -921,12 +921,10 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
     private int hdrStaticInfoOutputs;
     private long nextFrameTimeNanos;
     private int pacingFrameRateMilliHz;
-    // Fractional V-Sync: the refresh the last frame held for several was stamped for (decoder
-    // thread), and the refresh grid the phase report aims at with the refreshes a frame is held
-    // for (0 and 1 without a hold), set where a frame is released as it comes out (holdStampNs).
-    private long heldTargetNs;
-    /** Since when frames came a refresh early for their turn (FramePacingPolicy.earlyForTurn), 0 when not. */
-    private long heldEarlySinceNs;
+    // Fractional V-Sync: native hold stamp state and the refresh grid the phase report aims at
+    // (0 and 1 without a hold), set where a frame is released as it comes out (holdStampNs).
+    private final FramePacingPolicy.HoldStamp holdStamp = new FramePacingPolicy.HoldStamp();
+    private final long[] heldReportGridOut = new long[2];
     private volatile long heldAnchorNs;
     private volatile int heldAnchorRefreshes = 1;
     /** The refreshes smoothDisplayNs last logged holding each frame for, 1 before it held any. Decoder thread. */
@@ -3818,8 +3816,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
 
     static long nextVsyncTimeNs(long nowNs, long vsyncNs, long intervalNs, long presentationDeadlineNs) {
         // Before the first callback there is no display phase to align to.
-        if (vsyncNs == 0 || intervalNs <= 0) return nowNs;
-        return RefreshSlots.firstVsyncNs(nowNs, vsyncNs, intervalNs, presentationDeadlineNs);
+        return NightjarPolicyJni.vsyncTiming(1, nowNs, vsyncNs, intervalNs, presentationDeadlineNs, 0, false);
     }
 
     /** Extra slack before the latch the phase lock keeps when the scheduler places frames. */
@@ -3827,17 +3824,18 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
 
     // Phase lock: how long a frame ready at readyNs waits for the next latch deadline.
     static long latchSlackNs(long readyNs, long vsyncNs, long intervalNs, long presentationDeadlineNs) {
-        if (vsyncNs == 0 || intervalNs <= 0) return -1;
-        return nextVsyncTimeNs(readyNs, vsyncNs, intervalNs, presentationDeadlineNs) - presentationDeadlineNs - readyNs;
+        return NightjarPolicyJni.vsyncTiming(2, readyNs, vsyncNs, intervalNs, presentationDeadlineNs, 0, false);
     }
 
     /** Changes only this stream's preference object, never the saved pacing setting. */
     public boolean applyOutputPacingFallback() {
         // Vulkan has its own presentation clock, including actual external-display timestamps.
         // Keep its requested mode before negotiation; conventional fallback still uses this policy.
-        if ((videoFormat & MoonBridge.VIDEO_FORMAT_MASK_PYROWAVE) != 0 ||
-                (videoFormat == 0 && prefs.videoFormat == PreferenceConfiguration.FormatOption.FORCE_PYROWAVE)) return false;
-        if (outputVsyncAvailable || prefs.framePacing != PreferenceConfiguration.FRAME_PACING_BALANCED) return false;
+        boolean isPyroWave = (videoFormat & MoonBridge.VIDEO_FORMAT_MASK_PYROWAVE) != 0;
+        boolean forcePyroWave = videoFormat == 0 && prefs.videoFormat == PreferenceConfiguration.FormatOption.FORCE_PYROWAVE;
+        if (!FramePacingPolicy.applyOutputPacingFallback(isPyroWave, forcePyroWave, outputVsyncAvailable, prefs.framePacing)) {
+            return false;
+        }
         prefs.framePacing = PreferenceConfiguration.FRAME_PACING_MIN_LATENCY;
         return true;
     }
@@ -3871,9 +3869,9 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
                 phaseLockOff = "adaptive screen";
                 return;
             }
-            FramePacingPolicy.heldReportGrid(vsyncTimeNs, vsyncIntervalNs, anchorNs, refreshes, phaseReportGrid);
-            intervalNs = phaseReportGrid[1];
-            slackNs = latchSlackNs(readyNs, phaseReportGrid[0], intervalNs, vsyncPresentationDeadlineNs + roomNs);
+            FramePacingPolicy.heldReportGrid(vsyncTimeNs, vsyncIntervalNs, anchorNs, refreshes, heldReportGridOut);
+            intervalNs = heldReportGridOut[1];
+            slackNs = latchSlackNs(readyNs, heldReportGridOut[0], intervalNs, vsyncPresentationDeadlineNs + roomNs);
         }
         if (slackNs >= 0 && MoonBridge.reportFrameSlack(slackNs, intervalNs)) {
             phaseReports++;
@@ -4626,34 +4624,20 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
             intervalNs = vsyncIntervalNs;
             deadlineNs = vsyncPresentationDeadlineNs;
         }
-        if (refreshes <= 1 || vsyncNs == 0 || intervalNs <= 0 || !outputVsyncAvailable) {
-            heldTargetNs = 0;
-            heldEarlySinceNs = 0;
-            heldAnchorRefreshes = 1;
-            return 0;
-        }
-        if (everyFrame && refreshes != smoothHoldLogged) {
+        if (everyFrame && refreshes > 1 && vsyncNs != 0 && intervalNs > 0 && outputVsyncAvailable &&
+                refreshes != smoothHoldLogged) {
             smoothHoldLogged = refreshes;
             LimeLog.info(String.format(Locale.US,
                     "Smooth pacing: each frame waits for its turn, %d refreshes of %.2f ms", refreshes, intervalNs / 1e6));
         }
-        long earliestNs = nextVsyncTimeNs(releaseNs, vsyncNs, intervalNs, deadlineNs);
-        long targetNs = FramePacingPolicy.heldTargetNs(earliestNs, heldTargetNs, vsyncNs, intervalNs, refreshes,
-                everyFrame);
-        if (FramePacingPolicy.earlyForTurn(releaseNs, targetNs, intervalNs, deadlineNs)) {
-            if (heldEarlySinceNs == 0) {
-                heldEarlySinceNs = releaseNs;
-            } else if (releaseNs - heldEarlySinceNs >= FramePacingPolicy.EARLY_FOR_NS) {
-                targetNs -= intervalNs;
-                heldEarlySinceNs = 0;
-            }
-        } else {
-            heldEarlySinceNs = 0;
+        if (!holdStamp.step(releaseNs, vsyncNs, intervalNs, deadlineNs, refreshes, everyFrame, outputVsyncAvailable) ||
+                holdStamp.out[0] == 0) {
+            heldAnchorRefreshes = 1;
+            return 0;
         }
-        heldTargetNs = targetNs;
-        heldAnchorNs = targetNs;
-        heldAnchorRefreshes = refreshes;
-        return targetNs - intervalNs / 2;
+        heldAnchorNs = holdStamp.out[1];
+        heldAnchorRefreshes = (int) holdStamp.out[2];
+        return holdStamp.out[0];
     }
 
     /** Balanced at the panel's own rate: stamps outputs on the refresh grid (RefreshSlots) unless VRR/upscaler/switch disables it. */
@@ -5316,6 +5300,8 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
                 Thread.currentThread().interrupt();
             }
         }
+        refreshSlots.close();
+        holdStamp.close();
     }
 
     @Override

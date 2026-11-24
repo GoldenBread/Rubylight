@@ -269,7 +269,11 @@ pub fn grid_schedule_to_ns(
     lead_ns: i64,
 ) -> [i64; 7] {
     let vsync_ns = anchor_ns + s.vsync_index * interval_ns;
-    let release_ns = if s.hold_us == 0 { ready_ns } else { (vsync_ns - lead_ns).max(ready_ns) };
+    let release_ns = if s.hold_us == 0 {
+        ready_ns
+    } else {
+        (vsync_ns - lead_ns).max(ready_ns)
+    };
     [
         release_ns,
         vsync_ns,
@@ -316,7 +320,10 @@ impl PhaseLockReports {
         if now_ms - self.last_report_ms < PHASE_LOCK_REPORT_INTERVAL_MS {
             return false;
         }
-        let elapsed_ns = now_ms.saturating_sub(self.last_report_ms).min(u32::MAX as u64) as i64 * 1_000_000;
+        let elapsed_ns = now_ms
+            .saturating_sub(self.last_report_ms)
+            .min(u32::MAX as u64) as i64
+            * 1_000_000;
         self.last_report_ms = now_ms;
         match self.window.report_over(PHASE_LOCK_MIN_FRAMES, elapsed_ns) {
             Some(report) => {
