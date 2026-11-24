@@ -138,11 +138,23 @@ public class VulkanRendererBridge {
      * the host's, in tenths of a millisecond (0 if the host doesn't report it).
      */
     public void noteFrameReceived(long hostPtsUs, long receiveTimeUs, long enqueueTimeUs, char hostProcessingLatency) {
+        noteFrameReceived(hostPtsUs, receiveTimeUs, enqueueTimeUs, 0, hostProcessingLatency);
+    }
+
+    /**
+     * Same as {@link #noteFrameReceived(long, long, long, char)} using the caller's monotonic
+     * {@code receiveTimeNs} to derive {@code sessionNowUs} without an extra MoonBridge JNI call.
+     */
+    public void noteFrameReceived(long hostPtsUs, long receiveTimeUs, long enqueueTimeUs,
+                                  long receiveTimeNs, char hostProcessingLatency) {
         if (!gate.enter()) return;
         try {
             if (handle != 0) {
+                long sessionNowUs = receiveTimeNs > 0
+                        ? receiveTimeUs + (System.nanoTime() - receiveTimeNs) / 1000L
+                        : com.limelight.nvstream.jni.MoonBridge.sessionNowUs();
                 nativeNoteReceived(handle, hostPtsUs, receiveTimeUs, enqueueTimeUs, hostProcessingLatency,
-                        com.limelight.nvstream.jni.MoonBridge.sessionNowUs());
+                        sessionNowUs);
             }
         } finally {
             gate.exit();

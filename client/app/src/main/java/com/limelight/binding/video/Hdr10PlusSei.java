@@ -33,13 +33,49 @@ public final class Hdr10PlusSei {
     private static final int OBU_REDUNDANT_FRAME_HEADER = 7;
     private static final int METADATA_TYPE_ITUT_T35 = 4;
 
+    /** Reusable scratch space so unchanged HDR10+ metadata allocates zero objects per frame. */
+    public static final class Scratch {
+        byte[] rbsp = new byte[256];
+        int pos;
+
+        byte[] ensure(int size) {
+            if (rbsp.length < size) rbsp = new byte[size];
+            return rbsp;
+        }
+    }
+
     /** The HDR10+ payload of an HEVC access unit in Annex B, or null when it has none before its first slice. */
     public static byte[] hevc(byte[] data, int length) {
-        return hevc(ByteBuffer.wrap(data), length);
+        return hevcIfChanged(data, length, null, new Scratch());
     }
 
     /** {@link #hevc(byte[], int)} for a frame handed over in place; its position and limit stay as they are. */
     public static byte[] hevc(ByteBuffer data, int length) {
+        return hevcIfChanged(data, length, null, new Scratch());
+    }
+
+    /**
+     * Zero-allocation HEVC HDR10+ scan when unchanged: returns {@code previous} (same reference) if
+     * the frame carries identical metadata, a fresh copy if changed, or {@code null} if absent.
+     */
+    public static byte[] hevcIfChanged(byte[] data, int length, byte[] previous, Scratch scratch) {
+        int code = HdrBitstream.startCode(data, 0, length);
+        while (code >= 0) {
+            int header = code + 3;
+            if (header + 1 >= length) return null;
+            int type = (data[header] >> 1) & 0x3F;
+            if (type <= HEVC_LAST_VCL) return null;
+            int next = HdrBitstream.startCode(data, header, length);
+            if (type == HEVC_PREFIX_SEI) {
+                byte[] t35 = seiT35(data, header + 2, next < 0 ? length : next, previous, scratch);
+                if (t35 != null) return t35;
+            }
+            code = next;
+        }
+        return null;
+    }
+
+    public static byte[] hevcIfChanged(ByteBuffer data, int length, byte[] previous, Scratch scratch) {
         int code = HdrBitstream.startCode(data, 0, length);
         while (code >= 0) {
             int header = code + 3;
@@ -48,7 +84,7 @@ public final class Hdr10PlusSei {
             if (type <= HEVC_LAST_VCL) return null;
             int next = HdrBitstream.startCode(data, header, length);
             if (type == HEVC_PREFIX_SEI) {
-                byte[] t35 = seiT35(data, header + 2, next < 0 ? length : next);
+                byte[] t35 = seiT35(data, header + 2, next < 0 ? length : next, previous, scratch);
                 if (t35 != null) return t35;
             }
             code = next;
@@ -61,47 +97,99 @@ public final class Hdr10PlusSei {
      * or null when it has none before its first frame.
      */
     public static byte[] av1(byte[] data, int length) {
-        return av1(ByteBuffer.wrap(data), length);
+        return av1IfChanged(data, length, null, new Scratch());
     }
 
     /** {@link #av1(byte[], int)} for a frame handed over in place; its position and limit stay as they are. */
     public static byte[] av1(ByteBuffer data, int length) {
-        int[] at = {0};
-        while (at[0] < length) {
-            int header = data.get(at[0]) & 0xFF;
+        return av1IfChanged(data, length, null, new Scratch());
+    }
+
+    /**
+     * Zero-allocation AV1 HDR10+ scan when unchanged: returns {@code previous} (same reference) if
+     * the frame carries identical metadata, a fresh copy if changed, or {@code null} if absent.
+     */
+    public static byte[] av1IfChanged(byte[] data, int length, byte[] previous, Scratch scratch) {
+        scratch.pos = 0;
+        while (scratch.pos < length) {
+            int header = data[scratch.pos] & 0xFF;
             if ((header & 0x80) != 0) return null;
             int type = (header >> 3) & 0x0F;
-            at[0] += (header & 0x04) != 0 ? 2 : 1;
+            scratch.pos += (header & 0x04) != 0 ? 2 : 1;
             int end = length;
             if ((header & 0x02) != 0) {
-                long size = leb128(data, at, length);
-                if (size < 0 || size > length - at[0]) return null;
-                end = at[0] + (int) size;
+                long size = leb128(data, scratch, length);
+                if (size < 0 || size > length - scratch.pos) return null;
+                end = scratch.pos + (int) size;
             }
-            if (at[0] > end) return null;
+            if (scratch.pos > end) return null;
             if (type == OBU_FRAME_HEADER || type == OBU_TILE_GROUP || type == OBU_FRAME ||
                     type == OBU_REDUNDANT_FRAME_HEADER) {
                 return null;
             }
-            if (type == OBU_METADATA && leb128(data, at, end) == METADATA_TYPE_ITUT_T35) {
+            if (type == OBU_METADATA && leb128(data, scratch, end) == METADATA_TYPE_ITUT_T35) {
+                int last = end;
+                while (last > scratch.pos && data[last - 1] == 0) last--;
+                if (last > scratch.pos && data[last - 1] == (byte) 0x80 && isHdr10Plus(data, scratch.pos, last - 1)) {
+                    int len = last - 1 - scratch.pos;
+                    if (matches(previous, data, scratch.pos, len)) return previous;
+                    return Arrays.copyOfRange(data, scratch.pos, last - 1);
+                }
+            }
+            scratch.pos = end;
+        }
+        return null;
+    }
+
+    public static byte[] av1IfChanged(ByteBuffer data, int length, byte[] previous, Scratch scratch) {
+        scratch.pos = 0;
+        while (scratch.pos < length) {
+            int header = data.get(scratch.pos) & 0xFF;
+            if ((header & 0x80) != 0) return null;
+            int type = (header >> 3) & 0x0F;
+            scratch.pos += (header & 0x04) != 0 ? 2 : 1;
+            int end = length;
+            if ((header & 0x02) != 0) {
+                long size = leb128(data, scratch, length);
+                if (size < 0 || size > length - scratch.pos) return null;
+                end = scratch.pos + (int) size;
+            }
+            if (scratch.pos > end) return null;
+            if (type == OBU_FRAME_HEADER || type == OBU_TILE_GROUP || type == OBU_FRAME ||
+                    type == OBU_REDUNDANT_FRAME_HEADER) {
+                return null;
+            }
+            if (type == OBU_METADATA && leb128(data, scratch, end) == METADATA_TYPE_ITUT_T35) {
                 // The payload ends with trailing_bits: a one bit, then zeros to the end of the OBU.
                 int last = end;
-                while (last > at[0] && data.get(last - 1) == 0) last--;
-                if (last > at[0] && data.get(last - 1) == (byte) 0x80 && isHdr10Plus(data, at[0], last - 1)) {
-                    byte[] t35 = new byte[last - 1 - at[0]];
-                    HdrBitstream.range(data, at[0], last - 1).get(t35);
+                while (last > scratch.pos && data.get(last - 1) == 0) last--;
+                if (last > scratch.pos && data.get(last - 1) == (byte) 0x80 && isHdr10Plus(data, scratch.pos, last - 1)) {
+                    int len = last - 1 - scratch.pos;
+                    if (matches(previous, data, scratch.pos, len)) return previous;
+                    byte[] t35 = new byte[len];
+                    for (int i = 0; i < len; i++) t35[i] = data.get(scratch.pos + i);
                     return t35;
                 }
             }
-            at[0] = end;
+            scratch.pos = end;
         }
         return null;
     }
 
     /** The HDR10+ payload among the SEI messages of the NAL unit body from {@code from} to {@code end}, or null. */
-    private static byte[] seiT35(ByteBuffer data, int from, int end) {
-        byte[] rbsp = unescape(data, from, end);
-        int length = rbsp.length;
+    private static byte[] seiT35(byte[] data, int from, int end, byte[] previous, Scratch scratch) {
+        byte[] rbsp = scratch.ensure(end - from);
+        int length = unescapeInto(data, from, end, rbsp);
+        return seiT35FromRbsp(rbsp, length, previous);
+    }
+
+    private static byte[] seiT35(ByteBuffer data, int from, int end, byte[] previous, Scratch scratch) {
+        byte[] rbsp = scratch.ensure(end - from);
+        int length = unescapeInto(data, from, end, rbsp);
+        return seiT35FromRbsp(rbsp, length, previous);
+    }
+
+    private static byte[] seiT35FromRbsp(byte[] rbsp, int length, byte[] previous) {
         int at = 0;
         while (at < length && rbsp[at] != (byte) 0x80) {
             int payloadType = 0;
@@ -119,12 +207,33 @@ public final class Hdr10PlusSei {
             if (at >= length) return null;
             payloadSize += rbsp[at++] & 0xFF;
             if (payloadSize > length - at) return null;
-            if (payloadType == SEI_USER_DATA_REGISTERED_ITU_T_T35 && isHdr10Plus(ByteBuffer.wrap(rbsp), at, at + payloadSize)) {
+            if (payloadType == SEI_USER_DATA_REGISTERED_ITU_T_T35 && isHdr10Plus(rbsp, at, at + payloadSize)) {
+                if (matches(previous, rbsp, at, payloadSize)) return previous;
                 return Arrays.copyOfRange(rbsp, at, at + payloadSize);
             }
             at += payloadSize;
         }
         return null;
+    }
+
+    private static boolean matches(byte[] previous, byte[] data, int from, int len) {
+        if (previous == null || previous.length != len) return false;
+        for (int i = 0; i < len; i++) if (previous[i] != data[from + i]) return false;
+        return true;
+    }
+
+    private static boolean matches(byte[] previous, ByteBuffer data, int from, int len) {
+        if (previous == null || previous.length != len) return false;
+        for (int i = 0; i < len; i++) if (previous[i] != data.get(from + i)) return false;
+        return true;
+    }
+
+    private static boolean isHdr10Plus(byte[] data, int from, int end) {
+        if (end - from < HEADER.length) return false;
+        for (int i = 0; i < HEADER.length; i++) {
+            if (data[from + i] != HEADER[i]) return false;
+        }
+        return true;
     }
 
     private static boolean isHdr10Plus(ByteBuffer data, int from, int end) {
@@ -137,11 +246,33 @@ public final class Hdr10PlusSei {
 
     /** The bytes from {@code from} to {@code end} without the emulation prevention bytes (the 03 of 00 00 03). */
     static byte[] unescape(byte[] data, int from, int end) {
-        return unescape(ByteBuffer.wrap(data), from, end);
+        byte[] out = new byte[end - from];
+        int n = unescapeInto(data, from, end, out);
+        return n == out.length ? out : Arrays.copyOf(out, n);
     }
 
     static byte[] unescape(ByteBuffer data, int from, int end) {
         byte[] out = new byte[end - from];
+        int n = unescapeInto(data, from, end, out);
+        return n == out.length ? out : Arrays.copyOf(out, n);
+    }
+
+    private static int unescapeInto(byte[] data, int from, int end, byte[] out) {
+        int n = 0;
+        int zeros = 0;
+        for (int i = from; i < end; i++) {
+            byte b = data[i];
+            if (zeros >= 2 && b == 3) {
+                zeros = 0;
+                continue;
+            }
+            out[n++] = b;
+            zeros = b == 0 ? zeros + 1 : 0;
+        }
+        return n;
+    }
+
+    private static int unescapeInto(ByteBuffer data, int from, int end, byte[] out) {
         int n = 0;
         int zeros = 0;
         for (int i = from; i < end; i++) {
@@ -153,15 +284,26 @@ public final class Hdr10PlusSei {
             out[n++] = b;
             zeros = b == 0 ? zeros + 1 : 0;
         }
-        return n == out.length ? out : Arrays.copyOf(out, n);
+        return n;
     }
 
-    /** A leb128 value at {@code at[0]}, which moves past it, or -1 when it runs past {@code end} or 8 bytes. */
-    private static long leb128(ByteBuffer data, int[] at, int end) {
+    /** A leb128 value at {@code scratch.pos}, which moves past it, or -1 when it runs past {@code end} or 8 bytes. */
+    private static long leb128(byte[] data, Scratch scratch, int end) {
         long value = 0;
         for (int i = 0; i < 8; i++) {
-            if (at[0] >= end) return -1;
-            int b = data.get(at[0]++) & 0xFF;
+            if (scratch.pos >= end) return -1;
+            int b = data[scratch.pos++] & 0xFF;
+            value |= (long) (b & 0x7F) << (7 * i);
+            if ((b & 0x80) == 0) return value;
+        }
+        return -1;
+    }
+
+    private static long leb128(ByteBuffer data, Scratch scratch, int end) {
+        long value = 0;
+        for (int i = 0; i < 8; i++) {
+            if (scratch.pos >= end) return -1;
+            int b = data.get(scratch.pos++) & 0xFF;
             value |= (long) (b & 0x7F) << (7 * i);
             if ((b & 0x80) == 0) return value;
         }

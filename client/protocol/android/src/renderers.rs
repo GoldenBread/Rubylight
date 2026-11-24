@@ -4,9 +4,10 @@
 //! in one buffer, and Opus is decoded here so Java receives PCM. Passthrough PCM goes on as
 //! shorts the same way; AC3 and E-AC3 frames go to `bridgeArPlayEncoded` as bytes.
 
-use std::sync::{Mutex, MutexGuard, TryLockError};
+use std::sync::{Mutex, MutexGuard, OnceLock, TryLockError};
 
-use jni::objects::{GlobalRef, JShortArray};
+use jni::objects::{GlobalRef, JShortArray, JStaticMethodID};
+use jni::JNIEnv;
 
 use nightjar_core::sdp::VIDEO_FORMAT_MASK_PYROWAVE;
 use nightjar_core::session::{
@@ -22,14 +23,42 @@ use crate::{opus, platform};
 const DR_OK: i32 = 0;
 const BUFFER_TYPE_PICDATA: i32 = 0;
 
+struct FastMethods {
+    dr_submit_raw: JStaticMethodID,
+    dr_chunks_raw: JStaticMethodID,
+    ar_play_direct: JStaticMethodID,
+    ar_play_pending: JStaticMethodID,
+}
+
+static FAST_METHODS: OnceLock<FastMethods> = OnceLock::new();
+
+/// Caches the raw-pointer / direct-audio fast callbacks on `MoonBridge` during `RustBridge.init`.
+pub(crate) fn init(env: &mut JNIEnv) -> jni::errors::Result<()> {
+    if FAST_METHODS.get().is_some() {
+        return Ok(());
+    }
+    let class = env.find_class("com/limelight/nvstream/jni/MoonBridge")?;
+    let mut id = |name: &str, sig: &str| env.get_static_method_id(&class, name, sig);
+    let methods = FastMethods {
+        dr_submit_raw: id("drSubmitRawDecodeUnit", "(JIIIICJJJJ)I")?,
+        dr_chunks_raw: id("drSubmitChunksRaw", "(JIZ)V")?,
+        ar_play_direct: id("arPlaySampleDirect", "(JII)I")?,
+        ar_play_pending: id("arPlaySamplePending", "([SII)V")?,
+    };
+    let _ = FAST_METHODS.set(methods);
+    Ok(())
+}
+
 pub struct Video {
     bridge: &'static Bridge,
     buffer: Option<GlobalRef>,
     capacity: usize,
     /// PyroWave records frames reach the renderer as their packets arrive (early record push).
     early: bool,
-    /// Picture data goes to Java in place, as a direct buffer ([`direct_hand_off`]).
+    /// Picture data goes to Java in place, as a direct buffer or raw pointer ([`direct_hand_off`]).
     direct: bool,
+    /// The negotiated stream is PyroWave, which reads raw native pointers directly in C++.
+    pyrowave: bool,
     /// The "Video data straight to the decoder" setting, for [`direct_hand_off`].
     codec_direct: bool,
     chunks: ChunkBatch,
@@ -43,6 +72,7 @@ impl Video {
             capacity: 0,
             early,
             direct: false,
+            pyrowave: false,
             codec_direct,
             chunks: ChunkBatch::default(),
         }
@@ -89,10 +119,17 @@ impl Video {
         let (bytes, first) = (&self.chunks.bytes, self.chunks.first);
         let length = bytes.len();
         b.with_env(|env| {
-            // SAFETY: Java only reads the buffer, and only until the call returns (the contract
-            // of bridgeDrSubmitChunksDirect); `bytes` is borrowed from `self.chunks`, which is
-            // neither moved nor cleared until after the call, and the local reference goes with
-            // with_env's frame.
+            // SAFETY: Native PyroWave reads `bytes` synchronously during this call only;
+            // `self.chunks` is neither moved nor cleared until after the call returns.
+            if let Some(fast) = FAST_METHODS.get() {
+                let args = [
+                    bridge::long(bytes.as_ptr() as usize as i64),
+                    bridge::int(length as i32),
+                    jni::objects::JValue::Bool(first.into()).as_jni(),
+                ];
+                b.void(env, fast.dr_chunks_raw, &args);
+                return Ok(());
+            }
             let direct = unsafe { env.new_direct_byte_buffer(bytes.as_ptr().cast_mut(), length)? };
             let args = [
                 bridge::object(&direct),
@@ -243,6 +280,7 @@ impl VideoDecoder for Video {
             Some(Ok(buffer)) => {
                 self.buffer = Some(buffer);
                 self.capacity = 32768;
+                self.pyrowave = setup.format & VIDEO_FORMAT_MASK_PYROWAVE != 0;
                 self.direct = direct_hand_off(
                     setup.format,
                     &platform::system_property(c"debug.nightjar.pyro_direct"),
@@ -325,6 +363,25 @@ impl VideoDecoder for Video {
                 return Ok(submit(env, offset, BUFFER_TYPE_PICDATA));
             };
             let bytes = &frame.data()[picture];
+            // SAFETY: Native PyroWave reads `bytes` synchronously during this call only;
+            // `frame` outlives the call, skipping NewDirectByteBuffer JNI upcalls.
+            if self.pyrowave
+                && let Some(fast) = FAST_METHODS.get()
+            {
+                let args = [
+                    bridge::long(bytes.as_ptr() as usize as i64),
+                    bridge::int(bytes.len() as i32),
+                    bridge::int(BUFFER_TYPE_PICDATA),
+                    bridge::int(frame.number as i32),
+                    bridge::int(frame.frame_type as i32),
+                    jni::objects::JValue::Char(frame.host_processing_latency).as_jni(),
+                    bridge::long(frame.receive_time_us as i64),
+                    bridge::long(frame.enqueue_time_us as i64),
+                    bridge::long(receive_ns),
+                    bridge::long(frame.presentation_time_us as i64),
+                ];
+                return Ok(b.int(env, fast.dr_submit_raw, &args));
+            }
             // SAFETY: Java only reads the buffer, and only until the call returns (the
             // contract of bridgeDrSubmitDirectDecodeUnit); `frame` outlives the call, and the
             // local reference goes with with_env's frame.
@@ -421,6 +478,8 @@ pub struct Audio {
     channels: usize,
     samples_per_frame: usize,
     array: Option<GlobalRef>,
+    /// Stereo PCM tries the direct AAudio pointer path until Java reports a non-AAudio output.
+    try_direct_audio: bool,
     /// An AC3 or E-AC3 frame over [`MAX_ENCODED_FRAME`] was dropped and logged.
     oversized_logged: bool,
 }
@@ -435,6 +494,7 @@ impl Audio {
             channels: 0,
             samples_per_frame: 0,
             array: None,
+            try_direct_audio: false,
             oversized_logged: false,
         }
     }
@@ -564,6 +624,7 @@ impl AudioRenderer for Audio {
             return Err(-1);
         }
         self.array = array;
+        self.try_direct_audio = self.channels == 2;
         Ok(())
     }
 
@@ -611,7 +672,42 @@ impl AudioRenderer for Audio {
             }
         };
         let pcm = &self.pcm[..samples];
+        let pending_ms = crate::engine::pending_audio_ms() as i32;
+        let try_direct = &mut self.try_direct_audio;
         b.with_env(|env| {
+            if let Some(fast) = FAST_METHODS.get() {
+                if *try_direct
+                    && crate::engine::microphone_state() != crate::engine::MIC_STATE_READY
+                {
+                    let status = b.int(
+                        env,
+                        fast.ar_play_direct,
+                        &[
+                            bridge::long(pcm.as_ptr() as usize as i64),
+                            bridge::int(samples as i32),
+                            bridge::int(pending_ms),
+                        ],
+                    );
+                    if status == Some(1) {
+                        return Ok(());
+                    }
+                    if status == Some(-1) {
+                        *try_direct = false;
+                    }
+                }
+                let shorts = <&JShortArray>::from(array.as_obj());
+                env.set_short_array_region(shorts, 0, pcm)?;
+                b.void(
+                    env,
+                    fast.ar_play_pending,
+                    &[
+                        bridge::object(array.as_obj()),
+                        bridge::int(samples as i32),
+                        bridge::int(pending_ms),
+                    ],
+                );
+                return Ok(());
+            }
             let shorts = <&JShortArray>::from(array.as_obj());
             env.set_short_array_region(shorts, 0, pcm)?;
             b.void(
@@ -630,6 +726,7 @@ impl AudioRenderer for Audio {
     fn cleanup(&mut self) {
         *shared_decoder() = None;
         self.array = None;
+        self.try_direct_audio = false;
         self.bridge.post(self.bridge.m.ar_cleanup, &[]);
     }
 }

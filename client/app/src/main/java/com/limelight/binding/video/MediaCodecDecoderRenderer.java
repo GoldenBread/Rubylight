@@ -15,7 +15,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -255,6 +254,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
     private volatile long noInputSinceMs = -1;
     // Takes the units a stalled decoder cannot take now off the receive thread (SubmitHandoff).
     private volatile SubmitHandoff<HandedUnit> submitHandoff;
+    private final SubmitHandoff.BytePool handoffPool = new SubmitHandoff.BytePool();
     private static final long RECORD_INPUT_WAIT_MS = 500;
     // A decoder whose format had vendor low-latency keys and that hangs again before it ran well since
     // its hang reset is set up once more without them instead (resetHungDecoder); whether the last
@@ -905,8 +905,9 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
     private PreferenceConfiguration prefs;
 
     // Its monitor makes replacing a full queue atomic with the display thread's poll.
-    // The queue's own thread safety alone does not cover size/poll/add together.
-    private final LinkedBlockingQueue<Integer> outputBufferQueue = new LinkedBlockingQueue<>();
+    private final IntRing outputBufferQueue = new IntRing();
+    private final long[] phaseReportGrid = new long[2];
+    private final Hdr10PlusSei.Scratch hdr10PlusScratch = new Hdr10PlusSei.Scratch();
     private int outputBufferQueueLimit = 1;
     // Why the pending restart was requested. Problem reports keep warnings and "Decoder" lines,
     // so they show HDR, size and upscaler restarts as such instead of as a CodecException.
@@ -3870,9 +3871,9 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
                 phaseLockOff = "adaptive screen";
                 return;
             }
-            long[] grid = FramePacingPolicy.heldReportGrid(vsyncTimeNs, vsyncIntervalNs, anchorNs, refreshes);
-            intervalNs = grid[1];
-            slackNs = latchSlackNs(readyNs, grid[0], intervalNs, vsyncPresentationDeadlineNs + roomNs);
+            FramePacingPolicy.heldReportGrid(vsyncTimeNs, vsyncIntervalNs, anchorNs, refreshes, phaseReportGrid);
+            intervalNs = phaseReportGrid[1];
+            slackNs = latchSlackNs(readyNs, phaseReportGrid[0], intervalNs, vsyncPresentationDeadlineNs + roomNs);
         }
         if (slackNs >= 0 && MoonBridge.reportFrameSlack(slackNs, intervalNs)) {
             phaseReports++;
@@ -3974,11 +3975,11 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
             //
             // The queue holds at most two buffers to avoid starving the decoder. Keeping
             // only the newest frame trades the extra jitter buffer for lower latency.
-            Integer nextOutputBuffer;
+            int nextOutputBuffer;
             synchronized (outputBufferQueue) {
                 nextOutputBuffer = outputBufferQueue.poll();
             }
-            if (nextOutputBuffer != null) {
+            if (nextOutputBuffer != IntRing.EMPTY) {
                 long releaseNs = System.nanoTime();
                 try {
                     if (displayQueueDropDue(releaseNs)) {
@@ -4181,15 +4182,19 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
      * and why (catchUpReason): older than the age budget, or the decoder holds a surplus.
      */
     private boolean wantsCatchUp(int index, int drained, boolean scheduled) {
-        if (FramePacingPolicy.shouldDrainOutput(hostFrameTimes ?
-                        PreferenceConfiguration.FRAME_PACING_MAX_SMOOTHNESS : prefs.framePacing,
+        if (drained >= FramePacingPolicy.MAX_OUTPUT_DRAIN) return false;
+        int effectiveMode = hostFrameTimes ? PreferenceConfiguration.FRAME_PACING_MAX_SMOOTHNESS : prefs.framePacing;
+        if (FramePacingPolicy.dropQueuedFrames(effectiveMode)) {
+            catchUpReason = "catch_up";
+            return true;
+        }
+        if (FramePacingPolicy.shouldDrainOutput(effectiveMode,
                 frameLatencyStats.getEnqueueTimeNsForOutput(index), System.nanoTime(),
                 streamFrameRateMilliHz, drained)) {
             catchUpReason = "catch_up";
             return true;
         }
-        if (scheduled && drained < FramePacingPolicy.MAX_OUTPUT_DRAIN &&
-                residency.shouldDrop(DecoderQueuePolicy.depth(numFramesIn, numFramesOut, decoderDepthBase))) {
+        if (scheduled && residency.shouldDrop(DecoderQueuePolicy.depth(numFramesIn, numFramesOut, decoderDepthBase))) {
             catchUpReason = "governor";
             return true;
         }
@@ -4231,9 +4236,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
             if (newer < 0) return false;
             long nowNs = System.nanoTime();
             noteDecoderOutput(newer, info.presentationTimeUs, nowNs);
-            frameLatencyStats.onDropReason(heldIndex, reason);
-            frameLatencyStats.onOutputReleased(heldIndex, nowNs, false,
-                    reportsRenderTimes());
+            frameLatencyStats.onOutputDropped(heldIndex, reason, nowNs, reportsRenderTimes());
             videoDecoder.releaseOutputBuffer(heldIndex, false);
             numFramesOut++;
             heldIndex = newer;
@@ -4249,8 +4252,13 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
         @Override public void release(long releaseNs, long dueNs, boolean planned, long holdNs, boolean late,
                                       int inFlightCount) {
             long nowNs = System.nanoTime();
-            frameLatencyStats.onScheduled(heldIndex, planned ? dueNs : 0, holdNs, late, inFlightCount);
-            countRenderRelease(heldIndex, nowNs, releaseNs);
+            if (upscaler == null) {
+                frameLatencyStats.onScheduledHandedOff(heldIndex, planned ? dueNs : 0, holdNs, late, inFlightCount,
+                        nowNs, releaseNs, reportsRenderTimes());
+            } else {
+                frameLatencyStats.onScheduled(heldIndex, planned ? dueNs : 0, holdNs, late, inFlightCount);
+                countRenderRelease(heldIndex, nowNs, releaseNs);
+            }
             releaseOutputFrame(heldIndex, releaseNs);
         }
     }
@@ -4279,7 +4287,8 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
                 try (DecoderPerformanceHints performanceHints =
                              new DecoderPerformanceHints(context, prefs.phonePerformanceHints, refreshRate)) {
                     // debug.nightjar.adpf_cpu_time 0 reports the hand-off's wall time, as before.
-                    boolean cpuTime = prefs.phonePerformanceHints &&
+                    boolean hintsActive = performanceHints.isActive();
+                    boolean cpuTime = hintsActive && prefs.phonePerformanceHints &&
                             MediaCodecHelper.debugSwitch(DecoderPerformanceHints.CPU_TIME_SWITCH, true);
                     BufferInfo info = new BufferInfo();
                     while (!stopping) {
@@ -4328,7 +4337,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
                         } catch (IllegalStateException e) {
                             handleDecoderException(e);
                         } finally {
-                            if (workStartNs != 0) {
+                            if (workStartNs != 0 && hintsActive) {
                                 // Report the complete handoff once, after presenting. Reporting each
                                 // discarded output adds work while we are trying to leave catch-up.
                                 long workNs = cpuTime ? Debug.threadCpuTimeNanos() - workCpuStartNs :
@@ -4386,9 +4395,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
                 wantsCatchUp(lastIndex, drained, scheduled) &&
                 (outIndex = videoDecoder.dequeueOutputBuffer(info, 0)) >= 0) {
             noteDecoderOutput(outIndex, info.presentationTimeUs, System.nanoTime());
-            frameLatencyStats.onDropReason(lastIndex, catchUpReason);
-            frameLatencyStats.onOutputReleased(lastIndex, System.nanoTime(), false,
-                    reportsRenderTimes());
+            frameLatencyStats.onOutputDropped(lastIndex, catchUpReason, System.nanoTime(), reportsRenderTimes());
             videoDecoder.releaseOutputBuffer(lastIndex, false);
             if (scheduled && "governor".equals(catchUpReason)) {
                 residency.onDropped();
@@ -4412,8 +4419,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
             // refresh longer, or where frames wait for their turn the next takes this one's
             // (smoothDisplayNs), and the queue gives the buffer back (a catch-up above already did).
             // No keyframe is requested.
-            frameLatencyStats.onDropReason(lastIndex, "debt");
-            frameLatencyStats.onOutputReleased(lastIndex, System.nanoTime(), false, reportsRenderTimes());
+            frameLatencyStats.onOutputDropped(lastIndex, "debt", System.nanoTime(), reportsRenderTimes());
             videoDecoder.releaseOutputBuffer(lastIndex, false);
             debt.onDropped();
             return outIndex;
@@ -4428,8 +4434,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
             if (newer >= 0) {
                 long nowNs = System.nanoTime();
                 noteDecoderOutput(newer, info.presentationTimeUs, nowNs);
-                frameLatencyStats.onDropReason(lastIndex, "debt");
-                frameLatencyStats.onOutputReleased(lastIndex, nowNs, false, reportsRenderTimes());
+                frameLatencyStats.onOutputDropped(lastIndex, "debt", nowNs, reportsRenderTimes());
                 videoDecoder.releaseOutputBuffer(lastIndex, false);
                 debt.onDropped();
                 numFramesOut++;
@@ -4537,8 +4542,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
 
     /** Releases the output without showing it: the screen keeps the previous frame one refresh longer. */
     private void dropForDisplayQueue(int index, long nowNs) {
-        frameLatencyStats.onDropReason(index, "display_queue");
-        frameLatencyStats.onOutputReleased(index, nowNs, false, reportsRenderTimes());
+        frameLatencyStats.onOutputDropped(index, "display_queue", nowNs, reportsRenderTimes());
         videoDecoder.releaseOutputBuffer(index, false);
     }
 
@@ -4708,46 +4712,31 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
      */
     private void dropOutputsQueuedForDisplay() {
         while (true) {
-            Integer stale;
+            int stale;
             synchronized (outputBufferQueue) {
                 stale = outputBufferQueue.poll();
             }
-            if (stale == null) return;
-            frameLatencyStats.onDropReason(stale, "pace_switch");
-            frameLatencyStats.onOutputReleased(stale, System.nanoTime(), false, reportsRenderTimes());
+            if (stale == IntRing.EMPTY) return;
+            frameLatencyStats.onOutputDropped(stale, "pace_switch", System.nanoTime(), reportsRenderTimes());
             videoDecoder.releaseOutputBuffer(stale, false);
         }
     }
 
     private void queueOutputForDisplay(int lastIndex, long lastPtsUs) {
-        // For balanced frame pacing case, the Choreographer callback will handle rendering.
-        // We just put all frames into the output buffer queue and let it handle things.
-
-        // Discard the oldest buffer if we've exceeded our limit.
-        //
-        // NB: We have to do this on the producer side because the consumer may not
-        // run for a while (if there is a huge mismatch between stream FPS and display
-        // refresh rate).
+        // Discard the oldest buffer if we've exceeded our limit (producer side, since consumer may lag).
         int queueLimit = prefs.dropLateFrames ? 1 : outputBufferQueueLimit;
-        Integer droppedIndex;
+        int droppedIndex;
         synchronized (outputBufferQueue) {
             droppedIndex = outputBufferQueue.size() >= queueLimit ?
-                    outputBufferQueue.poll() : null;
+                    outputBufferQueue.poll() : IntRing.EMPTY;
             outputBufferQueue.add(lastIndex);
         }
-        // Publish the replacement before returning the old output to the
-        // codec. That call (or timing bookkeeping) can block; the display
-        // callback must still find the ready replacement in the meantime.
-        if (droppedIndex != null) {
-            // A newer output came before the vsync callback took this one.
-            frameLatencyStats.onDropReason(droppedIndex, "replaced");
-            frameLatencyStats.onOutputReleased(droppedIndex, System.nanoTime(), false,
-                    reportsRenderTimes());
+        // Publish replacement before releasing old output so the display callback finds it immediately.
+        if (droppedIndex != IntRing.EMPTY) {
+            frameLatencyStats.onOutputDropped(droppedIndex, "replaced", System.nanoTime(), reportsRenderTimes());
             videoDecoder.releaseOutputBuffer(droppedIndex, false);
-        }
-        // Artemis counts a queued frame unless queuing it dropped an older one.
-        // Its decode time ended when the decoder returned it.
-        if (droppedIndex == null) {
+        } else {
+            // Artemis counts a queued frame unless queuing it dropped an older one.
             frameLatencyStats.onArtemisDecodeCounted(lastPtsUs);
         }
     }
@@ -5782,19 +5771,19 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
             return submitInPlace(decodeUnitData, decodeUnitLength, decodeUnitType, frameNumber, frameType,
                     frameHostProcessingLatency, receiveTimeUs, enqueueTimeUs, receiveTimeNs, presentationTimeUs);
         }
-        // With direct submit this is the thread that reads the video socket: it takes the unit in
-        // place when the decoder has a buffer within a few ms, else a worker does the waiting.
-        return handoff.submit(() -> inputReadyForReceiveThread(frameType, decodeUnitType),
-                () -> submitInPlace(decodeUnitData, decodeUnitLength, decodeUnitType, frameNumber, frameType,
-                        frameHostProcessingLatency, receiveTimeUs, enqueueTimeUs, receiveTimeNs, presentationTimeUs),
-                () -> {
-                    byte[] bytes = copyOfUnit(decodeUnitData, decodeUnitLength);
-                    return bytes == null ? null : new HandedUnit(bytes, decodeUnitLength, decodeUnitType,
-                            frameNumber, frameType, frameHostProcessingLatency, receiveTimeUs, enqueueTimeUs,
-                            receiveTimeNs, presentationTimeUs);
-                },
-                decodeUnitType == MoonBridge.BUFFER_TYPE_PICDATA ? 1 : 0, frameType == MoonBridge.FRAME_TYPE_IDR,
-                frameNumber);
+        int frames = decodeUnitType == MoonBridge.BUFFER_TYPE_PICDATA ? 1 : 0;
+        boolean keyUnit = frameType == MoonBridge.FRAME_TYPE_IDR;
+        int gate = handoff.tryGateInPlace(frames, keyUnit, frameNumber);
+        if (gate <= 0) return gate;
+        if (gate == SubmitHandoff.GATE_IN_PLACE && inputReadyForReceiveThread(frameType, decodeUnitType)) {
+            return submitInPlace(decodeUnitData, decodeUnitLength, decodeUnitType, frameNumber, frameType,
+                    frameHostProcessingLatency, receiveTimeUs, enqueueTimeUs, receiveTimeNs, presentationTimeUs);
+        }
+        byte[] bytes = copyOfUnit(decodeUnitData, decodeUnitLength);
+        HandedUnit unit = bytes == null ? null : new HandedUnit(bytes, decodeUnitLength, decodeUnitType,
+                frameNumber, frameType, frameHostProcessingLatency, receiveTimeUs, enqueueTimeUs,
+                receiveTimeNs, presentationTimeUs);
+        return handoff.enqueue(unit, frames, keyUnit, frameNumber);
     }
 
     /** A unit as the worker thread takes it: the engine reuses its buffers once the call returns. */
@@ -5827,16 +5816,22 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
      * dropped and a key frame requested, rather than zeros submitted as picture data.
      */
     private byte[] copyOfUnit(byte[] array, int length) {
-        if (array != null && array.length >= length) return Arrays.copyOf(array, length);
+        if (array != null && array.length >= length) {
+            byte[] copy = handoffPool.acquire(length);
+            System.arraycopy(array, 0, copy, 0, length);
+            return copy;
+        }
         ByteBuffer direct = array == null ? directInput : null;
-        if (direct != null) {
-            ByteBuffer view = direct.duplicate();
-            view.position(0);
-            if (view.remaining() >= length) {
-                byte[] copy = new byte[length];
-                view.get(copy, 0, length);
-                return copy;
+        if (direct != null && direct.limit() >= length) {
+            byte[] copy = handoffPool.acquire(length);
+            int origPos = direct.position();
+            ((java.nio.Buffer) direct).position(0);
+            try {
+                direct.get(copy, 0, length);
+            } finally {
+                ((java.nio.Buffer) direct).position(origPos);
             }
+            return copy;
         }
         if (!badUnitLogged) {
             badUnitLogged = true;
@@ -5852,16 +5847,11 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
                 u.receiveTimeUs, u.enqueueTimeUs, u.receiveTimeNs, u.presentationTimeUs);
     }
 
-    /**
-     * Hands the units a decoder cannot take within a few ms to a worker thread, from the thread that
-     * submits them: with direct submit that reads the video socket, which the wait for an input
-     * buffer must not hold. The bound is the decode queue's setting. Only for a decoder that submits
-     * directly; the others submit from the engine's decode thread, where waiting is harmless.
-     */
     void enableSubmitHandoff() {
         int bound = prefs.decodeQueueFrames <= 0 || prefs.decodeQueueFrames > 15 ? 15 : prefs.decodeQueueFrames;
         submitHandoff = new SubmitHandoff<>(bound, "InputSubmit",
-                () -> Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_DISPLAY), this::submitHanded);
+                () -> Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_DISPLAY),
+                this::submitHanded, u -> handoffPool.release(u.data));
     }
 
     /**
@@ -6158,10 +6148,10 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
         if (frameWarp) MoonBridge.frameWarpNoteFrame(timestampUs, frameNumber);
         VulkanRendererBridge vulkan = vulkanRenderer;
         if (vulkan != null) {
-            vulkan.noteFrameReceived(timestampUs, receiveTimeUs, enqueueTimeUs, frameHostProcessingLatency);
+            vulkan.noteFrameReceived(timestampUs, receiveTimeUs, enqueueTimeUs, receiveTimeNs, frameHostProcessingLatency);
             if (hdr10PlusParse) {
-                noteVulkanHdr10Plus(vulkan, timestampUs, direct != null ? direct : ByteBuffer.wrap(decodeUnitData),
-                        decodeUnitLength);
+                noteVulkanHdr10Plus(vulkan, timestampUs, direct != null ? direct : null,
+                        decodeUnitData, decodeUnitLength);
             }
         }
 
@@ -6268,16 +6258,10 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
         activeWindowVideoStats.measurementStartTimestamp = SystemClock.uptimeMillis();
     }
 
-    // The picture data of the submitDecodeUnit call in progress when the Rust engine handed it over
-    // in place (submitDirectDecodeUnit), else null; submitDecodeUnit then has no array.
+    // The picture data of the submitDecodeUnit call in progress when handed over in place.
     private ByteBuffer directInput;
+    private long rawInputPtr;
 
-    /**
-     * Picture data in place: PyroWave reads it in native code and MediaCodec copies it straight into
-     * the codec's input buffer, without the Java array between. Dolby Vision's trim, the HDR Vivid
-     * SEI drop and the Vulkan renderer's HDR10+ parse read it where it is; parameter sets, which
-     * are kept, take the array copy.
-     */
     @Override
     public int submitDirectDecodeUnit(ByteBuffer decodeUnitData, int decodeUnitLength, int decodeUnitType,
                                       int frameNumber, int frameType, char frameHostProcessingLatency,
@@ -6296,6 +6280,19 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
         }
     }
 
+    public int submitRawDecodeUnit(long dataPtr, int decodeUnitLength, int decodeUnitType,
+                                   int frameNumber, int frameType, char frameHostProcessingLatency,
+                                   long receiveTimeUs, long enqueueTimeUs, long receiveTimeNs,
+                                   long presentationTimeUs) {
+        rawInputPtr = dataPtr;
+        try {
+            return submitDecodeUnit(null, decodeUnitLength, decodeUnitType, frameNumber, frameType,
+                    frameHostProcessingLatency, receiveTimeUs, enqueueTimeUs, receiveTimeNs, presentationTimeUs);
+        } finally {
+            rawInputPtr = 0;
+        }
+    }
+
     @Override
     public void submitChunks(byte[] data, int length, boolean first) {
         if (!stopping && (videoFormat & MoonBridge.VIDEO_FORMAT_MASK_PYROWAVE) != 0) {
@@ -6310,6 +6307,12 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
         }
     }
 
+    public void submitChunksRaw(long dataPtr, int length, boolean first) {
+        if (!stopping && (videoFormat & MoonBridge.VIDEO_FORMAT_MASK_PYROWAVE) != 0) {
+            pyroWaveRenderer.submitChunksRaw(dataPtr, length, first);
+        }
+    }
+
     private int submitPyroWaveFrame(byte[] decodeUnitData, int decodeUnitLength, int frameNumber,
                                     char frameHostProcessingLatency, long enqueueTimeNs, long receiveTimeNs,
                                     long presentationTimeUs) {
@@ -6320,24 +6323,23 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
         pyroWaveQueueSamples++;
         long ptsUs = Math.max(inputNs / 1000, lastTimestampUs + 1);
         lastTimestampUs = ptsUs;
-        frameLatencyStats.onDecoderInput(frameNumber, ptsUs, receiveTimeNs, enqueueTimeNs, inputNs, frameHostProcessingLatency,
-                presentationTimeUs);
-        frameLatencyStats.onPyroWaveDecoderQueued(ptsUs, inputNs);
-        // Newest frame wins: every PyroWave frame is intra-only, so when a newer one is already
-        // waiting, decoding this one would only delay it. A phone that falls behind catches up
-        // at once instead of working through a backlog.
+        frameLatencyStats.onPyroWaveInput(frameNumber, ptsUs, receiveTimeNs, enqueueTimeNs, inputNs,
+                frameHostProcessingLatency, presentationTimeUs, inputNs);
+        // Newest frame wins: every PyroWave frame is intra-only, so skip when a newer one waits.
         if (MoonBridge.getPendingVideoFrames() > 0) {
             activeWindowVideoStats.totalFrames++;
             activeWindowVideoStats.totalFramesReceived++;
             pyroWaveSkippedFrames++;
-            frameLatencyStats.onFrameReceived(receiveTimeNs);
             frameLatencyStats.discard(ptsUs, "replaced_before_decode");
             return MoonBridge.DR_OK;
         }
         PyroWaveDisplayClock.Snapshot displayClock =
                 FramePacingPolicy.usesPyroWaveDisplayClock(prefs.framePacing, prefs.vrr, outputVsyncAvailable) ?
                         pyroWaveDisplayClock.snapshot() : PyroWaveDisplayClock.Snapshot.UNAVAILABLE;
-        long submissionResult = pyroWaveRenderer.submitFrame(decodeUnitData, directInput, decodeUnitLength, ptsUs,
+        long submissionResult = rawInputPtr != 0 ?
+                pyroWaveRenderer.submitRawFrame(rawInputPtr, decodeUnitLength, ptsUs, frameNumber,
+                        presentationTimeUs, displayClock, frameLatencyStats, context, prefs.phonePerformanceHints, refreshRate) :
+                pyroWaveRenderer.submitFrame(decodeUnitData, directInput, decodeUnitLength, ptsUs,
                 frameNumber, presentationTimeUs, displayClock, frameLatencyStats,
                 context, prefs.phonePerformanceHints, refreshRate);
         activeWindowVideoStats.decoderTimeMs += pyroWaveSubmissionTiming.addDurationNs(
@@ -6349,7 +6351,6 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
         }
         activeWindowVideoStats.totalFrames++;
         activeWindowVideoStats.totalFramesReceived++;
-        frameLatencyStats.onFrameReceived(receiveTimeNs);
         if (submissionResult == PyroWaveDecoderRenderer.SUBMIT_ACCEPTED) {
             pyroWaveDecodedFrames++;
             pyroWaveFailures = 0;
@@ -6521,10 +6522,16 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
     }
 
     // The frame's HDR10+ payload, when it differs from the last one: a frame without one keeps it.
-    private void noteVulkanHdr10Plus(VulkanRendererBridge vulkan, long timestampUs, ByteBuffer data, int length) {
-        byte[] t35 = (videoFormat & MoonBridge.VIDEO_FORMAT_MASK_AV1) != 0 ? Hdr10PlusSei.av1(data, length) :
-                (videoFormat & MoonBridge.VIDEO_FORMAT_MASK_H265) != 0 ? Hdr10PlusSei.hevc(data, length) : null;
-        if (t35 == null || Arrays.equals(t35, vulkanHdr10PlusNoted)) return;
+    private void noteVulkanHdr10Plus(VulkanRendererBridge vulkan, long timestampUs, ByteBuffer direct,
+                                     byte[] data, int length) {
+        byte[] t35 = (videoFormat & MoonBridge.VIDEO_FORMAT_MASK_AV1) != 0
+                ? (direct != null ? Hdr10PlusSei.av1IfChanged(direct, length, vulkanHdr10PlusNoted, hdr10PlusScratch)
+                        : Hdr10PlusSei.av1IfChanged(data, length, vulkanHdr10PlusNoted, hdr10PlusScratch))
+                : (videoFormat & MoonBridge.VIDEO_FORMAT_MASK_H265) != 0
+                ? (direct != null ? Hdr10PlusSei.hevcIfChanged(direct, length, vulkanHdr10PlusNoted, hdr10PlusScratch)
+                        : Hdr10PlusSei.hevcIfChanged(data, length, vulkanHdr10PlusNoted, hdr10PlusScratch))
+                : null;
+        if (t35 == null || t35 == vulkanHdr10PlusNoted) return;
         if (vulkanHdr10PlusNoted == null) LimeLog.info("HDR10+ metadata in the stream (" + t35.length + " bytes)");
         vulkanHdr10PlusNoted = t35;
         vulkan.noteHdr10Plus(timestampUs, t35);

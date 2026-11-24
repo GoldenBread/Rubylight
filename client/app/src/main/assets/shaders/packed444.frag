@@ -7,6 +7,7 @@ uniform mat4 textureTransform;
 uniform ivec4 picture; // logical width/height, padded width/height
 uniform ivec4 colorimetry; // ten bit, full range, matrix, HDR
 uniform int packingVersion;
+uniform int nativeResolution;
 in vec2 uv;
 out vec4 color;
 
@@ -16,7 +17,7 @@ vec3 raw(vec2 pixel) {
     return texture(source, (textureTransform * vec4(coordinate, 0.0, 1.0)).xy).xyz;
 }
 
-vec3 reconstruct(ivec2 pixel) {
+vec3 reconstructRgb(ivec2 pixel) {
     pixel = clamp(pixel, ivec2(0), picture.xy - 1);
     float maximum = colorimetry.x != 0 ? 1023.0 : 255.0;
     float y = raw(vec2(pixel) + 0.5).x * maximum;
@@ -51,8 +52,10 @@ vec3 reconstruct(ivec2 pixel) {
     float r = y + 2.0 * (1.0 - krkb.x) * chroma.y;
     float b = y + 2.0 * (1.0 - krkb.y) * chroma.x;
     float g = (y - krkb.x * r - krkb.y * b) / (1.0 - krkb.x - krkb.y);
-    vec3 rgb = max(vec3(r, g, b), 0.0);
-    if (colorimetry.x == 0) return rgb;
+    return max(vec3(r, g, b), 0.0);
+}
+
+vec3 toLinear(vec3 rgb) {
     if (colorimetry.w != 0) {
         vec3 p = pow(clamp(rgb, 0.0, 1.0), vec3(1.0 / 78.84375));
         return 10000.0 * pow(max(p - 0.8359375, 0.0) / max(18.8515625 - 18.6875 * p, 0.000001), vec3(1.0 / 0.1593017578125));
@@ -61,16 +64,39 @@ vec3 reconstruct(ivec2 pixel) {
     return 80.0 * mat3(0.627404, 0.069097, 0.016391, 0.329283, 0.919540, 0.088013, 0.043313, 0.011362, 0.895595) * rgb;
 }
 
+vec3 toPq(vec3 rgb) {
+    vec3 p = pow(max(rgb / 10000.0, 0.0), vec3(0.1593017578125));
+    return pow((0.8359375 + 18.8515625 * p) / (1.0 + 18.6875 * p), vec3(78.84375));
+}
+
 void main() {
+    if (nativeResolution != 0) {
+        ivec2 pixel = ivec2(floor(vec2(uv.x, 1.0 - uv.y) * vec2(picture.xy)));
+        vec3 rgb = reconstructRgb(pixel);
+        if (colorimetry.x != 0) {
+            // 10-bit PQ HDR at 1:1 native resolution outputs PQ directly (0 pow() calls).
+            rgb = colorimetry.w != 0 ? clamp(rgb, 0.0, 1.0) : toPq(toLinear(rgb));
+        }
+        color = vec4(rgb, 1.0);
+        return;
+    }
     vec2 position = vec2(uv.x, 1.0 - uv.y) * vec2(picture.xy) - 0.5;
     ivec2 base = ivec2(floor(position));
     vec2 weight = fract(position);
     // Interpolate reconstructed color, never the adjacent packed sample regions.
-    vec3 rgb = mix(mix(reconstruct(base), reconstruct(base + ivec2(1, 0)), weight.x),
-                   mix(reconstruct(base + ivec2(0, 1)), reconstruct(base + ivec2(1, 1)), weight.x), weight.y);
+    vec3 c00 = reconstructRgb(base);
+    vec3 c10 = reconstructRgb(base + ivec2(1, 0));
+    vec3 c01 = reconstructRgb(base + ivec2(0, 1));
+    vec3 c11 = reconstructRgb(base + ivec2(1, 1));
     if (colorimetry.x != 0) {
-        vec3 p = pow(max(rgb / 10000.0, 0.0), vec3(0.1593017578125));
-        rgb = pow((0.8359375 + 18.8515625 * p) / (1.0 + 18.6875 * p), vec3(78.84375));
+        c00 = toLinear(c00);
+        c10 = toLinear(c10);
+        c01 = toLinear(c01);
+        c11 = toLinear(c11);
+    }
+    vec3 rgb = mix(mix(c00, c10, weight.x), mix(c01, c11, weight.x), weight.y);
+    if (colorimetry.x != 0) {
+        rgb = toPq(rgb);
     }
     color = vec4(rgb, 1.0);
 }

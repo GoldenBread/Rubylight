@@ -25,7 +25,12 @@ public final class HdrBitstream {
      * the picture or the RPU is lost.
      */
     public static int queuedLength(boolean dolbyVision, byte[] data, int length) {
-        return queuedLength(dolbyVision, ByteBuffer.wrap(data), length);
+        if (!dolbyVision) return length;
+        int end = length;
+        while (end > 0 && data[end - 1] == 0) {
+            end--;
+        }
+        return end;
     }
 
     /**
@@ -82,7 +87,22 @@ public final class HdrBitstream {
      * prefix SEI NAL unit (hdr_dynamic::hevc_t35_sei), before the first slice.
      */
     public static boolean findVividSei(byte[] data, int length, int[] range) {
-        return findVividSei(ByteBuffer.wrap(data), length, range);
+        int code = startCode(data, 0, length);
+        while (code >= 0) {
+            int header = code + 3;
+            if (header + 1 >= length) return false;
+            int type = (data[header] >> 1) & 0x3F;
+            if (type <= HEVC_LAST_VCL) return false;
+            int next = startCode(data, header, length);
+            int end = next < 0 ? length : unitStart(data, next);
+            if (type == HEVC_PREFIX_SEI && isVivid(data, header + 2, end)) {
+                range[0] = unitStart(data, code);
+                range[1] = end;
+                return true;
+            }
+            code = next;
+        }
+        return false;
     }
 
     public static boolean findVividSei(ByteBuffer data, int length, int[] range) {
@@ -123,13 +143,32 @@ public final class HdrBitstream {
         }
     }
 
-    /** {@link #put(ByteBuffer, byte[], int, int[])} from a frame handed over in place, in bulk. */
+    /** {@link #put(ByteBuffer, byte[], int, int[])} from a frame handed over in place, in bulk without allocating a view. */
     public static void put(ByteBuffer buffer, ByteBuffer data, int length, int[] drop) {
         if (drop == null) {
-            buffer.put(range(data, 0, length));
+            putSlice(buffer, data, 0, length);
         } else {
-            buffer.put(range(data, 0, drop[0]));
-            buffer.put(range(data, drop[1], length));
+            putSlice(buffer, data, 0, drop[0]);
+            putSlice(buffer, data, drop[1], length);
+        }
+    }
+
+    private static void putSlice(ByteBuffer dst, ByteBuffer src, int from, int end) {
+        if (from >= end) return;
+        int origPos = src.position();
+        int origLimit = src.limit();
+        int cap = src.capacity();
+        // Buffer's own position and limit: old Android lacks ByteBuffer's covariant ones.
+        Buffer view = src;
+        view.limit(cap);
+        view.position(from);
+        view.limit(end);
+        try {
+            dst.put(src);
+        } finally {
+            view.limit(cap);
+            view.position(origPos);
+            view.limit(origLimit);
         }
     }
 
@@ -143,6 +182,22 @@ public final class HdrBitstream {
     }
 
     /** Whether the SEI payload at {@code at} is a T.35 message with the HDR Vivid header. */
+    private static boolean isVivid(byte[] data, int at, int end) {
+        int payloadType = 0;
+        while (at < end && data[at] == (byte) 0xFF) {
+            payloadType += 255;
+            at++;
+        }
+        if (at >= end || payloadType + (data[at++] & 0xFF) != SEI_USER_DATA_REGISTERED_ITU_T_T35) return false;
+        while (at < end && data[at] == (byte) 0xFF) at++;
+        at++;
+        if (at + VIVID_T35.length > end) return false;
+        for (int i = 0; i < VIVID_T35.length; i++) {
+            if (data[at + i] != VIVID_T35[i]) return false;
+        }
+        return true;
+    }
+
     private static boolean isVivid(ByteBuffer data, int at, int end) {
         int payloadType = 0;
         while (at < end && data.get(at) == (byte) 0xFF) {
@@ -161,6 +216,13 @@ public final class HdrBitstream {
     }
 
     /** The offset of the next 00 00 01 at or after {@code from}, or -1. */
+    static int startCode(byte[] data, int from, int length) {
+        for (int i = from; i + 2 < length; i++) {
+            if (data[i] == 0 && data[i + 1] == 0 && data[i + 2] == 1) return i;
+        }
+        return -1;
+    }
+
     static int startCode(ByteBuffer data, int from, int length) {
         for (int i = from; i + 2 < length; i++) {
             if (data.get(i) == 0 && data.get(i + 1) == 0 && data.get(i + 2) == 1) return i;
@@ -169,6 +231,10 @@ public final class HdrBitstream {
     }
 
     /** A start code's offset, with the zero_byte of a four-byte start code. */
+    private static int unitStart(byte[] data, int code) {
+        return code > 0 && data[code - 1] == 0 ? code - 1 : code;
+    }
+
     private static int unitStart(ByteBuffer data, int code) {
         return code > 0 && data.get(code - 1) == 0 ? code - 1 : code;
     }

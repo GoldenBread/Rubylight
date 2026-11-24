@@ -263,4 +263,60 @@ public class SubmitHandoffTest {
         release.countDown();
         assertTrue(handoff.close(10_000));
     }
+
+    @Test
+    public void nonLambdaTryGateAndEnqueueMatchSubmitSemantics() throws Exception {
+        holdingWorker(2, -1);
+        assertEquals(SubmitHandoff.GATE_IN_PLACE, handoff.tryGateInPlace(1, false, 1));
+        assertEquals(MoonBridge.DR_OK, handoff.enqueue(1, 1, false, 1));
+        assertTrue(started.await(10, TimeUnit.SECONDS));
+        assertEquals(SubmitHandoff.GATE_QUEUE, handoff.tryGateInPlace(1, false, 2));
+        assertEquals(MoonBridge.DR_OK, handoff.enqueue(2, 1, false, 2));
+        release.countDown();
+        awaitSize(submitted, 2);
+        awaitIdle();
+        assertEquals(SubmitHandoff.GATE_IN_PLACE, handoff.tryGateInPlace(1, false, 3));
+    }
+
+    @Test
+    public void bytePoolReusesBuffersAndRecyclerReturnsDroppedAndFinishedUnits() throws Exception {
+        SubmitHandoff.BytePool pool = new SubmitHandoff.BytePool();
+        byte[] a = pool.acquire(100);
+        byte[] b = pool.acquire(200);
+        byte[] c = pool.acquire(300);
+        pool.release(a);
+        pool.release(b);
+        pool.release(c);
+        // Picks tightest-fitting pooled slot without allocating.
+        assertTrue(pool.acquire(150) == b);
+        assertTrue(pool.acquire(90) == a);
+        assertTrue(pool.acquire(250) == c);
+
+        List<byte[]> recycled = new CopyOnWriteArrayList<>();
+        SubmitHandoff<byte[]> pooled = new SubmitHandoff<>(1, "test-pool", () -> {}, unit -> {
+            started.countDown();
+            try {
+                release.await(10, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            return MoonBridge.DR_OK;
+        }, recycled::add);
+        try {
+            byte[] u1 = new byte[16];
+            byte[] u2 = new byte[16];
+            byte[] u3 = new byte[16];
+            assertEquals(MoonBridge.DR_OK, pooled.enqueue(u1, 1, false, 1));
+            assertTrue(started.await(10, TimeUnit.SECONDS));
+            assertEquals(MoonBridge.DR_OK, pooled.enqueue(u2, 1, false, 2));
+            // Overflow drops u3 and queued u2, recycling both immediately.
+            assertEquals(MoonBridge.DR_NEED_IDR, pooled.enqueue(u3, 1, false, 3));
+            assertEquals(2, recycled.size());
+            release.countDown();
+            assertTrue(pooled.close(10_000));
+            assertEquals(3, recycled.size());
+        } finally {
+            pooled.close(2000);
+        }
+    }
 }

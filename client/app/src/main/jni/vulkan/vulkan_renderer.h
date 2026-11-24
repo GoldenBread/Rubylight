@@ -19,6 +19,7 @@
 #include "../frame_warp_mask.h"
 #include "../window-dataspace/window_dataspace.h"
 #include "decoder_fence.h"
+#include "fixed_rings.h"
 #include "frame_pacer.h"
 #include "hdr10plus_window.h"
 #include "ndk_api.h"
@@ -288,7 +289,8 @@ private:
     static void onImageAvailableThunk(void* context, AImageReader* reader);
     void onImageAvailable();
     // Queues a decoded frame for the pacer, from the thread that decoded it
-    void enqueueFrame(FramePtr frame);
+    // Returns true when onImageAvailable() should presentNewest() directly after draining the reader.
+    bool enqueueFrame(FramePtr frame);
     void wake(uint32_t flags);
     bool canParkVsync();
 
@@ -418,7 +420,7 @@ private:
     // vsync they're due at. Rendering then happens while the frame would otherwise wait for its
     // vsync, so it's done well before the compositor needs it, and a shorter present delay holds.
     bool presentAhead_ = false;
-    std::map<uint64_t, PendingPresent> pendingPresents_;  // Ordered: reports come in present order
+    FixedOrderedRing<uint64_t, PendingPresent, 512> pendingPresents_;  // Ordered: reports come in present order
     std::vector<VkPastPresentationTimingGOOGLE> pastTimings_;  // collectPresentTimings()' reused buffer
 
     // The last frame presented ahead, so a frame replacing it at the same vsync is known
@@ -484,6 +486,8 @@ private:
     int64_t keepAliveNs_ = 0;
     int64_t lastNewFrameNs_ = 0;
     int64_t lastPresentNs_ = 0;
+    int64_t lastSuboptimalCheckNs_ = 0;
+    static constexpr int64_t kSuboptimalCheckIntervalNs = 250'000'000;
     static constexpr int64_t kKeepAliveAfterNs = 50'000'000;
     // Presents still unreported this long after the last one are left to the next report
     static constexpr int64_t kParkAfterPresentNs = 100'000'000;
@@ -628,7 +632,7 @@ private:
 
     // Shared between the image reader callback and the render thread
     std::mutex mutex_;
-    bool closing_ = false;
+    std::atomic<bool> closing_ {false};
     FramePacer pacer_;
     PacerTrace trace_;
     std::deque<FramePtr> pending_;
@@ -644,6 +648,7 @@ private:
     bool hdrEnabled_ = false;
     bool hdrChanged_ = false;
     HdrMetadata hdrMetadata_;
+    std::atomic<float> contentPeakNits_ {1000.0f};
     std::string outputDescription_;
     // The output, format, colour space, image count, present mode and delay cap of the swapchain
     std::string swapchainDescription_;
@@ -686,7 +691,7 @@ private:
     void noteDecoded(VideoFrame& frame);
     void countLatency(LatencySpan& span, int64_t latencyNs, bool synced);
     std::mutex latencyMutex_;
-    std::map<int64_t, FrameOrigin> origins_;
+    FixedOrderedRing<int64_t, FrameOrigin, 64> origins_;
     CaptureLatency captureLatency_;
 
     // Whether trace_ is recording, read without mutex_. Writes are still made under it.

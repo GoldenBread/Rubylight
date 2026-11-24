@@ -212,7 +212,11 @@ pub const INPUT_STICK_DEFLECTED: i64 = 1 << 32;
 /// [`input_seq`] and [`stick_deflected`] in one value, for Java's redraws between pictures to
 /// read with one call: the count in the low 32 bits, [`INPUT_STICK_DEFLECTED`] while deflected.
 pub fn input_state() -> i64 {
-    pack_input_state(input_seq(), stick_deflected())
+    let guard = lock(&CURRENT);
+    match guard.as_ref() {
+        Some(warp) => pack_input_state(warp.input_seq(), warp.stick_deflected()),
+        None => 0,
+    }
 }
 
 pub fn pack_input_state(seq: u32, stick_deflected: bool) -> i64 {

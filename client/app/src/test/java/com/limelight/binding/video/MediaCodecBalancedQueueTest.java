@@ -23,7 +23,6 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 
 import static com.limelight.preferences.PreferenceConfiguration.FRAME_PACING_BALANCED;
@@ -36,7 +35,7 @@ public class MediaCodecBalancedQueueTest {
     private static final long FRAME_NS = 1_000_000_000L / 120;
 
     @Test public void replacementIsReadyWhileDiscardingTheOldOutputIsBlocked() throws Exception {
-        try (Fixture fixture = new Fixture(1, new LinkedBlockingQueue<>())) {
+        try (Fixture fixture = new Fixture(1, new IntRing())) {
             fixture.seed(OLD);
             fixture.start();
             assertTrue("Producer did not begin returning the old buffer", fixture.state.discardEntered.await(5, TimeUnit.SECONDS));
@@ -53,7 +52,7 @@ public class MediaCodecBalancedQueueTest {
 
     @Test public void aStreamAsFastAsThePanelIsReleasedAtOnceAndDropsWhatWaitedForVsync() throws Exception {
         // Issue 7: at 120 fps on 120 Hz, waiting for the vsync callback dropped 6% of the frames.
-        try (Fixture fixture = new Fixture(1, new LinkedBlockingQueue<>())) {
+        try (Fixture fixture = new Fixture(1, new IntRing())) {
             fixture.renderer.setStreamFrameRateMilliHz(120_000);
             ReflectionHelpers.setField(fixture.renderer, "hostPhaseLock", true);
             fixture.dropLateFrames();
@@ -73,7 +72,7 @@ public class MediaCodecBalancedQueueTest {
 
     @Test public void withoutPhaseLockAStreamAsFastAsThePanelStillWaitsForVsync() throws Exception {
         // A host without phase lock reports cannot move its capture off the latch: keep the queue.
-        try (Fixture fixture = new Fixture(2, new LinkedBlockingQueue<>())) {
+        try (Fixture fixture = new Fixture(2, new IntRing())) {
             fixture.renderer.setStreamFrameRateMilliHz(120_000);
             ReflectionHelpers.setField(fixture.renderer, "hostPhaseLock", false);
             fixture.dropLateFrames();
@@ -84,7 +83,7 @@ public class MediaCodecBalancedQueueTest {
             // The old Balanced queue: the newest output waits for the callback, a late one goes.
             assertTrue(fixture.state.rendered.isEmpty());
             assertEquals(Collections.singletonList(OLD), fixture.state.dropped);
-            assertEquals(Collections.singletonList(NEW), new ArrayList<>(fixture.queue));
+            assertEquals(Collections.singletonList(NEW), fixture.queue.toList());
             assertEquals("replaced 1", fixture.state.stats.describeDrops(1));
             assertEquals(1L, (long) ReflectionHelpers.getField(fixture.renderer, "balancedOnVsync"));
         }
@@ -109,21 +108,21 @@ public class MediaCodecBalancedQueueTest {
             // and needlessly evicts SECOND, even though the consumer already freed a slot.
             assertEquals(Collections.singletonList(OLD), fixture.state.dropped);
             assertEquals(Collections.singletonList(SECOND), fixture.state.rendered);
-            assertEquals(Collections.singletonList(NEW), new ArrayList<>(fixture.queue));
+            assertEquals(Collections.singletonList(NEW), fixture.queue.toList());
         } finally {
             queue.consumerFinished.countDown();
         }
     }
 
     @Test public void consumerThatFreesASlotBeforeEnqueuePreservesBothRemainingFrames() throws Exception {
-        try (Fixture fixture = new Fixture(2, new LinkedBlockingQueue<>())) {
+        try (Fixture fixture = new Fixture(2, new IntRing())) {
             fixture.seed(OLD);
             fixture.seed(SECOND);
             fixture.frame(0);
             fixture.start();
             fixture.join();
             assertTrue(fixture.state.dropped.isEmpty());
-            assertEquals(Arrays.asList(SECOND, NEW), new ArrayList<>(fixture.queue));
+            assertEquals(Arrays.asList(SECOND, NEW), fixture.queue.toList());
 
             // The fake decoder stopped after its single output; resume just the frame callbacks.
             ReflectionHelpers.setField(fixture.renderer, "stopping", false);
@@ -138,7 +137,7 @@ public class MediaCodecBalancedQueueTest {
         // At 120 Hz, truncated vsyncIntervalNs is 8,333,333 ns while 2 true refreshes are
         // 16,666,667 ns. Crossing 2 * intervalNs caused VsyncTimeline.anchorNs to jump back by one
         // full refresh; Balanced's Choreographer cadence must stay monotonic and render every tick.
-        try (Fixture fixture = new Fixture(2, new LinkedBlockingQueue<>())) {
+        try (Fixture fixture = new Fixture(2, new IntRing())) {
             fixture.renderer.setStreamFrameRateMilliHz(120_000);
             ReflectionHelpers.setField(fixture.renderer, "refreshSlotsEnabled", true);
             long base = System.nanoTime();
@@ -174,12 +173,12 @@ public class MediaCodecBalancedQueueTest {
     }
 
     /** Force the old size/poll race, but never wait for a consumer while holding its monitor. */
-    private static final class SizeBarrierQueue extends LinkedBlockingQueue<Integer> {
+    private static final class SizeBarrierQueue extends IntRing {
         final CountDownLatch sizeRead = new CountDownLatch(1);
         final CountDownLatch consumerFinished = new CountDownLatch(1);
         boolean observed;
 
-        @Override public int size() {
+        @Override int size() {
             int size = super.size();
             if (!observed && size == 2) {
                 observed = true;
@@ -193,7 +192,7 @@ public class MediaCodecBalancedQueueTest {
     private static final class State {
         MediaCodecDecoderRenderer renderer;
         FrameLatencyStats stats;
-        LinkedBlockingQueue<Integer> queue;
+        IntRing queue;
         final CountDownLatch discardEntered = new CountDownLatch(1);
         final CountDownLatch allowDiscard = new CountDownLatch(1);
         final List<Integer> dropped = new ArrayList<>();
@@ -205,12 +204,12 @@ public class MediaCodecBalancedQueueTest {
     private static final class Fixture implements AutoCloseable {
         final ActivityController<Activity> activity = Robolectric.buildActivity(Activity.class).create();
         final MediaCodecDecoderRenderer renderer;
-        final LinkedBlockingQueue<Integer> queue;
+        final IntRing queue;
         final State state = new State();
         final MediaCodec codec;
         final long firstVsync = System.nanoTime();
 
-        Fixture(int capacity, LinkedBlockingQueue<Integer> queue) throws Exception {
+        Fixture(int capacity, IntRing queue) throws Exception {
             ReflectionHelpers.setStaticField(MediaCodecHelper.class, "initialized", true);
             PreferenceConfiguration prefs = new PreferenceConfiguration();
             prefs.videoFormat = PreferenceConfiguration.FormatOption.AUTO;

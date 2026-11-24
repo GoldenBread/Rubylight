@@ -90,7 +90,11 @@ class FrameLatencyStats {
     private Frame[] sparseOutputs; // allocated on the first index past the array
     private int sparseOutputCount;
     private final ArrayDeque<Frame> spareFrames = new ArrayDeque<>();
-    private static final int MAX_SPARE_FRAMES = 64;
+    private static final int MAX_SPARE_FRAMES = 512;
+    // Direct-mapped O(1) lookup by frameNumber for onHostTiming (falls back to scan on slot collision).
+    private static final int BY_NUMBER_SIZE = 512;
+    private static final int BY_NUMBER_MASK = BY_NUMBER_SIZE - 1;
+    private final Frame[] byNumber = new Frame[BY_NUMBER_SIZE];
     private Frame lastRenderRelease;
     private final ArrayDeque<Frame> completed = new ArrayDeque<>();
     private final long[][] samples = new long[STAGES][WINDOW_SIZE];
@@ -426,6 +430,8 @@ class FrameLatencyStats {
 
     // Only for frames nothing else holds: dropped from the completed queue or written to the CSV.
     private void recycle(Frame frame) {
+        int slot = frame.number & BY_NUMBER_MASK;
+        if (byNumber[slot] == frame) byNumber[slot] = null;
         if (lastRenderRelease == frame) lastRenderRelease = null;
         if (spareFrames.size() < MAX_SPARE_FRAMES) {
             frame.reset();
@@ -463,6 +469,7 @@ class FrameLatencyStats {
         // The unsigned wire value is in 100 us units; zero means unavailable.
         frame.hostProcessingNs = hostProcessingLatency * 100000L;
         pending.put(frame);
+        byNumber[frameNumber & BY_NUMBER_MASK] = frame;
         // Most frames have no early report: skip the Integer the lookup would box for each.
         frame.hostTiming = earlyReports.isEmpty() ? null : earlyReports.remove(frameNumber);
         // Stage 4 is only ever the header's value. Never feed a host timing report into it:
@@ -497,6 +504,10 @@ class FrameLatencyStats {
     }
 
     private Frame findFrame(int frameNumber) {
+        Frame cached = byNumber[frameNumber & BY_NUMBER_MASK];
+        if (cached != null && cached.number == frameNumber) {
+            return cached;
+        }
         for (Frame frame = pending.oldest; frame != null; frame = frame.newer) {
             if (frame.number == frameNumber) {
                 return frame;
@@ -528,6 +539,51 @@ class FrameLatencyStats {
     // counter. Keep its precise queue/completion samples without retaining unused boxed entries.
     synchronized void onPyroWaveDecoderQueued(long ptsUs, long queuedNs) {
         recordDecoderQueued(pending.get(ptsUs), queuedNs);
+    }
+
+    /** Combined PyroWave input bookkeeping in one monitor acquisition (received + input + queued). */
+    synchronized void onPyroWaveInput(int frameNumber, long ptsUs, long receiveNs, long enqueueNs,
+                                      long inputNs, char hostProcessingLatency, long hostRtpUs, long queuedNs) {
+        onFrameReceived(receiveNs);
+        onDecoderInput(frameNumber, ptsUs, receiveNs, enqueueNs, inputNs, hostProcessingLatency, hostRtpUs);
+        recordDecoderQueued(pending.get(ptsUs), queuedNs);
+    }
+
+    /** Combined drop-reason + non-render output release in one monitor acquisition. */
+    synchronized void onOutputDropped(int outputIndex, String reason, long releaseNs, boolean hasRenderCallback) {
+        onDropReason(outputIndex, reason);
+        onOutputReleased(outputIndex, releaseNs, 0, false, hasRenderCallback, false);
+    }
+
+    /** Combined scheduler plan + output hand-off in one monitor acquisition. */
+    synchronized void onScheduledHandedOff(int outputIndex, long vsyncNs, long holdNs, boolean late, int inFlight,
+                                           long releaseNs, long displayAtNs, boolean hasRenderCallback) {
+        onScheduled(outputIndex, vsyncNs, holdNs, late, inFlight);
+        onOutputReleased(outputIndex, releaseNs, displayAtNs, true, hasRenderCallback, true);
+    }
+
+    static final int PYROWAVE_EVENT_DECODED = 0;
+    static final int PYROWAVE_EVENT_QUEUED = 1;
+    static final int PYROWAVE_EVENT_RENDERED = 2;
+    static final int PYROWAVE_EVENT_STRIDE = 4;
+
+    /** Applies a native batch of PyroWave frame lifecycle events under one monitor acquisition. */
+    synchronized void applyPyroWaveEvents(long[] events, int eventCount, long pollNs) {
+        for (int i = 0; i < eventCount; i++) {
+            int base = i * PYROWAVE_EVENT_STRIDE;
+            int kind = (int) events[base];
+            long ptsUs = events[base + 1];
+            long timeNs = events[base + 2];
+            if (kind == PYROWAVE_EVENT_DECODED) {
+                onDecoderOutput((int) ptsUs, ptsUs, timeNs);
+            } else if (kind == PYROWAVE_EVENT_QUEUED) {
+                long flags = events[base + 3];
+                onPresentQueued((int) ptsUs, timeNs, (flags & 1L) != 0, (flags & 2L) != 0);
+            } else if (kind == PYROWAVE_EVENT_RENDERED) {
+                if (timeNs == 0) discard(ptsUs, "surface_changed");
+                else onFrameRendered(ptsUs, timeNs, pollNs);
+            }
+        }
     }
 
     private void recordDecoderQueued(Frame frame, long queuedNs) {
@@ -1135,9 +1191,9 @@ class FrameLatencyStats {
         return writeCsv(writer, null);
     }
 
-    // A flush's rows are put together in one buffer reused across flushes and written in one go;
-    // only the latency thread flushes.
+    // A flush's rows and drained frames are reused across flushes; only the latency thread flushes.
     private final StringBuilder csvRows = new StringBuilder(16 * 1024);
+    private final ArrayList<Frame> csvDrain = new ArrayList<>(256);
 
     // The clock offset is read once per flush, before the lock: it calls into native code that
     // takes its own lock, and one value is plenty for the few hundred ms a flush covers.
@@ -1146,14 +1202,19 @@ class FrameLatencyStats {
         long[] clock = new long[2];
         String clockColumns = clockOffset != null && clockOffset.read(clock) ?
                 clock[0] + "," + clock[1] : ",";
-        List<Frame> frames;
         long lost;
         long dropped;
         long sampleNs = System.nanoTime();
         float[] rates;
+        csvDrain.clear();
         synchronized (this) {
-            frames = new ArrayList<>(completed);
+            csvDrain.addAll(completed);
             completed.clear();
+            for (int i = 0; i < csvDrain.size(); i++) {
+                Frame f = csvDrain.get(i);
+                int slot = f.number & BY_NUMBER_MASK;
+                if (byNumber[slot] == f) byNumber[slot] = null;
+            }
             lost = csvRowsLost;
             dropped = presentDrops;
             rates = getFrameRates(sampleNs);
@@ -1164,128 +1225,21 @@ class FrameLatencyStats {
         // One buffer for all the rows of a flush: put together from pieces, a row made some fifty short strings.
         StringBuilder rows = csvRows;
         rows.setLength(0);
-        for (Frame frame : frames) {
-            appendRow(rows, frame, vrr, lost, dropped, sampleNs, frameRates, clockColumns);
+        for (int i = 0; i < csvDrain.size(); i++) {
+            appendRow(rows, csvDrain.get(i), vrr, lost, dropped, sampleNs, frameRates, clockColumns);
         }
         long written = rows.length();
         if (written > 0) writer.append(rows);
         synchronized (this) {
-            for (Frame frame : frames) recycle(frame);
+            for (int i = 0; i < csvDrain.size(); i++) recycle(csvDrain.get(i));
         }
+        csvDrain.clear();
         return written;
     }
 
     /** One frame's row with its line end. FrameLatencyCsvRowTest holds every character to what was written before. */
     static void appendRow(StringBuilder row, Frame frame, boolean vrr, long lost, long dropped, long sampleNs,
                           String frameRates, String clockColumns) {
-        boolean rendered = "rendered".equals(frame.status);
-        row.append(frame.number).append(',').append(frame.ptsUs).append(',');
-        timestamp(row, frame.receiveNs).append(',');
-        timestamp(row, frame.inputNs).append(',');
-        timestamp(row, frame.outputNs).append(',');
-        timestamp(row, frame.renderNs).append(',');
-        timestamp(row, frame.releaseNs).append(',');
-        row.append(frame.status).append(',');
-        duration(row, frame.receiveNs, frame.inputNs).append(',');
-        duration(row, frame.inputNs, frame.outputNs).append(',');
-        if (rendered) duration(row, frame.outputNs, frame.renderNs);
-        row.append(',');
-        if (rendered) duration(row, frame.receiveNs, frame.renderNs);
-        row.append(',').append(lost).append(',');
-        if (frame.hostProcessingNs != 0) milliseconds(row, frame.hostProcessingNs);
-        row.append(',');
-        // decode_to_present_ms and receive_to_present_ms repeat the two columns before csv_rows_lost.
-        if (rendered) duration(row, frame.outputNs, frame.renderNs);
-        row.append(',');
-        if (rendered) duration(row, frame.receiveNs, frame.renderNs);
-        row.append(',');
-        if (vrr) duration(row, frame.outputNs, frame.releaseNs);
-        row.append(',');
-        duration(row, frame.previousOutputNs, frame.outputNs).append(',');
-        duration(row, frame.previousReleaseNs, frame.releaseNs).append(',');
-        row.append(sampleNs).append(',').append(frameRates).append(',').append(dropped).append(',');
-        timestamp(row, frame.enqueueNs).append(',');
-        duration(row, frame.enqueueNs, frame.inputNs);
-        hostTimingColumns(row, frame.hostTiming);
-        row.append(',');
-        timestamp(row, frame.callbackReceivedNs).append(',');
-        duration(row, frame.renderNs, frame.callbackReceivedNs).append(',');
-        if (frame.hostRtpUs >= 0) row.append(frame.hostRtpUs);
-        hostStampColumns(row, frame.hostTiming);
-        row.append(',').append(clockColumns);
-        schedulerColumns(row, frame);
-        row.append('\n');
-    }
-
-    private static void schedulerColumns(StringBuilder row, Frame frame) {
-        row.append(',');
-        timestamp(row, frame.schedVsyncNs).append(',');
-        if (frame.schedHoldNs >= 0) milliseconds(row, frame.schedHoldNs);
-        row.append(',');
-        if (frame.schedHoldNs >= 0) row.append(frame.schedLate ? '1' : '0');
-        row.append(',');
-        if (frame.queueDepth >= 0) row.append(frame.queueDepth);
-        row.append(',');
-        if (frame.residencyExcessNs >= 0) milliseconds(row, frame.residencyExcessNs);
-        row.append(',');
-        if (frame.inFlight >= 0) row.append(frame.inFlight);
-        row.append(',');
-        if (frame.dropReason != null) row.append(frame.dropReason);
-    }
-
-    private static void hostTimingColumns(StringBuilder row, HostTimingReport.Record record) {
-        if (record == null) {
-            row.append(",,,,");
-            return;
-        }
-        milliseconds(row.append(','), record.hostUs * 1000L);
-        milliseconds(row.append(','), record.queueUs * 1000L);
-        milliseconds(row.append(','), record.encodeUs * 1000L);
-        milliseconds(row.append(','), record.sendUs * 1000L);
-    }
-
-    // Host present, acquired, submitted, encoded, first and last packet sent, on the host's video
-    // clock (microseconds), each with its leading comma; empty without an extended report.
-    private static void hostStampColumns(StringBuilder row, HostTimingReport.Record record) {
-        if (record == null || !record.hasExtra) {
-            row.append(",,,,,,");
-            return;
-        }
-        long present = record.presentedAtUs;
-        long submitted = present + record.queueUs;
-        long lastSent = present + record.hostUs;
-        unsigned(row.append(','), present);
-        unsigned(row.append(','), present + record.captureUs);
-        unsigned(row.append(','), submitted);
-        unsigned(row.append(','), submitted + record.encodeUs);
-        unsigned(row.append(','), lastSent - record.sendUs);
-        unsigned(row.append(','), lastSent);
-    }
-
-    /** The host's clock is a u64 carried in a long. */
-    private static void unsigned(StringBuilder row, long value) {
-        if (value >= 0) {
-            row.append(value);
-        } else {
-            row.append(Long.toUnsignedString(value));
-        }
-    }
-
-    private static StringBuilder timestamp(StringBuilder row, long timeNs) {
-        if (timeNs != 0) row.append(timeNs);
-        return row;
-    }
-
-    private static StringBuilder duration(StringBuilder row, long startNs, long endNs) {
-        if (startNs != 0 && endNs != 0 && endNs >= startNs) milliseconds(row, endNs - startNs);
-        return row;
-    }
-
-    // Milliseconds with all six decimals, from whole numbers so no locale can touch them: the nanoseconds below a
-    // millisecond are written behind a leading 1, which is then taken out again.
-    private static void milliseconds(StringBuilder row, long durationNs) {
-        row.append(durationNs / 1000000).append('.');
-        int lead = row.length();
-        row.append(1000000 + durationNs % 1000000).deleteCharAt(lead);
+        FrameLatencyCsv.appendRow(row, frame, vrr, lost, dropped, sampleNs, frameRates, clockColumns);
     }
 }

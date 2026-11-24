@@ -63,6 +63,8 @@ final class PresentScheduler {
     private int next;
     private long firstHostUs = Long.MIN_VALUE;
     private long lastHostUs = Long.MIN_VALUE;
+    private long lastLookupPtsUs = Long.MIN_VALUE;
+    private long lastLookupHostUs = -1;
     private volatile long lateDropped;
     private volatile long governorDropped;
     private volatile long capDropped;
@@ -80,6 +82,8 @@ final class PresentScheduler {
         next = 0;
         firstHostUs = Long.MIN_VALUE;
         lastHostUs = Long.MIN_VALUE;
+        lastLookupPtsUs = Long.MIN_VALUE;
+        lastLookupHostUs = -1;
     }
 
     /**
@@ -90,7 +94,13 @@ final class PresentScheduler {
      */
     synchronized boolean isLate(long codecPtsUs, long readyNs, long contentIntervalNs) {
         long host = clock.hostUsFor(codecPtsUs);
-        if (host < 0) return false;
+        if (host < 0) {
+            lastLookupPtsUs = Long.MIN_VALUE;
+            lastLookupHostUs = -1;
+            return false;
+        }
+        lastLookupPtsUs = codecPtsUs;
+        lastLookupHostUs = host;
         long behindUs = readyNs / 1000 - host;
         if (lastHostUs != Long.MIN_VALUE && Math.abs(host - lastHostUs) > DISCONTINUITY_US) reset();
         lastHostUs = host;
@@ -120,7 +130,14 @@ final class PresentScheduler {
     boolean plan(long codecPtsUs, long readyNs, long vsyncNs, long intervalNs, long deadlineNs, Plan out) {
         if (vsyncNs <= 0 || intervalNs <= 0) return false;
         long readyForGridNs = readyNs + Math.max(0, deadlineNs);
-        if (!clock.presentOnGrid(codecPtsUs, readyForGridNs, vsyncNs, intervalNs, intervalNs / LEAD_DIVISOR,
+        long host;
+        if (codecPtsUs == lastLookupPtsUs) {
+            host = lastLookupHostUs;
+            lastLookupPtsUs = Long.MIN_VALUE;
+        } else {
+            host = clock.hostUsFor(codecPtsUs);
+        }
+        if (!clock.presentOnGridForHost(host, readyForGridNs, vsyncNs, intervalNs, intervalNs / LEAD_DIVISOR,
                 intervalNs / 2, grid)) {
             return false;
         }

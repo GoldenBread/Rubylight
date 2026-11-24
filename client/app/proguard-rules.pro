@@ -3,9 +3,13 @@
     public <init>(android.app.Activity, com.limelight.binding.input.evdev.EvdevListener);
 }
 
-# Looked up by name from pyrowave_renderer.cpp and protocol/android/src/bridge.rs.
+# Looked up by name from pyrowave_renderer.cpp and protocol/android/src/{bridge,renderers}.rs.
 -keepclassmembers class com.limelight.nvstream.jni.MoonBridge {
     public static *** bridge*(...);
+    public static int drSubmitRawDecodeUnit(long, int, int, int, int, char, long, long, long, long);
+    public static void drSubmitChunksRaw(long, int, boolean);
+    public static int arPlaySampleDirect(long, int, int);
+    public static void arPlaySamplePending(short[], int, int);
 }
 -keepclassmembers class com.limelight.binding.video.FrameLatencyStats {
     void onDecoderOutput(int, long, long);

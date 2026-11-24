@@ -47,28 +47,9 @@ namespace {
     }
 }
 
-// Presets chosen by replaying recorded sessions over Wi-Fi at 72 and 144 fps
-// (tools/pacer-trace.sh). Compared with covering 95% of transit times, Balanced roughly halved
-// the frames that arrived too late for their vsync for 3-4 ms more delay, and Smooth left about
-// a sixth of them for 10-12 ms more. LowLatency covers 98%: at a frame a vsync that roughly
-// halved the uneven frames for 0.5-2 ms more delay.
-//
-// LowestLatency covers 90%, for when delay matters more than evenness. Replayed through
-// PyroWave sessions on a Pixel 10 Pro (whose GPU decode time varies by several ms), it scheduled
-// frames 10 ms sooner than LowLatency at 60 fps on 120 Hz (11 ms against 21) and 4.6 ms sooner at
-// 120 fps, for about 1.5-2.5% of frames held a vsync long or short. Covering 95% saved about a
-// quarter less; 80% doubled the uneven frames again for 3 ms more.
-//
-// Balanced looks at the last 3 s rather than 10, and gives delay back over about a second
-// (64 frames) rather than eight: with 10 s, a burst of late frames held the buffer up for
-// most of a minute. Replayed through four 60 fps Pixel 10 Pro sessions at 60 and 120 Hz, as
-// many frames arrived after their schedule (0.8-1.0%), the median buffer was 1-2 ms lower, and
-// the 90th percentile 7-20 ms lower where bursts had held it up. Covering 98% instead saved
-// 2-3 ms more but doubled the late frames.
-//
-// With a frame every two vsyncs or more, LowLatency covers 95% instead: over 13 steady
-// 72 fps on 144 Hz sessions, that took 1.3 ms off the delay for 0.3 more uneven frames a minute
-// (36 a minute). At a frame a vsync it cost 40% more uneven frames, so 98% stays there.
+// Presets chosen by replaying Wi-Fi sessions at 72/144 fps (tools/pacer-trace.sh): Balanced
+// 3 s / 99% / 64, Smooth 30 s / 99.9% / 4096, LowLatency 2 s / 98% (95% at >=2 vsyncs/frame) / 32,
+// LowestLatency & Instant 2 s / 90% / 32.
 constexpr double kLowLatencySlowSlotCoverage = 0.95;
 
 HostTimeline::HostTimeline(JitterBuffer jitterBuffer) : jitterBuffer_(jitterBuffer) {
@@ -123,6 +104,7 @@ void HostTimeline::setSlotVsyncs(int64_t slotVsyncs) {
 void HostTimeline::reset() {
     window_.clear();
     minQueue_.clear();
+    quantile_.clear();
     offsetNs_ = 0;
     lastPtsNs_ = 0;
     started_ = false;
@@ -131,6 +113,7 @@ void HostTimeline::reset() {
 void HostTimeline::restartWindow(int64_t minWindowNs, int64_t minDecayDivisor) {
     window_.clear();
     minQueue_.clear();
+    quantile_.clear();
     minWindowNs_ = minWindowNs;
     minDecayDivisor_ = minDecayDivisor;
     windowNs_ = std::max(baseWindowNs_, minWindowNs);
@@ -139,6 +122,7 @@ void HostTimeline::restartWindow(int64_t minWindowNs, int64_t minDecayDivisor) {
 
 void HostTimeline::shift(int64_t deltaNs) {
     offsetNs_ += deltaNs;
+    quantile_.shift(deltaNs);
     for (Sample& s : window_) {
         s.transitNs += deltaNs;
     }
@@ -176,9 +160,11 @@ void HostTimeline::addSample(int64_t scheduledPtsNs, int64_t arrivalNs) {
     if (!warmingUp && !warmedUp_) {
         window_.clear();
         minQueue_.clear();
+        quantile_.clear();
     }
 
     window_.push_back(sample);
+    quantile_.push(sample.transitNs);
     while (!minQueue_.empty() && minQueue_.back().transitNs >= sample.transitNs) {
         minQueue_.pop_back();
     }
@@ -190,6 +176,7 @@ void HostTimeline::addSample(int64_t scheduledPtsNs, int64_t arrivalNs) {
             minQueue_.pop_front();
         }
         window_.pop_front();
+        quantile_.popOldest();
     }
 
     // Through the warm-up, no buffer: frames are scheduled by the quickest transit seen, and any
@@ -204,18 +191,14 @@ void HostTimeline::addSample(int64_t scheduledPtsNs, int64_t arrivalNs) {
     // Until there are enough samples for a percentile, cover all of them. After that, leave out
     // at least the two slowest: with few samples, the percentile is otherwise just the slowest
     // frame, which may be a one-off.
-    scratch_.clear();
-    for (const Sample& s : window_) {
-        scratch_.push_back(s.transitNs);
-    }
-    const double n = static_cast<double>(scratch_.size());
-    size_t index = scratch_.size() - 1;
-    if (scratch_.size() >= 8) {
+    const size_t count = window_.size();
+    const double n = static_cast<double>(count);
+    size_t index = count - 1;
+    if (count >= 8) {
         const double coverage = std::min(coverage_, 1.0 - 2.0 / n);
         index = static_cast<size_t>(std::ceil(coverage * (n - 1)));
     }
-    std::nth_element(scratch_.begin(), scratch_.begin() + index, scratch_.end());
-    const int64_t target = scratch_[index];
+    const int64_t target = quantile_.kth(index);
 
     // Take more delay right away when frames start arriving later, and give it back slowly
     // so one quiet stretch doesn't leave us exposed to the next burst of jitter
@@ -368,6 +351,8 @@ void FramePacer::resetPhase() {
     lateNs_ = 0;
     soonerSinceNs_ = 0;
     earlySinceNs_ = 0;
+    hasCachedFit_ = false;
+    phaseFramesSinceFit_ = 0;
 }
 
 void FramePacer::onFrameArrived(FrameTiming& frame) {
@@ -505,6 +490,7 @@ bool FramePacer::fitPhase(size_t from, PhaseFit* out) const {
         if (high - low < out->spread) {
             out->spread = high - low;
             out->interval = candidate;
+            out->low = low;
             out->latest = high;
         }
     }
@@ -552,6 +538,8 @@ void FramePacer::updatePhase(FrameTiming& frame) {
     if (timeline_.jitterBuffer() == JitterBuffer::Instant) {
         phaseSamples_.clear();
         phaseLocked_ = false;
+        hasCachedFit_ = false;
+        phaseFramesSinceFit_ = 0;
         shiftNs_ = 0;
         slotParity_ = 0;
         lateNs_ = 0;
@@ -575,18 +563,14 @@ void FramePacer::updatePhase(FrameTiming& frame) {
 
     const int64_t slotPeriod = slotPeriodNs();
 
-    // At a frame a vsync, locking only evens out the host's own timing, which on a Pixel 10 Pro
-    // at 120 fps cost about 3 ms more delay for 15-60% fewer uneven frames (measured when the
-    // schedule covered the latest host timestamp on top of the buffer). Low latency and Lowest latency take the delay off. With a
-    // frame every few vsyncs, both lock: unlocked, frames change on whichever vsync their own
-    // timestamp lands before, and when that sits near a vsync, the slightest jitter shows one a
-    // vsync early or late. At 60 fps on a 120 Hz Pixel 10 Pro, unlocked Lowest latency showed
-    // about one frame in a hundred for one vsync or three instead of two.
+    // At a frame a vsync, Low/Lowest latency skip phase lock; at >=2 vsyncs/frame both lock.
     if (slotVsyncs_ == 1 && (timeline_.jitterBuffer() == JitterBuffer::LowLatency ||
                              timeline_.jitterBuffer() == JitterBuffer::LowestLatency ||
                              timeline_.jitterBuffer() == JitterBuffer::Instant)) {
         phaseSamples_.clear();
         phaseLocked_ = false;
+        hasCachedFit_ = false;
+        phaseFramesSinceFit_ = 0;
         shiftNs_ = 0;
         slotParity_ = 0;
         lateNs_ = 0;
@@ -610,6 +594,8 @@ void FramePacer::updatePhase(FrameTiming& frame) {
     auto unlock = [&]() {
         // Frames go up at their own host timestamps, and a delay would only add latency
         phaseLocked_ = false;
+        hasCachedFit_ = false;
+        phaseFramesSinceFit_ = 0;
         shiftNs_ = 0;
         slotParity_ = 0;
         lateNs_ = 0;
@@ -621,18 +607,36 @@ void FramePacer::updatePhase(FrameTiming& frame) {
         return;
     }
 
+    // Throttle full phase refits to every kRefitEveryFrames while locked and tight, refitting
+    // immediately if the incoming sample falls outside the cached [low, latest] residual bounds.
     PhaseFit fit;
-    if (!fitPhase(0, &fit)) {
-        unlock();
-        return;
+    bool needFit = !hasCachedFit_ || !phaseLocked_ ||
+                   cachedFit_.spread > kTrimSpread * static_cast<double>(slotPeriod) ||
+                   ++phaseFramesSinceFit_ >= kRefitEveryFrames;
+    if (!needFit) {
+        const double r = static_cast<double>(frame.hostPtsNs - cachedFitAnchorPtsNs_) -
+                         cachedFit_.interval * static_cast<double>(frameIndex_ - cachedFitAnchorIndex_);
+        if (r < cachedFit_.low || r > cachedFit_.latest) {
+            needFit = true;
+        } else {
+            const PhaseSample& f0 = phaseSamples_.front();
+            const double shift = static_cast<double>(cachedFitAnchorPtsNs_ - f0.hostPtsNs) -
+                                 cachedFit_.interval * static_cast<double>(cachedFitAnchorIndex_ - f0.frameIndex);
+            fit = {cachedFit_.interval, cachedFit_.low + shift, cachedFit_.latest + shift, cachedFit_.spread};
+        }
+    }
+    if (needFit) {
+        if (!fitPhase(0, &fit)) {
+            unlock();
+            return;
+        }
+        cachedFit_ = fit;
+        cachedFitAnchorIndex_ = phaseSamples_.front().frameIndex;
+        cachedFitAnchorPtsNs_ = phaseSamples_.front().hostPtsNs;
+        phaseFramesSinceFit_ = 0;
+        hasCachedFit_ = true;
     }
 
-    // Frames that fitted another line linger in the window: the host's desktop before a game
-    // started, whose timestamps sit apart from the game's. Packed loosely around a line that
-    // tries to fit both, frames were scheduled as late as the latest of them against it, up to
-    // 20 ms on an iPlay 70 mini Ultra going from the desktop into a 60 fps game, until they left
-    // the window 16 s later. When the last few seconds fit a line tightly by themselves, the
-    // frames before them are dropped and the schedule starts from that line.
     bool refitted = false;
     if (fit.spread > kTrimSpread * static_cast<double>(slotPeriod) &&
             frame.arrivalNs - phaseSamples_.front().timeNs > kRelockWindowNs + kMinPhaseSpanNs) {
@@ -647,20 +651,16 @@ void FramePacer::updatePhase(FrameTiming& frame) {
             const double moved =
                     (static_cast<double>(newFirst.hostPtsNs) + recent.interval * static_cast<double>(frameIndex_ - newFirst.frameIndex)) -
                     (static_cast<double>(oldFirst.hostPtsNs) + fit.interval * static_cast<double>(frameIndex_ - oldFirst.frameIndex));
-
-            // A line that moves later would take the schedule with it, since the buffer was
-            // measured against the old one, and the buffer only comes down slowly: on an iPlay
-            // 70 mini Ultra at 120 fps, a refit after a few seconds of uneven host timestamps
-            // moved the line 4.6 ms later, frames went a vsync later, and stayed there for 25 s
-            // with nothing arriving any later than before. Measured against the new line instead,
-            // the schedule stays put, and the buffer still grows at once if frames need it to.
-            // A line that moves earlier (one from the desktop the game started from) moves the
-            // schedule with it.
             if (transitOnLine_ && moved > 0) {
                 timeline_.shift(-static_cast<int64_t>(std::llround(moved)));
             }
             phaseSamples_.erase(phaseSamples_.begin(), phaseSamples_.begin() + static_cast<std::ptrdiff_t>(recentStart));
             fit = recent;
+            cachedFit_ = fit;
+            cachedFitAnchorIndex_ = phaseSamples_.front().frameIndex;
+            cachedFitAnchorPtsNs_ = phaseSamples_.front().hostPtsNs;
+            phaseFramesSinceFit_ = 0;
+            hasCachedFit_ = true;
             refitted = true;
         }
     }

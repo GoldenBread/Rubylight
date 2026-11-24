@@ -106,12 +106,15 @@ public class AndroidAudioRenderer implements AudioRenderer {
     static final int NATIVE_WRITE_DONE = 0, NATIVE_WRITE_STALLED = 1, NATIVE_WRITE_STOPPED = 2;
 
     private static native int nativeWriteAudio(long handle, short[] samples, int length);
+    private static native int nativeWriteAudioDirect(long handle, long pcmPtr, int frames);
+    private static native void nativeCopyShorts(long pcmPtr, short[] dst, int count);
     private static native int[] nativeAudioStats(long handle);
     private static native int nativeAudioBuffer(long handle, int frames);
     private static native int nativeAudioReserve(long handle, int frames);
     private static native void nativeAudioReserveLimit(long handle, int frames);
     private static native int nativeAudioQueued(long handle);
     private static native boolean nativeAudioSkipLate(long handle, int frames, int pendingFrames);
+    private static native int nativeAudioCheckAndQueued(long handle, int frames, int pendingFrames);
     private static native void nativeCloseAudio(long handle);
     private static native void nativeAbortAudio(long handle);
 
@@ -134,33 +137,17 @@ public class AndroidAudioRenderer implements AudioRenderer {
                 .build();
 
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
-            // Use FLAG_LOW_LATENCY on L through N
-            if (lowLatency) {
-                attributesBuilder.setFlags(AudioAttributes.FLAG_LOW_LATENCY);
-            }
+            if (lowLatency) attributesBuilder.setFlags(AudioAttributes.FLAG_LOW_LATENCY);
+            return new AudioTrack(attributesBuilder.build(), format, bufferSize,
+                    AudioTrack.MODE_STREAM, AudioManager.AUDIO_SESSION_ID_GENERATE);
         }
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            AudioTrack.Builder trackBuilder = new AudioTrack.Builder()
-                    .setAudioFormat(format)
-                    .setAudioAttributes(attributesBuilder.build())
-                    .setTransferMode(AudioTrack.MODE_STREAM)
-                    .setBufferSizeInBytes(bufferSize);
-
-            // Use PERFORMANCE_MODE_LOW_LATENCY on O and later
-            if (lowLatency) {
-                trackBuilder.setPerformanceMode(AudioTrack.PERFORMANCE_MODE_LOW_LATENCY);
-            }
-
-            return trackBuilder.build();
-        }
-        else {
-            return new AudioTrack(attributesBuilder.build(),
-                    format,
-                    bufferSize,
-                    AudioTrack.MODE_STREAM,
-                    AudioManager.AUDIO_SESSION_ID_GENERATE);
-        }
+        AudioTrack.Builder trackBuilder = new AudioTrack.Builder()
+                .setAudioFormat(format)
+                .setAudioAttributes(attributesBuilder.build())
+                .setTransferMode(AudioTrack.MODE_STREAM)
+                .setBufferSizeInBytes(bufferSize);
+        if (lowLatency) trackBuilder.setPerformanceMode(AudioTrack.PERFORMANCE_MODE_LOW_LATENCY);
+        return trackBuilder.build();
     }
 
     @Override
@@ -176,17 +163,10 @@ public class AndroidAudioRenderer implements AudioRenderer {
         loggedUnderruns = 0;
         nativeRate = nativeOutputRate();
 
-        switch (audioConfiguration.channelCount)
-        {
-            case 2:
-                channelConfig = AudioFormat.CHANNEL_OUT_STEREO;
-                break;
-            case 4:
-                channelConfig = AudioFormat.CHANNEL_OUT_QUAD;
-                break;
-            case 6:
-                channelConfig = AudioFormat.CHANNEL_OUT_5POINT1;
-                break;
+        switch (audioConfiguration.channelCount) {
+            case 2: channelConfig = AudioFormat.CHANNEL_OUT_STEREO; break;
+            case 4: channelConfig = AudioFormat.CHANNEL_OUT_QUAD; break;
+            case 6: channelConfig = AudioFormat.CHANNEL_OUT_5POINT1; break;
             case 8:
                 // AudioFormat.CHANNEL_OUT_7POINT1_SURROUND isn't available until Android 6.0,
                 // yet the CHANNEL_OUT_SIDE_LEFT and CHANNEL_OUT_SIDE_RIGHT constants were added
@@ -313,58 +293,14 @@ public class AndroidAudioRenderer implements AudioRenderer {
         // use the recommended larger buffer size.
 
         for (int i = 0; i < 4; i++) {
-            boolean lowLatency;
-            int bufferSize;
+            // 0/1: low-latency small/large buffer; 2/3: standard small/large buffer.
+            boolean lowLatency = i < 2;
+            int bufferSize = (i % 2 == 0)
+                    ? bytesPerFrame * 2
+                    : (((Math.max(minBufferBytes(), bytesPerFrame * 2) + (bytesPerFrame - 1)) / bytesPerFrame) * bytesPerFrame);
 
-            // We will try:
-            // 1) Small buffer, low latency mode
-            // 2) Large buffer, low latency mode
-            // 3) Small buffer, standard mode
-            // 4) Large buffer, standard mode
-
-            switch (i) {
-                case 0:
-                case 1:
-                    lowLatency = true;
-                    break;
-                case 2:
-                case 3:
-                    lowLatency = false;
-                    break;
-                default:
-                    // Unreachable
-                    throw new IllegalStateException();
-            }
-
-            switch (i) {
-                case 0:
-                case 2:
-                    bufferSize = bytesPerFrame * 2;
-                    break;
-
-                case 1:
-                case 3:
-                    // Try the larger buffer size
-                    bufferSize = Math.max(minBufferBytes(), bytesPerFrame * 2);
-
-                    // Round to next frame
-                    bufferSize = (((bufferSize + (bytesPerFrame - 1)) / bytesPerFrame) * bytesPerFrame);
-                    break;
-                default:
-                    // Unreachable
-                    throw new IllegalStateException();
-            }
-
-            // Skip low latency options if hardware sample rate doesn't match the content
-            if (nativeRate != sampleRate && lowLatency) {
-                continue;
-            }
-
-            // Skip low latency options when using audio effects, since low latency mode
-            // precludes the use of the audio effect pipeline (as of Android 13).
-            if (enableAudioFx && lowLatency) {
-                continue;
-            }
+            // Skip low latency options if hardware sample rate doesn't match or audio effects are enabled.
+            if (lowLatency && (nativeRate != sampleRate || enableAudioFx)) continue;
 
             try {
                 int minBufferFrames = Math.max(0, minBufferBytes()) / (channels * 2);
@@ -424,6 +360,11 @@ public class AndroidAudioRenderer implements AudioRenderer {
 
     @Override
     public void playDecodedAudio(short[] audioData, int length) {
+        playDecodedAudio(audioData, length, -1);
+    }
+
+    /** Plays decoded PCM with the Rust audio queue duration already supplied (-1 reads via JNI). */
+    public void playDecodedAudio(short[] audioData, int length, int pendingMs) {
         // AudioService calls run only for a live headset route, and never under the renderer
         // lock that stop() and cleanup() take from other threads.
         boolean headphones = headphoneSink != null && headphoneSink.active();
@@ -433,10 +374,78 @@ public class AndroidAudioRenderer implements AudioRenderer {
                     (float)Math.max(1, manager.getStreamMaxVolume(AudioManager.STREAM_MUSIC));
             volumeReadAt = uptimeMillis();
         }
-        playDecodedAudio(audioData, length, headphones);
+        playDecodedAudio(audioData, length, headphones, pendingMs);
     }
 
-    private synchronized void playDecodedAudio(short[] audioData, int length, boolean headphones) {
+    /**
+     * Direct native-memory fast path for stereo AAudio without headphones, AEC, or pending crossfade.
+     * Returns 1 when handled, 0 for transient fallback to short[], or -1 when AAudio is not active.
+     */
+    public int playDecodedAudioDirect(long pcmPtr, int length, int pendingMs) {
+        if (nativeAudio == 0 || channels != 2) return -1;
+        if ((headphoneSink != null && headphoneSink.active()) || trimHeadSamples > 0) return 0;
+        return playDecodedAudioDirectLocked(pcmPtr, length, pendingMs);
+    }
+
+    private synchronized int playDecodedAudioDirectLocked(long pcmPtr, int length, int pendingMs) {
+        if (stopped) return 1;
+        if (nativeAudio == 0 || channels != 2) return -1;
+        if (trimHeadSamples > 0) return 0;
+        int frames = length / 2;
+        int pending = pendingMs >= 0 ? pendingMs : pendingAudioMs();
+        int pendingFrames = (int)((long)Math.max(0, pending) * sampleRate / 1000);
+        int queuedFrames = checkLateAndQueuedNativeAudio(frames, pendingFrames);
+        if (queuedFrames < 0) return 1;
+        if (AudioBufferPolicy.dropLate(pending, queuedFrames, reserveFrames, sampleRate)) {
+            onLateDropped(pending, queuedFrames);
+            return 1;
+        }
+        if (driftTrim.trim(pendingFrames, queuedFrames, reserveFrames, frames, sampleRate)) {
+            keepTrimHeadDirect(pcmPtr, length);
+            onDriftTrimmed(pending, queuedFrames);
+            return 1;
+        }
+        if (bufferPolicy != null && bufferPolicy.needsFallback()) {
+            if (!fallbackToAudioTrack("AAudio hardware keeps underrunning at its largest device buffer")) {
+                droppedWrites++;
+                return 1;
+            }
+            return -1;
+        }
+        int written = writeNativeAudioDirect(pcmPtr, frames);
+        return finishNativeWrite(written, null, length, pcmPtr, frames, queuedFrames);
+    }
+
+    // Completes a native AAudio write (direct when audioData == null); returns 1 if handled, -1 if fallen back to AudioTrack.
+    private int finishNativeWrite(int written, short[] audioData, int length, long pcmPtr, int frames, int queuedFrames) {
+        if (written == NATIVE_WRITE_DONE) {
+            nativeStalls = 0;
+            if (audioData != null) echoReference(audioData, length, queuedFrames);
+            tuneBuffer();
+            return 1;
+        }
+        if (stopRequested || (written == NATIVE_WRITE_STALLED && ++nativeStalls < MAX_NATIVE_STALLS)) {
+            droppedWrites++;
+            return 1;
+        }
+        boolean stalled = written == NATIVE_WRITE_STALLED;
+        nativeStalls = 0;
+        if (!reopenAudio(stalled ? "AAudio stopped taking audio" : "AAudio disconnected")) {
+            droppedWrites++;
+            return 1;
+        }
+        if (nativeAudio == 0) return -1;
+        int retry = audioData != null ? writeNativeAudio(audioData, length) : writeNativeAudioDirect(pcmPtr, frames);
+        if (retry == NATIVE_WRITE_DONE) {
+            if (audioData != null) echoReference(audioData, length, outputQueuedFrames());
+            tuneBuffer();
+        } else if (!stopRequested) {
+            droppedWrites++;
+        }
+        return 1;
+    }
+
+    private synchronized void playDecodedAudio(short[] audioData, int length, boolean headphones, int pendingMsIn) {
         if (stopped) return;
         if (headphones && sampleRate == 48000 && channels >= 2) {
             short[] sound = audioData;
@@ -455,23 +464,20 @@ public class AndroidAudioRenderer implements AudioRenderer {
         }
         // Only queue up to 40 ms of audio beyond the output's reserve. The output's own level counts: after a
         // network stall drained it, the burst that follows refills it instead of being dropped.
-        // A stall's packets whose time Opus already concealed: playing them would keep latency up by the stall.
-        // The packets waiting behind this one refill the reserve, so only the excess over it is skipped.
-        int pendingMs = pendingAudioMs();
-        if (nativeAudio != 0 && channels > 0 &&
-                skipLateNativeAudio(length / channels, (int)((long)Math.max(0, pendingMs) * sampleRate / 1000))) return;
-        int queuedFrames = outputQueuedFrames();
+        int pendingMs = pendingMsIn >= 0 ? pendingMsIn : pendingAudioMs();
+        int pendingFrames = (int)((long)Math.max(0, pendingMs) * sampleRate / 1000);
+        int queuedFrames;
+        if (nativeAudio != 0 && channels > 0) {
+            queuedFrames = checkLateAndQueuedNativeAudio(length / channels, pendingFrames);
+            if (queuedFrames < 0) return;
+        } else {
+            queuedFrames = outputQueuedFrames();
+        }
         if (!AudioBufferPolicy.dropLate(pendingMs, queuedFrames, reserveFrames, sampleRate)) {
-            if (channels > 0 && driftTrim.trim((int)((long)Math.max(0, pendingMs) * sampleRate / 1000), queuedFrames,
+            if (channels > 0 && driftTrim.trim(pendingFrames, queuedFrames,
                     reserveFrames, length / channels, sampleRate)) {
                 keepTrimHead(audioData, length);
-                driftTrimmed++;
-                int trims = trimLog.count(uptimeMillis());
-                if (trims > 0) {
-                    LimeLog.info("Audio clock drift: trimmed a packet, pending " + pendingMs + " ms, output " +
-                            framesToMs(queuedFrames) + " of " + framesToMs(reserveFrames) + " ms (" + driftTrimmed +
-                            " trimmed, " + trims + " since the last line)");
-                }
+                onDriftTrimmed(pendingMs, queuedFrames);
                 return;
             }
             if (trimHeadSamples > 0) {
@@ -485,44 +491,9 @@ public class AndroidAudioRenderer implements AudioRenderer {
             }
             if (nativeAudio != 0) {
                 int written = writeNativeAudio(audioData, length);
-                if (written != NATIVE_WRITE_DONE && stopRequested) {
-                    droppedWrites++;
-                    return;
-                }
-                if (written == NATIVE_WRITE_DONE) {
-                    nativeStalls = 0;
-                    echoReference(audioData, length, queuedFrames);
-                    tuneBuffer();
-                    return;
-                }
-                if (written == NATIVE_WRITE_STALLED && ++nativeStalls < MAX_NATIVE_STALLS) {
-                    // A short stall: reopening would only lose the tuned reserve and count
-                    // toward the AudioTrack fallback.
-                    droppedWrites++;
-                    return;
-                }
-                boolean stalled = written == NATIVE_WRITE_STALLED;
-                nativeStalls = 0;
-                if (!reopenAudio(stalled ? "AAudio stopped taking audio" : "AAudio disconnected")) {
-                    // Later buffers retry the AudioTrack like any other dead output.
-                    droppedWrites++;
-                    return;
-                }
-                if (nativeAudio != 0) {
-                    if (writeNativeAudio(audioData, length) == NATIVE_WRITE_DONE) {
-                        echoReference(audioData, length, outputQueuedFrames());
-                        tuneBuffer();
-                    } else if (!stopRequested) {
-                        // The next buffer reopens again, or falls back if it keeps dying.
-                        droppedWrites++;
-                    }
-                    return;
-                }
+                if (finishNativeWrite(written, audioData, length, 0, 0, queuedFrames) >= 0) return;
             }
-            // This will block until the write is completed. That can cause a backlog
-            // of pending audio data, so we do the above check to be able to bound
-            // latency at 40 ms in that situation.
-            // A failed write drops only this buffer; the session's audio keeps playing.
+            // Blocking write; a failed write drops only this buffer so the session's audio keeps playing.
             if (writeAudioTrackFully(audioData, length)) {
                 echoReference(audioData, length, queuedFrames);
                 tuneBuffer();
@@ -530,17 +501,30 @@ public class AndroidAudioRenderer implements AudioRenderer {
                 droppedWrites++;
                 reportDrops();
             }
+        } else {
+            onLateDropped(pendingMs, queuedFrames);
         }
-        else {
-            lateDropped++;
-            int drops = lateLog.count(uptimeMillis());
-            if (drops > 0) {
-                LimeLog.info("Too much pending audio data: " + pendingMs + " ms, output " +
-                        framesToMs(queuedFrames) + " of " + framesToMs(reserveFrames) + " ms (" + drops +
-                        " dropped since the last line)");
-            }
-            reportDrops();
+    }
+
+    private void onDriftTrimmed(int pendingMs, int queuedFrames) {
+        driftTrimmed++;
+        int trims = trimLog.count(uptimeMillis());
+        if (trims > 0) {
+            LimeLog.info("Audio clock drift: trimmed a packet, pending " + pendingMs + " ms, output " +
+                    framesToMs(queuedFrames) + " of " + framesToMs(reserveFrames) + " ms (" + driftTrimmed +
+                    " trimmed, " + trims + " since the last line)");
         }
+    }
+
+    private void onLateDropped(int pendingMs, int queuedFrames) {
+        lateDropped++;
+        int drops = lateLog.count(uptimeMillis());
+        if (drops > 0) {
+            LimeLog.info("Too much pending audio data: " + pendingMs + " ms, output " +
+                    framesToMs(queuedFrames) + " of " + framesToMs(reserveFrames) + " ms (" + drops +
+                    " dropped since the last line)");
+        }
+        reportDrops();
     }
 
     // The trimmed packet's first 5 ms: it continues what already played, so the next packet fades in from it.
@@ -548,6 +532,14 @@ public class AndroidAudioRenderer implements AudioRenderer {
         int samples = Math.min(length, sampleRate / 200 * channels);
         if (trimHead.length < samples) trimHead = new short[samples];
         System.arraycopy(audioData, 0, trimHead, 0, samples);
+        trimHeadSamples = samples;
+    }
+
+    private void keepTrimHeadDirect(long pcmPtr, int length) {
+        int samples = Math.min(length, sampleRate / 200 * channels);
+        if (samples <= 0) return;
+        if (trimHead.length < samples) trimHead = new short[samples];
+        copyNativeShorts(pcmPtr, trimHead, samples);
         trimHeadSamples = samples;
     }
 
@@ -601,6 +593,10 @@ public class AndroidAudioRenderer implements AudioRenderer {
      */
     boolean skipLateNativeAudio(int frames, int pendingFrames) {
         return nativeAudioSkipLate(nativeAudio, frames, pendingFrames);
+    }
+
+    int checkLateAndQueuedNativeAudio(int frames, int pendingFrames) {
+        return nativeAudioCheckAndQueued(nativeAudio, frames, pendingFrames);
     }
 
     /** Frames the output holds that are not played yet: the AAudio ring, or the track past its playback head. */
@@ -773,6 +769,14 @@ public class AndroidAudioRenderer implements AudioRenderer {
         return nativeWriteAudio(nativeAudio, audioData, length);
     }
 
+    int writeNativeAudioDirect(long pcmPtr, int frames) {
+        return nativeWriteAudioDirect(nativeAudio, pcmPtr, frames);
+    }
+
+    void copyNativeShorts(long pcmPtr, short[] dst, int count) {
+        nativeCopyShorts(pcmPtr, dst, count);
+    }
+
     int pendingAudioMs() {
         return MoonBridge.getPendingAudioDuration();
     }
@@ -897,16 +901,12 @@ public class AndroidAudioRenderer implements AudioRenderer {
     }
 
     private void setAudioFxSession(boolean open) {
-        if (!enableAudioFx || track == null || audioFxSessionOpen == open) {
-            return;
-        }
+        if (!enableAudioFx || track == null || audioFxSessionOpen == open) return;
         Intent i = new Intent(open ? AudioEffect.ACTION_OPEN_AUDIO_EFFECT_CONTROL_SESSION :
                 AudioEffect.ACTION_CLOSE_AUDIO_EFFECT_CONTROL_SESSION);
         i.putExtra(AudioEffect.EXTRA_AUDIO_SESSION, track.getAudioSessionId());
         i.putExtra(AudioEffect.EXTRA_PACKAGE_NAME, context.getPackageName());
-        if (open) {
-            i.putExtra(AudioEffect.EXTRA_CONTENT_TYPE, AudioEffect.CONTENT_TYPE_GAME);
-        }
+        if (open) i.putExtra(AudioEffect.EXTRA_CONTENT_TYPE, AudioEffect.CONTENT_TYPE_GAME);
         context.sendBroadcast(i);
         audioFxSessionOpen = open;
     }
@@ -919,9 +919,7 @@ public class AndroidAudioRenderer implements AudioRenderer {
         channels = audioConfiguration.channelCount;
         sampleRate = AudioPassthrough.SAMPLE_RATE;
         encodedCodec = codec;
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
-            return encodedFailed("needs Android 10 or later");
-        }
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return encodedFailed("needs Android 10 or later");
         if (AudioPassthrough.encoding(codec) == 0 || AudioPassthrough.channelMask(channels) == 0) {
             return encodedFailed(AudioPassthrough.names(codec) + " with " + channels + " channels is not a passthrough format");
         }
@@ -930,9 +928,7 @@ public class AndroidAudioRenderer implements AudioRenderer {
 
     private int buildEncodedTrack() {
         // setupEncoded checked already; this keeps the route-change rebuild on Android 10 too.
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
-            return encodedFailed("needs Android 10 or later");
-        }
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return encodedFailed("needs Android 10 or later");
         int encoding = AudioPassthrough.encoding(encodedCodec);
         int mask = AudioPassthrough.channelMask(channels);
         try {

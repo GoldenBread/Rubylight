@@ -52,19 +52,24 @@ final class GlesUpscaler implements AutoCloseable, SurfaceTexture.OnFrameAvailab
     private SurfaceTexture texture;
     private Surface inputSurface;
     private int sourceTexture, intermediateTexture, framebuffer;
-    private int upscaleProgram, rcasProgram, transformUniform;
+    private int upscaleProgram, rcasProgram, transformUniform, nativeResolutionUniform = -1;
     private int surfaceWidth, surfaceHeight;
+    private long lastSurfaceQueryNs;
+    private volatile boolean surfaceSizeDirty;
     private int[] viewport;
     private long fence;
     // workStartNs is when the decoder released the frame (for the stall check); gpuStartNs is when
     // it was latched, so the sample is the reconstruction and not the wait in front of it.
     private volatile long workStartNs;
-    private long gpuStartNs;
+    private long gpuStartNs, submitDurationNs;
     private int pendingDrops;
     private boolean frameAvailable;
     // glGetError synchronises with the driver, so release builds check it on every 120th draw only.
     private static final int ERROR_CHECK_INTERVAL = 120;
     private static final long FENCE_WAIT_NS = 4_000_000L;
+    private static final long IDLE_FENCE_POLL_MS = 250L;
+    private static final long SURFACE_QUERY_INTERVAL_NS = 250_000_000L;
+    private static final int[] COLOR_ATTACHMENT0 = {GLES30.GL_COLOR_ATTACHMENT0};
     private int drawnFrames;
     private volatile boolean closed;
     private volatile String failureDetail;
@@ -161,6 +166,11 @@ final class GlesUpscaler implements AutoCloseable, SurfaceTexture.OnFrameAvailab
         pictureCrop = crop.clone();
     }
 
+    /** Marks the window size dirty so the next frame queries EGL surface dimensions immediately. */
+    void notifySurfaceResized() {
+        surfaceSizeDirty = true;
+    }
+
     long releaseFrame(long targetNs) {
         return frames.release(System.nanoTime(), targetNs);
     }
@@ -226,6 +236,7 @@ final class GlesUpscaler implements AutoCloseable, SurfaceTexture.OnFrameAvailab
         if (packing != null) require(extensions.contains("GL_EXT_YUV_target"), "raw YUV sampling");
         require(EGL14.eglSwapInterval(display, 0), "EGL swap interval");
         querySurfaceSize();
+        lastSurfaceQueryNs = System.nanoTime();
         surfaceWidth = size[0];
         surfaceHeight = size[1];
         viewport = UpscalingPolicy.viewport(packing == null ? width : packing.width,
@@ -247,6 +258,8 @@ final class GlesUpscaler implements AutoCloseable, SurfaceTexture.OnFrameAvailab
             GLES30.glUniform1i(GLES30.glGetUniformLocation(upscaleProgram, "packingVersion"), packing.version);
             GLES30.glUniform4i(GLES30.glGetUniformLocation(upscaleProgram, "picture"),
                     packing.width, packing.height, packing.paddedWidth, packing.paddedHeight);
+            nativeResolutionUniform = GLES30.glGetUniformLocation(upscaleProgram, "nativeResolution");
+            updateNativeResolution();
             updateHdr();
         }
         if (mode == UpscalingPolicy.Mode.FSR1) {
@@ -418,7 +431,9 @@ final class GlesUpscaler implements AutoCloseable, SurfaceTexture.OnFrameAvailab
                 MoonBridge.frameWarpInputState())) return;
         postRefresh();
         refreshFollowsNs = frameTimeNanos;
-        // A redraw stamped now would queue behind a picture asked for a later refresh
+        // A redraw stamped now would queue behind a picture asked for a later refresh.
+        // Retire a completed pipelined fence without blocking before deciding whether to skip.
+        if (fence != 0) pollFenceNonBlocking();
         if (fence != 0 || frameAvailable || frameTimeNanos < lastTargetNs + refreshPeriodNs() / 2 ||
                 frames.oldestReleaseNs() != 0) return;
         try {
@@ -542,13 +557,21 @@ final class GlesUpscaler implements AutoCloseable, SurfaceTexture.OnFrameAvailab
         require(EGL14.eglQuerySurface(display, window, EGL14.EGL_HEIGHT, size, 1), "EGL height");
     }
 
+    private void updateNativeResolution() {
+        if (packing != null && nativeResolutionUniform >= 0) {
+            GLES30.glUseProgram(upscaleProgram);
+            GLES30.glUniform1i(nativeResolutionUniform,
+                    viewport[2] == packing.width && viewport[3] == packing.height ? 1 : 0);
+        }
+    }
+
     @Override
     public void onFrameAvailable(SurfaceTexture surfaceTexture) {
         if (closed || policy.getReason() != UpscalingPolicy.Reason.NONE) return;
         frameAvailable = true;
         try {
             handler.removeCallbacks(pollCompletion);
-            // A frame behind a pending draw waits for it here (one slice; a longer wait goes on in the posted poll).
+            // Retire the previous frame's pipelined fence before latching the new frame.
             awaitFence();
             if (fence != 0 || !frameAvailable || policy.getReason() != UpscalingPolicy.Reason.NONE) return;
             drawFrame();
@@ -566,16 +589,21 @@ final class GlesUpscaler implements AutoCloseable, SurfaceTexture.OnFrameAvailab
             workStartNs = frame[0];
             gpuStartNs = System.nanoTime();
             pendingDrops = (int) frame[2];
-            querySurfaceSize();
-            if (size[0] != surfaceWidth || size[1] != surfaceHeight) {
-                if (packing == null && !frameWarp) {
-                    policy.fail(UpscalingPolicy.Reason.SIZE_CHANGED);
-                    return;
+            if (surfaceSizeDirty || gpuStartNs - lastSurfaceQueryNs >= SURFACE_QUERY_INTERVAL_NS) {
+                surfaceSizeDirty = false;
+                lastSurfaceQueryNs = gpuStartNs;
+                querySurfaceSize();
+                if (size[0] != surfaceWidth || size[1] != surfaceHeight) {
+                    if (packing == null && !frameWarp) {
+                        policy.fail(UpscalingPolicy.Reason.SIZE_CHANGED);
+                        return;
+                    }
+                    surfaceWidth = size[0];
+                    surfaceHeight = size[1];
+                    viewport = UpscalingPolicy.viewport(packing != null ? packing.width : pictureWidth,
+                            packing != null ? packing.height : pictureHeight, surfaceWidth, surfaceHeight, stretch);
+                    updateNativeResolution();
                 }
-                surfaceWidth = size[0];
-                surfaceHeight = size[1];
-                viewport = UpscalingPolicy.viewport(packing != null ? packing.width : pictureWidth,
-                        packing != null ? packing.height : pictureHeight, surfaceWidth, surfaceHeight, stretch);
             }
             texture.getTransformMatrix(transform);
             // A picture without padding samples SurfaceTexture's transform untouched.
@@ -605,8 +633,9 @@ final class GlesUpscaler implements AutoCloseable, SurfaceTexture.OnFrameAvailab
         require(EGLExt.eglPresentationTimeANDROID(display, window, presentNs), "EGL presentation time");
         if (frameWarp) lastTargetNs = presentNs > 0 ? presentNs : System.nanoTime();
         require(EGL14.eglSwapBuffers(display, window), "EGL swap");
-        GLES30.glFlush();
-        awaitFence();
+        submitDurationNs = System.nanoTime() - gpuStartNs;
+        // Pipeline fence retirement 1 frame deep; fallback timer retires static frames before STALL_LIMIT_NS.
+        handler.postDelayed(pollCompletion, IDLE_FENCE_POLL_MS);
     }
 
     /** The single-pass (or FSR's two-pass) draw of the latched picture into the window. */
@@ -618,6 +647,7 @@ final class GlesUpscaler implements AutoCloseable, SurfaceTexture.OnFrameAvailab
         if (frameWarp) applyWarp(ptsUs);
         GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, framebuffer);
         if (mode == UpscalingPolicy.Mode.FSR1) {
+            GLES30.glInvalidateFramebuffer(GLES30.GL_FRAMEBUFFER, 1, COLOR_ATTACHMENT0, 0);
             GLES30.glViewport(0, 0, viewport[2], viewport[3]);
             GLES30.glDrawArrays(GLES30.GL_TRIANGLES, 0, 3);
             GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0);
@@ -630,14 +660,19 @@ final class GlesUpscaler implements AutoCloseable, SurfaceTexture.OnFrameAvailab
         if (checkErrors) require(GLES30.glGetError() == GLES30.GL_NO_ERROR, "Upscaling draw");
     }
 
-    /**
-     * Completes the pending draw once its fence signals. This thread has nothing else to do while a draw is on the GPU
-     * (a frame behind it cannot be latched, and Frame Warp's refresh redraw skips while a fence is pending), so it
-     * waits for the fence here: one wakeup per frame instead of one per millisecond. The wait is cut into slices of
-     * {@link #FENCE_WAIT_NS}, so a lost fence cannot hang the thread: after a slice that ends without the signal the
-     * stall check runs and the wait goes on from a posted message, behind whatever else is queued (close(), a
-     * Frame Warp or HDR update).
-     */
+    private void pollFenceNonBlocking() {
+        if (closed || fence == 0 || policy.getReason() != UpscalingPolicy.Reason.NONE) return;
+        int status = GLES30.glClientWaitSync(fence, 0, 0);
+        if (status == GLES30.GL_ALREADY_SIGNALED || status == GLES30.GL_CONDITION_SATISFIED) {
+            handler.removeCallbacks(pollCompletion);
+            GLES30.glDeleteSync(fence);
+            fence = 0;
+            workStartNs = 0;
+            policy.recordFrame(submitDurationNs, pendingDrops);
+        }
+    }
+
+    /** Retires the pending draw's fence in FENCE_WAIT_NS slices so a lost fence cannot hang this thread. */
     private void awaitFence() {
         if (closed || fence == 0 || policy.getReason() != UpscalingPolicy.Reason.NONE) return;
         long waitStartNs = System.nanoTime();
@@ -657,11 +692,10 @@ final class GlesUpscaler implements AutoCloseable, SurfaceTexture.OnFrameAvailab
             GLES30.glDeleteSync(fence);
             fence = 0;
             workStartNs = 0;
-            // From the latch to the fence: the draw, swap blocking and the wait for the fence,
-            // but not the wait for the render thread before the latch. A conservative estimate of
-            // the reconstruction, not a scanout timestamp; the policy only acts on a sustained trend.
-            policy.recordFrame(System.nanoTime() - gpuStartNs, pendingDrops);
-            // Latch the newest waiting texture only after the previous draw has completed.
+            // Record submit time when GPU already finished during the inter-frame gap, or full
+            // wall time when we actually waited on an overloaded GPU.
+            long gpuNs = status == GLES30.GL_ALREADY_SIGNALED ? submitDurationNs : (System.nanoTime() - gpuStartNs);
+            policy.recordFrame(gpuNs, pendingDrops);
             if (frameAvailable && policy.getReason() == UpscalingPolicy.Reason.NONE) drawFrame();
         } else if (status == GLES30.GL_WAIT_FAILED) {
             if (failureDetail == null) failureDetail = "GPU fence wait failed";

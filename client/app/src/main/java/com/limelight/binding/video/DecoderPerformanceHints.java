@@ -16,7 +16,7 @@ final class DecoderPerformanceHints implements AutoCloseable {
     static final String CPU_TIME_SWITCH = "adpf_cpu_time";
 
     private PerformanceHintManager manager;
-    private PerformanceHintManager.Session session;
+    private volatile PerformanceHintManager.Session session;
     private long targetDurationNs;
     private int ownThreadId;
     private int submitThreadId;
@@ -97,6 +97,11 @@ final class DecoderPerformanceHints implements AutoCloseable {
         if (first != 0 && first != own) out[n++] = first;
         if (second != 0 && second != own && second != first) out[n++] = second;
         return java.util.Arrays.copyOf(out, n);
+    }
+
+    /** True while an ADPF hint session is open; callers skip threadCpuTimeNanos() when false. */
+    boolean isActive() {
+        return session != null;
     }
 
     void reportWorkDuration(long durationNs, int frameRate) {

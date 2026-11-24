@@ -174,13 +174,8 @@ public class AndroidAudioRendererTest {
 
         private int pendingMs, queuedFrames;
 
-        @Override int pendingAudioMs() {
-            return pendingMs;
-        }
-
-        @Override int outputQueuedFrames() {
-            return queuedFrames;
-        }
+        @Override int pendingAudioMs() { return pendingMs; }
+        @Override int outputQueuedFrames() { return queuedFrames; }
 
         private boolean late;
         private final List<Integer> lateChecks = new ArrayList<>(), latePending = new ArrayList<>();
@@ -191,9 +186,11 @@ public class AndroidAudioRendererTest {
             return late;
         }
 
-        void play() {
-            playDecodedAudio(new short[6], 6);
+        @Override int checkLateAndQueuedNativeAudio(int frames, int pendingFrames) {
+            return skipLateNativeAudio(frames, pendingFrames) ? -1 : outputQueuedFrames();
         }
+
+        void play() { playDecodedAudio(new short[6], 6); }
     }
 
     @Test public void partialWritesContinueAtTheUnwrittenSamples() {

@@ -6,8 +6,8 @@ import java.util.Arrays;
 final class PyroWaveDisplayClock {
     static final class Snapshot {
         static final Snapshot UNAVAILABLE = new Snapshot(0, 0);
-        final long vsyncNs;
-        final long intervalNs;
+        long vsyncNs;
+        long intervalNs;
 
         Snapshot(long vsyncNs, long intervalNs) {
             this.vsyncNs = vsyncNs;
@@ -16,6 +16,12 @@ final class PyroWaveDisplayClock {
     }
 
     private final long[] intervals = new long[7];
+    private final long[] scratch = new long[7];
+    // 4-slot ring avoids allocating a Snapshot per vsync while leaving prior snapshots intact for readers.
+    private final Snapshot[] ring = {
+            new Snapshot(0, 0), new Snapshot(0, 0), new Snapshot(0, 0), new Snapshot(0, 0)
+    };
+    private int ringIndex;
     private int count;
     private int position;
     private long nominalIntervalNs;
@@ -49,9 +55,13 @@ final class PyroWaveDisplayClock {
             }
         }
         if (count >= 3) {
-            long[] sorted = Arrays.copyOf(intervals, count);
-            Arrays.sort(sorted);
-            snapshot = new Snapshot(frameTimeNs, sorted[count / 2]);
+            System.arraycopy(intervals, 0, scratch, 0, count);
+            Arrays.sort(scratch, 0, count);
+            Snapshot next = ring[ringIndex];
+            ringIndex = (ringIndex + 1) & 3;
+            next.vsyncNs = frameTimeNs;
+            next.intervalNs = scratch[count / 2];
+            snapshot = next;
         }
     }
 

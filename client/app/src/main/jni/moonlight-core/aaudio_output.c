@@ -191,12 +191,12 @@ static void audioFill(AudioOutput* output, int16_t* pcm, uint32_t frames) {
 // is skipped only while the ring and the packets behind it still fill the reserve without it, so the
 // newest refill the ring and latency returns to the reserve. Counting only the ring, the whole network
 // queue was kept on top of the reserve, and the late bound dropped it a packet at a time.
-static bool audioSkipLate(AudioOutput* output, uint64_t nowNs, uint32_t frames, uint32_t pendingFrames) {
+static bool audioSkipLateWithQueued(AudioOutput* output, uint64_t nowNs, uint32_t frames,
+        uint32_t pendingFrames, uint32_t queued) {
     uint64_t gap = nowNs - output->lastPacketNs;
     output->lastPacketNs = nowNs;
     if (!frames || !output->rate) return false;
     if (gap >= (uint64_t)frames * 500000000u / output->rate && pendingFrames < frames) return false;
-    uint32_t queued = atomic_load(&output->queue.writtenFrames) - atomic_load(&output->queue.readFrames);
     uint64_t behind = (uint64_t)queued + pendingFrames;
     if (behind < atomic_load(&output->queue.targetFrames)) return false;
     uint32_t late = atomic_load(&output->lateFrames);
@@ -207,6 +207,11 @@ static bool audioSkipLate(AudioOutput* output, uint64_t nowNs, uint32_t frames, 
         }
     }
     return false;
+}
+
+static bool audioSkipLate(AudioOutput* output, uint64_t nowNs, uint32_t frames, uint32_t pendingFrames) {
+    uint32_t queued = atomic_load(&output->queue.writtenFrames) - atomic_load(&output->queue.readFrames);
+    return audioSkipLateWithQueued(output, nowNs, frames, pendingFrames, queued);
 }
 
 static aaudio_data_callback_result_t audioData(AAudioStream* stream, void* data, void* buffer, int32_t frames) {
@@ -307,6 +312,24 @@ static bool audioStreamStopped(AudioOutput* output) {
     return state != AAUDIO_STREAM_STATE_STARTED && state != AAUDIO_STREAM_STATE_STARTING;
 }
 
+static uint32_t writeAudioFrames(AudioOutput* output, const int16_t* pcm, uint32_t frames, int* waits) {
+    uint32_t done = 0;
+    while (done < frames && !atomic_load(&output->stopped)) {
+        uint32_t count = audioQueueWrite(&output->queue, pcm + done * 2, frames - done);
+        if (!count) {
+            // Counted since the callback last made room: a reserve smaller than a packet
+            // waits for it on every write, and only a callback that stops draining stalls.
+            if (++(*waits) >= AUDIO_WRITE_STALL_WAITS) break;
+            struct timespec pause = {0, 1000000};
+            nanosleep(&pause, NULL);
+            continue;
+        }
+        *waits = 0;
+        done += count;
+    }
+    return done;
+}
+
 JNIEXPORT jint JNICALL
 Java_com_limelight_binding_audio_AndroidAudioRenderer_nativeWriteAudio(JNIEnv* env, jclass clazz,
         jlong handle, jshortArray samples, jint length) {
@@ -322,26 +345,42 @@ Java_com_limelight_binding_audio_AndroidAudioRenderer_nativeWriteAudio(JNIEnv* e
         uint32_t pieceFrames = frames - position;
         if (pieceFrames > AUDIO_WRITE_CHUNK_FRAMES) pieceFrames = AUDIO_WRITE_CHUNK_FRAMES;
         (*env)->GetShortArrayRegion(env, samples, (jsize)(position * 2), (jsize)(pieceFrames * 2), chunk);
-        uint32_t done = 0;
-        while (done < pieceFrames && !atomic_load(&output->stopped)) {
-            uint32_t count = audioQueueWrite(&output->queue, chunk + done * 2, pieceFrames - done);
-            if (!count) {
-                // Counted since the callback last made room: a reserve smaller than a packet
-                // waits for it on every write, and only a callback that stops draining stalls.
-                if (++waits >= AUDIO_WRITE_STALL_WAITS) break;
-                struct timespec pause = {0, 1000000};
-                nanosleep(&pause, NULL);
-                continue;
-            }
-            waits = 0;
-            done += count;
-        }
+        uint32_t done = writeAudioFrames(output, chunk, pieceFrames, &waits);
         position += done;
         if (done < pieceFrames) break;
     }
     if (atomic_load(&output->stopped)) return AUDIO_WRITE_STOPPED;
     if (position == frames) return AUDIO_WRITE_DONE;
     return audioStreamStopped(output) ? AUDIO_WRITE_STOPPED : AUDIO_WRITE_STALLED;
+}
+
+// Writes stereo PCM directly from native memory into the lock-free AAudio ring without a Java short[] copy.
+JNIEXPORT jint JNICALL
+Java_com_limelight_binding_audio_AndroidAudioRenderer_nativeWriteAudioDirect(JNIEnv* env, jclass clazz,
+        jlong handle, jlong pcmPtr, jint frames) {
+    (void)env;
+    (void)clazz;
+    AudioOutput* output = (AudioOutput*)(intptr_t)handle;
+    const int16_t* pcm = (const int16_t*)(intptr_t)pcmPtr;
+    if (!output || !pcm || frames < 0) return AUDIO_WRITE_STOPPED;
+    int waits = 0;
+    uint32_t done = writeAudioFrames(output, pcm, (uint32_t)frames, &waits);
+    if (atomic_load(&output->stopped)) return AUDIO_WRITE_STOPPED;
+    if (done == (uint32_t)frames) return AUDIO_WRITE_DONE;
+    return audioStreamStopped(output) ? AUDIO_WRITE_STOPPED : AUDIO_WRITE_STALLED;
+}
+
+// Copies the leading crossfade head from native PCM on the rare drift-trim packet.
+JNIEXPORT void JNICALL
+Java_com_limelight_binding_audio_AndroidAudioRenderer_nativeCopyShorts(JNIEnv* env, jclass clazz,
+        jlong pcmPtr, jshortArray dst, jint count) {
+    (void)clazz;
+    const jshort* src = (const jshort*)(intptr_t)pcmPtr;
+    if (!src || !dst || count <= 0 || count > (*env)->GetArrayLength(env, dst)) return;
+    jshort* out = (*env)->GetShortArrayElements(env, dst, NULL);
+    if (!out) return;
+    memcpy(out, src, (size_t)count * sizeof(jshort));
+    (*env)->ReleaseShortArrayElements(env, dst, out, 0);
 }
 
 // stop() and cleanup(), from another thread than the writer's: a write waiting on a full ring ends at
@@ -423,6 +462,26 @@ Java_com_limelight_binding_audio_AndroidAudioRenderer_nativeAudioSkipLate(JNIEnv
     return audioSkipLate(output, (uint64_t)now.tv_sec * 1000000000u + (uint64_t)now.tv_nsec,
                          frames > 0 ? (uint32_t)frames : 0, pendingFrames > 0 ? (uint32_t)pendingFrames : 0)
             ? JNI_TRUE : JNI_FALSE;
+}
+
+// Combined per-packet late-skip check and queued-frame count in one JNI crossing:
+// returns -1 if skipped as late, otherwise the frames queued in the ring (>= 0).
+JNIEXPORT jint JNICALL
+Java_com_limelight_binding_audio_AndroidAudioRenderer_nativeAudioCheckAndQueued(JNIEnv* env, jclass clazz,
+        jlong handle, jint frames, jint pendingFrames) {
+    (void)env;
+    (void)clazz;
+    AudioOutput* output = (AudioOutput*)(intptr_t)handle;
+    if (!output) return 0;
+    uint32_t queued = atomic_load(&output->queue.writtenFrames) - atomic_load(&output->queue.readFrames);
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    uint64_t nowNs = (uint64_t)now.tv_sec * 1000000000u + (uint64_t)now.tv_nsec;
+    if (audioSkipLateWithQueued(output, nowNs, frames > 0 ? (uint32_t)frames : 0,
+            pendingFrames > 0 ? (uint32_t)pendingFrames : 0, queued)) {
+        return -1;
+    }
+    return (jint)queued;
 }
 
 JNIEXPORT void JNICALL

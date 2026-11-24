@@ -31,6 +31,8 @@ public final class PyroWaveDecoderRenderer {
     private GpuDriverStore.Driver customDriver;
     private String driverStatus = "";
     private volatile long lastSubmissionDurationNs;
+    private volatile float lastRecordLossPercent;
+    private final long[] eventBuf = new long[128 * FrameLatencyStats.PYROWAVE_EVENT_STRIDE];
     // Native work that changes or needs the renderer (submit, early chunks, event polling, HDR and Frame Warp
     // setup) runs under nativeLock; the object monitor guards only the cheap state the getters read (handle,
     // format, driver text) and is not held across a native submit, so the statistics and health getters never wait
@@ -329,11 +331,24 @@ public final class PyroWaveDecoderRenderer {
     long submitFrame(byte[] data, ByteBuffer directData, int length, long ptsUs, int frameNumber,
                      long hostPresentationTimeUs, PyroWaveDisplayClock.Snapshot displayClock,
                      FrameLatencyStats stats, Context context, boolean enablePerformanceHints, int frameRate) {
+        return submitFrameImpl(data, directData, 0L, length, ptsUs, frameNumber, hostPresentationTimeUs,
+                displayClock, stats, context, enablePerformanceHints, frameRate);
+    }
+
+    long submitRawFrame(long dataPtr, int length, long ptsUs, int frameNumber,
+                        long hostPresentationTimeUs, PyroWaveDisplayClock.Snapshot displayClock,
+                        FrameLatencyStats stats, Context context, boolean enablePerformanceHints, int frameRate) {
+        return submitFrameImpl(null, null, dataPtr, length, ptsUs, frameNumber, hostPresentationTimeUs,
+                displayClock, stats, context, enablePerformanceHints, frameRate);
+    }
+
+    private long submitFrameImpl(byte[] data, ByteBuffer directData, long rawPtr, int length, long ptsUs,
+                                 int frameNumber, long hostPresentationTimeUs,
+                                 PyroWaveDisplayClock.Snapshot displayClock, FrameLatencyStats stats,
+                                 Context context, boolean enablePerformanceHints, int frameRate) {
         synchronized (nativeLock) {
             lastSubmissionDurationNs = 0;
             if (handle == 0) return -1;
-            // setup() runs on the connection thread; submission runs on the actual decode thread.
-            // Track the Java thread identity because native thread IDs can be reused after a restart.
             Thread currentSubmissionThread = Thread.currentThread();
             if (submissionThread != currentSubmissionThread) {
                 if (!setSubmissionThreadPriority(Process.THREAD_PRIORITY_URGENT_DISPLAY) &&
@@ -349,27 +364,42 @@ public final class PyroWaveDecoderRenderer {
             if (performanceHints == null) {
                 performanceHints = new DecoderPerformanceHints(context, enablePerformanceHints, frameRate);
             }
-            // The host clock drives cadence; local ptsUs remains the unique statistics key.
-            // Copy the latest measured display phase before starting the native submission timer.
             long vsyncNs = displayClock.vsyncNs;
             long intervalNs = displayClock.intervalNs;
-            // Frame Warp shifts each picture for the frame the host drew it as
-            if (frameWarp) nativeNoteFrameNumber(handle, frameNumber);
-            long workStartNs = Debug.threadCpuTimeNanos();
+            boolean hintsActive = performanceHints.isActive();
+            long workStartNs = hintsActive ? Debug.threadCpuTimeNanos() : 0;
             long result;
             long submissionStartNs = System.nanoTime();
             try {
-                result = directData != null ?
-                        nativeSubmitDirectFrame(handle, directData, length, ptsUs, hostPresentationTimeUs, vsyncNs, intervalNs) :
-                        nativeSubmitFrame(handle, data, length, ptsUs, hostPresentationTimeUs, vsyncNs, intervalNs);
+                long packed = rawPtr != 0 ?
+                        nativeSubmitRawFrame(handle, rawPtr, length, ptsUs, frameNumber, frameWarp,
+                                hostPresentationTimeUs, vsyncNs, intervalNs) :
+                        directData != null ?
+                        nativeSubmitDirectFrame(handle, directData, length, ptsUs, frameNumber, frameWarp,
+                                hostPresentationTimeUs, vsyncNs, intervalNs) :
+                        nativeSubmitFrame(handle, data, length, ptsUs, frameNumber, frameWarp,
+                                hostPresentationTimeUs, vsyncNs, intervalNs);
+                lastRecordLossPercent = Float.intBitsToFloat((int) (packed >>> 32));
+                result = (int) packed;
             } finally {
-                // Match Moonlight X's wall-clock interval around native parsing, command recording
-                // and submission. Polling and Android performance-hint work are not submission work.
                 lastSubmissionDurationNs = System.nanoTime() - submissionStartNs;
-                performanceHints.reportWorkDuration(earlyWork.take(Debug.threadCpuTimeNanos() - workStartNs), frameRate);
+                if (hintsActive) {
+                    performanceHints.reportWorkDuration(earlyWork.take(Debug.threadCpuTimeNanos() - workStartNs), frameRate);
+                }
             }
-            nativePollRenderedFrames(handle, stats);
+            pollEvents(handle, stats);
             return result;
+        }
+    }
+
+    private void pollEvents(long rendererHandle, FrameLatencyStats stats) {
+        if (stats == null) return;
+        for (;;) {
+            int n = nativePollRenderedFrames(rendererHandle, eventBuf);
+            if (n == 0) break;
+            int count = n < 0 ? -n : n;
+            stats.applyPyroWaveEvents(eventBuf, count, System.nanoTime());
+            if (n > 0) break;
         }
     }
 
@@ -398,7 +428,7 @@ public final class PyroWaveDecoderRenderer {
 
     void pollRenderedFrames(FrameLatencyStats stats) {
         synchronized (nativeLock) {
-            if (handle != 0) nativePollRenderedFrames(handle, stats);
+            if (handle != 0) pollEvents(handle, stats);
         }
     }
 
@@ -449,11 +479,12 @@ public final class PyroWaveDecoderRenderer {
     void submitChunks(byte[] data, int length, boolean first) {
         synchronized (nativeLock) {
             if (handle == 0) return;
-            long workStartNs = Debug.threadCpuTimeNanos();
+            boolean hintsActive = performanceHints != null && performanceHints.isActive();
+            long workStartNs = hintsActive ? Debug.threadCpuTimeNanos() : 0;
             try {
                 nativeSubmitChunks(handle, data, length, first);
             } finally {
-                earlyWork.add(Debug.threadCpuTimeNanos() - workStartNs);
+                if (hintsActive) earlyWork.add(Debug.threadCpuTimeNanos() - workStartNs);
             }
         }
     }
@@ -462,11 +493,26 @@ public final class PyroWaveDecoderRenderer {
     void submitChunksDirect(ByteBuffer data, int length, boolean first) {
         synchronized (nativeLock) {
             if (handle == 0) return;
-            long workStartNs = Debug.threadCpuTimeNanos();
+            boolean hintsActive = performanceHints != null && performanceHints.isActive();
+            long workStartNs = hintsActive ? Debug.threadCpuTimeNanos() : 0;
             try {
                 nativeSubmitChunksDirect(handle, data, length, first);
             } finally {
-                earlyWork.add(Debug.threadCpuTimeNanos() - workStartNs);
+                if (hintsActive) earlyWork.add(Debug.threadCpuTimeNanos() - workStartNs);
+            }
+        }
+    }
+
+    // Raw native pointer fast path for early chunks (zero NewDirectByteBuffer upcall in Rust).
+    void submitChunksRaw(long dataPtr, int length, boolean first) {
+        synchronized (nativeLock) {
+            if (handle == 0) return;
+            boolean hintsActive = performanceHints != null && performanceHints.isActive();
+            long workStartNs = hintsActive ? Debug.threadCpuTimeNanos() : 0;
+            try {
+                nativeSubmitChunksRaw(handle, dataPtr, length, first);
+            } finally {
+                if (hintsActive) earlyWork.add(Debug.threadCpuTimeNanos() - workStartNs);
             }
         }
     }
@@ -523,7 +569,7 @@ public final class PyroWaveDecoderRenderer {
     }
 
     synchronized float getLastRecordLossPercent() {
-        return handle != 0 ? nativeGetLastRecordLossPercent(handle) : 0;
+        return handle != 0 ? lastRecordLossPercent : 0;
     }
 
     void setHdrMode(boolean enabled, byte[] metadata) {
@@ -565,8 +611,13 @@ public final class PyroWaveDecoderRenderer {
         long renderer = handle;
         handle = 0;
         format = 0;
+        lastRecordLossPercent = 0;
         try {
-            if (renderer != 0) nativeDestroy(renderer, stats);
+            if (renderer != 0) {
+                nativeDrain(renderer);
+                if (stats != null) pollEvents(renderer, stats);
+                nativeDestroy(renderer);
+            }
         } finally {
             if (customDriver != null) {
                 GpuDriverStore.endUse(driverContext, customDriver, 0);
@@ -598,21 +649,26 @@ public final class PyroWaveDecoderRenderer {
     private static native int nativeGetUpscalingReason(long handle);
     private static native boolean nativeSetGpuMaxClocks(boolean enabled);
     private static native long nativeSubmitFrame(long handle, byte[] data, int length, long ptsUs,
+                                                int frameNumber, boolean frameWarp,
                                                 long hostPresentationTimeUs, long vsyncNs, long intervalNs);
     private static native long nativeSubmitDirectFrame(long handle, ByteBuffer data, int length, long ptsUs,
+                                                      int frameNumber, boolean frameWarp,
                                                       long hostPresentationTimeUs, long vsyncNs, long intervalNs);
-    private static native boolean nativePollRenderedFrames(long handle, FrameLatencyStats stats);
+    private static native long nativeSubmitRawFrame(long handle, long dataPtr, int length, long ptsUs,
+                                                   int frameNumber, boolean frameWarp,
+                                                   long hostPresentationTimeUs, long vsyncNs, long intervalNs);
+    private static native int nativePollRenderedFrames(long handle, long[] out);
     private static native int nativeGetLastGpuDecodeUs(long handle);
     private static native float[] nativeGetWaits(long handle);
     private static native String nativeGetPresentMode(long handle);
-    private static native float nativeGetLastRecordLossPercent(long handle);
     private static native void nativeSubmitChunks(long handle, byte[] data, int length, boolean first);
     private static native void nativeSubmitChunksDirect(long handle, ByteBuffer data, int length, boolean first);
+    private static native void nativeSubmitChunksRaw(long handle, long dataPtr, int length, boolean first);
     private static native boolean nativeEarlyRecordsAllowed();
     private static native float[] nativeGetEarlyRecords(long handle);
     private static native void nativeSetHdrMode(long handle, boolean enabled, byte[] metadata);
     private static native void nativeSetTransfer(long handle, boolean hlg);
     private static native boolean nativeSetFrameWarp(long handle, long api);
-    private static native void nativeNoteFrameNumber(long handle, int frame);
-    private static native void nativeDestroy(long handle, FrameLatencyStats stats);
+    private static native void nativeDrain(long handle);
+    private static native void nativeDestroy(long handle);
 }

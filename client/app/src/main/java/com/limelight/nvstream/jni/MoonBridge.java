@@ -1,6 +1,8 @@
 package com.limelight.nvstream.jni;
 
 import com.limelight.LimeLog;
+import com.limelight.binding.audio.AndroidAudioRenderer;
+import com.limelight.binding.video.MediaCodecDecoderRenderer;
 import com.limelight.binding.video.PackedFallback;
 import com.limelight.nativeapi.HostEndpoint;
 import com.limelight.nvstream.NvConnectionListener;
@@ -251,34 +253,25 @@ public class MoonBridge {
         if (connectionListener != null) connectionListener.displayMessage(message);
     }
 
-    public static void bridgeDrStart() {
-        if (videoRenderer != null) {
-            videoRenderer.start();
-        }
-    }
+    public static void bridgeDrStart() { if (videoRenderer != null) videoRenderer.start(); }
 
-    public static void bridgeDrStop() {
-        if (videoRenderer != null) {
-            videoRenderer.stop();
-        }
-    }
+    public static void bridgeDrStop() { if (videoRenderer != null) videoRenderer.stop(); }
 
-    public static void bridgeDrCleanup() {
-        if (videoRenderer != null) {
-            videoRenderer.cleanup();
-        }
-    }
+    public static void bridgeDrCleanup() { if (videoRenderer != null) videoRenderer.cleanup(); }
 
     public static void bridgeDrSubmitChunks(byte[] data, int length, boolean first) {
-        if (videoRenderer != null) {
-            videoRenderer.submitChunks(data, length, first);
-        }
+        if (videoRenderer != null) videoRenderer.submitChunks(data, length, first);
     }
 
     // The engine's chunk batch in place; see VideoDecoderRenderer.submitChunksDirect.
     public static void bridgeDrSubmitChunksDirect(ByteBuffer data, int length, boolean first) {
-        if (videoRenderer != null) {
-            videoRenderer.submitChunksDirect(data, length, first);
+        if (videoRenderer != null) videoRenderer.submitChunksDirect(data, length, first);
+    }
+
+    // Raw native pointer fast path for PyroWave chunks (avoids NewDirectByteBuffer upcalls).
+    public static void drSubmitChunksRaw(long dataPtr, int length, boolean first) {
+        if (videoRenderer instanceof MediaCodecDecoderRenderer) {
+            ((MediaCodecDecoderRenderer)videoRenderer).submitChunksRaw(dataPtr, length, first);
         }
     }
 
@@ -286,14 +279,9 @@ public class MoonBridge {
                                                int frameNumber, int frameType, char frameHostProcessingLatency,
                                                long receiveTimeUs, long enqueueTimeUs, long receiveTimeNs,
                                                long presentationTimeUs) {
-        if (videoRenderer != null) {
-            return videoRenderer.submitDecodeUnit(decodeUnitData, decodeUnitLength,
-                    decodeUnitType, frameNumber, frameType, frameHostProcessingLatency, receiveTimeUs, enqueueTimeUs, receiveTimeNs,
-                    presentationTimeUs);
-        }
-        else {
-            return DR_OK;
-        }
+        return videoRenderer == null ? DR_OK : videoRenderer.submitDecodeUnit(decodeUnitData, decodeUnitLength,
+                decodeUnitType, frameNumber, frameType, frameHostProcessingLatency, receiveTimeUs, enqueueTimeUs,
+                receiveTimeNs, presentationTimeUs);
     }
 
     // The engine's picture data in place; see VideoDecoderRenderer.submitDirectDecodeUnit.
@@ -301,62 +289,61 @@ public class MoonBridge {
                                                      int frameNumber, int frameType, char frameHostProcessingLatency,
                                                      long receiveTimeUs, long enqueueTimeUs, long receiveTimeNs,
                                                      long presentationTimeUs) {
-        if (videoRenderer != null) {
-            return videoRenderer.submitDirectDecodeUnit(decodeUnitData, decodeUnitLength,
-                    decodeUnitType, frameNumber, frameType, frameHostProcessingLatency, receiveTimeUs, enqueueTimeUs, receiveTimeNs,
-                    presentationTimeUs);
+        return videoRenderer == null ? DR_OK : videoRenderer.submitDirectDecodeUnit(decodeUnitData, decodeUnitLength,
+                decodeUnitType, frameNumber, frameType, frameHostProcessingLatency, receiveTimeUs, enqueueTimeUs,
+                receiveTimeNs, presentationTimeUs);
+    }
+
+    // Raw native pointer fast path for PyroWave pictures (avoids NewDirectByteBuffer upcalls).
+    public static int drSubmitRawDecodeUnit(long dataPtr, int decodeUnitLength, int decodeUnitType,
+                                            int frameNumber, int frameType, char frameHostProcessingLatency,
+                                            long receiveTimeUs, long enqueueTimeUs, long receiveTimeNs,
+                                            long presentationTimeUs) {
+        if (videoRenderer instanceof MediaCodecDecoderRenderer) {
+            return ((MediaCodecDecoderRenderer)videoRenderer).submitRawDecodeUnit(dataPtr, decodeUnitLength,
+                    decodeUnitType, frameNumber, frameType, frameHostProcessingLatency, receiveTimeUs, enqueueTimeUs,
+                    receiveTimeNs, presentationTimeUs);
         }
-        else {
-            return DR_OK;
-        }
+        return DR_OK;
     }
 
     public static int bridgeArInit(int audioConfiguration, int sampleRate, int samplesPerFrame) {
-        if (audioRenderer != null) {
-            return audioRenderer.setup(new AudioConfiguration(audioConfiguration), sampleRate, samplesPerFrame);
-        }
-        else {
-            return -1;
-        }
+        return audioRenderer == null ? -1 : audioRenderer.setup(new AudioConfiguration(audioConfiguration), sampleRate, samplesPerFrame);
     }
 
-    public static void bridgeArStart() {
-        if (audioRenderer != null) {
-            audioRenderer.start();
-        }
-    }
+    public static void bridgeArStart() { if (audioRenderer != null) audioRenderer.start(); }
 
-    public static void bridgeArStop() {
-        if (audioRenderer != null) {
-            audioRenderer.stop();
-        }
-    }
+    public static void bridgeArStop() { if (audioRenderer != null) audioRenderer.stop(); }
 
-    public static void bridgeArCleanup() {
-        if (audioRenderer != null) {
-            audioRenderer.cleanup();
-        }
-    }
+    public static void bridgeArCleanup() { if (audioRenderer != null) audioRenderer.cleanup(); }
 
     public static void bridgeArPlaySample(short[] pcmData, int length) {
-        if (audioRenderer != null) {
+        if (audioRenderer != null) audioRenderer.playDecodedAudio(pcmData, length);
+    }
+
+    // Direct native-memory stereo AAudio fast path (zero short[] copy, zero getPendingAudioDuration JNI).
+    public static int arPlaySampleDirect(long pcmPtr, int length, int pendingMs) {
+        if (audioRenderer instanceof AndroidAudioRenderer) {
+            return ((AndroidAudioRenderer)audioRenderer).playDecodedAudioDirect(pcmPtr, length, pendingMs);
+        }
+        return -1;
+    }
+
+    // Fallback short[] path with pending audio duration forwarded from Rust (zero getPendingAudioDuration JNI).
+    public static void arPlaySamplePending(short[] pcmData, int length, int pendingMs) {
+        if (audioRenderer instanceof AndroidAudioRenderer) {
+            ((AndroidAudioRenderer)audioRenderer).playDecodedAudio(pcmData, length, pendingMs);
+        } else if (audioRenderer != null) {
             audioRenderer.playDecodedAudio(pcmData, length);
         }
     }
 
     public static int bridgeArInitEncoded(int audioConfiguration, int codec) {
-        if (audioRenderer != null) {
-            return audioRenderer.setupEncoded(new AudioConfiguration(audioConfiguration), codec);
-        }
-        else {
-            return -1;
-        }
+        return audioRenderer == null ? -1 : audioRenderer.setupEncoded(new AudioConfiguration(audioConfiguration), codec);
     }
 
     public static void bridgeArPlayEncoded(byte[] frame, int length) {
-        if (audioRenderer != null) {
-            audioRenderer.playEncodedAudio(frame, length);
-        }
+        if (audioRenderer != null) audioRenderer.playEncodedAudio(frame, length);
     }
 
     public static void bridgeClStageStarting(int stage) {

@@ -927,7 +927,7 @@ VulkanRenderer::~VulkanRenderer() {
     std::deque<FramePtr> pending;
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        closing_ = true;
+        closing_.store(true, std::memory_order_release);
         pending.swap(pending_);
         trace_.close();
         traceRecording_ = false;
@@ -1119,6 +1119,7 @@ void VulkanRenderer::setHdrMode(bool enabled, const uint8_t* metadata, size_t me
         std::lock_guard<std::mutex> lock(mutex_);
         hdrEnabled_ = enabled;
         hdrMetadata_ = parsed;
+        contentPeakNits_.store(parsed.contentPeakNits, std::memory_order_relaxed);
         hdrChanged_ = true;
     }
     wake(kWakeHdr);
@@ -1222,16 +1223,13 @@ void VulkanRenderer::onImageAvailable() {
         prioritized = true;
         raiseThreadPriority("image reader");
     }
-    if (imageReaderTid_.exchange(gettid()) != gettid()) {
+    static thread_local const pid_t tid = gettid();
+    if (imageReaderTid_.load(std::memory_order_relaxed) != tid && imageReaderTid_.exchange(tid) != tid) {
         perfHint_.addThread();
     }
+    bool presentDirect = false;
     for (;;) {
-        {
-            std::lock_guard<std::mutex> lock(mutex_);
-            if (closing_) {
-                return;
-            }
-        }
+        if (closing_.load(std::memory_order_acquire)) return;
 
         // The image comes with a fence for the decoder finishing writing it, which we wait on
         // here. AImageReader_acquireNextImage() waits on it itself, but holding the reader's
@@ -1248,7 +1246,7 @@ void VulkanRenderer::onImageAvailable() {
             if (status == AMEDIA_IMGREADER_MAX_IMAGES_ACQUIRED) {
                 ALOGW("All reader images are held");
             }
-            return;
+            break;
         }
         // Presenting on arrival with the GPU wait, the frame goes on with its fence and the GPU
         // waits for it (waitForDecoder()), so its draw is recorded and queued while the decoder
@@ -1287,19 +1285,24 @@ void VulkanRenderer::onImageAvailable() {
             frame->crop = {0, 0, 0, 0};
         }
 
-        enqueueFrame(std::move(frame));
+        if (enqueueFrame(std::move(frame))) {
+            presentDirect = true;
+        }
+    }
+    if (presentDirect) {
+        // Direct on-arrival present after draining back-to-back images (avoids 1-3+ ms eventfd wakeup).
+        std::lock_guard<std::mutex> renderLock(renderMutex_);
+        if (!renderStopped_) presentNewest();
     }
 }
 
-void VulkanRenderer::enqueueFrame(FramePtr frame) {
+bool VulkanRenderer::enqueueFrame(FramePtr frame) {
     noteDecoded(*frame);
 
     std::deque<FramePtr> dropped;
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        if (closing_) {
-            return;
-        }
+        if (closing_.load(std::memory_order_acquire)) return false;
         pacer_.onFrameArrived(frame->timing);
         trace_.frame(frame->timing, pending_.size() + 1, queueOverflowDrops_);
         pending_.push_back(std::move(frame));
@@ -1310,22 +1313,16 @@ void VulkanRenderer::enqueueFrame(FramePtr frame) {
         }
     }
 
+    bool presentDirect = false;
     if (presentAhead_ && !presentOnArrival_) {
-        // Presented from this thread rather than waking the render thread for it: on a
-        // Pixel 10 Pro, the render thread took 1 ms to wake at the median and over 3 ms one
-        // time in ten, time the compositor then didn't have
         std::lock_guard<std::mutex> renderLock(renderMutex_);
-        if (!renderStopped_) {
-            presentAhead();
-        }
+        if (!renderStopped_) presentAhead();
+    } else if (presentOnArrival_) {
+        if (!frontBufferAligned_) presentDirect = true;
+        else wake(kWakeFrame);
     }
-    else if (presentOnArrival_) {
-        wake(kWakeFrame);
-    }
-    if (vsyncParked_.load()) {
-        wake(kWakeVsync);
-    }
-    // Frames in `dropped` are released here, outside the lock
+    if (vsyncParked_.load(std::memory_order_relaxed)) wake(kWakeVsync);
+    return presentDirect;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1786,9 +1783,8 @@ void VulkanRenderer::presentAhead() {
             // Replacing the last frame presented ahead at the same vsync: the compositor won't
             // show that one, by design
             if (lastAheadPresentId_ != 0 && showVsyncNs <= lastAheadVsyncNs_ + pacer_.vsyncPeriodNs() / 2) {
-                auto previous = pendingPresents_.find(lastAheadPresentId_);
-                if (previous != pendingPresents_.end()) {
-                    previous->second.replaced = true;
+                if (PendingPresent* previous = pendingPresents_.find(lastAheadPresentId_)) {
+                    previous->replaced = true;
                 }
             }
             lastAheadPresentId_ = presentId;
@@ -2003,11 +1999,7 @@ bool VulkanRenderer::renderFrame(const FramePtr& frame, uint64_t presentId, int6
     else if (config_.ditherMode == 2) {
         ditherAmplitude = 1.0f / 255.0f;
     }
-    float contentPeakNits;
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        contentPeakNits = hdrMetadata_.contentPeakNits;
-    }
+    const float contentPeakNits = contentPeakNits_.load(std::memory_order_relaxed);
     pc.params[0] = ditherAmplitude;
     pc.params[1] = static_cast<float>(frameCounter_ % 64);
     const bool hlg = config_.hdrTransfer == kHdrTransferHlg;
@@ -2206,24 +2198,24 @@ bool VulkanRenderer::renderFrame(const FramePtr& frame, uint64_t presentId, int6
         present.pNext = &presentTimes;
 
         // Slack from commit (render wait can take ms on Pixel 10 Pro and skew the learned guard).
-        PendingPresent& pending = pendingPresents_[presentId];
-        pending = {plan.hwVsyncNs, presentScheduler_.delayVsyncs(), ahead,
-                   ahead ? rawVsyncNs - (commitNs != 0 ? commitNs : nowNs()) : 0, rawVsyncNs};
-        pending.onArrival = onArrival;
+        PendingPresent entry {plan.hwVsyncNs, presentScheduler_.delayVsyncs(), ahead,
+                              ahead ? rawVsyncNs - (commitNs != 0 ? commitNs : nowNs()) : 0, rawVsyncNs};
+        entry.onArrival = onArrival;
         taggedPresentId = presentId;
         if (!frame->presentCounted) {
             countedAtTag = true;
             // Counted when the present is reported, at the time it reached the screen
-            pending.originNs = frame->originNs;
-            pending.originSynced = frame->originSynced;
-            pending.hostPtsNs = frame->timing.hostPtsNs;
+            entry.originNs = frame->originNs;
+            entry.originSynced = frame->originSynced;
+            entry.hostPtsNs = frame->timing.hostPtsNs;
             frame->presentCounted = true;
         }
+        pendingPresents_.put(presentId, entry);
         if (pendingPresents_.size() > 256) {
             // Reports lost across a swapchain rebuild never arrive
-            while (!pendingPresents_.empty() && pendingPresents_.begin()->first + 128 < presentId) {
-                reportPresent(pendingPresents_.begin()->second.hostPtsNs, 0, 0);
-                pendingPresents_.erase(pendingPresents_.begin());
+            while (!pendingPresents_.empty() && pendingPresents_.front().key + 128 < presentId) {
+                reportPresent(pendingPresents_.front().value.hostPtsNs, 0, 0);
+                pendingPresents_.popFront();
             }
         }
     }
@@ -2234,9 +2226,11 @@ bool VulkanRenderer::renderFrame(const FramePtr& frame, uint64_t presentId, int6
         presentCallNs = nowNs();
         result = vk_.vkQueuePresentKHR(queue_, &present);
     }
+    const int64_t afterPresentNs = nowNs();
     // The render's CPU time for the performance hint session, without waiting for the GPU or a
     // swapchain image
-    perfHint_.reportWork(nowNs() - startNs - (acquiredNs - releasedNs) - (fenceWaited ? fencedNs - fenceWaitNs : 0));
+    perfHint_.reportWork(afterPresentNs - startNs - (acquiredNs - releasedNs) -
+                         (fenceWaited ? fencedNs - fenceWaitNs : 0));
 
     const bool shown = result == VK_SUCCESS || result == VK_SUBOPTIMAL_KHR;
     if (warpApi_ && shown) {
@@ -2254,37 +2248,35 @@ bool VulkanRenderer::renderFrame(const FramePtr& frame, uint64_t presentId, int6
     if (!shown && countedAtTag) {
         // Nothing was queued, so no report will come for the tag: the frame is counted when a
         // later present of it is
-        PendingPresent& failed = pendingPresents_[taggedPresentId];
-        failed.originNs = 0;
-        failed.hostPtsNs = 0;
+        if (PendingPresent* failed = pendingPresents_.find(taggedPresentId)) {
+            failed->originNs = 0;
+            failed->hostPtsNs = 0;
+        }
         frame->presentCounted = false;
     }
     if (shown && countedAtTag) {
-        pendingPresents_[taggedPresentId].queuedNs = presentCallNs;
+        if (PendingPresent* p = pendingPresents_.find(taggedPresentId)) {
+            p->queuedNs = presentCallNs;
+        }
     }
     if (shown && !frame->presentQueued) {
         frame->presentQueued = true;
         if (!frame->presentCounted) {
-            // Not tagged for a report of when it reached the screen (a front buffer, or a period
-            // not yet known): until the present was queued. A frame drawn again (across a
-            // swapchain rebuild) is only counted the first time.
             frame->presentCounted = true;
-            const int64_t queuedNs = nowNs();
             if (frame->originNs != 0) {
                 std::lock_guard<std::mutex> lock(latencyMutex_);
-                countLatency(captureLatency_.presented, queuedNs - frame->originNs, frame->originSynced);
+                countLatency(captureLatency_.presented, afterPresentNs - frame->originNs, frame->originSynced);
             }
             reportPresent(frame->timing.hostPtsNs, presentCallNs, kNoScanout);
         }
     }
-    if (presentId != 0) {
-        const int64_t queuedNs = nowNs();
+    if (presentId != 0 && traceRecording_.load(std::memory_order_relaxed)) {
         std::lock_guard<std::mutex> lock(mutex_);
-        trace_.rendered(presentId, startNs, fencedNs, acquiredNs, queuedNs, imageIndex, fenceWaited, releasedNs);
+        trace_.rendered(presentId, startNs, fencedNs, acquiredNs, afterPresentNs, imageIndex, fenceWaited, releasedNs);
     }
 
     slotFrames_[slot] = frame;
-    lastPresentNs_ = nowNs();
+    lastPresentNs_ = afterPresentNs;
     if (frame != current_) {
         lastNewFrameNs_ = lastPresentNs_;
     }
@@ -2295,7 +2287,9 @@ bool VulkanRenderer::renderFrame(const FramePtr& frame, uint64_t presentId, int6
     if (result == VK_ERROR_OUT_OF_DATE_KHR) {
         swapchainDirty_ = true;
     }
-    else if (result == VK_SUBOPTIMAL_KHR) {
+    else if (result == VK_SUBOPTIMAL_KHR &&
+             afterPresentNs - lastSuboptimalCheckNs_ >= kSuboptimalCheckIntervalNs) {
+        lastSuboptimalCheckNs_ = afterPresentNs;
         // Android reports suboptimal when the display's rotation no longer matches our
         // pre-rotation. A new rotation or size needs a new swapchain.
         VkSurfaceCapabilitiesKHR caps;
@@ -2309,7 +2303,7 @@ bool VulkanRenderer::renderFrame(const FramePtr& frame, uint64_t presentId, int6
             }
         }
     }
-    else if (result != VK_SUCCESS) {
+    else if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) {
         ALOGE("vkQueuePresentKHR failed: %d", result);
         swapchainDirty_ = true;
         noteFailure("presenting a frame", result, kFatalFailures);
@@ -2340,23 +2334,24 @@ void VulkanRenderer::collectPresentTimings() {
         const VkPastPresentationTimingGOOGLE& t = timings[i];
 
         // Reports come in present order, so earlier presents still without one were dropped
-        for (auto it = pendingPresents_.begin(); it != pendingPresents_.end() && it->first < t.presentID;) {
-            if (!it->second.replaced && !it->second.onArrival) {
-                presentScheduler_.onMissed(it->second.ahead, it->second.slackNs, it->second.vsyncNs,
-                                           it->second.delayVsyncs, currentPeriodNs_, presentsAhead());
+        while (!pendingPresents_.empty() && pendingPresents_.front().key < t.presentID) {
+            const PendingPresent& missed = pendingPresents_.front().value;
+            if (!missed.replaced && !missed.onArrival) {
+                presentScheduler_.onMissed(missed.ahead, missed.slackNs, missed.vsyncNs,
+                                           missed.delayVsyncs, currentPeriodNs_, presentsAhead());
             }
-            reportPresent(it->second.hostPtsNs, 0, 0);
-            it = pendingPresents_.erase(it);
+            reportPresent(missed.hostPtsNs, 0, 0);
+            pendingPresents_.popFront();
         }
 
-        auto pending = pendingPresents_.find(t.presentID);
-        if (pending != pendingPresents_.end() && !pending->second.onArrival && t.actualPresentTime > 0) {
-            presentScheduler_.observeHardwareVsync(pending->second.rawVsyncNs,
+        PendingPresent* pending = pendingPresents_.find(t.presentID);
+        if (pending != nullptr && !pending->onArrival && t.actualPresentTime > 0) {
+            presentScheduler_.observeHardwareVsync(pending->rawVsyncNs,
                                                    static_cast<int64_t>(t.actualPresentTime), currentPeriodNs_);
         }
-        if (pending != pendingPresents_.end() && pending->second.ahead && !pending->second.replaced) {
-            presentScheduler_.onAheadOutcome(pending->second.slackNs, pending->second.vsyncNs,
-                                             pending->second.delayVsyncs, true,
+        if (pending != nullptr && pending->ahead && !pending->replaced) {
+            presentScheduler_.onAheadOutcome(pending->slackNs, pending->vsyncNs,
+                                             pending->delayVsyncs, true,
                                              static_cast<int64_t>(t.actualPresentTime),
                                              static_cast<int64_t>(t.earliestPresentTime),
                                              static_cast<int64_t>(t.presentMargin), currentPeriodNs_);
@@ -2366,31 +2361,31 @@ void VulkanRenderer::collectPresentTimings() {
         // and so was presented at its vsync or with less time than the guard, may miss; that
         // frame is late on screen whatever the delay, and it shouldn't raise the delay for all
         // the others.
-        const bool counts = pending != pendingPresents_.end() && !pending->second.onArrival &&
-                (!presentsAhead() || (pending->second.ahead && pending->second.slackNs >= presentScheduler_.guardNs()));
+        const bool counts = pending != nullptr && !pending->onArrival &&
+                (!presentsAhead() || (pending->ahead && pending->slackNs >= presentScheduler_.guardNs()));
         if (counts) {
-            presentScheduler_.onPresented(pending->second.vsyncNs, pending->second.delayVsyncs, currentPeriodNs_,
+            presentScheduler_.onPresented(pending->vsyncNs, pending->delayVsyncs, currentPeriodNs_,
                                           static_cast<int64_t>(t.actualPresentTime),
                                           static_cast<int64_t>(t.earliestPresentTime),
                                           static_cast<int64_t>(t.presentMargin),
-                                          pending->second.ahead ? pending->second.slackNs : -1);
+                                          pending->ahead ? pending->slackNs : -1);
         }
-        if (pending != pendingPresents_.end()) {
+        if (pending != nullptr) {
             // A frame replaced at its vsync never reached the screen
-            if (!pending->second.replaced) {
-                if (pending->second.originNs != 0) {
+            if (!pending->replaced) {
+                if (pending->originNs != 0) {
                     std::lock_guard<std::mutex> lock(latencyMutex_);
                     countLatency(captureLatency_.presented,
-                                 static_cast<int64_t>(t.actualPresentTime) - pending->second.originNs,
-                                 pending->second.originSynced);
+                                 static_cast<int64_t>(t.actualPresentTime) - pending->originNs,
+                                 pending->originSynced);
                 }
-                reportPresent(pending->second.hostPtsNs, pending->second.queuedNs,
+                reportPresent(pending->hostPtsNs, pending->queuedNs,
                               static_cast<int64_t>(t.actualPresentTime));
             }
             else {
-                reportPresent(pending->second.hostPtsNs, 0, 0);
+                reportPresent(pending->hostPtsNs, 0, 0);
             }
-            pendingPresents_.erase(pending);
+            pendingPresents_.erase(t.presentID);
         }
     }
 
@@ -2430,10 +2425,7 @@ void VulkanRenderer::noteReceived(int64_t hostPtsNs, int64_t receiveNs, int64_t 
         }
         if (origin.ns != 0) {
             std::lock_guard<std::mutex> lock(latencyMutex_);
-            origins_[hostPtsNs] = origin;
-            while (origins_.size() > 64) {
-                origins_.erase(origins_.begin());
-            }
+            origins_.put(hostPtsNs, origin);
         }
     }
 
@@ -2466,15 +2458,12 @@ void VulkanRenderer::noteDecoded(VideoFrame& frame) {
     }
     frame.hdr10Plus = hdr10PlusDecoded_;
 
-    auto it = origins_.find(frame.timing.hostPtsNs);
-    if (it == origins_.end()) {
+    FrameOrigin found {};
+    if (!origins_.popThrough(frame.timing.hostPtsNs, &found)) {
         return;
     }
-    frame.originNs = it->second.ns;
-    frame.originSynced = it->second.synced;
-
-    // Frames are decoded in order, so any still waiting before this one never will be
-    origins_.erase(origins_.begin(), std::next(it));
+    frame.originNs = found.ns;
+    frame.originSynced = found.synced;
     countLatency(captureLatency_.decoded, frame.timing.arrivalNs - frame.originNs, frame.originSynced);
 }
 
@@ -2528,6 +2517,7 @@ bool VulkanRenderer::createSwapchain() {
     // Only a window found empty below keeps failures from counting; any other failure does
     const bool wasEmpty = outputWindowEmpty_;
     outputWindowEmpty_ = false;
+    lastSuboptimalCheckNs_ = 0;
     VkSurfaceCapabilitiesKHR caps;
     if (vk_.vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physicalDevice_, surface_, &caps) != VK_SUCCESS) {
         return false;

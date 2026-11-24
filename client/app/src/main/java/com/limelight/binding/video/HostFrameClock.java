@@ -250,7 +250,13 @@ final class HostFrameClock {
     boolean presentOnGrid(long codecPtsUs, long readyNs, long anchorNs, long intervalNs, long leadNs,
             long slackNs, GridPlan out) {
         if (!scheduling || intervalNs <= 0) return false;
-        long host = hostUsFor(codecPtsUs);
+        return presentOnGridForHost(hostUsFor(codecPtsUs), readyNs, anchorNs, intervalNs, leadNs, slackNs, out);
+    }
+
+    /** Same as {@link #presentOnGrid} when the caller already looked up {@code hostUs} for the frame. */
+    boolean presentOnGridForHost(long host, long readyNs, long anchorNs, long intervalNs, long leadNs,
+            long slackNs, GridPlan out) {
+        if (!scheduling || intervalNs <= 0) return false;
         if (host < 0 || !bridge.scheduleOnGrid(host, readyNs, anchorNs, intervalNs, leadNs, slackNs, grid)) {
             return false;
         }

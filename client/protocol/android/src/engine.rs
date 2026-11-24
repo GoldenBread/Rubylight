@@ -10,7 +10,10 @@ use nightjar_core::control::clipboard_sync::{ClipboardItem, ClipboardSync, Local
 use nightjar_core::control::ClientMessage;
 use nightjar_core::rtsp::MicrophoneState;
 use nightjar_core::sdp::{self, StreamConfig};
-use nightjar_core::session::{HostInfo, Interrupt, NetworkChange, NetworkHint, Session, SessionConfig, VideoGauges};
+use nightjar_core::session::{
+    AudioGauges, HostInfo, Interrupt, NetworkChange, NetworkHint, Session, SessionConfig,
+    VideoGauges,
+};
 use rubylight_protocol::clipboard_sync::{Frame, CLIPBOARD_SYNC_MESSAGE_TYPE};
 use rubylight_protocol::control::ClockSyncReply;
 use rubylight_protocol::present_clock::{Grid, GridSchedule, PresentClock, Schedule, Settings};
@@ -62,6 +65,8 @@ struct Engine {
     /// receive thread under the receiver's lock, so it must not take `session` (another thread
     /// may hold it while it waits for that lock). Never held across another lock.
     video_gauges: Mutex<Option<VideoGauges>>,
+    /// Lock-free audio backlog gauge, mirrored with `video_gauges` so per-packet queries skip `session`.
+    audio_gauges: Mutex<Option<AudioGauges>>,
     /// The control message types the host announced, set by the handshake before the video
     /// renderer starts. The session is stored only after every stage ran, and the renderer's
     /// `start` already asks what the host supports (to run the clock sync for the timing CSV).
@@ -89,6 +94,7 @@ static ENGINE: LazyLock<Engine> = LazyLock::new(|| Engine {
     microphone_state: AtomicI32::new(MIC_STATE_OFF),
     present_clock: Mutex::new(None),
     video_gauges: Mutex::new(None),
+    audio_gauges: Mutex::new(None),
     host_messages: Mutex::new(Vec::new()),
     phase_lock_supported: AtomicBool::new(false),
     host_packed444_modes: AtomicI32::new(-1),
@@ -194,9 +200,7 @@ pub fn start(bridge: &'static Bridge, params: StartParams) -> i32 {
     *lock(&ENGINE.phase_lock) = PhaseLockReports::default();
     ENGINE.phase_lock_lead_us.store(i32::MIN, Ordering::SeqCst);
     *lock(&ENGINE.microphone) = None;
-    ENGINE
-        .microphone_state
-        .store(MIC_STATE_OFF, Ordering::SeqCst);
+    ENGINE.microphone_state.store(MIC_STATE_OFF, Ordering::SeqCst);
     let interrupt = Interrupt::default();
     *lock(&ENGINE.interrupt) = interrupt.clone();
     set_host_messages(&[]);
@@ -283,13 +287,12 @@ pub fn start(bridge: &'static Bridge, params: StartParams) -> i32 {
         }
         MicrophoneState::On => MIC_STATE_UNAVAILABLE,
     };
-    ENGINE
-        .microphone_state
-        .store(microphone_state, Ordering::SeqCst);
+    ENGINE.microphone_state.store(microphone_state, Ordering::SeqCst);
     // Before the session is published: no controller arrives before the queue knows.
     session.input(|q| q.set_controller_identity(controller_identity));
     let id = ENGINE.sessions.fetch_add(1, Ordering::SeqCst) + 1;
     *lock(&ENGINE.video_gauges) = session.video_gauges();
+    *lock(&ENGINE.audio_gauges) = Some(session.audio_gauges());
     *lock(&ENGINE.session) = Some((id, session));
     crate::frame_warp::after_start();
     if events.started.load(Ordering::SeqCst) {
@@ -302,6 +305,7 @@ pub fn start(bridge: &'static Bridge, params: StartParams) -> i32 {
 pub fn stop() {
     let session = lock(&ENGINE.session).take();
     *lock(&ENGINE.video_gauges) = None;
+    *lock(&ENGINE.audio_gauges) = None;
     *lock(&ENGINE.clipboard) = None;
     set_host_messages(&[]);
     crate::frame_warp::end();
@@ -313,9 +317,7 @@ pub fn stop() {
             microphone.sent, microphone.errors
         ));
     }
-    ENGINE
-        .microphone_state
-        .store(MIC_STATE_OFF, Ordering::SeqCst);
+    ENGINE.microphone_state.store(MIC_STATE_OFF, Ordering::SeqCst);
     // Detaches what is attached here; the host detaches its side as the stream ends.
     if let Some((id, session)) = session {
         crate::usb::end(id);
@@ -345,9 +347,7 @@ pub fn announce_host_packed444_modes(modes: u8) {
     if lock(&ENGINE.interrupt).is_interrupted() {
         return;
     }
-    ENGINE
-        .host_packed444_modes
-        .store(i32::from(modes), Ordering::SeqCst);
+    ENGINE.host_packed444_modes.store(i32::from(modes), Ordering::SeqCst);
 }
 
 /// `MoonBridge.getHostPacked444Modes`: what this stream's DESCRIBE offered, -1 before it.
@@ -360,9 +360,7 @@ pub fn announce_hdr_format(format: u8) {
     if lock(&ENGINE.interrupt).is_interrupted() {
         return;
     }
-    ENGINE
-        .announced_hdr_format
-        .store(i32::from(format), Ordering::SeqCst);
+    ENGINE.announced_hdr_format.store(i32::from(format), Ordering::SeqCst);
 }
 
 /// `MoonBridge.getAnnouncedHdrFormat`: the HDR format this stream's ANNOUNCE asked for, 0 for
@@ -394,9 +392,7 @@ pub fn report_frame_slack(slack_ns: i64, period_ns: i64) -> bool {
     let mut reports = lock(&ENGINE.phase_lock);
     let ready = reports.push(slack_ns, period_ns, now_ms());
     if ready {
-        ENGINE
-            .phase_lock_lead_us
-            .store(reports.lead_us(), Ordering::SeqCst);
+        ENGINE.phase_lock_lead_us.store(reports.lead_us(), Ordering::SeqCst);
     }
     ready
 }
@@ -483,8 +479,13 @@ pub fn present_clock_reset() {
 /// Frames still waiting in the decode queue. One that stays non-empty means the frame being
 /// scheduled is late by the decoder's backlog, so it is shown at once and its lateness is not
 /// learnt (`PresentClock::schedule_queued`, nightjar#80).
-fn decode_queue_len() -> usize {
+pub fn decode_queue_len() -> usize {
     video_gauges(0, |g| g.decode_queue_len())
+}
+
+/// Milliseconds of audio queued for the renderer, read without taking `ENGINE.session`.
+pub fn pending_audio_ms() -> u32 {
+    lock(&ENGINE.audio_gauges).as_ref().map_or(0, |g| g.pending_audio_ms())
 }
 
 /// Frames dropped over a full decode queue since the stream started (`VideoStats::decoder_drops`);
@@ -517,10 +518,7 @@ pub fn present_clock_observe(rtp: u32) {
 
 /// The content rate in millihertz, 0 until it held steady for two seconds or without a clock.
 pub fn present_clock_content_rate() -> u32 {
-    lock(&ENGINE.present_clock)
-        .as_ref()
-        .and_then(|clock| clock.content_rate_mhz())
-        .unwrap_or(0)
+    lock(&ENGINE.present_clock).as_ref().and_then(|c| c.content_rate_mhz()).unwrap_or(0)
 }
 
 /// Frames scheduled, frames late, clock sync round trip (-1 without).
@@ -748,11 +746,11 @@ mod tests {
         let held = lock(&ENGINE.session);
         let (done, finished) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
-            let _ = done.send((decoder_drops(), decode_queue_len()));
+            let _ = done.send((decoder_drops(), decode_queue_len(), pending_audio_ms()));
         });
         let read = finished.recv_timeout(std::time::Duration::from_secs(5));
         drop(held);
-        assert_eq!(read, Ok((0, 0)), "the reads waited for the session lock");
+        assert_eq!(read, Ok((0, 0, 0)), "the reads waited for the session lock");
     }
 
     #[test]

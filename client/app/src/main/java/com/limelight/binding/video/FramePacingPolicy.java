@@ -244,11 +244,21 @@ public final class FramePacingPolicy {
      * Returns {anchor, period}. The desktop's nightjar_policy::vsync::report_refreshes is the same rule.
      */
     static long[] heldReportGrid(long vsyncNs, long intervalNs, long anchorNs, int refreshes) {
+        long[] out = new long[2];
+        heldReportGrid(vsyncNs, intervalNs, anchorNs, refreshes, out);
+        return out;
+    }
+
+    /** Zero-allocation {@link #heldReportGrid(long, long, long, int)} writing {anchor, period} into {@code out}. */
+    static void heldReportGrid(long vsyncNs, long intervalNs, long anchorNs, int refreshes, long[] out) {
         if (refreshes <= 1 || anchorNs == 0 || intervalNs <= 0 || refreshes * intervalNs > MAX_REPORT_PERIOD_NS) {
-            return new long[] {vsyncNs, intervalNs};
+            out[0] = vsyncNs;
+            out[1] = intervalNs;
+            return;
         }
         long periodNs = intervalNs * refreshes;
-        return new long[] {anchorNs - 4 * periodNs, periodNs};
+        out[0] = anchorNs - 4 * periodNs;
+        out[1] = periodNs;
     }
 
     static boolean hasOutputDrainTimeRemaining(long elapsedNs, int fpsMilliHz) {

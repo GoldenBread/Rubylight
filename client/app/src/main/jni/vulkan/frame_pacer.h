@@ -49,6 +49,131 @@ enum class JitterBuffer : int {
 // network and decode delay, and its variation is the jitter we have to buffer for. Showing a
 // frame at hostPts + offset, where offset covers nearly all observed transit times, recreates
 // the host's cadence with a constant delay.
+// Incremental O(log N) sliding-window order statistic backed by two flat heaps with lazy
+// deletion and an O(1) global value shift. Zero per-frame heap allocations after warm-up.
+class SlidingQuantile {
+public:
+    void clear() {
+        low_.clear();
+        high_.clear();
+        side_.clear();
+        lowLive_ = 0;
+        highLive_ = 0;
+        minActiveId_ = 0;
+        nextId_ = 0;
+        valueShift_ = 0;
+    }
+
+    void shift(int64_t deltaNs) { valueShift_ += deltaNs; }
+
+    size_t size() const { return lowLive_ + highLive_; }
+
+    void push(int64_t value) {
+        const int64_t stored = value - valueShift_;
+        const uint64_t id = nextId_++;
+        pruneHigh();
+        if (highLive_ > 0 && stored >= high_.front().val) {
+            high_.push_back({stored, id});
+            std::push_heap(high_.begin(), high_.end(), MinCmp{});
+            highLive_++;
+            side_.push_back(1);
+        }
+        else {
+            low_.push_back({stored, id});
+            std::push_heap(low_.begin(), low_.end(), MaxCmp{});
+            lowLive_++;
+            side_.push_back(0);
+        }
+    }
+
+    void popOldest() {
+        if (side_.empty()) return;
+        if (side_.front()) {
+            highLive_--;
+        }
+        else {
+            lowLive_--;
+        }
+        side_.pop_front();
+        minActiveId_++;
+        maybeCompact();
+    }
+
+    // Returns the k-th smallest live element (0-indexed), bit-exact with std::nth_element.
+    int64_t kth(size_t k) {
+        const size_t targetLow = k + 1;
+        while (lowLive_ > targetLow) {
+            pruneLow();
+            const Item item = low_.front();
+            std::pop_heap(low_.begin(), low_.end(), MaxCmp{});
+            low_.pop_back();
+            lowLive_--;
+            side_[static_cast<size_t>(item.id - minActiveId_)] = 1;
+            high_.push_back(item);
+            std::push_heap(high_.begin(), high_.end(), MinCmp{});
+            highLive_++;
+        }
+        while (lowLive_ < targetLow) {
+            pruneHigh();
+            const Item item = high_.front();
+            std::pop_heap(high_.begin(), high_.end(), MinCmp{});
+            high_.pop_back();
+            highLive_--;
+            side_[static_cast<size_t>(item.id - minActiveId_)] = 0;
+            low_.push_back(item);
+            std::push_heap(low_.begin(), low_.end(), MaxCmp{});
+            lowLive_++;
+        }
+        pruneLow();
+        return low_.front().val + valueShift_;
+    }
+
+private:
+    struct Item {
+        int64_t val;
+        uint64_t id;
+    };
+    struct MaxCmp {
+        bool operator()(const Item& a, const Item& b) const { return a.val < b.val; }
+    };
+    struct MinCmp {
+        bool operator()(const Item& a, const Item& b) const { return a.val > b.val; }
+    };
+
+    void pruneLow() {
+        while (!low_.empty() && low_.front().id < minActiveId_) {
+            std::pop_heap(low_.begin(), low_.end(), MaxCmp{});
+            low_.pop_back();
+        }
+    }
+
+    void pruneHigh() {
+        while (!high_.empty() && high_.front().id < minActiveId_) {
+            std::pop_heap(high_.begin(), high_.end(), MinCmp{});
+            high_.pop_back();
+        }
+    }
+
+    void maybeCompact() {
+        const size_t live = lowLive_ + highLive_;
+        if (low_.size() + high_.size() <= live * 4 + 256) return;
+        auto keep = [this](const Item& item) { return item.id < minActiveId_; };
+        low_.erase(std::remove_if(low_.begin(), low_.end(), keep), low_.end());
+        high_.erase(std::remove_if(high_.begin(), high_.end(), keep), high_.end());
+        std::make_heap(low_.begin(), low_.end(), MaxCmp{});
+        std::make_heap(high_.begin(), high_.end(), MinCmp{});
+    }
+
+    std::vector<Item> low_;
+    std::vector<Item> high_;
+    std::deque<uint8_t> side_;
+    size_t lowLive_ = 0;
+    size_t highLive_ = 0;
+    uint64_t minActiveId_ = 0;
+    uint64_t nextId_ = 0;
+    int64_t valueShift_ = 0;
+};
+
 class HostTimeline {
 public:
     explicit HostTimeline(JitterBuffer jitterBuffer);
@@ -138,7 +263,7 @@ private:
 
     std::deque<Sample> window_;
     std::deque<Sample> minQueue_;  // Increasing transit times, for the window minimum
-    std::vector<int64_t> scratch_;
+    SlidingQuantile quantile_;
     int64_t offsetNs_ = 0;
     int64_t lastPtsNs_ = 0;
     bool started_ = false;
@@ -286,9 +411,11 @@ private:
     void updateSlot(const FrameTiming& frame);
     struct PhaseFit {
         double interval = 0;  // The game's frame interval
+        double low = 0;       // The earliest sample against the line
         double latest = 0;    // The latest sample against the line
         double spread = 0;    // From the earliest sample against it to the latest
     };
+    static constexpr size_t kRefitEveryFrames = 8;
     bool fitPhase(size_t from, PhaseFit* out) const;
     void updatePhase(FrameTiming& frame);
     void scheduleFrom(FrameTiming& frame, int64_t measuredPtsNs, bool onLine, int64_t scheduledPtsNs);
@@ -360,6 +487,11 @@ private:
     };
     std::deque<PhaseSample> phaseSamples_;
     int64_t frameIndex_ = 0;
+    PhaseFit cachedFit_;
+    int64_t cachedFitAnchorIndex_ = 0;
+    int64_t cachedFitAnchorPtsNs_ = 0;
+    size_t phaseFramesSinceFit_ = 0;
+    bool hasCachedFit_ = false;
 
     // Recent ready costs (addReadyCost())
     std::deque<int64_t> readyCosts_;

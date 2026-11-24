@@ -3345,6 +3345,8 @@ namespace {
         std::vector<jlong> completedBatch;
         std::vector<jlong> renderedBatch;
         std::vector<jlong> releasedBatch;
+        std::vector<jlong> packedEvents;
+        size_t packedEventsOffset = 0;
 
         // Present thread only, like pollRenderedFrames(): reused so polling doesn't allocate.
         std::vector<VkPastPresentationTimingGOOGLE> pastTimings;
@@ -3786,55 +3788,79 @@ Java_com_limelight_binding_video_PyroWaveDecoderRenderer_nativeCreate(JNIEnv *en
     return reinterpret_cast<jlong>(renderer.release());
 }
 
+static jlong packSubmitResult(int status, Renderer *renderer) {
+    float loss = renderer != nullptr ? renderer->lastRecordLossPercent.load(std::memory_order_relaxed) : 0.0f;
+    uint32_t lossBits = 0;
+    std::memcpy(&lossBits, &loss, sizeof(lossBits));
+    return (static_cast<jlong>(lossBits) << 32) | static_cast<uint32_t>(status);
+}
+
 JNIEXPORT jlong JNICALL
 Java_com_limelight_binding_video_PyroWaveDecoderRenderer_nativeSubmitFrame(JNIEnv *env, jclass, jlong handle,
                                                                            jbyteArray data, jint length, jlong ptsUs,
+                                                                           jint frameNumber, jboolean frameWarp,
                                                                            jlong hostPresentationTimeUs,
                                                                            jlong vsyncNs, jlong intervalNs) {
     auto *renderer = reinterpret_cast<Renderer *>(handle);
-    if (renderer == nullptr) return SUBMIT_ERROR;
+    if (renderer == nullptr) return packSubmitResult(SUBMIT_ERROR, nullptr);
     SubmissionDiagnostics::Frame timing(renderer->submissionDiagnostics, length > 0 ? size_t(length) : 0);
-    if (data == nullptr || length <= 0) return SUBMIT_ERROR;
-    // Copy out of the Java array so decode and present do not run inside a JNI
-    // critical section. Frames arrive on one thread, so the buffer is reused.
+    if (data == nullptr || length <= 0) return packSubmitResult(SUBMIT_ERROR, renderer);
     static thread_local std::vector<uint8_t> frame;
     {
         SubmissionDiagnostics::Stage copy(renderer->submissionDiagnostics, SubmissionDiagnostics::COPY);
-        if (length > env->GetArrayLength(data)) return SUBMIT_ERROR;
+        if (length > env->GetArrayLength(data)) return packSubmitResult(SUBMIT_ERROR, renderer);
         frame.resize(size_t(length));
         env->GetByteArrayRegion(data, 0, length, reinterpret_cast<jbyte *>(frame.data()));
-        if (env->ExceptionCheck()) return SUBMIT_ERROR;
+        if (env->ExceptionCheck()) return packSubmitResult(SUBMIT_ERROR, renderer);
     }
+    if (frameWarp) renderer->noteFrameNumber(uint32_t(frameNumber));
     timing.framing(length >= 4 && pyroReadLe32(frame.data()) == 0);
     timing.result = renderer->submit(frame.data(), frame.size(), ptsUs, hostPresentationTimeUs, vsyncNs, intervalNs);
-    return timing.result;
+    return packSubmitResult(timing.result, renderer);
 }
 
-// The Rust engine's frame in place (debug.nightjar.pyro_direct, on by default): a direct buffer
-// over its own memory, valid for this call. submit() parses the frame and the SDK copies the
-// records it keeps before this returns, so neither Java nor this side copies the frame first,
-// whether early push finished it or it goes whole. The copy stage then only finds the address.
+// The Rust engine's frame in place (direct ByteBuffer fallback).
 JNIEXPORT jlong JNICALL
 Java_com_limelight_binding_video_PyroWaveDecoderRenderer_nativeSubmitDirectFrame(JNIEnv *env, jclass, jlong handle,
                                                                                  jobject data, jint length, jlong ptsUs,
+                                                                                 jint frameNumber, jboolean frameWarp,
                                                                                  jlong hostPresentationTimeUs,
                                                                                  jlong vsyncNs, jlong intervalNs) {
     auto *renderer = reinterpret_cast<Renderer *>(handle);
-    if (renderer == nullptr) return SUBMIT_ERROR;
+    if (renderer == nullptr) return packSubmitResult(SUBMIT_ERROR, nullptr);
     SubmissionDiagnostics::Frame timing(renderer->submissionDiagnostics, length > 0 ? size_t(length) : 0);
-    if (data == nullptr || length <= 0) return SUBMIT_ERROR;
+    if (data == nullptr || length <= 0) return packSubmitResult(SUBMIT_ERROR, renderer);
     const uint8_t *bytes;
     {
         SubmissionDiagnostics::Stage copy(renderer->submissionDiagnostics, SubmissionDiagnostics::COPY);
         bytes = static_cast<const uint8_t *>(env->GetDirectBufferAddress(data));
         if (bytes == nullptr || jlong(length) > env->GetDirectBufferCapacity(data)) {
             LOGE("PyroWave frame handed over in place without a direct buffer of %d bytes", length);
-            return SUBMIT_ERROR;
+            return packSubmitResult(SUBMIT_ERROR, renderer);
         }
     }
+    if (frameWarp) renderer->noteFrameNumber(uint32_t(frameNumber));
     timing.framing(length >= 4 && pyroReadLe32(bytes) == 0);
     timing.result = renderer->submit(bytes, size_t(length), ptsUs, hostPresentationTimeUs, vsyncNs, intervalNs);
-    return timing.result;
+    return packSubmitResult(timing.result, renderer);
+}
+
+// Raw native pointer fast path (zero NewDirectByteBuffer JNI upcall in Rust).
+JNIEXPORT jlong JNICALL
+Java_com_limelight_binding_video_PyroWaveDecoderRenderer_nativeSubmitRawFrame(JNIEnv *, jclass, jlong handle,
+                                                                              jlong dataPtr, jint length, jlong ptsUs,
+                                                                              jint frameNumber, jboolean frameWarp,
+                                                                              jlong hostPresentationTimeUs,
+                                                                              jlong vsyncNs, jlong intervalNs) {
+    auto *renderer = reinterpret_cast<Renderer *>(handle);
+    if (renderer == nullptr) return packSubmitResult(SUBMIT_ERROR, nullptr);
+    SubmissionDiagnostics::Frame timing(renderer->submissionDiagnostics, length > 0 ? size_t(length) : 0);
+    const auto *bytes = reinterpret_cast<const uint8_t *>(static_cast<intptr_t>(dataPtr));
+    if (bytes == nullptr || length <= 0) return packSubmitResult(SUBMIT_ERROR, renderer);
+    if (frameWarp) renderer->noteFrameNumber(uint32_t(frameNumber));
+    timing.framing(length >= 4 && pyroReadLe32(bytes) == 0);
+    timing.result = renderer->submit(bytes, size_t(length), ptsUs, hostPresentationTimeUs, vsyncNs, intervalNs);
+    return packSubmitResult(timing.result, renderer);
 }
 
 JNIEXPORT void JNICALL
@@ -3844,7 +3870,6 @@ Java_com_limelight_binding_video_PyroWaveDecoderRenderer_nativeSubmitChunks(JNIE
     auto *renderer = reinterpret_cast<Renderer *>(handle);
     if (renderer == nullptr || data == nullptr || length <= 0) return;
     SubmissionDiagnostics::Chunks timing(renderer->submissionDiagnostics);
-    // The frame's thread, so the buffer is reused like nativeSubmitFrame's.
     static thread_local std::vector<uint8_t> chunks;
     if (length > env->GetArrayLength(data)) return;
     chunks.resize(size_t(length));
@@ -3853,9 +3878,6 @@ Java_com_limelight_binding_video_PyroWaveDecoderRenderer_nativeSubmitChunks(JNIE
     renderer->pushChunks(chunks.data(), chunks.size(), first == JNI_TRUE);
 }
 
-// The Rust engine's early chunks in place (debug.nightjar.pyro_direct, as for frames): a direct buffer
-// over its batch, valid for this call. pushChunks copies the records it keeps into the SDK before
-// it returns, so the batch is read once, with no copy here.
 JNIEXPORT void JNICALL
 Java_com_limelight_binding_video_PyroWaveDecoderRenderer_nativeSubmitChunksDirect(JNIEnv *env, jclass, jlong handle,
                                                                                   jobject data, jint length,
@@ -3871,10 +3893,19 @@ Java_com_limelight_binding_video_PyroWaveDecoderRenderer_nativeSubmitChunksDirec
     renderer->pushChunks(bytes, size_t(length), first == JNI_TRUE);
 }
 
-// Early record push is on: on the Retroid Pocket 6 at 1080p60 400 Mbps it took 0.5 to 0.8 ms off
-// the median from a frame's last packet to its completed decode and 2.5 ms off p95.
-// debug.nightjar.pyro_early set to 0 turns it off for the next stream, for A/B runs against the
-// whole-frame push.
+// Raw native pointer fast path for early chunks (zero NewDirectByteBuffer JNI upcall in Rust).
+JNIEXPORT void JNICALL
+Java_com_limelight_binding_video_PyroWaveDecoderRenderer_nativeSubmitChunksRaw(JNIEnv *, jclass, jlong handle,
+                                                                               jlong dataPtr, jint length,
+                                                                               jboolean first) {
+    auto *renderer = reinterpret_cast<Renderer *>(handle);
+    const auto *bytes = reinterpret_cast<const uint8_t *>(static_cast<intptr_t>(dataPtr));
+    if (renderer == nullptr || bytes == nullptr || length <= 0) return;
+    SubmissionDiagnostics::Chunks timing(renderer->submissionDiagnostics);
+    renderer->pushChunks(bytes, size_t(length), first == JNI_TRUE);
+}
+
+// debug.nightjar.pyro_early=0 disables early record push for the next stream.
 JNIEXPORT jboolean JNICALL
 Java_com_limelight_binding_video_PyroWaveDecoderRenderer_nativeEarlyRecordsAllowed(JNIEnv *, jclass) {
     char value[PROP_VALUE_MAX] = {};
@@ -3882,78 +3913,49 @@ Java_com_limelight_binding_video_PyroWaveDecoderRenderer_nativeEarlyRecordsAllow
     return std::strcmp(value, "0") == 0 ? JNI_FALSE : JNI_TRUE;
 }
 
-namespace {
-    struct StatsMethods {
-        jmethodID onCompleted, onReleased, onRendered, discard;
-    };
-
-    // FrameLatencyStats' callbacks, looked up once: this runs after every submitted frame, and
-    // the app's class is never unloaded, so its method IDs stay valid. A failed lookup is not
-    // kept and leaves its NoSuchMethodError pending, as before.
-    bool statsMethods(JNIEnv *env, jobject stats, StatsMethods &out) {
-        static std::atomic<jmethodID> onCompleted {nullptr}, onReleased {nullptr}, onRendered {nullptr}, discard {nullptr};
-        // discard is stored last, so once it is set the other three are too
-        if (jmethodID cached = discard.load(std::memory_order_acquire)) {
-            out = {onCompleted.load(std::memory_order_relaxed), onReleased.load(std::memory_order_relaxed),
-                   onRendered.load(std::memory_order_relaxed), cached};
-            return true;
-        }
-        jclass statsClass = env->GetObjectClass(stats);
-        out.onCompleted = env->GetMethodID(statsClass, "onDecoderOutput", "(IJJ)V");
-        out.onReleased = out.onCompleted ? env->GetMethodID(statsClass, "onPresentQueued", "(IJZZ)V") : nullptr;
-        out.onRendered = out.onReleased ? env->GetMethodID(statsClass, "onFrameRendered", "(JJ)V") : nullptr;
-        out.discard = out.onRendered ? env->GetMethodID(statsClass, "discard", "(JLjava/lang/String;)V") : nullptr;
-        env->DeleteLocalRef(statsClass);
-        if (out.discard == nullptr) return false;
-        onCompleted.store(out.onCompleted, std::memory_order_relaxed);
-        onReleased.store(out.onReleased, std::memory_order_relaxed);
-        onRendered.store(out.onRendered, std::memory_order_relaxed);
-        discard.store(out.discard, std::memory_order_release);
-        return true;
-    }
-}  // namespace
-
-JNIEXPORT jboolean JNICALL
+// Batches decoded/released/rendered events into a reused Java long[] (stride 4: kind, ptsUs, timeNs, flags)
+// to eliminate per-event JNI upcalls. Returns eventCount (>0 done, <0 more remain, 0 empty).
+JNIEXPORT jint JNICALL
 Java_com_limelight_binding_video_PyroWaveDecoderRenderer_nativePollRenderedFrames(JNIEnv *env, jclass, jlong handle,
-                                                                                 jobject stats) {
+                                                                                 jlongArray out) {
     auto *renderer = reinterpret_cast<Renderer *>(handle);
-    if (renderer == nullptr) return JNI_FALSE;
-    const jboolean timing = renderer->displayTimingSupported ? JNI_TRUE : JNI_FALSE;
-    // Output completions precede their releases (including replaced frames), which
-    // in turn precede display times. All three queues are drained atomically.
-    auto &completed = renderer->completedBatch;
-    auto &released = renderer->releasedBatch;
-    auto &rendered = renderer->renderedBatch;
-    renderer->takeEvents(completed, released, rendered);
-    if (completed.empty() && released.empty() && rendered.empty()) return timing;
-    StatsMethods methods;
-    if (!statsMethods(env, stats, methods)) return JNI_FALSE;
-    const jmethodID onCompleted = methods.onCompleted;
-    const jmethodID onReleased = methods.onReleased;
-    const jmethodID onRendered = methods.onRendered;
-    const jmethodID discard = methods.discard;
-    for (size_t i = 0; i + 2 <= completed.size(); i += 2) {
-        env->CallVoidMethod(stats, onCompleted, jint(completed[i]), completed[i], completed[i + 1]);
-        if (env->ExceptionCheck()) return JNI_FALSE;
-    }
-    for (size_t i = 0; i + 3 <= released.size(); i += 3) {
-        // The output index Java registered for this frame: its presentation time, truncated.
-        env->CallVoidMethod(stats, onReleased, jint(released[i]), released[i + 1],
-                            released[i + 2] ? JNI_TRUE : JNI_FALSE, timing);
-        if (env->ExceptionCheck()) return JNI_FALSE;
-    }
-    for (size_t i = 0; i + 2 <= rendered.size(); i += 2) {
-        if (rendered[i + 1] == 0) {
-            jstring reason = env->NewStringUTF("surface_changed");
-            if (reason == nullptr) return JNI_FALSE;
-            env->CallVoidMethod(stats, discard, rendered[i], reason);
-            env->DeleteLocalRef(reason);
-        } else {
-            env->CallVoidMethod(stats, onRendered, rendered[i], rendered[i + 1]);
+    if (renderer == nullptr || out == nullptr) return 0;
+    const jsize outLen = env->GetArrayLength(out);
+    const size_t maxLongs = outLen > 0 ? (size_t(outLen) & ~size_t(3)) : 0;
+    if (maxLongs == 0) return 0;
+    auto &packed = renderer->packedEvents;
+    if (renderer->packedEventsOffset >= packed.size()) {
+        packed.clear();
+        renderer->packedEventsOffset = 0;
+        const jlong timingBit = renderer->displayTimingSupported ? 2 : 0;
+        auto &completed = renderer->completedBatch;
+        auto &released = renderer->releasedBatch;
+        auto &rendered = renderer->renderedBatch;
+        renderer->takeEvents(completed, released, rendered);
+        if (completed.empty() && released.empty() && rendered.empty()) return 0;
+        packed.reserve((completed.size() / 2 + released.size() / 3 + rendered.size() / 2) * 4);
+        for (size_t i = 0; i + 2 <= completed.size(); i += 2) {
+            packed.push_back(0); packed.push_back(completed[i]); packed.push_back(completed[i + 1]); packed.push_back(0);
         }
-        if (env->ExceptionCheck()) return JNI_FALSE;
+        for (size_t i = 0; i + 3 <= released.size(); i += 3) {
+            packed.push_back(1); packed.push_back(released[i]); packed.push_back(released[i + 1]);
+            packed.push_back((released[i + 2] ? 1 : 0) | timingBit);
+        }
+        for (size_t i = 0; i + 2 <= rendered.size(); i += 2) {
+            packed.push_back(2); packed.push_back(rendered[i]); packed.push_back(rendered[i + 1]); packed.push_back(0);
+        }
     }
-    return timing;
+    const size_t remaining = packed.size() - renderer->packedEventsOffset;
+    const size_t take = remaining < maxLongs ? remaining : maxLongs;
+    env->SetLongArrayRegion(out, 0, jsize(take), packed.data() + renderer->packedEventsOffset);
+    renderer->packedEventsOffset += take;
+    const bool more = renderer->packedEventsOffset < packed.size();
+    if (!more) {
+        packed.clear();
+        renderer->packedEventsOffset = 0;
+    }
+    const jint count = jint(take / 4);
+    return more ? -count : count;
 }
 
 JNIEXPORT jint JNICALL
@@ -4010,12 +4012,6 @@ Java_com_limelight_binding_video_PyroWaveDecoderRenderer_nativeSetGpuMaxClocks(J
     return setAdrenoMaxClocks(enabled);
 }
 
-JNIEXPORT jfloat JNICALL
-Java_com_limelight_binding_video_PyroWaveDecoderRenderer_nativeGetLastRecordLossPercent(JNIEnv *, jclass, jlong handle) {
-    auto *renderer = reinterpret_cast<Renderer *>(handle);
-    return renderer != nullptr ? renderer->lastRecordLossPercent.load(std::memory_order_relaxed) : 0;
-}
-
 JNIEXPORT void JNICALL
 Java_com_limelight_binding_video_PyroWaveDecoderRenderer_nativeSetHdrMode(JNIEnv *env, jclass, jlong handle,
                                                                        jboolean enabled, jbyteArray metadata) {
@@ -4048,24 +4044,15 @@ Java_com_limelight_binding_video_PyroWaveDecoderRenderer_nativeSetFrameWarp(JNIE
     return renderer != nullptr && table != nullptr && renderer->enableFrameWarp(table) ? JNI_TRUE : JNI_FALSE;
 }
 
-// Frame Warp: the host's number for the frame the same thread submits next.
 JNIEXPORT void JNICALL
-Java_com_limelight_binding_video_PyroWaveDecoderRenderer_nativeNoteFrameNumber(JNIEnv *, jclass, jlong handle,
-                                                                             jint frame) {
+Java_com_limelight_binding_video_PyroWaveDecoderRenderer_nativeDrain(JNIEnv *, jclass, jlong handle) {
     auto *renderer = reinterpret_cast<Renderer *>(handle);
-    if (renderer != nullptr) renderer->noteFrameNumber(uint32_t(frame));
+    if (renderer != nullptr) renderer->drain();
 }
 
 JNIEXPORT void JNICALL
-Java_com_limelight_binding_video_PyroWaveDecoderRenderer_nativeDestroy(JNIEnv *env, jclass clazz, jlong handle,
-                                                                      jobject stats) {
-    auto *renderer = reinterpret_cast<Renderer *>(handle);
-    if (renderer == nullptr) return;
-    renderer->drain();
-    if (stats != nullptr) {
-        Java_com_limelight_binding_video_PyroWaveDecoderRenderer_nativePollRenderedFrames(env, clazz, handle, stats);
-    }
-    delete renderer;
+Java_com_limelight_binding_video_PyroWaveDecoderRenderer_nativeDestroy(JNIEnv *, jclass, jlong handle) {
+    delete reinterpret_cast<Renderer *>(handle);
 }
 
 }  // extern "C"

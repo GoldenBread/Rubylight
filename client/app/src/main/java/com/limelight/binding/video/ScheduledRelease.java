@@ -61,31 +61,44 @@ final class ScheduledRelease {
     long run(boolean droppedBefore, long contentIntervalNs, boolean capActive) {
         boolean dropped = droppedBefore;
         boolean late;
+        long readyNs;
+        long ptsUs;
+        boolean attemptedReplace;
         for (;;) {
-            long readyNs = port.nanoTime();
+            attemptedReplace = false;
+            readyNs = port.nanoTime();
             port.timing(timing);
+            ptsUs = port.heldPtsUs();
             // The clock learns lateness against this time; it must be the same for every frame.
             long basisNs = timing.grid ? readyNs + Math.max(0, timing.deadlineNs) : readyNs;
-            late = scheduler.isLate(port.heldPtsUs(), basisNs, contentIntervalNs);
-            if (PresentScheduler.dropLate(late, true, dropped) && replace("late", basisNs)) {
-                dropped = true;
-                continue;
-            }
-            if (capActive && inFlight.full(port.nanoTime())) {
-                scheduler.onCapHeld();
-                if (!dropped && replace("in_flight", basisNs)) {
+            late = scheduler.isLate(ptsUs, basisNs, contentIntervalNs);
+            if (PresentScheduler.dropLate(late, true, dropped)) {
+                attemptedReplace = true;
+                if (replace("late", basisNs)) {
                     dropped = true;
                     continue;
+                }
+            }
+            if (capActive && inFlight.full(attemptedReplace ? port.nanoTime() : readyNs)) {
+                scheduler.onCapHeld();
+                if (!dropped) {
+                    attemptedReplace = true;
+                    if (replace("in_flight", basisNs)) {
+                        dropped = true;
+                        continue;
+                    }
                 }
             }
             break;
         }
 
-        // Plan from the time and the vsync the frame is released at, not from what was read above:
-        // a replacement attempt takes time, and a stale vsync could be in the past or taken.
-        long readyNs = port.nanoTime();
-        port.timing(timing);
-        long ptsUs = port.heldPtsUs();
+        // Only re-read time and display timing if a replacement attempt ran (which takes time);
+        // otherwise reuse the snapshot just taken above.
+        if (attemptedReplace) {
+            readyNs = port.nanoTime();
+            port.timing(timing);
+            ptsUs = port.heldPtsUs();
+        }
         long releaseNs, dueNs, holdNs;
         boolean planned = timing.grid && scheduler.plan(ptsUs, readyNs, timing.vsyncNs, timing.intervalNs,
                 timing.deadlineNs, plan);
@@ -97,8 +110,7 @@ final class ScheduledRelease {
             releaseNs = dueNs = port.fallbackPresentNs(ptsUs, readyNs);
             holdNs = releaseNs - readyNs;
         }
-        long nowNs = port.nanoTime();
-        int inFlightCount = inFlight.count(nowNs);
+        int inFlightCount = inFlight.count(readyNs);
         inFlight.onReleased(ptsUs, dueNs);
         port.release(releaseNs, dueNs, planned, holdNs, late, inFlightCount);
         return ptsUs;

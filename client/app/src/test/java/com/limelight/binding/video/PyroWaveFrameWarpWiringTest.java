@@ -33,20 +33,19 @@ public class PyroWaveFrameWarpWiringTest {
         Matcher declared = Pattern.compile("private static native \\w+(?:\\[\\])? (\\w+)\\(").matcher(java);
         while (declared.find()) natives.add(declared.group(1));
         assertTrue(natives.contains("nativeSetFrameWarp"));
-        assertTrue(natives.contains("nativeNoteFrameNumber"));
+        assertTrue(natives.contains("nativeSubmitRawFrame"));
+        assertTrue(natives.contains("nativeSubmitChunksRaw"));
         for (String name : natives) {
             assertTrue(name, cpp.contains("Java_com_limelight_binding_video_PyroWaveDecoderRenderer_" + name + "("));
         }
         assertTrue(java.contains("private static native boolean nativeSetFrameWarp(long handle, long api);"));
         assertTrue(cpp.contains("PyroWaveDecoderRenderer_nativeSetFrameWarp(JNIEnv *, jclass, jlong handle,\n" +
                 "                                                                          jlong api) {"));
-        assertTrue(java.contains("private static native void nativeNoteFrameNumber(long handle, int frame);"));
-        assertTrue(cpp.contains("PyroWaveDecoderRenderer_nativeNoteFrameNumber(JNIEnv *, jclass, jlong handle,\n" +
-                "                                                                             jint frame) {"));
+        assertTrue(cpp.contains("if (frameWarp) renderer->noteFrameNumber(uint32_t(frameNumber));"));
     }
 
     // The renderer is made before the stream says it offers Frame Warp: it takes it once the decoder is set
-    // up, and each picture's number reaches it with the picture
+    // up, and each picture's number reaches it folded into the submit call (zero extra JNI crossing)
     @Test
     public void frameWarpReachesPyroWaveAfterSetupWithEachFramesNumber() throws Exception {
         String decoder = read("src/main/java/com/limelight/binding/video/MediaCodecDecoderRenderer.java");
@@ -57,7 +56,9 @@ public class PyroWaveFrameWarpWiringTest {
                 "                frameNumber, presentationTimeUs,"));
         assertFalse(decoder.contains("frame_warp_reason_pyrowave"));
         String java = read(JAVA);
-        assertTrue(java.contains("if (frameWarp) nativeNoteFrameNumber(handle, frameNumber);"));
+        assertTrue(java.contains("nativeSubmitRawFrame(handle, rawPtr, length, ptsUs, frameNumber, frameWarp,"));
+        assertTrue(java.contains("nativeSubmitDirectFrame(handle, directData, length, ptsUs, frameNumber, frameWarp,"));
+        assertTrue(java.contains("nativeSubmitFrame(handle, data, length, ptsUs, frameNumber, frameWarp,"));
     }
 
     // Both passes take the shift the same way: no mask read without a shift or where the mask does not apply, the

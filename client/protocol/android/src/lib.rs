@@ -81,7 +81,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_init(
     if let Some(version) = string(&mut env, &app_version) {
         nightjar_core::http::set_app_version(&version);
     }
-    match bridge::init(&mut env) {
+    match bridge::init(&mut env).and_then(|()| renderers::init(&mut env)) {
         Ok(()) => JNI_TRUE,
         Err(e) => {
             let _ = env.exception_clear();
@@ -716,7 +716,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_getPendingAudi
     _: JNIEnv,
     _: JClass,
 ) -> jint {
-    engine::with_session(0, |s| s.pending_audio_ms() as jint)
+    engine::pending_audio_ms() as jint
 }
 
 /// The Opus concealer for the AAudio callback (`aaudio_output.c`), as a C function pointer.
@@ -734,7 +734,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_getPendingVide
     _: JNIEnv,
     _: JClass,
 ) -> jint {
-    engine::with_session(0, |s| s.decode_queue_len() as i32)
+    engine::decode_queue_len() as jint
 }
 
 /// Frames dropped over a full decode queue since the stream started (`VideoStats::decoder_drops`);
@@ -999,11 +999,11 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_sendMicrophone
     {
         return -1;
     }
-    let mut frame = vec![0i16; samples];
-    if env.get_short_array_region(&pcm, 0, &mut frame).is_err() {
+    let mut buf = [0i16; 2880];
+    if env.get_short_array_region(&pcm, 0, &mut buf[..samples]).is_err() {
         return -1;
     }
-    engine::send_microphone(&frame)
+    engine::send_microphone(&buf[..samples])
 }
 
 #[unsafe(no_mangle)]

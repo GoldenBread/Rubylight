@@ -7,6 +7,7 @@ import java.util.ArrayDeque;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.BooleanSupplier;
+import java.util.function.Consumer;
 import java.util.function.IntSupplier;
 import java.util.function.Supplier;
 
@@ -55,9 +56,55 @@ final class SubmitHandoff<U> {
         }
     }
 
+    /** Return codes of {@link #tryGateInPlace} (disjoint from MoonBridge DR_* <= 0). */
+    static final int GATE_IN_PLACE = 1;
+    static final int GATE_QUEUE = 2;
+
+    /** 3-slot reusable byte[] pool for units copied to the input worker outside the handoff lock. */
+    static final class BytePool {
+        private static final int SLOTS = 3;
+        private final byte[][] slots = new byte[SLOTS][];
+        private int count;
+
+        synchronized byte[] acquire(int minLength) {
+            int best = -1;
+            int smallest = -1;
+            for (int i = 0; i < count; i++) {
+                int len = slots[i].length;
+                if (len >= minLength && (best < 0 || len < slots[best].length)) best = i;
+                if (smallest < 0 || len < slots[smallest].length) smallest = i;
+            }
+            if (best >= 0) {
+                byte[] buf = slots[best];
+                slots[best] = slots[--count];
+                slots[count] = null;
+                return buf;
+            }
+            if (count == SLOTS && smallest >= 0) {
+                slots[smallest] = slots[--count];
+                slots[count] = null;
+            }
+            return new byte[minLength];
+        }
+
+        synchronized void release(byte[] buf) {
+            if (buf == null || buf.length == 0) return;
+            if (count < SLOTS) {
+                slots[count++] = buf;
+                return;
+            }
+            int smallest = 0;
+            for (int i = 1; i < SLOTS; i++) {
+                if (slots[i].length < slots[smallest].length) smallest = i;
+            }
+            if (buf.length > slots[smallest].length) slots[smallest] = buf;
+        }
+    }
+
     private final Object lock = new Object();
     private final ArrayDeque<Entry<U>> queue = new ArrayDeque<>();
     private final Worker<U> worker;
+    private final Consumer<U> recycler;
     private final int bound;
     private final String threadName;
     private final Runnable threadInit;
@@ -66,6 +113,8 @@ final class SubmitHandoff<U> {
     private final AtomicLong handed = new AtomicLong();
     // Frames the engine dropped while the decoder waited for a key frame: not network loss.
     private final AtomicBoolean keyGap = new AtomicBoolean();
+    // True iff !closed && !awaitingKey && !working && queue.isEmpty(): lets the hot in-place path skip lock.
+    private volatile boolean fastBypass = true;
     // All below under lock.
     private Thread thread;
     private boolean working;
@@ -82,10 +131,37 @@ final class SubmitHandoff<U> {
      * {@code threadInit} runs on it first (its priority).
      */
     SubmitHandoff(int bound, String threadName, Runnable threadInit, Worker<U> worker) {
+        this(bound, threadName, threadInit, worker, null);
+    }
+
+    SubmitHandoff(int bound, String threadName, Runnable threadInit, Worker<U> worker, Consumer<U> recycler) {
         this.bound = Math.max(1, bound);
         this.threadName = threadName;
         this.threadInit = threadInit;
         this.worker = worker;
+        this.recycler = recycler;
+    }
+
+    private void updateFastBypass() {
+        fastBypass = !closed && !awaitingKey && !working && queue.isEmpty();
+    }
+
+    private void recycle(U unit) {
+        if (recycler != null && unit != null) recycler.accept(unit);
+    }
+
+    /**
+     * Zero-allocation fast gate on the receive thread: returns {@link #GATE_IN_PLACE} when the
+     * caller may try in-place submission, {@link #GATE_QUEUE} when it must copy outside the lock
+     * and call {@link #enqueue}, or a MoonBridge DR_* status (<= 0) when dropped.
+     */
+    int tryGateInPlace(int frames, boolean keyUnit, int frameNumber) {
+        if (fastBypass) return GATE_IN_PLACE;
+        synchronized (lock) {
+            Integer refused = gate(frames, keyUnit, frameNumber);
+            if (refused != null) return refused;
+            return (queue.isEmpty() && !working) ? GATE_IN_PLACE : GATE_QUEUE;
+        }
     }
 
     /**
@@ -101,12 +177,9 @@ final class SubmitHandoff<U> {
      */
     int submit(BooleanSupplier inputReady, IntSupplier inPlace, Supplier<U> copy, int frames, boolean keyUnit,
                int frameNumber) {
-        synchronized (lock) {
-            Integer refused = gate(frames, keyUnit, frameNumber);
-            if (refused != null) return refused;
-            if (!(queue.isEmpty() && !working)) return enqueue(copy.get(), frames, keyUnit, frameNumber);
-        }
-        if (inputReady.getAsBoolean()) return inPlace.getAsInt();
+        int gateResult = tryGateInPlace(frames, keyUnit, frameNumber);
+        if (gateResult <= 0) return gateResult;
+        if (gateResult == GATE_IN_PLACE && inputReady.getAsBoolean()) return inPlace.getAsInt();
         return enqueue(copy.get(), frames, keyUnit, frameNumber);
     }
 
@@ -118,6 +191,7 @@ final class SubmitHandoff<U> {
             awaitingKey = false;
             reportIdr = false;
             lostKeyFrame = -1;
+            updateFastBypass();
             return null;
         }
         drops.addAndGet(frames);
@@ -136,28 +210,35 @@ final class SubmitHandoff<U> {
         for (Entry<U> waiting : queue) {
             frames += waiting.frames;
             if (waiting.keyUnit) lostKeyFrame = waiting.frameNumber;
+            recycle(waiting.unit);
         }
         queue.clear();
         drops.addAndGet(frames);
         awaitingKey = true;
+        updateFastBypass();
         keyGap.set(true);
     }
 
-    private int enqueue(U unit, int frames, boolean keyUnit, int frameNumber) {
+    int enqueue(U unit, int frames, boolean keyUnit, int frameNumber) {
         synchronized (lock) {
             // The worker may have failed since the caller looked.
             Integer refused = gate(frames, keyUnit, frameNumber);
-            if (refused != null) return refused;
+            if (refused != null) {
+                recycle(unit);
+                return refused;
+            }
             if (unit == null || queue.size() >= bound) {
                 // No unit to queue (the caller could not copy it), or the decoder fell behind by the
                 // whole bound: drop what waits, as the engines' decode unit queue does, and ask for a
                 // key frame.
+                recycle(unit);
                 dropQueued(frames, -1);
                 if (keyUnit) lostKeyFrame = frameNumber;
                 reportIdr = false;
                 return MoonBridge.DR_NEED_IDR;
             }
             queue.add(new Entry<>(unit, frames, keyUnit, frameNumber));
+            updateFastBypass();
             if (thread == null || !thread.isAlive()) {
                 thread = new Thread(this::run, threadName);
                 thread.setDaemon(true);
@@ -183,6 +264,7 @@ final class SubmitHandoff<U> {
                 if (closed) return;
                 entry = queue.poll();
                 working = true;
+                updateFastBypass();
             }
             int status = MoonBridge.DR_NEED_IDR;
             try {
@@ -193,6 +275,7 @@ final class SubmitHandoff<U> {
                 // units queueing behind a worker that is gone.
                 LimeLog.severe("Input worker: submitting frame " + entry.frameNumber + " threw " + t);
             } finally {
+                recycle(entry.unit);
                 synchronized (lock) {
                     // A failure and its flags are one step: the receive thread never sees an idle
                     // worker that has yet to say the decoder lost a frame.
@@ -201,6 +284,7 @@ final class SubmitHandoff<U> {
                         reportIdr = true;
                     }
                     working = false;
+                    updateFastBypass();
                 }
             }
         }
@@ -264,7 +348,9 @@ final class SubmitHandoff<U> {
         synchronized (lock) {
             first = !closed;
             closed = true;
+            for (Entry<U> waiting : queue) recycle(waiting.unit);
             queue.clear();
+            updateFastBypass();
             joined = thread;
             lock.notifyAll();
         }
