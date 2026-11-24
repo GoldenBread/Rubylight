@@ -24,8 +24,6 @@ public final class NightjarInputJni {
 
     public static native short maxByMagnitudeShort(short a, short b);
 
-    public static native void mouseStickCurve(short stickX, short stickY, float[] out);
-
     public static native void normalizeAxisSet(
             float lsX, float lsY, float rsX, float rsY,
             float lt, float rt, float hatX, float hatY,
@@ -221,4 +219,158 @@ public final class NightjarInputJni {
             int[] packedContexts, int count, boolean steamControlsSession,
             short controllerNumber, float steamPadTouchX, boolean mouseEmulationActive,
             int[] out);
+
+    // --- 5. State Machines (Combos, GuideHold, Mouse Mode, Steer/Capture) ---
+
+    public static native int[] capturedButtonFlags();
+
+    public static native long usbInputStateCreate();
+
+    public static native void usbInputStateDestroy(long handle);
+
+    public static native int usbSteerMenuStep(
+            long handle, int controllerId, int buttons, int[] outKeys);
+
+    public static native void usbCapturePadStep(
+            long handle, int controllerId, int buttons,
+            float stickX, float stickY, int generation, int[] out);
+
+    public static native int usbFilterGameButtons(long handle, int controllerId, int buttons);
+
+    public static native void usbRemovePadCapture(long handle, int controllerId, int[] out);
+
+    public static native int quitComboMask(String combo);
+
+    public static native int quitButtonFlag(int keyCode);
+
+    public static native boolean holdQuitComboStep(boolean pending, int buttons, String combo);
+
+    public static native int releaseQuitComboStep(boolean pending, int buttons);
+
+    public static native boolean shouldArmMenuCombo(int heldButtons);
+
+    public static native boolean shouldOpenMenuOnRelease(
+            boolean pendingExit, int inputMap, boolean pressedEmpty);
+
+    public static native long tapHoldRemainingMs(long downTimeMs, long eventTimeMs);
+
+    public static native boolean startLongPressTogglesMouse(
+            long startDownTimeMs, long eventTimeMs, boolean mouseEmulationEnabled);
+
+    public static native int guideHoldStep(int stateBits, int op, long holdMs, boolean repeat);
+
+    public static native void usbGuideHoldStep(
+            boolean guideDown, int guideHoldBits, boolean guideTapping,
+            int buttonFlags, long holdMs, boolean canHold, int[] out);
+
+    public static native int fixedStepNext(int step);
+
+    public static native int fixedStepDelta(double component, int step);
+
+    public static native boolean mouseSilenced(
+            boolean sendControllers, boolean isDefaultContext);
+
+    public static native int pickMenuMouseTarget(
+            boolean[] eligible, short[] numbers, boolean[] active, int count);
+
+    public static native void mousePacketStep(
+            int inputMap, int lastInputMap, boolean fixedStepEnabled,
+            int currentStep, int[] out);
+
+    public static native void mouseTickStep(
+            short lx, short ly, short rx, short ry,
+            int scrollStickMode, int fixedStep, int[] out);
+
+    // --- 6. Rumble, Sensors, Gyro & Battery ---
+
+    public static native boolean rumbleAllows(boolean rumbleDisabled);
+
+    public static native int rumbleFeelFromKey(String key);
+
+    public static native short rumbleShapeMotor(short motor, int feelOrdinal);
+
+    public static native int rumbleShapeAmplitude(int amplitude, int feelOrdinal);
+
+    public static native short rumbleScaleMotor(short motor, int strengthPercent);
+
+    public static native int rumbleSingleMotorAmplitude(
+            short lowFreqMotor, short highFreqMotor, int feelOrdinal, int strengthPercent);
+
+    public static native void rumblePwmTimings(int amplitude, int feelOrdinal, long[] out);
+
+    public static native long rumbleStateCreate(
+            boolean allowed, int feelOrdinal, short deviceFallbackSlot);
+
+    public static native void rumbleStateDestroy(long handle);
+
+    public static native int rumbleRecordMotor(
+            long handle, short slot, short low, short high, boolean stopped);
+
+    public static native int rumbleRecordTriggers(
+            long handle, short slot, short lt, short rt, boolean stopped);
+
+    public static native int rumbleSetPaused(
+            long handle, boolean paused, boolean stopped, int[] out);
+
+    public static native boolean rumblePlanDual(
+            short low, short high, int feelOrdinal, int[] out);
+
+    public static native boolean rumblePlanQuad(
+            short low, short high, short lt, short rt, int feelOrdinal, int[] out);
+
+    public static native int rumblePlanSingle(
+            short low, short high, int feelOrdinal, int strengthPercent, long[] out);
+
+    public static native int rumbleDeviceVibratorRoute(
+            long handle, short slot, short low, short high,
+            boolean foundMatching, boolean vibrated, boolean osc, boolean onlyL3R3,
+            boolean vibrateOsc, boolean fallbackToDevice, int fallbackStrength, long[] out);
+
+    public static native int rumbleReleaseSlot(
+            long handle, short slot, boolean assigned,
+            boolean slotStillAssigned, boolean devVibForP1);
+
+    public static native boolean gyroLivenessStep(
+            long zeroNanos, float x, float y, float z, long timestampNanos, long[] state);
+
+    public static native boolean checksGyroLiveness(
+            short slot, short deviceFallbackSlot, boolean usingDeviceSensors,
+            boolean fallbackToDevice, boolean hasDeviceGyro);
+
+    public static native int clampMotionRateHz(int rateHz);
+
+    public static native int motionSamplingPeriodUs(int rateHz);
+
+    public static native int usbMotionRateHz(
+            int reportRateHz, boolean gamepadMotionSensors,
+            boolean dropsMotionAndTouchpad, boolean usesDeviceSensors);
+
+    public static native boolean isValidGyroSensitivity(float value);
+
+    public static native int validateGyroMapping(
+            int xAxis, int yAxis, int zAxis,
+            int xSign, int ySign, int zSign, float hSens, float vSens);
+
+    public static native void transformGyro(
+            float x, float y, float z,
+            int xAxis, int yAxis, int zAxis,
+            int xSign, int ySign, int zSign, float hSens, float vSens, float[] out);
+
+    public static native long motionFilterCreate(
+            byte motionType, boolean needsDeviceOrientation, boolean checkLiveness,
+            boolean hasMapping, int xAxis, int yAxis, int zAxis,
+            int xSign, int ySign, int zSign, float hSens, float vSens);
+
+    public static native void motionFilterDestroy(long handle);
+
+    public static native int motionSampleStep(
+            long handle, float x, float y, float z,
+            long timestampNanos, int displayRotation, boolean flydigiForced, float[] out);
+
+    public static native int sceBatteryReading(
+            int percentage, int connectionType, int chargingState, float[] out);
+
+    public static native boolean evaluateBatteryUpdate(
+            boolean sendControllers, int status, float capacity,
+            int lastStatus, float lastCapacity, int[] out);
 }

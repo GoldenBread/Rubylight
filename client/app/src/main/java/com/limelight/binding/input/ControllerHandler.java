@@ -43,8 +43,6 @@ import com.limelight.binding.input.driver.AbstractController;
 import com.limelight.binding.input.driver.DualSenseController;
 import com.limelight.binding.input.driver.UsbDriverListener;
 import com.limelight.binding.input.driver.UsbDriverService;
-import com.limelight.binding.input.keyboard.KeyboardFocus;
-import com.limelight.binding.input.keyboard.PcKeyboardController;
 import com.limelight.nvstream.NvConnection;
 import com.limelight.nvstream.input.ControllerPacket;
 import com.limelight.nvstream.input.MouseButtonPacket;
@@ -70,8 +68,6 @@ import java.util.concurrent.atomic.AtomicIntegerArray;
 
 public class ControllerHandler implements InputManager.InputDeviceListener, UsbDriverListener {
 
-    private static final int START_DOWN_TIME_MOUSE_MODE_MS = 750;
-
     private static final int MINIMUM_BUTTON_DOWN_TIME_MS = 25;
 
     private static final int EMULATING_SPECIAL = 0x1;
@@ -83,6 +79,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
     private static final int BATTERY_RECHECK_INTERVAL_MS = 120 * 1000;
 
     private static volatile int[] androidButtonKeycodes;
+    private static volatile int[] capturedButtonFlags;
 
     private static int[] androidButtonKeycodes() {
         int[] codes = androidButtonKeycodes;
@@ -93,14 +90,32 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         return codes;
     }
 
+    private static int[] capturedButtonFlags() {
+        int[] flags = capturedButtonFlags;
+        if (flags == null) {
+            flags = NightjarInputJni.capturedButtonFlags();
+            capturedButtonFlags = flags;
+        }
+        return flags;
+    }
+
     private final Object fuseLock = new Object();
     private final int[] axisSetOut = new int[8];
     private final int[] remapOut = new int[1];
     private final int[] buttonStepOut = new int[5];
     private final int[] comboOut = new int[2];
+    private final int[] stateOut = new int[7];
+    private final int[] steerKeysOut = new int[11];
+    private final int[] rumblePauseOut = new int[81];
+    private final int[] rumbleAmpOut = new int[4];
+    private final long[] rumbleSingleOut = new long[3];
+    private final int[] batteryOut = new int[2];
+    private final float[] sceCapOut = new float[1];
     private int[] fuseScratch = new int[MAX_GAMEPADS * 6];
     private final int[] fuseOut = new int[7];
     private long slotStateHandle;
+    private long usbInputStateHandle;
+    private long rumbleStateHandle;
 
     private final ConcurrentHashMap<Integer, InputDeviceContext> inputDeviceContexts = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Integer, UsbDeviceContext> usbDeviceContexts = new ConcurrentHashMap<>();
@@ -271,6 +286,9 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         if (onscreenOwnPlayerSession) currentControllers |= 1;
         slotStateHandle = NightjarInputJni.slotStateCreate(
                 initialControllers, onscreenOwnPlayerSession, touchpadButtonSession, steamControlsSession);
+        usbInputStateHandle = NightjarInputJni.usbInputStateCreate();
+        rumbleStateHandle = NightjarInputJni.rumbleStateCreate(
+                rumbleAllowed, rumbleFeel.ordinal(), deviceFallbackSlot);
 
         // Register ourselves for input device notifications
         inputManager.registerInputDeviceListener(this, null);
@@ -483,6 +501,14 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
             NightjarInputJni.slotStateDestroy(slotStateHandle);
             slotStateHandle = 0L;
         }
+        if (usbInputStateHandle != 0L) {
+            NightjarInputJni.usbInputStateDestroy(usbInputStateHandle);
+            usbInputStateHandle = 0L;
+        }
+        if (rumbleStateHandle != 0L) {
+            NightjarInputJni.rumbleStateDestroy(rumbleStateHandle);
+            rumbleStateHandle = 0L;
+        }
     }
 
     /** Stops a pad's rotation on the host, ordered after any sensor sample being sent (see {@link #motionSendLock}). */
@@ -496,7 +522,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
     private void closeMotionListener(SensorManager sensors, MotionListener listener) {
         // Closed first: a sample already on the sensor thread finds the listener closed, since
         // unregistering alone does not hold back one that was delivered just before.
-        listener.closed = true;
+        listener.close();
         sensors.unregisterListener(listener);
         displayRotation.release(listener);
     }
@@ -630,15 +656,18 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
      */
     private void pauseRumble(boolean paused) {
         synchronized (rumbleLock) {
-            if (rumblePaused == paused || stopped) {
+            int count = NightjarInputJni.rumbleSetPaused(rumbleStateHandle, paused, stopped, rumblePauseOut);
+            int kind = rumblePauseOut[0];
+            if (kind == 0) {
                 return;
             }
             rumblePaused = paused;
-            if (paused) {
+            if (kind == 1) {
                 for (InputDeviceContext deviceContext : inputDeviceContexts.values()) {
                     deviceContext.cancelMotors();
                 }
-                for (short controllerNumber : rumbleLevels.keySet()) {
+                for (int i = 0; i < count; i++) {
+                    short controllerNumber = (short) rumblePauseOut[1 + i];
                     List<AbstractController> usbPads = usbPadsOf(controllerNumber);
                     if (usbPads == null || usbPads.isEmpty()) continue;
                     synchronized (usbRumbleLock) {
@@ -651,11 +680,16 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
                 }
                 deviceVibrator.cancel();
             }
-            else {
-                for (Map.Entry<Short, short[]> levels : new ArrayList<>(rumbleLevels.entrySet())) {
-                    short[] l = levels.getValue();
-                    if (l[0] != 0 || l[1] != 0) rumble(levels.getKey(), l[0], l[1]);
-                    if (l[2] != 0 || l[3] != 0) rumbleTriggers(levels.getKey(), l[2], l[3]);
+            else if (kind == 2) {
+                for (int i = 0; i < count; i++) {
+                    int base = 1 + i * 5;
+                    short slot = (short) rumblePauseOut[base];
+                    short low = (short) rumblePauseOut[base + 1];
+                    short high = (short) rumblePauseOut[base + 2];
+                    short lt = (short) rumblePauseOut[base + 3];
+                    short rt = (short) rumblePauseOut[base + 4];
+                    if (low != 0 || high != 0) rumble(slot, low, high);
+                    if (lt != 0 || rt != 0) rumbleTriggers(slot, lt, rt);
                 }
             }
         }
@@ -984,7 +1018,11 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
     }
 
     private void releaseControllerNumber(GenericControllerContext context) {
-        if (deviceVibratorForPlayerOne && context.assignedControllerNumber && context.controllerNumber == deviceFallbackSlot) {
+        boolean stillAssigned = context.assignedControllerNumber && slotStillAssigned(context, context.controllerNumber);
+        int rumbleRelease = NightjarInputJni.rumbleReleaseSlot(
+                rumbleStateHandle, context.controllerNumber, context.assignedControllerNumber,
+                stillAssigned, deviceVibratorForPlayerOne);
+        if ((rumbleRelease & 1) != 0) {
             deviceVibratorForPlayerOne = false;
             deviceVibrator.cancel();
         }
@@ -1013,7 +1051,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         if ((released & (1 << 17)) != 0) {
             controllerSlotsWithInput.set(context.controllerNumber, 0);
         }
-        if (context.assignedControllerNumber && !slotStillAssigned(context, context.controllerNumber)) {
+        if ((rumbleRelease & 2) != 0) {
             // The next pad in this slot must not play the old pad's levels when rumble resumes.
             rumbleLevels.remove(context.controllerNumber);
         }
@@ -1395,7 +1433,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
                 return true;
             }
             // Firmware injects the press and release together; hold Guide long enough for games to see it
-            long remaining = MINIMUM_BUTTON_DOWN_TIME_MS - (event.getEventTime() - event.getDownTime());
+            long remaining = NightjarInputJni.tapHoldRemainingMs(event.getDownTime(), event.getEventTime());
             if (remaining > 0) {
                 scheduleDefaultGuideRelease(context, remaining);
                 return true;
@@ -1902,18 +1940,6 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
                 context.pressedButtons.containsValue(KeyEvent.KEYCODE_BUTTON_L1));
     }
 
-    private static boolean areBatteryCapacitiesEqual(float first, float second) {
-        // With no NaNs involved, it is a simple equality comparison.
-        if (!Float.isNaN(first) && !Float.isNaN(second)) {
-            return first == second;
-        }
-        else {
-            // If we have a NaN in one or both positions, compare NaN-ness instead.
-            // Equality comparisons will always return false for NaN.
-            return Float.isNaN(first) == Float.isNaN(second);
-        }
-    }
-
     /** What a controller's battery reported, in BatteryState's terms. */
     private static final class BatteryReading {
         final int status;
@@ -1929,9 +1955,6 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
     // never on the main thread and never holding a lock the main thread takes. Null: no battery.
     @SuppressLint("InlinedApi")
     private BatteryReading readControllerBattery(InputDeviceContext context) {
-        int currentBatteryStatus;
-        float currentBatteryCapacity;
-
         // Use the BatteryState object introduced in Android S, if it's available and present.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             BatteryState batteryState = context.inputDevice.getBatteryState();
@@ -1942,109 +1965,30 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
 
         if (sceManager.isRecognizedDevice(context.inputDevice)) {
             // On the SHIELD Android TV, we can use a proprietary API to access battery/charge state.
-            // We will convert it to the same form used by BatteryState to share code.
             int batteryPercentage = sceManager.getBatteryPercentage(context.inputDevice);
-            if (batteryPercentage < 0) {
-                currentBatteryCapacity = Float.NaN;
-            }
-            else {
-                currentBatteryCapacity = batteryPercentage / 100.f;
-            }
-
             SceConnectionType connectionType = sceManager.getConnectionType(context.inputDevice);
             SceChargingState chargingState = sceManager.getChargingState(context.inputDevice);
-
-            // We can make some assumptions about charge state based on the connection type
-            if (connectionType == SceConnectionType.WIRED || connectionType == SceConnectionType.BOTH) {
-                if (batteryPercentage == 100) {
-                    currentBatteryStatus = BatteryState.STATUS_FULL;
-                }
-                else if (chargingState == SceChargingState.NOT_CHARGING) {
-                    currentBatteryStatus = BatteryState.STATUS_NOT_CHARGING;
-                }
-                else {
-                    currentBatteryStatus = BatteryState.STATUS_CHARGING;
-                }
-            }
-            else if (connectionType == SceConnectionType.WIRELESS) {
-                if (chargingState == SceChargingState.CHARGING) {
-                    currentBatteryStatus = BatteryState.STATUS_CHARGING;
-                }
-                else {
-                    currentBatteryStatus = BatteryState.STATUS_DISCHARGING;
-                }
-            }
-            else {
-                // If connection type is unknown, just use the charge state
-                if (batteryPercentage == 100) {
-                    currentBatteryStatus = BatteryState.STATUS_FULL;
-                }
-                else if (chargingState == SceChargingState.NOT_CHARGING) {
-                    currentBatteryStatus = BatteryState.STATUS_DISCHARGING;
-                }
-                else if (chargingState == SceChargingState.CHARGING) {
-                    currentBatteryStatus = BatteryState.STATUS_CHARGING;
-                }
-                else {
-                    currentBatteryStatus = BatteryState.STATUS_UNKNOWN;
-                }
-            }
+            int connType = connectionType == SceConnectionType.WIRED ? 1
+                    : connectionType == SceConnectionType.WIRELESS ? 2
+                    : connectionType == SceConnectionType.BOTH ? 3 : 0;
+            int chargeState = chargingState == SceChargingState.NOT_CHARGING ? 1
+                    : chargingState == SceChargingState.CHARGING ? 2 : 0;
+            int status = NightjarInputJni.sceBatteryReading(batteryPercentage, connType, chargeState, sceCapOut);
+            return new BatteryReading(status, sceCapOut[0]);
         }
-        else {
-            return null;
-        }
-        return new BatteryReading(currentBatteryStatus, currentBatteryCapacity);
+        return null;
     }
 
     @SuppressLint("InlinedApi")
     private void sendControllerBatteryPacket(InputDeviceContext context, BatteryReading battery) {
-        // Controllers Off: the PC has no pad for it.
-        if (!prefConfig.sendControllers) return;
-        int currentBatteryStatus = battery.status;
-        float currentBatteryCapacity = battery.capacity;
-
-        if (currentBatteryStatus != context.lastReportedBatteryStatus ||
-                !areBatteryCapacitiesEqual(currentBatteryCapacity, context.lastReportedBatteryCapacity)) {
-            byte state;
-            byte percentage;
-
-            switch (currentBatteryStatus) {
-                case BatteryState.STATUS_UNKNOWN:
-                    state = MoonBridge.LI_BATTERY_STATE_UNKNOWN;
-                    break;
-
-                case BatteryState.STATUS_CHARGING:
-                    state = MoonBridge.LI_BATTERY_STATE_CHARGING;
-                    break;
-
-                case BatteryState.STATUS_DISCHARGING:
-                    state = MoonBridge.LI_BATTERY_STATE_DISCHARGING;
-                    break;
-
-                case BatteryState.STATUS_NOT_CHARGING:
-                    state = MoonBridge.LI_BATTERY_STATE_NOT_CHARGING;
-                    break;
-
-                case BatteryState.STATUS_FULL:
-                    state = MoonBridge.LI_BATTERY_STATE_FULL;
-                    break;
-
-                default:
-                    return;
-            }
-
-            if (Float.isNaN(currentBatteryCapacity)) {
-                percentage = MoonBridge.LI_BATTERY_PERCENTAGE_UNKNOWN;
-            }
-            else {
-                percentage = (byte)(currentBatteryCapacity * 100);
-            }
-
-            conn.sendControllerBatteryEvent((byte)context.controllerNumber, state, percentage);
-
-            context.lastReportedBatteryStatus = currentBatteryStatus;
-            context.lastReportedBatteryCapacity = currentBatteryCapacity;
+        if (!NightjarInputJni.evaluateBatteryUpdate(
+                prefConfig.sendControllers, battery.status, battery.capacity,
+                context.lastReportedBatteryStatus, context.lastReportedBatteryCapacity, batteryOut)) {
+            return;
         }
+        conn.sendControllerBatteryEvent((byte) context.controllerNumber, (byte) batteryOut[0], (byte) batteryOut[1]);
+        context.lastReportedBatteryStatus = battery.status;
+        context.lastReportedBatteryCapacity = battery.capacity;
     }
 
     private int packFusionContext(int count, int buttons, byte lt, byte rt, short lx, short ly, short rx, short ry) {
@@ -2137,58 +2081,25 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
 
         short activeControllerMask = getActiveControllerMask();
         if (originalContext.mouseEmulationActive) {
-            int changedMask = inputMap ^  originalContext.mouseEmulationLastInputMap;
-
-            boolean aDown = (inputMap & ControllerPacket.A_FLAG) != 0;
-            boolean bDown = (inputMap & ControllerPacket.B_FLAG) != 0;
-
-            originalContext.mouseEmulationLastInputMap = inputMap;
-
-            if (prefConfig.mouseEmulationFixedStep) {
-                originalContext.mouseEmulationFixedStepHeld = (inputMap & ControllerPacket.X_FLAG) != 0;
-                if ((changedMask & inputMap & ControllerPacket.Y_FLAG) != 0) {
-                    originalContext.mouseEmulationStep = FixedStepMouse.nextStep(originalContext.mouseEmulationStep);
-                    Toast.makeText(activityContext, activityContext.getString(R.string.stream_mouse_step,
-                            originalContext.mouseEmulationStep), Toast.LENGTH_SHORT).show();
-                }
+            NightjarInputJni.mousePacketStep(
+                    inputMap, originalContext.mouseEmulationLastInputMap,
+                    prefConfig.mouseEmulationFixedStep, originalContext.mouseEmulationStep, stateOut);
+            originalContext.mouseEmulationLastInputMap = stateOut[0];
+            originalContext.mouseEmulationStep = stateOut[1];
+            int flags = stateOut[2];
+            originalContext.mouseEmulationFixedStepHeld = (flags & 1) != 0;
+            if ((flags & (1 << 1)) != 0) {
+                Toast.makeText(activityContext, activityContext.getString(R.string.stream_mouse_step,
+                        originalContext.mouseEmulationStep), Toast.LENGTH_SHORT).show();
             }
-
-            if ((changedMask & ControllerPacket.A_FLAG) != 0) {
-                if (aDown) {
-                    conn.sendMouseButtonDown(MouseButtonPacket.BUTTON_LEFT);
-                }
-                else {
-                    conn.sendMouseButtonUp(MouseButtonPacket.BUTTON_LEFT);
-                }
-            }
-            if ((changedMask & ControllerPacket.B_FLAG) != 0) {
-                if (bDown) {
-                    conn.sendMouseButtonDown(MouseButtonPacket.BUTTON_RIGHT);
-                }
-                else {
-                    conn.sendMouseButtonUp(MouseButtonPacket.BUTTON_RIGHT);
-                }
-            }
-            if ((changedMask & ControllerPacket.UP_FLAG) != 0) {
-                if ((inputMap & ControllerPacket.UP_FLAG) != 0) {
-                    conn.sendMouseScroll((byte) 1);
-                }
-            }
-            if ((changedMask & ControllerPacket.DOWN_FLAG) != 0) {
-                if ((inputMap & ControllerPacket.DOWN_FLAG) != 0) {
-                    conn.sendMouseScroll((byte) -1);
-                }
-            }
-            if ((changedMask & ControllerPacket.RIGHT_FLAG) != 0) {
-                if ((inputMap & ControllerPacket.RIGHT_FLAG) != 0) {
-                    conn.sendMouseHScroll((byte) 1);
-                }
-            }
-            if ((changedMask & ControllerPacket.LEFT_FLAG) != 0) {
-                if ((inputMap & ControllerPacket.LEFT_FLAG) != 0) {
-                    conn.sendMouseHScroll((byte) -1);
-                }
-            }
+            if (stateOut[3] > 0) conn.sendMouseButtonDown(MouseButtonPacket.BUTTON_LEFT);
+            else if (stateOut[3] < 0) conn.sendMouseButtonUp(MouseButtonPacket.BUTTON_LEFT);
+            if (stateOut[4] > 0) conn.sendMouseButtonDown(MouseButtonPacket.BUTTON_RIGHT);
+            else if (stateOut[4] < 0) conn.sendMouseButtonUp(MouseButtonPacket.BUTTON_RIGHT);
+            if ((flags & (1 << 2)) != 0) conn.sendMouseScroll((byte) 1);
+            if ((flags & (1 << 3)) != 0) conn.sendMouseScroll((byte) -1);
+            if ((flags & (1 << 4)) != 0) conn.sendMouseHScroll((byte) 1);
+            if ((flags & (1 << 5)) != 0) conn.sendMouseHScroll((byte) -1);
 
             conn.sendControllerInput(controllerNumber, activeControllerMask,
                     (short)0, (byte)0, (byte)0, (short)0, (short)0, (short)0, (short)0);
@@ -2491,39 +2402,6 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         return true;
     }
 
-    private Vector2d convertRawStickAxisToPixelMovement(short stickX, short stickY) {
-        float[] out = new float[2];
-        NightjarInputJni.mouseStickCurve(stickX, stickY, out);
-        Vector2d vector = new Vector2d();
-        vector.initialize(out[0], out[1]);
-        return vector;
-    }
-
-    // fixedStep is 0 for movement that follows how far the stick is pushed.
-    private void sendEmulatedMouseMove(short x, short y, int fixedStep) {
-        Vector2d vector = convertRawStickAxisToPixelMovement(x, y);
-        if (vector.getMagnitude() >= 1) {
-            if (fixedStep > 0) {
-                int dx = FixedStepMouse.delta(vector.getX(), fixedStep);
-                int dy = FixedStepMouse.delta(-vector.getY(), fixedStep);
-                if (dx != 0 || dy != 0) {
-                    conn.sendMouseMove((short)dx, (short)dy);
-                }
-            }
-            else {
-                conn.sendMouseMove((short)vector.getX(), (short)-vector.getY());
-            }
-        }
-    }
-
-    private void sendEmulatedMouseScroll(short x, short y) {
-        Vector2d vector = convertRawStickAxisToPixelMovement(x, y);
-        if (vector.getMagnitude() >= 1) {
-            conn.sendMouseHighResScroll((short)vector.getY());
-            conn.sendMouseHighResHScroll((short)vector.getX());
-        }
-    }
-
     @TargetApi(31)
     private boolean hasDualAmplitudeControlledRumbleVibrators(VibratorManager vm) {
         int[] vibratorIds = vm.getVibratorIds();
@@ -2546,40 +2424,23 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
     // This must only be called if hasDualAmplitudeControlledRumbleVibrators() is true!
     @TargetApi(31)
     private void rumbleDualVibrators(VibratorManager vm, short lowFreqMotor, short highFreqMotor) {
-        lowFreqMotor = feel(lowFreqMotor);
-        highFreqMotor = feel(highFreqMotor);
-        // Normalize motor values to 0-255 amplitudes for VibrationManager
-        highFreqMotor = (short)((highFreqMotor >> 8) & 0xFF);
-        lowFreqMotor = (short)((lowFreqMotor >> 8) & 0xFF);
-
-        // If they're both zero, we can just call cancel().
-        if (lowFreqMotor == 0 && highFreqMotor == 0) {
+        if (!NightjarInputJni.rumblePlanDual(lowFreqMotor, highFreqMotor, rumbleFeel.ordinal(), rumbleAmpOut)) {
             vm.cancel();
             return;
         }
 
-        // There's no documentation that states that vibrators for FF_RUMBLE input devices will
-        // always be enumerated in this order, but it seems consistent between Xbox Series X (USB),
-        // PS3 (USB), and PS4 (USB+BT) controllers on Android 12 Beta 3.
         int[] vibratorIds = vm.getVibratorIds();
-        int[] vibratorAmplitudes = new int[] { highFreqMotor, lowFreqMotor };
-
         CombinedVibration.ParallelCombination combo = CombinedVibration.startParallel();
-
         for (int i = 0; i < vibratorIds.length; i++) {
-            // It's illegal to create a VibrationEffect with an amplitude of 0.
-            // Simply excluding that vibrator from our ParallelCombination will turn it off.
-            if (vibratorAmplitudes[i] != 0) {
-                combo.addVibrator(vibratorIds[i], VibrationEffect.createOneShot(60000, vibratorAmplitudes[i]));
+            if (rumbleAmpOut[i] != 0) {
+                combo.addVibrator(vibratorIds[i], VibrationEffect.createOneShot(60000, rumbleAmpOut[i]));
             }
         }
 
         VibrationAttributes.Builder vibrationAttributes = new VibrationAttributes.Builder();
-
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             vibrationAttributes.setUsage(VibrationAttributes.USAGE_MEDIA);
         }
-
         vm.vibrate(combo.combine(), vibrationAttributes.build());
     }
 
@@ -2605,43 +2466,23 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
     // This must only be called if hasQuadAmplitudeControlledRumbleVibrators() is true!
     @TargetApi(31)
     private void rumbleQuadVibrators(VibratorManager vm, short lowFreqMotor, short highFreqMotor, short leftTrigger, short rightTrigger) {
-        lowFreqMotor = feel(lowFreqMotor);
-        highFreqMotor = feel(highFreqMotor);
-        leftTrigger = feel(leftTrigger);
-        rightTrigger = feel(rightTrigger);
-        // Normalize motor values to 0-255 amplitudes for VibrationManager
-        highFreqMotor = (short)((highFreqMotor >> 8) & 0xFF);
-        lowFreqMotor = (short)((lowFreqMotor >> 8) & 0xFF);
-        leftTrigger = (short)((leftTrigger >> 8) & 0xFF);
-        rightTrigger = (short)((rightTrigger >> 8) & 0xFF);
-
-        // If they're all zero, we can just call cancel().
-        if (lowFreqMotor == 0 && highFreqMotor == 0 && leftTrigger == 0 && rightTrigger == 0) {
+        if (!NightjarInputJni.rumblePlanQuad(lowFreqMotor, highFreqMotor, leftTrigger, rightTrigger, rumbleFeel.ordinal(), rumbleAmpOut)) {
             vm.cancel();
             return;
         }
 
-        // This is a guess based upon the behavior of FF_RUMBLE, but untested due to lack of Linux
-        // support for trigger rumble!
         int[] vibratorIds = vm.getVibratorIds();
-        int[] vibratorAmplitudes = new int[] { highFreqMotor, lowFreqMotor, leftTrigger, rightTrigger };
-
         CombinedVibration.ParallelCombination combo = CombinedVibration.startParallel();
-
         for (int i = 0; i < vibratorIds.length; i++) {
-            // It's illegal to create a VibrationEffect with an amplitude of 0.
-            // Simply excluding that vibrator from our ParallelCombination will turn it off.
-            if (vibratorAmplitudes[i] != 0) {
-                combo.addVibrator(vibratorIds[i], VibrationEffect.createOneShot(60000, vibratorAmplitudes[i]));
+            if (rumbleAmpOut[i] != 0) {
+                combo.addVibrator(vibratorIds[i], VibrationEffect.createOneShot(60000, rumbleAmpOut[i]));
             }
         }
 
         VibrationAttributes.Builder vibrationAttributes = new VibrationAttributes.Builder();
-
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             vibrationAttributes.setUsage(VibrationAttributes.USAGE_MEDIA);
         }
-
         vm.vibrate(combo.combine(), vibrationAttributes.build());
     }
 
@@ -2651,20 +2492,13 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
     }
 
     private void rumbleSingleVibrator(Vibrator vibrator, short lowFreqMotor, short highFreqMotor) {
-        rumbleSingleVibrator(vibrator, lowFreqMotor, highFreqMotor, 100);
+        int simulatedAmplitude = NightjarInputJni.rumblePlanSingle(
+                lowFreqMotor, highFreqMotor, rumbleFeel.ordinal(), 100, rumbleSingleOut);
+        vibrateSinglePlan(vibrator, simulatedAmplitude, rumbleSingleOut[0], rumbleSingleOut[1]);
     }
 
-    private void rumbleSingleVibrator(Vibrator vibrator, short lowFreqMotor, short highFreqMotor, int strengthPercent) {
-        // Since we can only use a single amplitude value, scale each motor by the strength, mix them
-        // (80% of the big one, 33% of the small one) and shape the result by the rumble feel.
-        // NB: This value is 0-255 as required by VibrationEffect.
-        int simulatedAmplitude = RumblePolicy.singleMotorAmplitude(lowFreqMotor, highFreqMotor, rumbleFeel, strengthPercent);
-
+    private void vibrateSinglePlan(Vibrator vibrator, int simulatedAmplitude, long onTime, long offTime) {
         if (simulatedAmplitude == 0) {
-            // This case is easy - just cancel the current effect and get out.
-            // NB: We cannot simply check lowFreqMotor == highFreqMotor == 0
-            // because our simulatedAmplitude could be 0 even though our inputs
-            // are not (ex: lowFreqMotor == 0 && highFreqMotor == 1).
             vibrator.cancel();
             return;
         }
@@ -2692,9 +2526,6 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
 
         // If we reach this point, we don't have amplitude controls available, so
         // we must emulate it by PWMing the vibration. Ick.
-        long[] pwm = RumblePolicy.pwmTimings(simulatedAmplitude, rumbleFeel);
-        long onTime = pwm[0];
-        long offTime = pwm[1];
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             VibrationAttributes vibrationAttributes = new VibrationAttributes.Builder()
                     .setUsage(VibrationAttributes.USAGE_MEDIA)
@@ -2719,9 +2550,12 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         boolean foundMatchingDevice = false;
         boolean vibrated = false;
 
-        if (stopped || !rumbleAllowed) {
+        int state = NightjarInputJni.rumbleRecordMotor(
+                rumbleStateHandle, controllerNumber, lowFreqMotor, highFreqMotor, stopped);
+        if ((state & 1) == 0) {
             return;
         }
+        boolean active = (state & 2) != 0;
         short[] levels = levelsOf(controllerNumber);
         levels[0] = lowFreqMotor;
         levels[1] = highFreqMotor;
@@ -2735,7 +2569,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
                 // motor levels, and must not bring back the ones from before the pause.
                 deviceContext.lowFreqMotor = lowFreqMotor;
                 deviceContext.highFreqMotor = highFreqMotor;
-                if (rumblePaused) continue;
+                if (!active) continue;
 
                 // Prefer the documented Android 12 rumble API which can handle dual vibrators on PS/Xbox controllers
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && deviceContext.vibratorManager != null) {
@@ -2763,7 +2597,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
                 if (stopped) deviceContext.cancelMotors();
             }
         }
-        if (rumblePaused) return;
+        if (!active) return;
 
         List<AbstractController> usbPads = usbPadsOf(controllerNumber);
         if (usbPads == null) {
@@ -2781,21 +2615,19 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
             }
         }
 
-        // We may decide to rumble the device for player 1, or the first pad after on-screen controls of their own
-        if (controllerNumber == 0 || controllerNumber == deviceFallbackSlot) {
-            // If we didn't find a matching device, it must be the on-screen
-            // controls that triggered the rumble. Vibrate the device if
-            // the user has requested that behavior.
-            if (controllerNumber == 0 && !foundMatchingDevice && prefConfig.onscreenController && !prefConfig.onlyL3R3 && prefConfig.vibrateOsc) {
-                rumbleSingleVibrator(deviceVibrator, lowFreqMotor, highFreqMotor);
-            }
-            else if (controllerNumber == deviceFallbackSlot && foundMatchingDevice && !vibrated && prefConfig.vibrateFallbackToDevice) {
-                // We found a device to vibrate but it didn't have rumble support. The user
-                // has requested us to vibrate the device in this case.
-
-                deviceVibratorForPlayerOne = true;
-                rumbleSingleVibrator(deviceVibrator, lowFreqMotor, highFreqMotor, prefConfig.vibrateFallbackToDeviceStrength);
-            }
+        int route = NightjarInputJni.rumbleDeviceVibratorRoute(
+                rumbleStateHandle, controllerNumber, lowFreqMotor, highFreqMotor,
+                foundMatchingDevice, vibrated, prefConfig.onscreenController,
+                prefConfig.onlyL3R3, prefConfig.vibrateOsc,
+                prefConfig.vibrateFallbackToDevice, prefConfig.vibrateFallbackToDeviceStrength,
+                rumbleSingleOut);
+        if (route == 1) {
+            vibrateSinglePlan(deviceVibrator, (int) rumbleSingleOut[0], rumbleSingleOut[1], rumbleSingleOut[2]);
+            if (stopped) deviceVibrator.cancel();
+        }
+        else if (route == 2) {
+            deviceVibratorForPlayerOne = true;
+            vibrateSinglePlan(deviceVibrator, (int) rumbleSingleOut[0], rumbleSingleOut[1], rumbleSingleOut[2]);
             if (stopped) deviceVibrator.cancel();
         }
     }
@@ -2807,9 +2639,12 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
     }
 
     private void rumbleTriggers(short controllerNumber, short leftTrigger, short rightTrigger) {
-        if (stopped || !rumbleAllowed) {
+        int state = NightjarInputJni.rumbleRecordTriggers(
+                rumbleStateHandle, controllerNumber, leftTrigger, rightTrigger, stopped);
+        if ((state & 1) == 0) {
             return;
         }
+        boolean active = (state & 2) != 0;
         short[] levels = levelsOf(controllerNumber);
         levels[2] = leftTrigger;
         levels[3] = rightTrigger;
@@ -2820,7 +2655,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
                 if (deviceContext.assignedControllerNumber && deviceContext.controllerNumber == controllerNumber) {
                     deviceContext.leftTriggerMotor = leftTrigger;
                     deviceContext.rightTriggerMotor = rightTrigger;
-                    if (rumblePaused) continue;
+                    if (!active) continue;
 
                     if (deviceContext.quadVibrators) {
                         rumbleQuadVibrators(deviceContext.vibratorManager,
@@ -2831,7 +2666,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
                 }
             }
         }
-        if (rumblePaused) {
+        if (!active) {
             return;
         }
 
@@ -3060,9 +2895,10 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
     // Player 1's controller gyroscope gets a liveness check when its demand may move to the device
     // gyroscope, the way Moonlight V+ does it.
     boolean checksGyroLiveness(short controllerNumber, SensorManager controllerSensors) {
-        return controllerNumber == deviceFallbackSlot && controllerSensors != deviceSensorManager &&
-                prefConfig.gamepadMotionSensorsFallbackToDevice && deviceSensorManager != null &&
-                deviceSensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE) != null;
+        return NightjarInputJni.checksGyroLiveness(
+                controllerNumber, deviceFallbackSlot, controllerSensors == deviceSensorManager,
+                prefConfig.gamepadMotionSensorsFallbackToDevice,
+                deviceSensorManager != null && deviceSensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE) != null);
     }
 
     // A controller gyroscope that reports only zeros hands both motion sensors to the device's own.
@@ -3102,12 +2938,8 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         private final byte motionType;
         private final boolean needsDeviceOrientationCorrection;
         private final InputDeviceContext livenessContext;
-        // Settings › Gyroscope mapping for a controller's gyroscope, fixed when the listener starts.
-        private final GyroAxisTransformer gyroMapping;
-        // Only the thread delivering the events reads and writes these.
-        private final float[] lastValues = new float[3];
-        private final float[] mapped = new float[3];
-        private final GyroLivenessTracker liveness;
+        private final float[] motionOut = new float[3];
+        private long filterHandle;
         // Set by closeMotionListener() on the thread that unregisters this listener.
         volatile boolean closed;
         // Whether this listener holds the display rotation; guarded by the DeviceRotation monitor.
@@ -3119,8 +2951,21 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
             this.motionType = motionType;
             this.needsDeviceOrientationCorrection = needsDeviceOrientationCorrection;
             this.livenessContext = livenessContext;
-            this.gyroMapping = gyroMapping;
-            this.liveness = livenessContext != null ? new GyroLivenessTracker() : null;
+            GyroAxisTransformer map = gyroMapping != null ? gyroMapping : GyroAxisTransformer.identity();
+            this.filterHandle = NightjarInputJni.motionFilterCreate(
+                    motionType, needsDeviceOrientationCorrection, livenessContext != null,
+                    gyroMapping != null, map.sourceAxes[0], map.sourceAxes[1], map.sourceAxes[2],
+                    map.signs[0], map.signs[1], map.signs[2],
+                    map.horizontalSensitivity, map.verticalSensitivity);
+        }
+
+        void close() {
+            closed = true;
+            long h = filterHandle;
+            filterHandle = 0L;
+            if (h != 0L) {
+                NightjarInputJni.motionFilterDestroy(h);
+            }
         }
 
         @Override
@@ -3128,64 +2973,15 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
             if (closed || stopped || !sensorsEnabled || !inputEnabled || !prefConfig.sendControllers) {
                 return;
             }
-            // Before the duplicate check, which drops the repeated zeros this looks for.
-            if (liveness != null && liveness.onSample(sensorEvent.values[0], sensorEvent.values[1],
-                    sensorEvent.values[2], sensorEvent.timestamp)) {
+            int rotation = needsDeviceOrientationCorrection ? displayRotation.rotation() : 0;
+            int step = NightjarInputJni.motionSampleStep(
+                    filterHandle, sensorEvent.values[0], sensorEvent.values[1], sensorEvent.values[2],
+                    sensorEvent.timestamp, rotation, GyroDiagnosticOverlay.isFlydigiForced(), motionOut);
+            if ((step & 1) != 0) {
                 mainThreadHandler.post(() -> fallBackToDeviceSensors(livenessContext));
             }
-            // Android will invoke our callback any time we get a new reading,
-            // even if the values are the same as last time. Don't report a
-            // duplicate set of values to save bandwidth.
-            if (sensorEvent.values[0] == lastValues[0] &&
-                    sensorEvent.values[1] == lastValues[1] &&
-                    sensorEvent.values[2] == lastValues[2]) {
+            if ((step & 2) == 0) {
                 return;
-            }
-            else {
-                lastValues[0] = sensorEvent.values[0];
-                lastValues[1] = sensorEvent.values[1];
-                lastValues[2] = sensorEvent.values[2];
-            }
-
-            int x = 0;
-            int y = 1;
-            int z = 2;
-            int xFactor = 1;
-            int yFactor = 1;
-            int zFactor = 1;
-
-            if (needsDeviceOrientationCorrection) {
-                int deviceRotation = displayRotation.rotation();
-                switch (deviceRotation) {
-                    case Surface.ROTATION_0:
-                    case Surface.ROTATION_180:
-                        x = 0;
-                        y = 2;
-                        z = 1;
-                        break;
-
-                    case Surface.ROTATION_90:
-                    case Surface.ROTATION_270:
-                        x = 1;
-                        y = 2;
-                        z = 0;
-                        break;
-                }
-
-                switch (deviceRotation) {
-                    case Surface.ROTATION_0:
-                        zFactor = -1;
-                        break;
-                    case Surface.ROTATION_90:
-                        xFactor = -1;
-                        zFactor = -1;
-                        break;
-                    case Surface.ROTATION_180:
-                        xFactor = -1;
-                        break;
-                    case Surface.ROTATION_270:
-                        break;
-                }
             }
 
             synchronized (motionSendLock) {
@@ -3194,35 +2990,13 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
                 if (closed || stopped || !sensorsEnabled || !inputEnabled || !prefConfig.sendControllers) {
                     return;
                 }
-                if (motionType == MoonBridge.LI_MOTION_TYPE_GYRO) {
-                    // Convert from rad/s to deg/s
-                    float gx = sensorEvent.values[x] * xFactor * 57.2957795f;
-                    float gy = sensorEvent.values[y] * yFactor * 57.2957795f;
-                    float gz = sensorEvent.values[z] * zFactor * 57.2957795f;
-                    GyroAxisTransformer mapping = gyroMapping == null ? null
-                            : GyroDiagnosticOverlay.isFlydigiForced() ? GyroMappingPreferences.FLYDIGI_TRANSFORM
-                            : gyroMapping;
-                    if (mapping != null && !mapping.isIdentity()) {
-                        mapping.transform(gx, gy, gz, mapped);
-                        gx = mapped[0];
-                        gy = mapped[1];
-                        gz = mapped[2];
-                    }
-                    if (GyroDiagnosticOverlay.isEnabled()) {
-                        GyroDiagnosticOverlay.report("sensor", controllerNumber, motionType, gx, gy, gz);
-                    }
-                    conn.sendControllerMotionEvent((byte) controllerNumber, motionType, gx, gy, gz);
+                float mx = motionOut[0];
+                float my = motionOut[1];
+                float mz = motionOut[2];
+                if (GyroDiagnosticOverlay.isEnabled()) {
+                    GyroDiagnosticOverlay.report("sensor", controllerNumber, motionType, mx, my, mz);
                 }
-                else {
-                    // Pass m/s^2 directly without conversion
-                    float ax = sensorEvent.values[x] * xFactor;
-                    float ay = sensorEvent.values[y] * yFactor;
-                    float az = sensorEvent.values[z] * zFactor;
-                    if (GyroDiagnosticOverlay.isEnabled()) {
-                        GyroDiagnosticOverlay.report("sensor", controllerNumber, motionType, ax, ay, az);
-                    }
-                    conn.sendControllerMotionEvent((byte) controllerNumber, motionType, ax, ay, az);
-                }
+                conn.sendControllerMotionEvent((byte) controllerNumber, motionType, mx, my, mz);
             }
         }
 
@@ -3242,10 +3016,11 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
 
         for (UsbDeviceContext context : usbDeviceContexts.values()) {
             if (context.assignedControllerNumber && context.controllerNumber == controllerNumber) {
-                short rate = prefConfig.gamepadMotionSensors && !dropsMotionAndTouchpad(context.buttonMap) ? reportRateHz : 0;
+                short rate = (short) NightjarInputJni.usbMotionRateHz(
+                        reportRateHz, prefConfig.gamepadMotionSensors,
+                        dropsMotionAndTouchpad(context.buttonMap), context.deviceSensors != null);
                 if (context.deviceSensors != null) {
-                    // Report rate is restricted to <= 200 Hz without the HIGH_SAMPLING_RATE_SENSORS permission
-                    context.setDeviceMotion(motionType, (short) Math.min(200, rate & 0xFFFF));
+                    context.setDeviceMotion(motionType, rate);
                 }
                 else {
                     context.device.setMotionEventState(motionType, rate);
@@ -3254,7 +3029,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         }
 
         // Report rate is restricted to <= 200 Hz without the HIGH_SAMPLING_RATE_SENSORS permission
-        reportRateHz = (short) Math.min(200, reportRateHz & 0xFFFF);
+        reportRateHz = (short) NightjarInputJni.clampMotionRateHz(reportRateHz);
 
         for (InputDeviceContext deviceContext : inputDeviceContexts.values()) {
 
@@ -3290,7 +3065,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
                         Sensor accelSensor = sm.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
                         if (sensorsEnabled && reportRateHz != 0 && accelSensor != null) {
                             deviceContext.accelListener = createSensorListener(controllerNumber, motionType, sm == deviceSensorManager, null);
-                            registerMotionListener(sm, accelSensor, deviceContext.accelListener, 1000000 / reportRateHz);
+                            registerMotionListener(sm, accelSensor, deviceContext.accelListener, NightjarInputJni.motionSamplingPeriodUs(reportRateHz));
                         }
                         break;
                     case MoonBridge.LI_MOTION_TYPE_GYRO:
@@ -3306,7 +3081,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
                                     checksGyroLiveness(controllerNumber, sm) ? deviceContext : null,
                                     sm == deviceSensorManager ? null
                                             : GyroMappingPreferences.transformer(activityContext, deviceContext.inputDevice));
-                            registerMotionListener(sm, gyroSensor, deviceContext.gyroListener, 1000000 / reportRateHz);
+                            registerMotionListener(sm, gyroSensor, deviceContext.gyroListener, NightjarInputJni.motionSamplingPeriodUs(reportRateHz));
                         }
                         break;
                 }
@@ -3389,7 +3164,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         if (previous != null) {
             mainThreadHandler.removeCallbacks(previous);
         }
-        long remaining = MINIMUM_BUTTON_DOWN_TIME_MS - (eventTime - event.getDownTime());
+        long remaining = NightjarInputJni.tapHoldRemainingMs(event.getDownTime(), eventTime);
         if (remaining > 0 && isHandledButtonUp(context, finalKeyCode, scanCode)) {
             Runnable release = new Runnable() {
                 @Override
@@ -3430,8 +3205,8 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         }
         int stepFlags = buttonStepOut[4];
         if ((stepFlags & 1) != 0 &&
-                eventTime - context.startDownTime > ControllerHandler.START_DOWN_TIME_MOUSE_MODE_MS &&
-                prefConfig.mouseEmulation) {
+                NightjarInputJni.startLongPressTogglesMouse(
+                        context.startDownTime, eventTime, prefConfig.mouseEmulation)) {
             context.toggleMouseEmulation();
         }
         context.inputMap = buttonStepOut[1];
@@ -3461,7 +3236,8 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         sendControllerInputPacket(context);
 
         // pressedButtons too: after a clickpad press, a Select or LB still held is not in inputMap.
-        if (context.pendingExit && context.inputMap == 0 && context.pressedButtons.isEmpty()) {
+        if (NightjarInputJni.shouldOpenMenuOnRelease(
+                context.pendingExit, context.inputMap, context.pressedButtons.isEmpty())) {
             context.pendingExit = false;
             if (activityContext instanceof Game) {
                 ((Game) activityContext).showStreamMenuFromController();
@@ -3585,25 +3361,21 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
      * the stream menu or a capture has the pad: there Guide does what it always did.
      */
     private int guideHoldButtons(UsbDeviceContext context, int buttonFlags) {
-        boolean guide = (buttonFlags & ControllerPacket.SPECIAL_BUTTON_FLAG) != 0;
-        if (guide != context.guideDown) {
-            context.guideDown = guide;
-            if (guide) {
-                if (inputEnabled && padCapture == null) holdGuide(context, false);
-            }
-            else if (releaseGuide(context) == GuideHold.Release.TAP) {
-                // Ended by reportControllerState, on the driver's thread like every report
-                context.guideTapping = true;
-            }
-        }
-        // Guide pressed together with another button is a chord: both go out now. A button pressed
-        // after Guide was already waiting got Guide sent first, by reportControllerState.
-        if (guide && (buttonFlags & ~ControllerPacket.SPECIAL_BUTTON_FLAG) != 0 && context.guideHold.chord()) {
+        NightjarInputJni.usbGuideHoldStep(
+                context.guideDown, context.guideHold.stateBits(), context.guideTapping,
+                buttonFlags, prefConfig.guideMenuHoldMs, inputEnabled && padCapture == null, stateOut);
+        context.guideDown = stateOut[0] != 0;
+        context.guideHold.setStateBits(stateOut[1]);
+        context.guideTapping = stateOut[2] != 0;
+        int actionBits = stateOut[4];
+        if ((actionBits & 2) != 0) {
             mainThreadHandler.removeCallbacks(context.guideHoldRunnable);
         }
-        if (context.guideHold.active()) buttonFlags &= ~ControllerPacket.SPECIAL_BUTTON_FLAG;
-        if (context.guideTapping) buttonFlags |= ControllerPacket.SPECIAL_BUTTON_FLAG;
-        return buttonFlags;
+        if ((actionBits & 1) != 0) {
+            mainThreadHandler.removeCallbacks(context.guideHoldRunnable);
+            mainThreadHandler.postDelayed(context.guideHoldRunnable, prefConfig.guideMenuHoldMs);
+        }
+        return stateOut[3];
     }
 
     public boolean handleButtonDown(KeyEvent event) {
@@ -3688,8 +3460,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
 
         // Wait for the menu combo to lift so it cannot activate a menu item. It goes by the
         // held buttons: a clickpad press before Start+RB took Select and LB out of inputMap.
-        if (heldButtons(context) == (ControllerPacket.BACK_FLAG | ControllerPacket.PLAY_FLAG |
-                                     ControllerPacket.LB_FLAG | ControllerPacket.RB_FLAG)) {
+        if (NightjarInputJni.shouldArmMenuCombo(heldButtons(context))) {
             context.pendingExit = true;
         }
 
@@ -3846,23 +3617,15 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         int buttons = context.buttonMap.mapButtonFlags(buttonFlags, prefConfig.flipFaceButtons);
         if (!inputEnabled) {
             // Android sees no key events from a pad this driver owns: it steers the menu from here.
-            steerMenu(context, buttons);
+            steerMenu(controllerId, context, buttons);
             return;
         }
         PadCapture capture = padCapture;
         if (capture != null) {
-            capturePad(context, capture, buttons, leftStickX, leftStickY);
+            capturePad(controllerId, context, capture, buttons, leftStickX, leftStickY);
             return;
         }
-        if (context.steeringMenu) {
-            // Buttons still held from the menu reach the host only after they were let go.
-            context.steeringMenu = false;
-            context.captureStick = null;
-            context.heldFromMenu = context.menuButtons;
-        }
-        context.heldFromMenu &= buttons;
-        buttons &= ~context.heldFromMenu;
-        context.lastButtons = buttons;
+        buttons = NightjarInputJni.usbFilterGameButtons(usbInputStateHandle, controllerId, buttons);
 
         NightjarInputJni.normalizeUsbAxes(
                 leftStickX, leftStickY, rightStickX, rightStickY, leftTrigger, rightTrigger,
@@ -3879,8 +3642,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
 
         // The same menu combination as on an Android-mapped pad, opened once all four are let go so
         // it cannot activate a menu item.
-        if (buttons == (ControllerPacket.BACK_FLAG | ControllerPacket.PLAY_FLAG |
-                ControllerPacket.LB_FLAG | ControllerPacket.RB_FLAG)) {
+        if (NightjarInputJni.shouldArmMenuCombo(buttons)) {
             context.menuComboPending = true;
         }
         if (quitChanged) holdQuitCombo(context, buttonFlags);
@@ -3902,53 +3664,25 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
      * (qiin2333/moonlight-qt, gamepad.cpp), less its default, which is the menu combo on Android.
      */
     static int quitComboMask(String combo) {
-        int shoulders = ControllerPacket.LB_FLAG | ControllerPacket.RB_FLAG;
-        switch (combo == null ? "" : combo) {
-            case "select_lb_rb_y": return shoulders | ControllerPacket.BACK_FLAG | ControllerPacket.Y_FLAG;
-            case "start_lb_rb_a": return shoulders | ControllerPacket.PLAY_FLAG | ControllerPacket.A_FLAG;
-            case "start_lb_rb_b": return shoulders | ControllerPacket.PLAY_FLAG | ControllerPacket.B_FLAG;
-            case "lb_rb_x_y": return shoulders | ControllerPacket.X_FLAG | ControllerPacket.Y_FLAG;
-            case "lb_rb_a_b": return shoulders | ControllerPacket.A_FLAG | ControllerPacket.B_FLAG;
-            default: return 0;
-        }
+        return NightjarInputJni.quitComboMask(combo);
     }
 
     // A physical button as the quit combo sees it; 0 for buttons no combo uses.
     static int quitButton(int keyCode) {
-        switch (keyCode) {
-            case KeyEvent.KEYCODE_BUTTON_START: case KeyEvent.KEYCODE_MENU: return ControllerPacket.PLAY_FLAG;
-            case KeyEvent.KEYCODE_BUTTON_SELECT: case KeyEvent.KEYCODE_BACK: return ControllerPacket.BACK_FLAG;
-            case KeyEvent.KEYCODE_BUTTON_L1: return ControllerPacket.LB_FLAG;
-            case KeyEvent.KEYCODE_BUTTON_R1: return ControllerPacket.RB_FLAG;
-            case KeyEvent.KEYCODE_BUTTON_A: return ControllerPacket.A_FLAG;
-            case KeyEvent.KEYCODE_BUTTON_B: return ControllerPacket.B_FLAG;
-            case KeyEvent.KEYCODE_BUTTON_X: return ControllerPacket.X_FLAG;
-            case KeyEvent.KEYCODE_BUTTON_Y: return ControllerPacket.Y_FLAG;
-            case KeyEvent.KEYCODE_BUTTON_THUMBL: return ControllerPacket.LS_CLK_FLAG;
-            case KeyEvent.KEYCODE_BUTTON_THUMBR: return ControllerPacket.RS_CLK_FLAG;
-            case KeyEvent.KEYCODE_BUTTON_MODE: return ControllerPacket.SPECIAL_BUTTON_FLAG;
-            case KeyEvent.KEYCODE_DPAD_UP: return ControllerPacket.UP_FLAG;
-            case KeyEvent.KEYCODE_DPAD_DOWN: return ControllerPacket.DOWN_FLAG;
-            case KeyEvent.KEYCODE_DPAD_LEFT: return ControllerPacket.LEFT_FLAG;
-            case KeyEvent.KEYCODE_DPAD_RIGHT: return ControllerPacket.RIGHT_FLAG;
-            default: return 0;
-        }
+        return NightjarInputJni.quitButtonFlag(keyCode);
     }
 
     private void holdQuitCombo(GenericControllerContext context, int buttons) {
-        int mask = quitComboMask(prefConfig.gamepadQuitCombo);
-        if (mask != 0 && buttons == mask) {
-            context.quitComboPending = true;
-        }
+        context.quitComboPending = NightjarInputJni.holdQuitComboStep(
+                context.quitComboPending, buttons, prefConfig.gamepadQuitCombo);
     }
 
     // Like the menu combo, the stream ends once every button is up, so none stays held on the PC.
     private void releaseQuitCombo(GenericControllerContext context, int buttons) {
-        if (context.quitComboPending && buttons == 0) {
-            context.quitComboPending = false;
-            if (activityContext instanceof Game) {
-                ((Game) activityContext).leaveStreamFromController();
-            }
+        int res = NightjarInputJni.releaseQuitComboStep(context.quitComboPending, buttons);
+        context.quitComboPending = (res & 1) != 0;
+        if ((res & 2) != 0 && activityContext instanceof Game) {
+            ((Game) activityContext).leaveStreamFromController();
         }
     }
 
@@ -3984,89 +3718,64 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
      * mouse turns off, or the first controller's turns on. It works with the Start long press off.
      */
     public void toggleMouseEmulationFromMenu() {
-        boolean active = false;
-        for (GenericControllerContext context : mouseContexts()) {
-            if (context.mouseEmulationActive) { context.toggleMouseEmulation(); active = true; }
+        List<GenericControllerContext> contexts = mouseContexts();
+        int n = contexts.size();
+        boolean[] eligible = new boolean[n];
+        short[] numbers = new short[n];
+        boolean[] active = new boolean[n];
+        for (int i = 0; i < n; i++) {
+            GenericControllerContext c = contexts.get(i);
+            eligible[i] = c != defaultContext && c != handheldContext && c.assignedControllerNumber;
+            numbers[i] = c.controllerNumber;
+            active[i] = c.mouseEmulationActive;
         }
-        if (active) return;
-        // The first controller is the lowest numbered pad, not whichever the map lists first.
-        GenericControllerContext first = null;
-        for (GenericControllerContext context : mouseContexts()) {
-            if (context == defaultContext || context == handheldContext || !context.assignedControllerNumber) continue;
-            if (first == null || context.controllerNumber < first.controllerNumber) first = context;
+        int target = NightjarInputJni.pickMenuMouseTarget(eligible, numbers, active, n);
+        if (target == -1) {
+            for (GenericControllerContext context : contexts) {
+                if (context.mouseEmulationActive) context.toggleMouseEmulation();
+            }
         }
-        if (first != null) first.toggleMouseEmulation();
+        else if (target >= 0) {
+            contexts.get(target).toggleMouseEmulation();
+        }
     }
 
-    // The keyboard owns the pad: report each change to it, and treat what is still held on the way
-    // out like buttons held from the menu, so they reach the game only after they were let go.
-    private static final int[] CAPTURED_BUTTONS = {ControllerPacket.UP_FLAG, ControllerPacket.DOWN_FLAG,
-            ControllerPacket.LEFT_FLAG, ControllerPacket.RIGHT_FLAG, ControllerPacket.A_FLAG, ControllerPacket.B_FLAG,
-            ControllerPacket.X_FLAG, ControllerPacket.Y_FLAG, ControllerPacket.LB_FLAG, ControllerPacket.RB_FLAG,
-            ControllerPacket.PLAY_FLAG};
-
-    private void capturePad(UsbDeviceContext context, PadCapture capture, int buttons, float stickX, float stickY) {
-        if (!context.steeringMenu) {
-            context.steeringMenu = true;
-            // Everything held as the keyboard takes over, such as the A that chose it in the menu, is no
-            // press for the keyboard and stays away from the game until it is let go.
-            context.menuButtons = buttons | context.lastButtons;
+    private void capturePad(int controllerId, UsbDeviceContext context, PadCapture capture, int buttons, float stickX, float stickY) {
+        NightjarInputJni.usbCapturePadStep(
+                usbInputStateHandle, controllerId, buttons, stickX, stickY,
+                captureGeneration.get(), stateOut);
+        if (stateOut[0] != 0) {
             context.menuComboPending = false;
             context.quitComboPending = false;
-            context.captureStick = null;
-            context.captureGeneration = captureGeneration.get();
             // The game's last state is cleared here, on the thread that sends this pad's reports.
             releaseUsbInput(context);
         }
-        int generation = captureGeneration.get();
-        if (context.captureGeneration != generation) {
-            context.captureGeneration = generation;
-            context.captureStick = null;
-        }
-        int changed = buttons ^ context.menuButtons;
-        context.menuButtons = buttons;
-        for (int flag : CAPTURED_BUTTONS) {
-            if ((changed & flag) != 0) capture.button(flag, (buttons & flag) != 0);
+        int changed = stateOut[1];
+        int newButtons = stateOut[2];
+        for (int flag : capturedButtonFlags()) {
+            if ((changed & flag) != 0) capture.button(flag, (newButtons & flag) != 0);
         }
         // The stick is reported on every report; the keyboard only needs to hear when its direction changes.
-        KeyboardFocus.Direction direction = PcKeyboardController.stickDirection(stickX, stickY, context.captureStick);
-        if (direction != context.captureStick) {
-            context.captureStick = direction;
+        if (stateOut[3] != 0) {
             capture.stick(context.id, stickX, stickY);
         }
     }
 
     // While the stream menu or one of its dialogs has focus, a newly pressed D-pad direction, A or B
     // of a USB-driver pad moves, chooses or goes back there.
-    private void steerMenu(UsbDeviceContext context, int buttons) {
-        // The menu took the pad from the keyboard (if it had it), which let go of the stick.
-        context.captureStick = null;
-        if (!context.steeringMenu) {
-            context.steeringMenu = true;
-            context.menuButtons = context.lastButtons;
+    private void steerMenu(int controllerId, UsbDeviceContext context, int buttons) {
+        int count = NightjarInputJni.usbSteerMenuStep(
+                usbInputStateHandle, controllerId, buttons, steerKeysOut);
+        if (steerKeysOut[0] != 0) {
             context.menuComboPending = false;
             context.quitComboPending = false;
         }
-        int pressed = buttons & ~context.menuButtons;
-        context.menuButtons = buttons;
-        if (pressed == 0 || !(activityContext instanceof Game)) {
+        if (count <= 0 || !(activityContext instanceof Game)) {
             return;
         }
         Game game = (Game) activityContext;
-        int[][] keys = {
-                {ControllerPacket.UP_FLAG, KeyEvent.KEYCODE_DPAD_UP},
-                {ControllerPacket.DOWN_FLAG, KeyEvent.KEYCODE_DPAD_DOWN},
-                {ControllerPacket.LEFT_FLAG, KeyEvent.KEYCODE_DPAD_LEFT},
-                {ControllerPacket.RIGHT_FLAG, KeyEvent.KEYCODE_DPAD_RIGHT},
-                {ControllerPacket.A_FLAG, KeyEvent.KEYCODE_DPAD_CENTER},
-                {ControllerPacket.B_FLAG, KeyEvent.KEYCODE_BUTTON_B},
-                // The stream menu's controller buttons: Y keyboard, X mouse, LB shortcuts, RB overlay.
-                {ControllerPacket.Y_FLAG, KeyEvent.KEYCODE_BUTTON_Y},
-                {ControllerPacket.X_FLAG, KeyEvent.KEYCODE_BUTTON_X},
-                {ControllerPacket.LB_FLAG, KeyEvent.KEYCODE_BUTTON_L1},
-                {ControllerPacket.RB_FLAG, KeyEvent.KEYCODE_BUTTON_R1}};
-        for (int[] key : keys) {
-            if ((pressed & key[0]) != 0) game.steerStreamMenu(key[1]);
+        for (int i = 1; i <= count; i++) {
+            game.steerStreamMenu(steerKeysOut[i]);
         }
     }
 
@@ -4119,14 +3828,14 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         if (context != null) {
             LimeLog.info("Removed controller: "+controller.getControllerId());
             // Unplugged while the PC keyboard was open: nothing will report what it held being let go.
+            NightjarInputJni.usbRemovePadCapture(usbInputStateHandle, controller.getControllerId(), stateOut);
             PadCapture capture = padCapture;
-            if (capture != null && context.steeringMenu) {
-                for (int flag : CAPTURED_BUTTONS) {
-                    if ((context.menuButtons & flag) != 0) capture.button(flag, false);
+            if (capture != null && stateOut[0] != 0) {
+                int heldMenuButtons = stateOut[1];
+                for (int flag : capturedButtonFlags()) {
+                    if ((heldMenuButtons & flag) != 0) capture.button(flag, false);
                 }
-                context.menuButtons = 0;
-                if (context.captureStick != null) {
-                    context.captureStick = null;
+                if (stateOut[2] != 0) {
                     capture.stick(context.id, 0f, 0f);
                 }
             }
@@ -4208,6 +3917,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         public boolean mouseEmulationFixedStepHeld;
         public int mouseEmulationStep = FixedStepMouse.MIN_STEP;
         public final int mouseEmulationReportPeriod = 50;
+        private final int[] mouseTickOut = new int[7];
 
         public final Runnable mouseEmulationRunnable = new Runnable() {
             @Override
@@ -4220,19 +3930,21 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
                 }
 
                 int fixedStep = mouseEmulationFixedStepHeld ? mouseEmulationStep : 0;
-
-                // Send mouse events from analog sticks
-                if (prefConfig.analogStickForScrolling == PreferenceConfiguration.AnalogStickForScrolling.RIGHT) {
-                    sendEmulatedMouseMove(leftStickX, leftStickY, fixedStep);
-                    sendEmulatedMouseScroll(rightStickX, rightStickY);
+                int scrollStickMode = prefConfig.analogStickForScrolling == PreferenceConfiguration.AnalogStickForScrolling.RIGHT ? 1
+                        : prefConfig.analogStickForScrolling == PreferenceConfiguration.AnalogStickForScrolling.LEFT ? 2 : 0;
+                NightjarInputJni.mouseTickStep(
+                        leftStickX, leftStickY, rightStickX, rightStickY,
+                        scrollStickMode, fixedStep, mouseTickOut);
+                int flags = mouseTickOut[0];
+                if ((flags & 1) != 0) {
+                    conn.sendMouseMove((short) mouseTickOut[1], (short) mouseTickOut[2]);
                 }
-                else if (prefConfig.analogStickForScrolling == PreferenceConfiguration.AnalogStickForScrolling.LEFT) {
-                    sendEmulatedMouseMove(rightStickX, rightStickY, fixedStep);
-                    sendEmulatedMouseScroll(leftStickX, leftStickY);
+                if ((flags & 2) != 0) {
+                    conn.sendMouseMove((short) mouseTickOut[3], (short) mouseTickOut[4]);
                 }
-                else {
-                    sendEmulatedMouseMove(leftStickX, leftStickY, fixedStep);
-                    sendEmulatedMouseMove(rightStickX, rightStickY, fixedStep);
+                if ((flags & 4) != 0) {
+                    conn.sendMouseHighResScroll((short) mouseTickOut[5]);
+                    conn.sendMouseHighResHScroll((short) mouseTickOut[6]);
                 }
 
                 // Requeue the callback
@@ -4242,7 +3954,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
 
         // Controllers Off: a physical pad sends nothing, its mouse included (the on-screen gamepad still does).
         private boolean mouseSilenced() {
-            return !prefConfig.sendControllers && this != defaultContext;
+            return NightjarInputJni.mouseSilenced(prefConfig.sendControllers, this == defaultContext);
         }
 
         public void toggleMouseEmulation() {
@@ -4732,11 +4444,6 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         boolean menuComboPending;
         // Guide was down in the driver's last report (see guideHoldButtons).
         boolean guideDown;
-        // The pad steers the stream menu while the stream has no input focus.
-        boolean steeringMenu;
-        KeyboardFocus.Direction captureStick;
-        int captureGeneration;
-        int menuButtons, heldFromMenu, lastButtons;
 
         // Select+LB held as the touchpad click: those of the two not let go yet, which stay silent until released
         int clickpadSwallowed;
@@ -4770,7 +4477,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
             Sensor sensor = deviceSensors.getDefaultSensor(gyro ? Sensor.TYPE_GYROSCOPE : Sensor.TYPE_ACCELEROMETER);
             if (!stopped && sensorsEnabled && rate != 0 && sensor != null) {
                 listener = createSensorListener(controllerNumber, motionType, true, null);
-                registerMotionListener(deviceSensors, sensor, listener, 1000000 / rate);
+                registerMotionListener(deviceSensors, sensor, listener, NightjarInputJni.motionSamplingPeriodUs(rate));
             }
             if (gyro) gyroListener = listener;
             else accelListener = listener;

@@ -1,5 +1,7 @@
 package com.limelight.binding.input;
 
+import com.limelight.nvstream.jni.NightjarInputJni;
+
 /** Which host vibration requests reach a motor, and how strongly this device vibrates in a controller's place. */
 public final class RumblePolicy {
     private RumblePolicy() {}
@@ -9,7 +11,7 @@ public final class RumblePolicy {
      * waveform haptics and this device's vibration standing in for a controller.
      */
     public static boolean allows(boolean rumbleDisabled) {
-        return !rumbleDisabled;
+        return NightjarInputJni.rumbleAllows(rumbleDisabled);
     }
 
     /**
@@ -32,45 +34,25 @@ public final class RumblePolicy {
 
         /** The feel stored under this key; anything unknown is Standard. */
         public static Feel fromKey(String key) {
-            for (Feel feel : values()) {
-                if (feel.key.equals(key)) return feel;
-            }
-            return STANDARD;
+            int ord = NightjarInputJni.rumbleFeelFromKey(key);
+            Feel[] all = values();
+            return (ord >= 0 && ord < all.length) ? all[ord] : STANDARD;
         }
     }
 
-    // Strong: levels under this share of full strength stay silent; every other level starts at the floor.
-    private static final double STRONG_DEAD = 0.02;
-    private static final double STRONG_FLOOR = 0.25;
-    private static final double STRONG_GAMMA = 0.7;
-    // Subtle: the strongest level reaches this share of full strength.
-    private static final double SUBTLE_CAP = 0.6;
-    private static final double SUBTLE_GAMMA = 1.5;
-
     /** An unsigned 16-bit motor level after the feel's curve; zero stays zero. */
     public static short shapeMotor(short motor, Feel feel) {
-        int level = motor & 0xffff;
-        if (level == 0 || feel == Feel.STANDARD) return motor;
-        double f = level / 65535.0;
-        double y;
-        if (feel == Feel.STRONG) {
-            y = f < STRONG_DEAD ? 0.0 : STRONG_FLOOR + (1.0 - STRONG_FLOOR) * Math.pow(f, STRONG_GAMMA);
-        } else {
-            y = SUBTLE_CAP * Math.pow(f, SUBTLE_GAMMA);
-        }
-        return (short) Math.max(0, Math.min(65535, Math.round(y * 65535.0)));
+        return NightjarInputJni.rumbleShapeMotor(motor, feel.ordinal());
     }
 
     /** A 0-255 vibration amplitude after the feel's curve. */
     public static int shapeAmplitude(int amplitude, Feel feel) {
-        if (amplitude <= 0 || feel == Feel.STANDARD) return amplitude;
-        return Math.min(255, (shapeMotor((short) (amplitude * 257), feel) & 0xffff) >> 8);
+        return NightjarInputJni.rumbleShapeAmplitude(amplitude, feel.ordinal());
     }
 
     /** Scales an unsigned 16-bit motor level by a percentage, capped at full strength. */
     public static short scaleMotor(short motor, int strengthPercent) {
-        int scaled = ((motor & 0xffff) * Math.max(0, strengthPercent)) / 100;
-        return (short) Math.min(scaled, Short.MAX_VALUE * 2);
+        return NightjarInputJni.rumbleScaleMotor(motor, strengthPercent);
     }
 
     /**
@@ -79,10 +61,7 @@ public final class RumblePolicy {
      * the feel's curve. Standard is the mix alone, so strength still sets it at every percent.
      */
     public static int singleMotorAmplitude(short lowFreqMotor, short highFreqMotor, Feel feel, int strengthPercent) {
-        int low = (scaleMotor(lowFreqMotor, strengthPercent) >> 8) & 0xFF;
-        int high = (scaleMotor(highFreqMotor, strengthPercent) >> 8) & 0xFF;
-        int mixed = Math.min(255, (int) ((low * 0.80) + (high * 0.33)));
-        return shapeAmplitude(mixed, feel);
+        return NightjarInputJni.rumbleSingleMotorAmplitude(lowFreqMotor, highFreqMotor, feel.ordinal(), strengthPercent);
     }
 
     /** The PWM period a device without amplitude control is pulsed over, in milliseconds. */
@@ -94,8 +73,8 @@ public final class RumblePolicy {
      * floor it lifts weak rumble to is not lost to rounding.
      */
     public static long[] pwmTimings(int amplitude, Feel feel) {
-        long on = (long) ((amplitude / 255.0) * PWM_PERIOD_MS);
-        if (feel != Feel.STANDARD && amplitude > 0) on = Math.max(1, on);
-        return new long[] {on, PWM_PERIOD_MS - on};
+        long[] out = new long[2];
+        NightjarInputJni.rumblePwmTimings(amplitude, feel.ordinal(), out);
+        return out;
     }
 }

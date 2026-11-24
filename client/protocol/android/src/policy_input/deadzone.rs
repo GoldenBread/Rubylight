@@ -5,7 +5,7 @@ use jni::objects::{JClass, JFloatArray, JIntArray};
 use jni::sys::{JNI_FALSE, jboolean, jbyte, jfloat, jint, jshort};
 use nightjar_policy::controller::deadzone::{
     AxisSetOutput, apply_stick_deadzone, apply_trigger_deadzone, max_by_magnitude_i16,
-    max_by_magnitude_u8, mouse_stick_curve, normalize_axis_set, normalize_usb_axes,
+    max_by_magnitude_u8, normalize_axis_set, normalize_usb_axes,
 };
 
 use super::{write_floats, write_ints};
@@ -51,18 +51,6 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarInputJni_maxByMag
     b: jshort,
 ) -> jshort {
     max_by_magnitude_i16(a, b)
-}
-
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarInputJni_mouseStickCurve(
-    mut env: JNIEnv,
-    _: JClass,
-    stick_x: jshort,
-    stick_y: jshort,
-    out: JFloatArray,
-) {
-    let (ox, oy) = mouse_stick_curve(stick_x, stick_y);
-    write_floats(&mut env, &out, &[ox, oy]);
 }
 
 #[unsafe(no_mangle)]

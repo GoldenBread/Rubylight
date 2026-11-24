@@ -1,5 +1,7 @@
 package com.limelight.binding.input;
 
+import com.limelight.nvstream.jni.NightjarInputJni;
+
 /**
  * Spots a controller gyroscope that delivers samples but no data: some controller clones list an
  * Android gyroscope whose values stay exactly zero while its timestamps advance. A real gyroscope
@@ -13,9 +15,8 @@ final class GyroLivenessTracker {
     static final long DEFAULT_ZERO_NANOS = 1_000_000_000L;
 
     private final long zeroNanos;
-    private long zeroRunStartNanos;
-    private boolean sawMotion;
-    private boolean tripped;
+    // [0] = zeroRunStartNanos, [1] = sawMotion (0/1), [2] = tripped (0/1)
+    private final long[] state = new long[3];
 
     GyroLivenessTracker() {
         this(DEFAULT_ZERO_NANOS);
@@ -27,21 +28,6 @@ final class GyroLivenessTracker {
 
     /** True once, for the sample that completes the zero run, if no sample before moved. */
     synchronized boolean onSample(float x, float y, float z, long timestampNanos) {
-        if (tripped || sawMotion) {
-            return false;
-        }
-        if (x != 0f || y != 0f || z != 0f) {
-            sawMotion = true;
-            return false;
-        }
-        if (zeroRunStartNanos == 0 || timestampNanos < zeroRunStartNanos) {
-            zeroRunStartNanos = timestampNanos;
-            return false;
-        }
-        if (timestampNanos - zeroRunStartNanos < zeroNanos) {
-            return false;
-        }
-        tripped = true;
-        return true;
+        return NightjarInputJni.gyroLivenessStep(zeroNanos, x, y, z, timestampNanos, state);
     }
 }

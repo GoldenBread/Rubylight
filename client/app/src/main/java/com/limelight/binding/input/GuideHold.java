@@ -1,5 +1,7 @@
 package com.limelight.binding.input;
 
+import com.limelight.nvstream.jni.NightjarInputJni;
+
 /**
  * Hold Guide to open the stream menu, for one controller. While the hold time runs Guide stays off
  * the host; let go before it and the press goes out as a short Guide tap, held past it and the stream
@@ -18,28 +20,41 @@ final class GuideHold {
         SWALLOW,
     }
 
-    // Waiting for the hold time; held back until let go (the menu opened, or the input was let go).
-    private boolean pending, swallowing;
+    private static final int OP_DOWN = 0;
+    private static final int OP_EXPIRE = 1;
+    private static final int OP_CHORD = 2;
+    private static final int OP_UP = 3;
+    private static final int OP_CANCEL_PENDING = 4;
+    private static final int OP_RESET = 5;
+
+    // Bit 0: pending, Bit 1: swallowing (mirrors nightjar_policy::controller::state_machine::GuideHoldState).
+    private int state;
+
+    private int step(int op, long holdMs, boolean repeat) {
+        int packed = NightjarInputJni.guideHoldStep(state, op, holdMs, repeat);
+        state = packed & 0x3;
+        return packed >> 8;
+    }
+
+    synchronized int stateBits() {
+        return state;
+    }
+
+    synchronized void setStateBits(int bits) {
+        state = bits & 0x3;
+    }
 
     /**
      * Guide went down. Returns whether the press is held back (the hold time starts for a new
      * press); false when holding is off, and Guide goes to the host at once.
      */
     synchronized boolean down(long holdMs, boolean repeat) {
-        if (repeat && active()) return true;
-        // A new press: a release lost while the menu had the input ends the last one.
-        reset();
-        if (holdMs <= 0) return false;
-        pending = true;
-        return true;
+        return step(OP_DOWN, holdMs, repeat) != 0;
     }
 
     /** The hold time ended; returns whether the stream menu opens now. */
     synchronized boolean expire() {
-        if (!pending) return false;
-        pending = false;
-        swallowing = true;
-        return true;
+        return step(OP_EXPIRE, 0, false) != 0;
     }
 
     /**
@@ -47,26 +62,19 @@ final class GuideHold {
      * that button. Its release is then an ordinary one ({@link Release#PASS}).
      */
     synchronized boolean chord() {
-        if (!pending) return false;
-        pending = false;
-        return true;
+        return step(OP_CHORD, 0, false) != 0;
     }
 
     synchronized Release up() {
-        if (pending) {
-            pending = false;
-            return Release.TAP;
-        }
-        if (swallowing) {
-            swallowing = false;
-            return Release.SWALLOW;
-        }
+        int res = step(OP_UP, 0, false);
+        if (res == 1) return Release.TAP;
+        if (res == 2) return Release.SWALLOW;
         return Release.PASS;
     }
 
     /** Whether Guide is held back now: waiting for the hold time or until it is let go. */
     synchronized boolean active() {
-        return pending || swallowing;
+        return state != 0;
     }
 
     /**
@@ -74,14 +82,10 @@ final class GuideHold {
      * off the host until let go. Returns whether a hold was waiting.
      */
     synchronized boolean cancelPending() {
-        if (!pending) return false;
-        pending = false;
-        swallowing = true;
-        return true;
+        return step(OP_CANCEL_PENDING, 0, false) != 0;
     }
 
     synchronized void reset() {
-        pending = false;
-        swallowing = false;
+        step(OP_RESET, 0, false);
     }
 }

@@ -1,0 +1,417 @@
+//! JNI exports for `nightjar_policy::controller::state_machine` and mouse fixed-step curves.
+
+use jni::JNIEnv;
+use jni::objects::{JBooleanArray, JClass, JIntArray, JShortArray, JString};
+use jni::sys::{JNI_FALSE, jboolean, jdouble, jfloat, jint, jintArray, jlong, jshort};
+use nightjar_policy::controller::deadzone::{fixed_step_delta, fixed_step_next};
+use nightjar_policy::controller::state_machine::{
+    CAPTURED_BUTTONS, GuideOp, ScrollStick, UsbInputStates, guide_hold_step, hold_quit_combo,
+    mouse_packet_step, mouse_silenced, mouse_tick_step, pick_menu_mouse_target, quit_button_flag,
+    quit_combo_mask, release_quit_combo, should_arm_menu_combo, should_open_menu_on_release,
+    start_long_press_toggles_mouse, tap_hold_remaining_ms, usb_guide_hold_step,
+};
+
+use super::{USB_STATE_SLAB, jbool, write_ints};
+use crate::policy::int_array;
+use crate::string;
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarInputJni_capturedButtonFlags(
+    mut env: JNIEnv,
+    _: JClass,
+) -> jintArray {
+    let flags: [i32; 11] = CAPTURED_BUTTONS.map(|f| f as i32);
+    int_array(&mut env, &flags)
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarInputJni_usbInputStateCreate(
+    _: JNIEnv,
+    _: JClass,
+) -> jlong {
+    USB_STATE_SLAB.insert(UsbInputStates::default())
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarInputJni_usbInputStateDestroy(
+    _: JNIEnv,
+    _: JClass,
+    handle: jlong,
+) {
+    let _ = USB_STATE_SLAB.remove(handle);
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarInputJni_usbSteerMenuStep(
+    mut env: JNIEnv,
+    _: JClass,
+    handle: jlong,
+    controller_id: jint,
+    buttons: jint,
+    out_keys: JIntArray,
+) -> jint {
+    let Some((clear_combos, keys, count)) =
+        USB_STATE_SLAB.with(handle, |s| s.steer_menu(controller_id, buttons as u32))
+    else {
+        return 0;
+    };
+    let mut buf = [0i32; 11];
+    buf[0] = i32::from(clear_combos);
+    buf[1..=count].copy_from_slice(&keys[..count]);
+    write_ints(&mut env, &out_keys, &buf[..=count]);
+    count as jint
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarInputJni_usbCapturePadStep(
+    mut env: JNIEnv,
+    _: JClass,
+    handle: jlong,
+    controller_id: jint,
+    buttons: jint,
+    stick_x: jfloat,
+    stick_y: jfloat,
+    generation: jint,
+    out: JIntArray,
+) {
+    let Some(res) = USB_STATE_SLAB.with(handle, |s| {
+        s.capture_pad(controller_id, buttons as u32, stick_x, stick_y, generation)
+    }) else {
+        return;
+    };
+    write_ints(
+        &mut env,
+        &out,
+        &[
+            i32::from(res.entered),
+            res.changed_mask as i32,
+            res.new_buttons as i32,
+            i32::from(res.stick_changed),
+        ],
+    );
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarInputJni_usbFilterGameButtons(
+    _: JNIEnv,
+    _: JClass,
+    handle: jlong,
+    controller_id: jint,
+    buttons: jint,
+) -> jint {
+    USB_STATE_SLAB
+        .with(handle, |s| {
+            s.filter_game_buttons(controller_id, buttons as u32)
+        })
+        .unwrap_or(buttons as u32) as jint
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarInputJni_usbRemovePadCapture(
+    mut env: JNIEnv,
+    _: JClass,
+    handle: jlong,
+    controller_id: jint,
+    out: JIntArray,
+) {
+    let (was_steering, menu_buttons, had_stick) = USB_STATE_SLAB
+        .with(handle, |s| s.remove_pad(controller_id))
+        .unwrap_or((false, 0, false));
+    write_ints(
+        &mut env,
+        &out,
+        &[
+            i32::from(was_steering),
+            menu_buttons as i32,
+            i32::from(had_stick),
+        ],
+    );
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarInputJni_quitComboMask(
+    mut env: JNIEnv,
+    _: JClass,
+    combo: JString,
+) -> jint {
+    let combo = string(&mut env, &combo);
+    quit_combo_mask(combo.as_deref().unwrap_or("")) as jint
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarInputJni_quitButtonFlag(
+    _: JNIEnv,
+    _: JClass,
+    key_code: jint,
+) -> jint {
+    quit_button_flag(key_code) as jint
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarInputJni_holdQuitComboStep(
+    mut env: JNIEnv,
+    _: JClass,
+    pending: jboolean,
+    buttons: jint,
+    combo: JString,
+) -> jboolean {
+    let combo = string(&mut env, &combo);
+    jbool(hold_quit_combo(
+        pending != JNI_FALSE,
+        buttons as u32,
+        combo.as_deref().unwrap_or(""),
+    ))
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarInputJni_releaseQuitComboStep(
+    _: JNIEnv,
+    _: JClass,
+    pending: jboolean,
+    buttons: jint,
+) -> jint {
+    let (new_pending, should_leave) = release_quit_combo(pending != JNI_FALSE, buttons as u32);
+    i32::from(new_pending) | (i32::from(should_leave) << 1)
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarInputJni_shouldArmMenuCombo(
+    _: JNIEnv,
+    _: JClass,
+    held_buttons: jint,
+) -> jboolean {
+    jbool(should_arm_menu_combo(held_buttons as u32))
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarInputJni_shouldOpenMenuOnRelease(
+    _: JNIEnv,
+    _: JClass,
+    pending_exit: jboolean,
+    input_map: jint,
+    pressed_empty: jboolean,
+) -> jboolean {
+    jbool(should_open_menu_on_release(
+        pending_exit != JNI_FALSE,
+        input_map as u32,
+        pressed_empty != JNI_FALSE,
+    ))
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarInputJni_tapHoldRemainingMs(
+    _: JNIEnv,
+    _: JClass,
+    down_time_ms: jlong,
+    event_time_ms: jlong,
+) -> jlong {
+    tap_hold_remaining_ms(down_time_ms, event_time_ms)
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarInputJni_startLongPressTogglesMouse(
+    _: JNIEnv,
+    _: JClass,
+    start_down_time_ms: jlong,
+    event_time_ms: jlong,
+    mouse_emulation_enabled: jboolean,
+) -> jboolean {
+    jbool(start_long_press_toggles_mouse(
+        start_down_time_ms,
+        event_time_ms,
+        mouse_emulation_enabled != JNI_FALSE,
+    ))
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarInputJni_guideHoldStep(
+    _: JNIEnv,
+    _: JClass,
+    state_bits: jint,
+    op: jint,
+    hold_ms: jlong,
+    repeat: jboolean,
+) -> jint {
+    let Some(op) = GuideOp::from_i32(op) else {
+        return state_bits & 0x3;
+    };
+    let (new_bits, result) = guide_hold_step(state_bits as u8, op, hold_ms, repeat != JNI_FALSE);
+    i32::from(new_bits) | (result << 8)
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarInputJni_usbGuideHoldStep(
+    mut env: JNIEnv,
+    _: JClass,
+    guide_down: jboolean,
+    guide_hold_bits: jint,
+    guide_tapping: jboolean,
+    button_flags: jint,
+    hold_ms: jlong,
+    can_hold: jboolean,
+    out: JIntArray,
+) {
+    let res = usb_guide_hold_step(
+        guide_down != JNI_FALSE,
+        guide_hold_bits as u8,
+        guide_tapping != JNI_FALSE,
+        button_flags as u32,
+        hold_ms,
+        can_hold != JNI_FALSE,
+    );
+    let action_bits = i32::from(res.schedule_hold) | (i32::from(res.cancel_hold) << 1);
+    write_ints(
+        &mut env,
+        &out,
+        &[
+            i32::from(res.guide_down),
+            i32::from(res.guide_hold_bits),
+            i32::from(res.guide_tapping),
+            res.out_buttons as i32,
+            action_bits,
+        ],
+    );
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarInputJni_fixedStepNext(
+    _: JNIEnv,
+    _: JClass,
+    step: jint,
+) -> jint {
+    fixed_step_next(step)
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarInputJni_fixedStepDelta(
+    _: JNIEnv,
+    _: JClass,
+    component: jdouble,
+    step: jint,
+) -> jint {
+    fixed_step_delta(component, step)
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarInputJni_mouseSilenced(
+    _: JNIEnv,
+    _: JClass,
+    send_controllers: jboolean,
+    is_default_context: jboolean,
+) -> jboolean {
+    jbool(mouse_silenced(
+        send_controllers != JNI_FALSE,
+        is_default_context != JNI_FALSE,
+    ))
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarInputJni_pickMenuMouseTarget(
+    env: JNIEnv,
+    _: JClass,
+    eligible: JBooleanArray,
+    numbers: JShortArray,
+    active: JBooleanArray,
+    count: jint,
+) -> jint {
+    let n = count.max(0) as usize;
+    if n == 0 || eligible.is_null() || numbers.is_null() || active.is_null() {
+        return -2;
+    }
+    let mut e_buf = vec![0u8; n];
+    let mut n_buf = vec![0i16; n];
+    let mut a_buf = vec![0u8; n];
+    if env
+        .get_boolean_array_region(&eligible, 0, &mut e_buf)
+        .is_err()
+        || env.get_short_array_region(&numbers, 0, &mut n_buf).is_err()
+        || env
+            .get_boolean_array_region(&active, 0, &mut a_buf)
+            .is_err()
+    {
+        return -2;
+    }
+    if a_buf.iter().any(|&v| v != 0) {
+        return -1;
+    }
+    let contexts: Vec<(bool, i16, bool)> = (0..n)
+        .map(|i| (e_buf[i] != 0, n_buf[i], a_buf[i] != 0))
+        .collect();
+    match pick_menu_mouse_target(&contexts) {
+        Some(idx) => idx as jint,
+        None => -2,
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarInputJni_mousePacketStep(
+    mut env: JNIEnv,
+    _: JClass,
+    input_map: jint,
+    last_input_map: jint,
+    fixed_step_enabled: jboolean,
+    current_step: jint,
+    out: JIntArray,
+) {
+    let plan = mouse_packet_step(
+        input_map as u32,
+        last_input_map as u32,
+        fixed_step_enabled != JNI_FALSE,
+        current_step,
+    );
+    let flags = i32::from(plan.fixed_step_held)
+        | (i32::from(plan.step_changed) << 1)
+        | (i32::from(plan.scroll_up) << 2)
+        | (i32::from(plan.scroll_down) << 3)
+        | (i32::from(plan.hscroll_right) << 4)
+        | (i32::from(plan.hscroll_left) << 5);
+    write_ints(
+        &mut env,
+        &out,
+        &[
+            plan.last_input_map as i32,
+            plan.step,
+            flags,
+            i32::from(plan.left_btn),
+            i32::from(plan.right_btn),
+        ],
+    );
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarInputJni_mouseTickStep(
+    mut env: JNIEnv,
+    _: JClass,
+    lx: jshort,
+    ly: jshort,
+    rx: jshort,
+    ry: jshort,
+    scroll_stick_mode: jint,
+    fixed_step: jint,
+    out: JIntArray,
+) {
+    let plan = mouse_tick_step(
+        lx,
+        ly,
+        rx,
+        ry,
+        ScrollStick::from_i32(scroll_stick_mode),
+        fixed_step,
+    );
+    let flags = i32::from(plan.has_move1)
+        | (i32::from(plan.has_move2) << 1)
+        | (i32::from(plan.has_scroll) << 2);
+    write_ints(
+        &mut env,
+        &out,
+        &[
+            flags,
+            i32::from(plan.move1_x),
+            i32::from(plan.move1_y),
+            i32::from(plan.move2_x),
+            i32::from(plan.move2_y),
+            i32::from(plan.scroll_v),
+            i32::from(plan.scroll_h),
+        ],
+    );
+}

@@ -1,5 +1,7 @@
 package com.limelight.binding.input;
 
+import com.limelight.nvstream.jni.NightjarInputJni;
+
 /**
  * Maps a controller's gyroscope axes onto the axes Moonlight sends (X pitch, Y yaw, Z roll)
  * and scales pitch and yaw, without changing units.
@@ -14,10 +16,10 @@ public final class GyroAxisTransformer {
 
     private static final GyroAxisTransformer IDENTITY = new GyroAxisTransformer(0, 1, 2, 1, 1, 1);
 
-    private final int[] sourceAxes;
-    private final int[] signs;
-    private final float horizontalSensitivity;
-    private final float verticalSensitivity;
+    final int[] sourceAxes;
+    final int[] signs;
+    final float horizontalSensitivity;
+    final float verticalSensitivity;
     private final boolean identity;
 
     GyroAxisTransformer(int xAxis, int yAxis, int zAxis,
@@ -28,31 +30,28 @@ public final class GyroAxisTransformer {
     GyroAxisTransformer(int xAxis, int yAxis, int zAxis,
                         int xSign, int ySign, int zSign,
                         float horizontalSensitivity, float verticalSensitivity) {
-        if (!validSensitivity(horizontalSensitivity) || !validSensitivity(verticalSensitivity)) {
+        int res = NightjarInputJni.validateGyroMapping(
+                xAxis, yAxis, zAxis, xSign, ySign, zSign,
+                horizontalSensitivity, verticalSensitivity);
+        int err = res & 0xFF;
+        if (err == 1) {
             throw new IllegalArgumentException("Sensitivity must be between 0.10 and 3.00");
+        }
+        if (err == 2) {
+            throw new IllegalArgumentException("Axes must be a permutation of 0, 1, 2");
+        }
+        if (err == 3) {
+            throw new IllegalArgumentException("Axis signs must be +1 or -1");
         }
         sourceAxes = new int[] {xAxis, yAxis, zAxis};
         signs = new int[] {xSign, ySign, zSign};
-        boolean[] seen = new boolean[3];
-        for (int axis : sourceAxes) {
-            if (axis < 0 || axis > 2 || seen[axis]) {
-                throw new IllegalArgumentException("Axes must be a permutation of 0, 1, 2");
-            }
-            seen[axis] = true;
-        }
-        for (int sign : signs) {
-            if (sign != 1 && sign != -1) {
-                throw new IllegalArgumentException("Axis signs must be +1 or -1");
-            }
-        }
         this.horizontalSensitivity = horizontalSensitivity;
         this.verticalSensitivity = verticalSensitivity;
-        identity = xAxis == 0 && yAxis == 1 && zAxis == 2 && xSign == 1 && ySign == 1 && zSign == 1
-                && horizontalSensitivity == 1f && verticalSensitivity == 1f;
+        identity = (res & 0x100) != 0;
     }
 
     static boolean validSensitivity(float value) {
-        return Float.isFinite(value) && value >= MIN_SENSITIVITY && value <= MAX_SENSITIVITY;
+        return NightjarInputJni.isValidGyroSensitivity(value);
     }
 
     public static GyroAxisTransformer identity() {
@@ -66,12 +65,11 @@ public final class GyroAxisTransformer {
 
     /** Writes the mapped values into {@code out} (length 3), which may be reused across calls. */
     public void transform(float x, float y, float z, float[] out) {
-        float sx = sourceAxes[0] == 0 ? x : sourceAxes[0] == 1 ? y : z;
-        float sy = sourceAxes[1] == 0 ? x : sourceAxes[1] == 1 ? y : z;
-        float sz = sourceAxes[2] == 0 ? x : sourceAxes[2] == 1 ? y : z;
-        out[0] = sx * signs[0] * verticalSensitivity;
-        out[1] = sy * signs[1] * horizontalSensitivity;
-        out[2] = sz * signs[2];
+        NightjarInputJni.transformGyro(
+                x, y, z,
+                sourceAxes[0], sourceAxes[1], sourceAxes[2],
+                signs[0], signs[1], signs[2],
+                horizontalSensitivity, verticalSensitivity, out);
     }
 
     float[] transform(float x, float y, float z) {

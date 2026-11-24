@@ -20,6 +20,41 @@ pub enum RumbleFeel {
 
 impl RumbleFeel {
     pub const ALL: [Self; 3] = [Self::Standard, Self::Strong, Self::Subtle];
+
+    /// The feel stored under this key; anything unknown is `Standard`.
+    pub fn from_key(key: Option<&str>) -> Self {
+        match key {
+            Some("strong") => Self::Strong,
+            Some("subtle") => Self::Subtle,
+            _ => Self::Standard,
+        }
+    }
+
+    /// Maps an integer ordinal (`0=Standard, 1=Strong, 2=Subtle`), falling back to `Standard`.
+    pub fn from_ordinal(ordinal: i32) -> Self {
+        match ordinal {
+            1 => Self::Strong,
+            2 => Self::Subtle,
+            _ => Self::Standard,
+        }
+    }
+
+    /// Integer ordinal matching `RumblePolicy.Feel.ordinal()`.
+    pub fn ordinal(self) -> i32 {
+        match self {
+            Self::Standard => 0,
+            Self::Strong => 1,
+            Self::Subtle => 2,
+        }
+    }
+}
+
+/// The PWM period a device without amplitude control is pulsed over, in milliseconds.
+pub const PWM_PERIOD_MS: i64 = 20;
+
+/// Whether host vibration requests may reach any motor (`!rumble_disabled`).
+pub fn allows(rumble_disabled: bool) -> bool {
+    !rumble_disabled
 }
 
 /// Strong: levels under this share of full strength stay silent (a motor cannot show them, and
@@ -45,6 +80,45 @@ pub fn shape(level: u16, feel: RumbleFeel) -> u16 {
         RumbleFeel::Subtle => SUBTLE_CAP * f.powf(SUBTLE_GAMMA),
     };
     (y * 65535.0).round().clamp(0.0, 65535.0) as u16
+}
+
+/// A 0-255 vibration amplitude after the feel's curve.
+pub fn shape_amplitude(amplitude: i32, feel: RumbleFeel) -> i32 {
+    if amplitude <= 0 || feel == RumbleFeel::Standard {
+        return amplitude;
+    }
+    let level = (amplitude as u32).wrapping_mul(257) as u16;
+    i32::from(shape(level, feel) >> 8).min(255)
+}
+
+/// Scales an unsigned 16-bit motor level by a percentage, capped at `0xFFFE` (`Short.MAX_VALUE * 2`).
+pub fn scale_motor(motor: u16, strength_percent: i32) -> u16 {
+    let pct = u64::from(strength_percent.max(0) as u32);
+    let scaled = (u64::from(motor) * pct) / 100;
+    scaled.min(0xFFFE) as u16
+}
+
+/// The single 0-255 amplitude for a device with one motor: scales each motor, mixes 80% of low +
+/// 33% of high, and applies the feel curve.
+pub fn single_motor_amplitude(
+    low_freq_motor: u16,
+    high_freq_motor: u16,
+    feel: RumbleFeel,
+    strength_percent: i32,
+) -> i32 {
+    let low = i32::from(scale_motor(low_freq_motor, strength_percent) >> 8);
+    let high = i32::from(scale_motor(high_freq_motor, strength_percent) >> 8);
+    let mixed = ((f64::from(low) * 0.80) + (f64::from(high) * 0.33)) as i32;
+    shape_amplitude(mixed.min(255), feel)
+}
+
+/// `{on, off}` milliseconds for a vibrator without amplitude control.
+pub fn pwm_timings(amplitude: i32, feel: RumbleFeel) -> (i64, i64) {
+    let mut on = ((f64::from(amplitude) / 255.0) * (PWM_PERIOD_MS as f64)) as i64;
+    if feel != RumbleFeel::Standard && amplitude > 0 {
+        on = on.max(1);
+    }
+    (on, PWM_PERIOD_MS - on)
 }
 
 #[cfg(test)]
@@ -104,5 +178,94 @@ mod tests {
             RumbleFeel::Strong
         );
         assert_eq!(RumbleFeel::default(), RumbleFeel::Standard);
+    }
+
+    #[test]
+    fn allows_from_key_and_ordinal_roundtrip() {
+        assert!(allows(false));
+        assert!(!allows(true));
+        for feel in RumbleFeel::ALL {
+            let key = match feel {
+                RumbleFeel::Standard => "standard",
+                RumbleFeel::Strong => "strong",
+                RumbleFeel::Subtle => "subtle",
+            };
+            assert_eq!(RumbleFeel::from_key(Some(key)), feel);
+            assert_eq!(RumbleFeel::from_ordinal(feel.ordinal()), feel);
+        }
+        assert_eq!(RumbleFeel::from_key(None), RumbleFeel::Standard);
+        assert_eq!(RumbleFeel::from_key(Some("loud")), RumbleFeel::Standard);
+        assert_eq!(RumbleFeel::from_ordinal(-1), RumbleFeel::Standard);
+        assert_eq!(RumbleFeel::from_ordinal(99), RumbleFeel::Standard);
+    }
+
+    #[test]
+    fn scale_motor_caps_at_0xfffe_and_clamps_negative_strength() {
+        assert_eq!(scale_motor(0xFFFE, 50), 0x7FFF);
+        assert_eq!(scale_motor(0xFFFF, 200), 0xFFFE);
+        assert_eq!(scale_motor(0x1000, 200), 0x2000);
+        assert_eq!(scale_motor(0xFFFF, 0), 0);
+        assert_eq!(scale_motor(0xFFFF, -10), 0);
+    }
+
+    #[test]
+    fn single_motor_amplitude_matches_java_mix_and_feel_order() {
+        let levels = [
+            (0xFF00u16, 0u16),
+            (0, 0xFFFF),
+            (0x8000, 0x4000),
+            (0xFFFF, 0xFFFF),
+            (0x0180, 0x0100),
+            (0x1234, 0xABCD),
+        ];
+        for strength in 1..=200 {
+            for (l0, l1) in levels {
+                let low = i32::from(scale_motor(l0, strength) >> 8);
+                let high = i32::from(scale_motor(l1, strength) >> 8);
+                let old = (((f64::from(low) * 0.80) + (f64::from(high) * 0.33)) as i32).min(255);
+                assert_eq!(
+                    single_motor_amplitude(l0, l1, RumbleFeel::Standard, strength),
+                    old,
+                    "strength {strength}"
+                );
+            }
+        }
+        assert_eq!(
+            single_motor_amplitude(0xFF00, 0, RumbleFeel::Standard, 100),
+            204
+        );
+        assert_eq!(
+            single_motor_amplitude(0xFFFF, 0xFFFF, RumbleFeel::Standard, 0),
+            0
+        );
+
+        let standard = single_motor_amplitude(0x3000, 0, RumbleFeel::Standard, 50);
+        let strong = single_motor_amplitude(0x3000, 0, RumbleFeel::Strong, 50);
+        assert!(standard > 0 && standard < 64);
+        assert!(strong >= 64);
+    }
+
+    #[test]
+    fn shape_amplitude_and_pwm_timings_match_android_policy() {
+        for feel in RumbleFeel::ALL {
+            assert_eq!(shape_amplitude(0, feel), 0);
+        }
+        for amp in 0..=255 {
+            assert_eq!(shape_amplitude(amp, RumbleFeel::Standard), amp);
+        }
+        assert!(shape_amplitude(20, RumbleFeel::Strong) >= 64);
+        assert_eq!(shape_amplitude(255, RumbleFeel::Strong), 255);
+        assert!(shape_amplitude(255, RumbleFeel::Subtle) <= 153);
+
+        assert_eq!(pwm_timings(128, RumbleFeel::Standard), (10, 10));
+        assert_eq!(pwm_timings(255, RumbleFeel::Standard), (20, 0));
+        assert_eq!(pwm_timings(5, RumbleFeel::Standard).0, 0);
+        assert_eq!(pwm_timings(5, RumbleFeel::Strong).0, 1);
+        assert_eq!(pwm_timings(0, RumbleFeel::Strong).0, 0);
+        let weak = single_motor_amplitude(0x1800, 0, RumbleFeel::Strong, 100);
+        let plain = single_motor_amplitude(0x1800, 0, RumbleFeel::Standard, 100);
+        assert!(
+            pwm_timings(weak, RumbleFeel::Strong).0 > pwm_timings(plain, RumbleFeel::Standard).0
+        );
     }
 }
