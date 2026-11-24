@@ -29,7 +29,10 @@ pub struct Tracker {
     deadline: std::time::Instant,
     /// pid → creation time.
     pub tracked: BTreeMap<u32, u64>,
-    checked: BTreeSet<(u32, u64)>,
+    /// The processes whose program was read, with the name they had then: a program under
+    /// Wine starts as the Wine loader and takes the Windows program's name a moment later,
+    /// so a process whose name changed is read once more.
+    checked: BTreeSet<(u32, u64, String)>,
     seen: bool,
     /// Since when no tracked process is left, and how long that may last:
     /// a game that restarts itself through Steam has none for a moment.
@@ -102,7 +105,7 @@ impl Tracker {
                     && self.baseline.get(&process.pid) != Some(&process.started)
                     && !STEAM_PROCESSES.contains(&name.as_str())
                     && !NOT_THE_GAME.contains(&name.as_str())
-                    && !self.checked.contains(&(process.pid, process.started))
+                    && !self.checked.contains(&checked_key(process))
             })
             .map(|process| process.pid)
             .collect()
@@ -120,7 +123,7 @@ impl Tracker {
         loop {
             let mut added = false;
             for process in now {
-                let key = (process.pid, process.started);
+                let key = checked_key(process);
                 if self.tracked.contains_key(&process.pid)
                     || self.baseline.get(&process.pid) == Some(&process.started)
                     || STEAM_PROCESSES.contains(&process.name.to_ascii_lowercase().as_str())
@@ -164,6 +167,10 @@ impl Tracker {
             Tracked::Waiting
         }
     }
+}
+/// What [`Tracker::checked`] holds of a process.
+fn checked_key(process: &Process) -> (u32, u64, String) {
+    (process.pid, process.started, process.name.clone())
 }
 fn normalized(path: &str) -> String {
     path.replace('/', "\\")

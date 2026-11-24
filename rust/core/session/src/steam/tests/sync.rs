@@ -300,6 +300,31 @@ fn tracker_follows_the_game_and_its_children() {
     assert_eq!(tracker.update(&before, images), Tracked::Exited);
 }
 #[test]
+fn a_wine_program_read_before_it_takes_its_name_is_read_again() {
+    let process = |name: &str| Process {
+        pid: 3,
+        parent: 2,
+        started: 30,
+        name: name.into(),
+    };
+    let before = [Process {
+        pid: 2,
+        parent: 1,
+        started: 20,
+        name: "steam.exe".into(),
+    }];
+    let mut tracker = Tracker::new(&before, "/games/portal", std::time::Duration::from_secs(15));
+    // Under Wine the game's process starts as the loader, then becomes the game.
+    let loader = |_| Some("/proton/files/bin/wine64-preloader".to_owned());
+    let game = |_| Some("/games/portal/portal.exe".to_owned());
+    let starting = [before[0].clone(), process("wine64")];
+    assert_eq!(tracker.update(&starting, loader), Tracked::Waiting);
+    assert!(tracker.unchecked(&starting).is_empty(), "read once");
+    let renamed = [before[0].clone(), process("portal.exe")];
+    assert_eq!(tracker.unchecked(&renamed), [3]);
+    assert_eq!(tracker.update(&renamed, game), Tracked::Running);
+}
+#[test]
 fn the_paths_an_update_asks_for_are_the_ones_listed_before_it() {
     let process = |pid, parent, started, name: &str| Process {
         pid,
