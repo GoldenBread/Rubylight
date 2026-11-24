@@ -89,7 +89,24 @@ fn quote(text: &str) -> String {
 /// once gamescope has started its first child.
 pub fn wrap(command: &str, environment: &BTreeMap<String, String>) -> Result<(String, PathBuf)> {
     let program = std::env::var("RUBYLIGHT_GAMESCOPE").unwrap_or_else(|_| PROGRAM.into());
+    // Without gamescope the wrapped command would exit at once and the launch would look like
+    // a game that quit: say so before anything starts.
+    if !installed(&program) {
+        bail!(
+            "gamescope is not installed: a Linux host runs each game inside a gamescope session of its own. Install gamescope, or use an app without a command to stream the desktop."
+        );
+    }
     wrap_in(&root(), &program, command, environment)
+}
+
+/// Whether `program` can be started: a path that exists, or a name on `PATH`.
+fn installed(program: &str) -> bool {
+    if program.contains('/') {
+        return Path::new(program).is_file();
+    }
+    std::env::var_os("PATH").is_some_and(|path| {
+        std::env::split_paths(&path).any(|folder| folder.join(program).is_file())
+    })
 }
 
 /// [`wrap`] with the sessions' folder and the program to start.
@@ -248,6 +265,14 @@ fn sweep(root: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_missing_gamescope_is_found_before_anything_starts() {
+        assert!(installed("sh"));
+        assert!(installed("/bin/sh"));
+        assert!(!installed("no-such-gamescope-here"));
+        assert!(!installed("/nowhere/gamescope"));
+    }
 
     fn env(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
         pairs

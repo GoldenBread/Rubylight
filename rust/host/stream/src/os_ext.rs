@@ -31,11 +31,18 @@ pub fn game_command(
     command: String,
     environment: &std::collections::BTreeMap<String, String>,
 ) -> anyhow::Result<String> {
+    // The tests' apps start as they are: they test process handling, not gamescope (which has
+    // tests of its own), and need no gamescope on the machine that runs them.
     #[cfg(target_os = "linux")]
-    {
+    if !cfg!(any(test, feature = "test-support")) {
         let (wrapped, folder) = butterpollo_win_io::gamescope::wrap(&command, environment)?;
         tracing::info!(session = %folder.display(), "the app starts inside a gamescope session");
-        Ok(wrapped)
+        return Ok(wrapped);
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let _ = environment;
+        Ok(command)
     }
     #[cfg(not(target_os = "linux"))]
     {
