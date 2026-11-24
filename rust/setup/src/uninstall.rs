@@ -4,9 +4,7 @@ mod child_session;
 mod files;
 
 use child_session::{child_session_record, delete_child_session_passwords, restore_child_session};
-use files::{
-    profile_note, remove_leftover_folders, remove_package, remove_profile, remove_staging,
-};
+use files::{profile_note, remove_leftover_folders, remove_package, remove_profile};
 pub(crate) use files::{remove_earlier_folder, remove_layers, remove_stale_layers};
 
 use crate::{

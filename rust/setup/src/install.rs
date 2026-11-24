@@ -17,19 +17,16 @@ pub(crate) use side_by_side::{SIDE_BY_SIDE_MARK, ensure_idle, probe, streaming, 
 pub use side_by_side::{pc_address, side_by_side_result, web_port};
 pub(crate) use staging::{
     prepare_staging_root, register, remove_legacy_staging, replace_file, secure_install,
-    staging_root,
 };
 
 use drivers::remember_driver_choice;
 use profile::{
     Target, import_error, migration_source, nvprefs_undo_pending, outside_other_hosts,
-    refuse_foreign_service, secure_profile, stop_running, target, undo_import_on_error,
+    refuse_foreign_service, secure_profile, stop_running, target, trust_console,
+    undo_import_on_error,
 };
-use side_by_side::{earlier_settings_moved, pc_name, prepare_side_by_side_profile};
-use staging::{
-    SwitchFailure, copy_package, create_install, prepare_staging, remove_legacy, switch_service,
-    unpack,
-};
+use side_by_side::{earlier_settings_moved, pc_name, port_free, prepare_side_by_side_profile};
+use staging::{SwitchFailure, copy_package, create_install, remove_legacy, switch_service, unpack};
 
 use crate::{
     detect::{self, OLD_SERVICES, UNINSTALL},
@@ -691,6 +688,8 @@ use drivers::*;
 use profile::*;
 #[cfg(test)]
 use side_by_side::*;
+#[cfg(test)]
+pub(crate) use staging::staging_root;
 #[cfg(test)]
 use staging::*;
 #[cfg(test)]

@@ -13,9 +13,8 @@ pub use security::{
     trusted_ancestors, trusted_folder, trusted_parents, trusted_tree,
 };
 pub use services::{
-    StartupPlan, delete_service, install_service, service_program, service_running,
-    set_service_display_name, start_service, start_service_unless_disabled, startup_plan,
-    stop_service, wait_stopped,
+    delete_service, install_service, service_program, service_running, set_service_display_name,
+    start_service, start_service_unless_disabled, stop_service, wait_stopped,
 };
 
 use crate::log::line;
@@ -33,7 +32,7 @@ use windows::{
         System::Threading::*,
         UI::Shell::*,
     },
-    core::PCWSTR,
+    core::{HSTRING, PCWSTR},
 };
 
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -581,17 +580,14 @@ use security::{
     administrator_account, not_found, other_writer, system_drive_root, trusted_owner, vanished,
 };
 #[cfg(test)]
-use services::{open_service, service_start_type};
+use services::{StartupPlan, open_service, service_start_type, startup_plan};
 #[cfg(test)]
-use windows::{
-    Win32::{
-        Security::PSID,
-        System::Services::{
-            ChangeServiceConfigW, ENUM_SERVICE_TYPE, SERVICE_AUTO_START, SERVICE_DEMAND_START,
-            SERVICE_DISABLED, SERVICE_ERROR, SERVICE_NO_CHANGE, SERVICE_START_TYPE,
-        },
+use windows::Win32::{
+    Security::PSID,
+    System::Services::{
+        ChangeServiceConfigW, ENUM_SERVICE_TYPE, SERVICE_AUTO_START, SERVICE_DEMAND_START,
+        SERVICE_DISABLED, SERVICE_ERROR, SERVICE_NO_CHANGE, SERVICE_START_TYPE,
     },
-    core::HSTRING,
 };
 
 #[cfg(test)]
