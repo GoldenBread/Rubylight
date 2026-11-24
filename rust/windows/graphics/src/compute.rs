@@ -1206,17 +1206,8 @@ impl Converter {
     /// Order this queue after the capture's copy behind `ready`: on the GPU
     /// when its fence is on this queue's device, else on the CPU.
     fn wait_capture(&self, ready: Option<&Ready>) -> Result<()> {
-        match ready {
-            // SAFETY: The guard checked that `ready.fence` belongs to this queue's device, and
-            // `ready` holds it for the call.
-            Some(ready) if ready.device == self.compute.device.as_raw() as usize => unsafe {
-                self.compute
-                    .queue
-                    .Wait(&ready.fence, ready.value)
-                    .inspect_err(|_| self.compute.retire())?;
-            },
-            Some(ready) => ready.wait()?,
-            None => {}
+        if let Some(ready) = ready {
+            self.compute.wait_ready(ready)?;
         }
         Ok(())
     }

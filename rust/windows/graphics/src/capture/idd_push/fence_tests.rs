@@ -1,5 +1,6 @@
 //! Native driver-transport checks using two GPU devices; no driver installation.
 use super::*;
+use std::sync::atomic::AtomicBool;
 
 /// The driver's half of either ring, on a second D3D11 device as WUDFHost has: the
 /// ring's textures and fences opened from their NT handles.
@@ -194,14 +195,17 @@ fn a_fence_ring_carries_frames_both_ways_without_keyed_mutexes() -> Result<()> {
             assert_eq!(claimed, seq);
             consumer.consumed(u64::from(seq));
             let image = if in_place {
+                let compute_read = Arc::new(AtomicBool::new(false));
                 let lent = Lent {
                     fences: fences.clone(),
                     slot: index,
                     seq,
                     d3d11: Mutex::new(false),
+                    compute_read: compute_read.clone(),
                 };
                 let ready =
-                    crate::compute::Ready::on(&compute, fences.written.clone(), u64::from(seq));
+                    crate::compute::Ready::on(&compute, fences.written.clone(), u64::from(seq))
+                        .with_compute_read(compute_read);
                 let image = lend_fenced(&gpu, &ring.slots[index].texture, index, lent, ready)?;
                 // The compute conversion waits for the driver's copy on the GPU.
                 let opened = compute.open(&image.texture)?;
@@ -217,7 +221,7 @@ fn a_fence_ring_carries_frames_both_ways_without_keyed_mutexes() -> Result<()> {
                 // SAFETY: the fence is opened on this context's device.
                 unsafe { fences.context.Wait(&fences.written11, u64::from(seq))? };
                 let image = pool.copy(&gpu, &ring.slots[index].texture, None)?.unwrap();
-                fences.free(index, seq, false)?;
+                fences.free(index, seq, false, false)?;
                 image
             };
             // A D3D11 reader sees the driver's pixels, never an older frame.
@@ -249,14 +253,17 @@ fn claim_image(
             .claim(&header)
             .context("claim newest fenced frame")?;
         consumer.consumed(u64::from(seq));
+        let compute_read = Arc::new(AtomicBool::new(false));
         let lent = Lent {
             fences: fences.clone(),
             slot: index,
             seq,
             d3d11: Mutex::new(false),
+            compute_read: compute_read.clone(),
         };
         let ready =
-            crate::compute::Ready::on(&fences.compute, fences.written.clone(), u64::from(seq));
+            crate::compute::Ready::on(&fences.compute, fences.written.clone(), u64::from(seq))
+                .with_compute_read(compute_read);
         return lend_fenced(gpu, &ring.slots[index].texture, index, lent, ready);
     }
     let index = consumer
@@ -382,7 +389,9 @@ fn a_fence_slot_waits_for_all_readers_and_survives_ring_replacement() -> Result<
         "both slots still have readers"
     );
     drop(second);
-    until("a returned slot", || driver.released() >= 1)?;
+    // `second` was never submitted to compute or D3D11, so its slot returns
+    // immediately with release 0 without queueing a GPU Signal.
+    assert_eq!(driver.released(), 0);
     assert!(
         driver
             .push(&ring.section.header(), &source.texture)?
@@ -449,6 +458,9 @@ fn a_returned_slot_waits_for_gpu_completion_before_the_driver_reuses_it() -> Res
     let first = claim_image(&gpu, &ring, &mut consumer, None)?;
     anyhow::ensure!(driver.push(&header, &source.texture)?.is_some());
     let second = claim_image(&gpu, &ring, &mut consumer, None)?;
+    // Mark `first` as read on the compute queue, as a compute conversion does,
+    // so freeing it must wait behind the gated queue.
+    first.ready.as_ref().unwrap().mark_compute_read();
     // SAFETY: the new fence belongs to the compute queue's device.
     let gate = Gate(unsafe { compute.device.CreateFence(0, D3D12_FENCE_FLAG_NONE)? });
     // SAFETY: this private wait is always released by Gate::drop, including unwinding.
@@ -471,6 +483,67 @@ fn a_returned_slot_waits_for_gpu_completion_before_the_driver_reuses_it() -> Res
     until("the gated GPU release", || driver.released() >= release)?;
     anyhow::ensure!(driver.push(&header, &source.texture)?.is_some());
     assert_eq!(second.readback(&mut None)?.bytes, vec![40; 16 * 16 * 4]);
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires native shared GPU fences; verifies unread slots avoid compute-queue Signals"]
+fn an_unread_fence_slot_frees_immediately_without_signalling_the_compute_queue() -> Result<()> {
+    use windows::Win32::Graphics::Direct3D12::{D3D12_FENCE_FLAG_NONE, ID3D12Fence};
+
+    struct Gate(ID3D12Fence);
+    impl Drop for Gate {
+        fn drop(&mut self) {
+            // SAFETY: CPU-signalling our own live test fence releases its queued wait.
+            let _ = unsafe { self.0.Signal(1) };
+        }
+    }
+
+    let _com = ComGuard::new()?;
+    let gpu = Device::new("")?;
+    let compute = crate::compute::Compute::for_device(&gpu.device)?;
+    let ring = Ring::fenced(
+        &gpu,
+        compute.clone(),
+        Layout {
+            kind: Kind::Fence,
+            slot_count: 2,
+            width: 16,
+            height: 16,
+            format: ring::FORMAT_BGRA8,
+            generation: 1,
+        },
+        true,
+    )?;
+    let mut driver = FakeDriver::open(&ring)?;
+    let source = solid(&driver.gpu, 60)?;
+    let mut consumer = Consumer::new(1, 2);
+    let header = ring.section.header();
+    anyhow::ensure!(driver.push(&header, &source.texture)?.is_some());
+    let first = claim_image(&gpu, &ring, &mut consumer, None)?;
+    anyhow::ensure!(driver.push(&header, &source.texture)?.is_some());
+    let second = claim_image(&gpu, &ring, &mut consumer, None)?;
+    // Gate the compute queue so any GPU Signal would remain pending.
+    // SAFETY: the new fence belongs to the compute queue's device.
+    let gate = Gate(unsafe { compute.device.CreateFence(0, D3D12_FENCE_FLAG_NONE)? });
+    // SAFETY: released unconditionally by Gate::drop.
+    unsafe { compute.queue.Wait(&gate.0, 1)? };
+    drop(first);
+    let release = (0..2)
+        .find_map(|slot| match header.slot_state(slot) {
+            ring::SlotState::Free { release } => Some(release),
+            _ => None,
+        })
+        .context("the unread image returns its metadata slot")?;
+    assert_eq!(
+        release, 0,
+        "an unread frame must release with fence value 0 without queueing a GPU Signal"
+    );
+    assert_eq!(driver.released(), 0);
+    // The driver can reclaim the slot immediately despite the gated compute queue.
+    anyhow::ensure!(driver.push(&header, &source.texture)?.is_some());
+    drop(gate);
+    assert_eq!(second.readback(&mut None)?.bytes, vec![60; 16 * 16 * 4]);
     Ok(())
 }
 

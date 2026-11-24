@@ -29,7 +29,7 @@ use rubylight_vdisplay_proto::control::{
 };
 use rubylight_vdisplay_proto::ring::{self, Consumer, Counters, Header, Kind, Layout, SlotMeta};
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use windows::Win32::Foundation::{HANDLE, INVALID_HANDLE_VALUE, WAIT_TIMEOUT};
 use windows::Win32::System::Memory::{
@@ -1083,14 +1083,17 @@ impl Session {
         let meta = header.slot(index);
         let slot = &self.ring.slots[index];
         if self.zero_copy {
+            let compute_read = Arc::new(AtomicBool::new(false));
             let lent = Lent {
                 fences: fences.clone(),
                 slot: index,
                 seq,
                 d3d11: Mutex::new(false),
+                compute_read: compute_read.clone(),
             };
             let ready =
-                crate::compute::Ready::on(&fences.compute, fences.written.clone(), u64::from(seq));
+                crate::compute::Ready::on(&fences.compute, fences.written.clone(), u64::from(seq))
+                    .with_compute_read(compute_read);
             let image = lend_fenced(&self.gpu, &slot.texture, index, lent, ready)?;
             return Ok(Some((self.finish(&meta, taken), image)));
         }
@@ -1099,7 +1102,7 @@ impl Session {
             .and_then(|()| self.pool.copy(&self.gpu, &slot.texture, None));
         // The copy is queued on this device (or ordered before it by the compute handoff),
         // so freeing now cannot let the driver overwrite pixels still being read.
-        let freed = fences.free(index, seq, false);
+        let freed = fences.free(index, seq, false, false);
         let image = copied?;
         freed?;
         let Some(image) = image else {
@@ -1265,12 +1268,15 @@ fn lend(
 ) -> Result<GpuImage> {
     // Checked before the D3D11 signal, so an unsupported texture hands nothing out.
     pixel_of(&slot.texture)?;
-    let ready = returns.lock().unwrap().acquired()?;
+    let (ready, compute_read) = returns.lock().unwrap().acquired()?;
     in_place(
         gpu,
         &slot.texture,
         ready,
-        bridge::Lease::ring(index, mutex.clone(), returns),
+        bridge::Lease::ring(
+            index,
+            crate::compute::KeyedLease::new(mutex.clone(), returns, compute_read, 0),
+        ),
     )
 }
 

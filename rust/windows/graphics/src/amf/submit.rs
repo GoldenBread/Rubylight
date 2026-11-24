@@ -1,6 +1,7 @@
 //! Encoder input: preparing and submitting a surface, the per-frame bitrate
 //! and frame cap, waiting for queue capacity, and re-encoding a cut as a
 //! keyframe.
+use super::repeat_cache::{CachedConverted, CachedTexture};
 use super::*;
 
 pub(super) fn acknowledge_keyframe(
@@ -497,83 +498,136 @@ impl Encoder {
         bitrate: u32,
     ) -> Result<Vec<Encoded>> {
         let started = Instant::now();
+        let repeat = std::mem::take(&mut self.repeat);
         let mut output = self.wait_capacity()?;
         let idr = idr || self.hdr_metadata.needs_idr() || self.recover;
         if self._device.device.as_raw() != image.gpu.device.as_raw() {
             bail!("GPU frame and encoder must use the same D3D11 device");
         }
         let source = (image.width, image.height, image.pixel);
+        let constants = crate::gpu_color::constants(
+            &self.config,
+            source,
+            self.luminance,
+            image.cursor.as_ref(),
+        );
+        let cacheable =
+            self.overlay.is_none() && self.focus.settings.is_none() && self.focus.fixed.is_none();
         let conversion_started = Instant::now();
         // Whether AMF's video converter took this frame, on a stream that has one.
         let mut vpe_used = None;
-        let (surface, converted, conversion) = if let Some(input) = self.compute.as_mut() {
-            let compute = input.converter.compute().clone();
-            let texture = timed("compute open", || compute.open(&image.texture))?;
-            let pointer = image
-                .cursor
+        let mut reused = false;
+        let mut to_cache = None;
+        let cached_surface = if cacheable
+            && self
+                .last_converted
                 .as_ref()
-                .map(|cursor| input.converter.pointer(cursor))
-                .transpose()?;
-            input.converter.values = crate::gpu_color::constants(
-                &self.config,
-                source,
-                self.luminance,
-                image.cursor.as_ref(),
-            );
-            input.converter.set_overlay(self.overlay.as_ref());
-            let converted = timed("compute conversion", || {
-                input.converter.convert(
-                    &texture,
-                    crate::compute::format(image.pixel),
-                    pointer.as_ref(),
-                    image,
-                )
-            })?;
-            timed("conversion fence wait", || {
-                gpu::synchronize(&converted.texture, &converted.fence, converted.value)
-            })?;
-            let surface = timed("AMF surface wrap", || {
-                input.context.wrap(&converted.texture, &mut self.ownership)
-            })?;
-            // Kept while the frame may need encoding again (`reencodes_cut`).
-            let kept = self.cut_limit.map(|_| converted.texture.clone());
-            (surface, (None, kept), Some(converted.conversion))
-        } else if let Some(converted) = self.convert_vpe(image, source)? {
-            vpe_used = Some(true);
-            // HLG's `held` prepass texture is RGB/FP16 input to VPE (already
-            // held by `self.ownership`), not the NV12/P010 output for re-encoding.
-            let _ = converted.held;
-            let kept = if self.cut_limit.is_some() {
-                vpe_kept_texture(&self._device, &converted.surface)?
-            } else {
-                None
-            };
-            (converted.surface, (kept, None), None)
+                .is_some_and(|cached| cached.matches(image, &constants, repeat))
+        {
+            match (
+                &self.last_converted.as_ref().unwrap().texture,
+                self.compute.as_ref(),
+            ) {
+                (CachedTexture::D3d12(texture), Some(input)) => {
+                    // AMF tracks the D3D12 resource state and fence value in private data
+                    // after the previous submission, just like `reencode_as_idr`.
+                    let surface = timed("AMF surface wrap", || {
+                        input.context.wrap(texture, &mut self.ownership)
+                    })?;
+                    let kept = self.cut_limit.map(|_| texture.clone());
+                    Some((surface, (None, kept), None))
+                }
+                (CachedTexture::D3d11(texture), None) => {
+                    let (surface, texture) = gpu::wrap(self.context, texture, &mut self.ownership)?;
+                    Some((surface, (Some(texture), None), None))
+                }
+                _ => None,
+            }
         } else {
-            if self.vpe.is_some() {
-                vpe_used = Some(false);
-            }
-            if self
-                .gpu_convert
-                .as_ref()
-                .is_none_or(|converter| converter.source != source)
+            None
+        };
+        let (surface, converted, conversion) = if let Some(cached) = cached_surface {
+            reused = true;
+            #[cfg(test)]
             {
-                self.gpu_convert = Some(gpu::Converter::new(&self._device, &self.config, source)?);
+                self.converted_reuses += 1;
             }
-            let color = &mut self.gpu_convert.as_mut().unwrap().color;
-            color.set_luminance(self.luminance);
-            color.set_overlay(self.overlay.as_ref());
-            let (surface, texture) = timed("graphics conversion", || {
-                self.gpu_convert
-                    .as_mut()
-                    .unwrap()
-                    .convert(self.context, image, &mut self.ownership)
-            })?;
-            // Submitted with `sample_dynamic`, once the frame went to the encoder.
-            if let Some(stats) = self.graphics_stats.as_deref_mut() {
-                stats.queue(image, &self.gpu_convert.as_ref().unwrap().color);
+            cached
+        } else {
+            // Release any previously cached target back to the pool before converting.
+            self.last_converted = None;
+            if let Some(input) = self.compute.as_mut() {
+                let compute = input.converter.compute().clone();
+                let texture = timed("compute open", || compute.open(&image.texture))?;
+                let pointer = image
+                    .cursor
+                    .as_ref()
+                    .map(|cursor| input.converter.pointer(cursor))
+                    .transpose()?;
+                input.converter.values = constants;
+                input.converter.set_overlay(self.overlay.as_ref());
+                let converted = timed("compute conversion", || {
+                    input.converter.convert(
+                        &texture,
+                        crate::compute::format(image.pixel),
+                        pointer.as_ref(),
+                        image,
+                    )
+                })?;
+                timed("conversion fence wait", || {
+                    gpu::synchronize(&converted.texture, &converted.fence, converted.value)
+                })?;
+                let surface = timed("AMF surface wrap", || {
+                    input.context.wrap(&converted.texture, &mut self.ownership)
+                })?;
+                if cacheable {
+                    to_cache = Some(CachedTexture::D3d12(converted.texture.clone()));
+                }
+                // Kept while the frame may need encoding again (`reencodes_cut`).
+                let kept = self.cut_limit.map(|_| converted.texture.clone());
+                (surface, (None, kept), Some(converted.conversion))
+            } else if let Some(converted) = self.convert_vpe(image, source)? {
+                vpe_used = Some(true);
+                // HLG's `held` prepass texture is RGB/FP16 input to VPE (already
+                // held by `self.ownership`), not the NV12/P010 output for re-encoding.
+                let _ = converted.held;
+                let kept = if self.cut_limit.is_some() {
+                    vpe_kept_texture(&self._device, &converted.surface)?
+                } else {
+                    None
+                };
+                (converted.surface, (kept, None), None)
+            } else {
+                if self.vpe.is_some() {
+                    vpe_used = Some(false);
+                }
+                if self
+                    .gpu_convert
+                    .as_ref()
+                    .is_none_or(|converter| converter.source != source)
+                {
+                    self.gpu_convert =
+                        Some(gpu::Converter::new(&self._device, &self.config, source)?);
+                }
+                let color = &mut self.gpu_convert.as_mut().unwrap().color;
+                color.set_luminance(self.luminance);
+                color.set_overlay(self.overlay.as_ref());
+                let (surface, texture) = timed("graphics conversion", || {
+                    self.gpu_convert.as_mut().unwrap().convert(
+                        self.context,
+                        image,
+                        &mut self.ownership,
+                    )
+                })?;
+                if cacheable {
+                    to_cache = Some(CachedTexture::D3d11(texture.clone()));
+                }
+                // Submitted with `sample_dynamic`, once the frame went to the encoder.
+                if let Some(stats) = self.graphics_stats.as_deref_mut() {
+                    stats.queue(image, &self.gpu_convert.as_ref().unwrap().color);
+                }
+                (surface, (Some(texture), None), None)
             }
-            (surface, (Some(texture), None), None)
         };
         let conversion_elapsed = conversion_started.elapsed();
         let (converted, converted12) = converted;
@@ -651,6 +705,9 @@ impl Encoder {
             if let (Some(vpe), Some(used)) = (self.vpe.as_deref_mut(), vpe_used) {
                 vpe.record(used, conversion_elapsed, image.captured);
             }
+            if let Some(texture) = to_cache {
+                self.last_converted = Some(CachedConverted::new(image, constants, texture));
+            }
             self.in_flight.push_back(Submission {
                 pts: self.index,
                 started,
@@ -663,7 +720,7 @@ impl Encoder {
                 skipped: plan.skipped,
                 cut_limit: self.cut_limit,
                 reencoded: false,
-                _capture: self.compute.is_none().then(|| image.clone()),
+                _capture: (self.compute.is_none() && !reused).then(|| image.clone()),
                 _converted: converted,
                 _converted12: converted12,
             });

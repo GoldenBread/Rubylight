@@ -106,41 +106,56 @@ impl Fences {
 
     /// Free `slot`, claimed for frame `seq`, behind every read of it submitted so far: on the
     /// compute queue for a ring read in place (and on the D3D11 device too when `d3d11_read`),
-    /// else on the D3D11 device.
-    pub(super) fn free(&self, slot: usize, seq: u32, d3d11_read: bool) -> Result<()> {
+    /// else on the D3D11 device. When `on_compute` and neither queue read the slot, release it
+    /// immediately with fence value `0` without touching any GPU queue.
+    pub(super) fn free(
+        &self,
+        slot: usize,
+        seq: u32,
+        d3d11_read: bool,
+        compute_read: bool,
+    ) -> Result<()> {
         let mut values = self.values.lock().unwrap();
         anyhow::ensure!(
             !self.failed.load(Ordering::Acquire),
             "frame ring ordering failed"
         );
-        values.0 += 1;
-        let release = values.0;
-        // SAFETY: every fence was created on the compute device and opened on this context's
-        // device; the context is multithread-protected and the queue free-threaded.
-        let signalled = unsafe {
-            if self.on_compute {
-                let bridged = if d3d11_read {
-                    values.1 += 1;
-                    self.context
-                        .Signal(&self.bridge.1, values.1)
-                        .map(|()| self.context.Flush())
-                        .and_then(|()| self.compute.queue.Wait(&self.bridge.0, values.1))
+        let release = if self.on_compute && !compute_read && !d3d11_read {
+            // Never read by either GPU queue: the driver's `claim_fenced` treats
+            // `release == 0` as already completed (`0 <= released`), avoiding a
+            // compute-queue Signal per discarded high-refresh frame.
+            0
+        } else {
+            values.0 += 1;
+            let release = values.0;
+            // SAFETY: every fence was created on the compute device and opened on this context's
+            // device; the context is multithread-protected and the queue free-threaded.
+            let signalled = unsafe {
+                if self.on_compute {
+                    let bridged = if d3d11_read {
+                        values.1 += 1;
+                        self.context
+                            .Signal(&self.bridge.1, values.1)
+                            .map(|()| self.context.Flush())
+                            .and_then(|()| self.compute.queue.Wait(&self.bridge.0, values.1))
+                    } else {
+                        Ok(())
+                    };
+                    bridged.and_then(|()| self.compute.queue.Signal(&self.released, release))
                 } else {
-                    Ok(())
-                };
-                bridged.and_then(|()| self.compute.queue.Signal(&self.released, release))
-            } else {
-                self.context
-                    .Signal(&self.released11, release)
-                    .map(|()| self.context.Flush())
+                    self.context
+                        .Signal(&self.released11, release)
+                        .map(|()| self.context.Flush())
+                }
+            };
+            // A failed signal does not prove the reads completed. Keep the slot owned until
+            // Session retires this ring; a later signal must not make an unsafe slot reusable.
+            if let Err(error) = signalled {
+                self.fail_ordering();
+                return Err(error).context("free a Rubylight frame ring slot");
             }
+            release
         };
-        // A failed signal does not prove the reads completed. Keep the slot owned until
-        // Session retires this ring; a later signal must not make an unsafe slot reusable.
-        if let Err(error) = signalled {
-            self.fail_ordering();
-            return Err(error).context("free a Rubylight frame ring slot");
-        }
         let freed = Consumer::release(&self.section.header(), slot, seq, release);
         drop(values);
         if !freed {
@@ -188,6 +203,8 @@ pub(crate) struct Lent {
     pub(super) seq: u32,
     /// Whether a D3D11 reader waited for the driver's copy.
     pub(super) d3d11: Mutex<bool>,
+    /// Shared with the image's `Ready`: true once any D3D12 compute reader queued a read.
+    pub(super) compute_read: Arc<AtomicBool>,
 }
 
 impl Lent {
@@ -212,7 +229,8 @@ impl Lent {
 impl Drop for Lent {
     fn drop(&mut self) {
         let d3d11 = *self.d3d11.lock().unwrap();
-        if let Err(error) = self.fences.free(self.slot, self.seq, d3d11) {
+        let compute = self.compute_read.load(Ordering::Acquire);
+        if let Err(error) = self.fences.free(self.slot, self.seq, d3d11, compute) {
             tracing::debug!(error = %format!("{error:#}"), slot = self.slot, "Rubylight frame ring slot retained after a GPU ordering error");
         }
     }

@@ -257,6 +257,7 @@ fn reader_values_belong_to_a_fence_not_the_shared_device() -> Result<()> {
         device: old.device.as_raw() as usize,
         readers: Some(readers.clone()),
         reader_fence: Some(old.fence.clone()),
+        compute_read: None,
     };
     let old_value = old.signal()?;
     ready.read_by(&old, old_value)?;

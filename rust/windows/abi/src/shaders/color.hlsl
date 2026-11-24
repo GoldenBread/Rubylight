@@ -139,7 +139,7 @@ float3 resize(float2 p, float2 footprint) {
     }
     return rgb / (footprint.x * footprint.y);
 }
-float3 nonlinear(float2 target) {
+float3 sample_source(float2 target) {
     float3 rgb;
     if (all(sourceSize == targetSize)) {
         rgb = load(int2(target));
@@ -168,6 +168,10 @@ float3 nonlinear(float2 target) {
         float2 footprint = all(abs(size - float2(targetSize)) < 1) ? 1 / ratio : 1 / scale;
         rgb = resize(p, footprint);
     }
+    return rgb;
+}
+float3 nonlinear(float2 target) {
+    float3 rgb = sample_source(target);
     if (hdr == 0) {
         // SDR desktop RGB uses sRGB transfer and Rec.709 primaries. Applying
         // only the BT.2020 YUV coefficients would relabel those primaries.
@@ -231,34 +235,72 @@ float2 chromaCode(float3 rgb) {
 // left edge also works with resizing and letterboxing.
 // HDR streams filter light, not codes: PQ and HLG are so steep that averaging
 // the codes of ClearType's coloured glyph fringes gave small text a magenta
-// cast that SDR's gentler curve hides (Rubylight #130). `chromaLight` undoes
-// `nonlinear`'s last step (`pq` for every `hdr` but 0 and 2, `hlg` for 2) and
-// `chromaCodes` redoes it; SDR keeps filtering its codes.
-// BT.2020 display light in scRGB units for an HLG signal: ARIB STD-B67's
-// inverse OETF to scene light, then the reference OOTF at system gamma 1.2
-// for `hlg`'s 1000-nit display (scene * Ys^0.2), the inverse of `hlg`.
-float3 hlgLight(float3 v) {
-    v = max(v, 0);
-    float3 scene = lerp((exp((v - 0.55991073) / 0.17883277) + 0.28466892) / 12.0,
-                        v * v / 3.0, step(v, 0.5));
-    float y = dot(scene, float3(0.2627, 0.6780, 0.0593));
-    return y > 0 ? scene * pow(y, 0.2) * (1000.0 / 80.0) : float3(0, 0, 0);
-}
+// cast that SDR's gentler curve hides (Rubylight #130). Linear captures stay
+// in BT.2020 light through the filter (`chroma_sample_at`) and encode once
+// (`chromaCodes`), avoiding a transfer-and-inverse round-trip on every tap;
+// SDR keeps filtering its codes.
 // Branches, not `?:`, which would evaluate every curve for every stream.
-float3 chromaLight(float3 rgb) {
-    [branch] if (hdr == 0) return rgb;
-    [branch] if (hdr == 2) return hlgLight(rgb);
-    return depq(rgb);
+float3 chroma_sample_at(float2 target, bool menu) {
+    if (menu) {
+        int2 at = clamp((int2(target) - int2(menuOrigin)) / int(menuScale), 0, int2(menuSize / menuScale) - 1);
+        float3 c = menuImage.Load(int3(at, 0)).rgb;
+        [branch] if (hdr == 0) return colorMatrix == 2 ? bt2020_sdr(gamut2020(srgb_linear(c))) : c;
+        float3 light = gamut2020(srgb_linear(c)) * sdrWhiteScale;
+        [branch] if (hdr == 2) return max(light, 0);
+        return saturate(light / 125.0);
+    }
+    float3 rgb = sample_source(target);
+    [branch] if (hdr == 0) {
+        return colorMatrix == 2 ? bt2020_sdr(gamut2020(pixel == 1 ? rgb : srgb_linear(rgb))) : rgb;
+    }
+    [branch] if (hdr == 2) return pixel == 2 ? depq(rgb) * 125.0 : max(gamut2020(rgb), 0);
+    [branch] if (pixel == 2) return depq(rgb);
+    return saturate(gamut2020(rgb) / 125.0);
+}
+// Compute both the nonlinear code (returned) and the chroma filter's
+// working-space value (`light`), evaluating `sample_source` once per pixel
+// without a `pq -> depq` or `hlg -> hlgLight` round-trip.
+float3 pixel_and_light(float2 target, bool menu, out float3 light) {
+    if (menu) {
+        int2 at = clamp((int2(target) - int2(menuOrigin)) / int(menuScale), 0, int2(menuSize / menuScale) - 1);
+        float3 c = menuImage.Load(int3(at, 0)).rgb;
+        [branch] if (hdr == 0) {
+            light = colorMatrix == 2 ? bt2020_sdr(gamut2020(srgb_linear(c))) : c;
+            return light;
+        }
+        float3 lin = gamut2020(srgb_linear(c)) * sdrWhiteScale;
+        [branch] if (hdr == 2) {
+            light = max(lin, 0);
+            return hlg(light);
+        }
+        light = saturate(lin / 125.0);
+        return pq(light);
+    }
+    float3 rgb = sample_source(target);
+    [branch] if (hdr == 0) {
+        light = colorMatrix == 2 ? bt2020_sdr(gamut2020(pixel == 1 ? rgb : srgb_linear(rgb))) : rgb;
+        return light;
+    }
+    [branch] if (hdr == 2) {
+        light = pixel == 2 ? depq(rgb) * 125.0 : max(gamut2020(rgb), 0);
+        return hlg(light);
+    }
+    [branch] if (pixel == 2) {
+        light = depq(rgb);
+        return rgb;
+    }
+    light = saturate(gamut2020(rgb) / 125.0);
+    return pq(light);
 }
 float3 chromaCodes(float3 light) {
     [branch] if (hdr == 0) return light;
     [branch] if (hdr == 2) return hlg(light);
     return pq(light);
 }
-float3 leftChroma(float2 at, bool menu, float3 c00, float3 c10, float3 c01, float3 c11) {
+float3 leftChroma(float2 at, bool menu, float3 l00, float3 l10, float3 l01, float3 l11) {
     float2 left = float2(max(at.x - 1, 0), at.y);
-    return chromaCodes((chromaLight(rgb_at(left, menu)) + chromaLight(rgb_at(left + float2(0, 1), menu)) +
-                        2 * (chromaLight(c00) + chromaLight(c01)) + chromaLight(c10) + chromaLight(c11)) * 0.125);
+    return chromaCodes(((chroma_sample_at(left, menu) + chroma_sample_at(left + float2(0, 1), menu)) +
+                        2 * (l00 + l01) + l10 + l11) * 0.125);
 }
 float lumaPixel(float2 p, bool menu) {
     if (menu) menu_clip(uint2(p));
@@ -267,8 +309,8 @@ float lumaPixel(float2 p, bool menu) {
 float2 chromaPixel(float2 p, bool menu) {
     float2 at = floor(p) * 2;
     if (menu) menu_clip(uint2(at));
-    return chromaCode(leftChroma(at, menu, rgb_at(at, menu), rgb_at(at + float2(1, 0), menu),
-                                 rgb_at(at + float2(0, 1), menu), rgb_at(at + float2(1, 1), menu)));
+    return chromaCode(leftChroma(at, menu, chroma_sample_at(at, menu), chroma_sample_at(at + float2(1, 0), menu),
+                                 chroma_sample_at(at + float2(0, 1), menu), chroma_sample_at(at + float2(1, 1), menu)));
 }
 float4 luma(float4 p : SV_Position) : SV_Target { return float4(lumaPixel(p.xy, false), 0, 0, 1); }
 float4 chroma(float4 p : SV_Position) : SV_Target { return float4(chromaPixel(p.xy, false), 0, 1); }
@@ -283,21 +325,17 @@ RWTexture2D<float2> chromaPlane : register(u1);
 // Returns the chroma it wrote, and the luma in `y` (00, 10, 01, 11).
 float2 yuv420Block(uint2 id, bool menu, out float4 y) {
     uint2 at = id * 2;
-    float3 c00 = rgb_at(float2(at), menu);
-    float3 c10 = rgb_at(float2(at + uint2(1, 0)), menu);
-    float3 c01 = rgb_at(float2(at + uint2(0, 1)), menu);
-    float3 c11 = rgb_at(float2(at + uint2(1, 1)), menu);
-    // Each store follows its code, as `yuv420_cs` always did: fxc schedules
-    // by source order, and this keeps its bytecode unchanged.
-    y.x = lumaCode(c00);
+    float3 l00, l10, l01, l11;
+    // Each store follows its code, keeping live temporaries minimal for fxc.
+    y.x = lumaCode(pixel_and_light(float2(at), menu, l00));
     lumaPlane[at] = y.x;
-    y.y = lumaCode(c10);
+    y.y = lumaCode(pixel_and_light(float2(at + uint2(1, 0)), menu, l10));
     lumaPlane[at + uint2(1, 0)] = y.y;
-    y.z = lumaCode(c01);
+    y.z = lumaCode(pixel_and_light(float2(at + uint2(0, 1)), menu, l01));
     lumaPlane[at + uint2(0, 1)] = y.z;
-    y.w = lumaCode(c11);
+    y.w = lumaCode(pixel_and_light(float2(at + uint2(1, 1)), menu, l11));
     lumaPlane[at + uint2(1, 1)] = y.w;
-    float2 uv = chromaCode(leftChroma(float2(at), menu, c00, c10, c01, c11));
+    float2 uv = chromaCode(leftChroma(float2(at), menu, l00, l10, l01, l11));
     chromaPlane[id] = uv;
     return uv;
 }
@@ -444,9 +482,9 @@ float2 pyroChroma(float3 rgb) {
 }
 // PyroWave's decoder explicitly uses centre-sited 4:2:0 (pyrowave.h).
 // Keep its 2x2 average separate from standard codecs' left-sited filter.
-float2 pyroBlock(float3 c00, float3 c10, float3 c01, float3 c11) {
+float2 pyroBlock(float3 l00, float3 l10, float3 l01, float3 l11) {
     // In light for HDR, as `leftChroma`.
-    return pyroChroma(chromaCodes((chromaLight(c00) + chromaLight(c10) + chromaLight(c01) + chromaLight(c11)) * 0.25));
+    return pyroChroma(chromaCodes((l00 + l10 + l01 + l11) * 0.25));
 }
 float pyroLumaPixel(float2 p, bool menu) {
     if (menu) menu_clip(uint2(p));
@@ -459,7 +497,7 @@ float2 pyro_chroma(float2 p, bool menu) {
     }
     float2 at = floor(p)*2;
     if (menu) menu_clip(uint2(at));
-    return pyroBlock(rgb_at(at, menu), rgb_at(at+float2(1,0), menu), rgb_at(at+float2(0,1), menu), rgb_at(at+float2(1,1), menu));
+    return pyroBlock(chroma_sample_at(at, menu), chroma_sample_at(at+float2(1,0), menu), chroma_sample_at(at+float2(0,1), menu), chroma_sample_at(at+float2(1,1), menu));
 }
 float4 pyro_y(float4 p : SV_Position) : SV_Target { return float4(pyroLumaPixel(p.xy, false),0,0,1); }
 float4 pyro_u(float4 p : SV_Position) : SV_Target { return float4(pyro_chroma(p.xy, false).x,0,0,1); }
@@ -491,21 +529,22 @@ RWTexture2D<float> pyroU : register(u3);
 RWTexture2D<float> pyroV : register(u4);
 void pyroBlocks(uint2 id, bool menu) {
     uint2 at = id * 2;
-    float3 c00 = rgb_at(float2(at), menu);
-    float3 c10 = rgb_at(float2(at + uint2(1, 0)), menu);
-    float3 c01 = rgb_at(float2(at + uint2(0, 1)), menu);
-    float3 c11 = rgb_at(float2(at + uint2(1, 1)), menu);
+    float3 l00, l10, l01, l11;
+    float3 c00 = pixel_and_light(float2(at), menu, l00);
+    float3 c10 = pixel_and_light(float2(at + uint2(1, 0)), menu, l10);
+    float3 c01 = pixel_and_light(float2(at + uint2(0, 1)), menu, l01);
+    float3 c11 = pixel_and_light(float2(at + uint2(1, 1)), menu, l11);
     pyroY[at] = pyroLuma(c00);
     pyroY[at + uint2(1, 0)] = pyroLuma(c10);
     pyroY[at + uint2(0, 1)] = pyroLuma(c01);
     pyroY[at + uint2(1, 1)] = pyroLuma(c11);
-    if (padding != 0) {
+    [branch] if (padding != 0) {
         float2 c = pyroChroma(c00); pyroU[at] = c.x; pyroV[at] = c.y;
         c = pyroChroma(c10); pyroU[at + uint2(1, 0)] = c.x; pyroV[at + uint2(1, 0)] = c.y;
         c = pyroChroma(c01); pyroU[at + uint2(0, 1)] = c.x; pyroV[at + uint2(0, 1)] = c.y;
         c = pyroChroma(c11); pyroU[at + uint2(1, 1)] = c.x; pyroV[at + uint2(1, 1)] = c.y;
     } else {
-        float2 c = pyroBlock(c00, c10, c01, c11);
+        float2 c = pyroBlock(l00, l10, l01, l11);
         pyroU[id] = c.x;
         pyroV[id] = c.y;
     }

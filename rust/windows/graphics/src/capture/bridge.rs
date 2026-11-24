@@ -226,10 +226,7 @@ pub(crate) struct Lease {
     notify: Option<Notify>,
 }
 enum Back {
-    Keyed {
-        mutex: IDXGIKeyedMutex,
-        returns: Arc<Mutex<crate::compute::Returns>>,
-    },
+    Keyed(crate::compute::KeyedLease),
     Fenced(super::idd_push::Lent),
 }
 /// The helper's returned slots, and the capture worker's wake.
@@ -237,14 +234,10 @@ type Notify = (Arc<Mutex<Vec<usize>>>, Arc<crate::timing::Signal>);
 impl Lease {
     /// A keyed-mutex frame-ring texture of Rubylight's display driver, handed
     /// back with key 0.
-    pub(super) fn ring(
-        slot: usize,
-        mutex: IDXGIKeyedMutex,
-        returns: Arc<Mutex<crate::compute::Returns>>,
-    ) -> Self {
+    pub(super) fn ring(slot: usize, keyed: crate::compute::KeyedLease) -> Self {
         Self {
             slot,
-            back: Back::Keyed { mutex, returns },
+            back: Back::Keyed(keyed),
             notify: None,
         }
     }
@@ -283,7 +276,7 @@ unsafe impl Sync for Lease {}
 impl Drop for Lease {
     fn drop(&mut self) {
         let returned = match &self.back {
-            Back::Keyed { mutex, returns } => returns.lock().unwrap().hand_back(mutex, 0),
+            Back::Keyed(keyed) => keyed.hand_back(),
             // The slot is freed as `Lent` drops, right after this.
             Back::Fenced(_) => Ok(()),
         };
@@ -730,7 +723,7 @@ impl Session {
             DXGI_FORMAT_R16G16B16A16_FLOAT => Pixel::RgbaF16,
             _ => bail!("unsupported WGC shared format {:?}", desc.Format),
         };
-        let ready = returns.lock().unwrap().acquired()?;
+        let (ready, compute_read) = returns.lock().unwrap().acquired()?;
         Ok(GpuImage {
             cursor: None,
             width: desc.Width,
@@ -745,10 +738,12 @@ impl Session {
             ready: Some(ready),
             lease: Some(Arc::new(Lease {
                 slot,
-                back: Back::Keyed {
-                    mutex: texture.mutex.clone(),
+                back: Back::Keyed(crate::compute::KeyedLease::new(
+                    texture.mutex.clone(),
                     returns,
-                },
+                    compute_read,
+                    0,
+                )),
                 notify: Some((self.freed.clone(), self.frame.clone())),
             })),
             focus: None,

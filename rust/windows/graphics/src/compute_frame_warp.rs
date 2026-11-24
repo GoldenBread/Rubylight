@@ -607,14 +607,7 @@ impl FrameWarpGpu {
         let grid = hud.map(|(_, hud)| (hud.grid, hud.layout.stride));
         let ready = image.ready.as_ref();
         if let Some(ready) = ready {
-            // SAFETY: `can_read` checked that the fence belongs to this queue's device, and
-            // `image` holds it for the call.
-            unsafe {
-                compute
-                    .queue
-                    .Wait(&ready.fence, ready.value)
-                    .inspect_err(|_| compute.retire())?;
-            }
+            compute.wait_ready(ready)?;
         }
         let fence = compute.execute(&self.slots[index].list)?;
         self.last = fence;

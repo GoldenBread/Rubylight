@@ -399,6 +399,10 @@ impl Encoder {
                 focus: Default::default(),
                 prediction: output::Prediction::new(options.amd_output_prediction()),
                 output_thread: None,
+                repeat: false,
+                last_converted: None,
+                #[cfg(test)]
+                converted_reuses: 0,
             };
             // Before any property: AMF refuses an oversize FrameSize with a bare
             // AMF_OUT_OF_RANGE, which would read as a driver problem.

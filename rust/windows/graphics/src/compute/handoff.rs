@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::capture::Crop;
+use std::sync::atomic::AtomicBool;
 
 /// A D3D12 fence the capture's D3D11 device can signal and wait for.
 fn shared_fence(compute: &Compute, device: &ID3D11Device5) -> Result<(ID3D12Fence, ID3D11Fence)> {
@@ -109,6 +110,23 @@ impl Compute {
             Ok((texture, handle))
         }
     }
+    /// Order this queue after `ready` and record that compute work is reading its
+    /// capture texture.
+    pub(crate) fn wait_ready(&self, ready: &Ready) -> Result<()> {
+        ready.mark_compute_read();
+        if ready.device == self.device.as_raw() as usize {
+            // SAFETY: The guard checked that `ready.fence` belongs to this queue's device, and
+            // `ready` holds it for the call.
+            unsafe {
+                self.queue
+                    .Wait(&ready.fence, ready.value)
+                    .inspect_err(|_| self.retire())?;
+            }
+        } else {
+            ready.wait()?;
+        }
+        Ok(())
+    }
 }
 
 /// When a copied frame is complete: the copy queue's fence reaching `value`.
@@ -122,6 +140,9 @@ pub struct Ready {
     /// The exact conversion timeline the capture copy queue waits for. A
     /// replacement queue can share the same D3D12 device, but never its values.
     pub(super) reader_fence: Option<ID3D12Fence>,
+    /// Marked before any D3D12 compute read of a lent capture texture is
+    /// queued, so dropping an unread frame skips the compute release Signal.
+    pub(crate) compute_read: Option<Arc<AtomicBool>>,
 }
 // Fences are free-threaded.
 // SAFETY: `fence` is a free-threaded ID3D12Fence, and `device` is an address compared, never
@@ -138,6 +159,19 @@ impl Ready {
             device: compute.device.as_raw() as usize,
             readers: None,
             reader_fence: None,
+            compute_read: None,
+        }
+    }
+    /// Attach a flag shared with a capture lease to record whether the compute
+    /// queue ever read this texture.
+    pub(crate) fn with_compute_read(mut self, read: Arc<AtomicBool>) -> Self {
+        self.compute_read = Some(read);
+        self
+    }
+    /// Record that a D3D12 compute reader is about to read this texture.
+    pub(crate) fn mark_compute_read(&self) {
+        if let Some(read) = &self.compute_read {
+            read.store(true, Ordering::Release);
         }
     }
     /// Block until the copy is done.
@@ -145,6 +179,7 @@ impl Ready {
         wait_fence(&self.fence, self.value)
     }
     pub(super) fn read_by(&self, compute: &Compute, value: u64) -> Result<()> {
+        self.mark_compute_read();
         if let Some(readers) = &self.readers {
             if self.reader_fence.as_ref() == Some(&compute.fence) {
                 readers.fetch_max(value, Ordering::Release);
@@ -214,8 +249,8 @@ impl Returns {
         Ok(())
     }
     /// The D3D11 device has just taken a texture's keyed mutex: when compute
-    /// work may read it.
-    pub(crate) fn acquired(&mut self) -> Result<Ready> {
+    /// work may read it, and a shared flag marked if any compute read runs.
+    pub(crate) fn acquired(&mut self) -> Result<(Ready, Arc<AtomicBool>)> {
         self.compute.ensure_active()?;
         self.value += 1;
         // SAFETY: The fence was opened on this context's device, which is multithread-protected.
@@ -225,17 +260,42 @@ impl Returns {
                 .inspect_err(|_| self.compute.retire())?;
             self.context.Flush();
         }
-        Ok(Ready {
-            fence: self.acquired.0.clone(),
-            value: self.value,
-            device: self.compute.device.as_raw() as usize,
-            readers: None,
-            reader_fence: None,
-        })
+        let compute_read = Arc::new(AtomicBool::new(false));
+        Ok((
+            Ready {
+                fence: self.acquired.0.clone(),
+                value: self.value,
+                device: self.compute.device.as_raw() as usize,
+                readers: None,
+                reader_fence: None,
+                compute_read: Some(compute_read.clone()),
+            },
+            compute_read,
+        ))
     }
-    /// Release `mutex` with `key` once all compute work submitted so far,
-    /// including every conversion that read its texture, has finished.
-    pub(crate) fn hand_back(&mut self, mutex: &IDXGIKeyedMutex, key: u64) -> Result<()> {
+    /// Release `mutex` with `key`. When `compute_read` is true, waits for all
+    /// compute work submitted so far before releasing; otherwise no compute
+    /// work read the texture, so D3D11 releases the mutex without queueing a
+    /// compute-queue `Signal` and D3D11 `Wait`.
+    pub(crate) fn hand_back(
+        &mut self,
+        mutex: &IDXGIKeyedMutex,
+        key: u64,
+        compute_read: bool,
+    ) -> Result<()> {
+        if !compute_read {
+            // SAFETY: The caller holds `mutex` and releases it only here; no
+            // compute work read this texture, and `context` is live and
+            // multithread-protected.
+            let released = unsafe {
+                mutex
+                    .ReleaseSync(key)
+                    .context("return shared texture mutex")
+            };
+            // SAFETY: The context is live and multithread-protected.
+            unsafe { self.context.Flush() };
+            return released;
+        }
         // SAFETY: Both fences are on the compute device and this context's device; the caller holds
         // `mutex` and releases it only here.
         let returned = return_after_reads(
@@ -262,6 +322,37 @@ impl Returns {
         // wait/release even when a later operation failed; no failed slot is reused.
         unsafe { self.context.Flush() };
         returned
+    }
+}
+
+/// A keyed-mutex shared texture lent via [`Returns`]. Hands the mutex back on
+/// drop, skipping the compute-queue drain `Signal` when no compute work read it.
+pub(crate) struct KeyedLease {
+    mutex: IDXGIKeyedMutex,
+    returns: Arc<Mutex<Returns>>,
+    compute_read: Arc<AtomicBool>,
+    key: u64,
+}
+impl KeyedLease {
+    pub(crate) fn new(
+        mutex: IDXGIKeyedMutex,
+        returns: Arc<Mutex<Returns>>,
+        compute_read: Arc<AtomicBool>,
+        key: u64,
+    ) -> Self {
+        Self {
+            mutex,
+            returns,
+            compute_read,
+            key,
+        }
+    }
+    pub(crate) fn hand_back(&self) -> Result<()> {
+        let read = self.compute_read.load(Ordering::Acquire);
+        self.returns
+            .lock()
+            .unwrap()
+            .hand_back(&self.mutex, self.key, read)
     }
 }
 impl Drop for Returns {
@@ -488,6 +579,7 @@ impl Handoff {
             device: self.compute.device.as_raw() as usize,
             readers: Some(readers),
             reader_fence: Some(self.compute.fence.clone()),
+            compute_read: None,
         })
     }
     /// A command list the copy queue has finished with.

@@ -13,6 +13,7 @@ mod output;
 mod output_thread;
 mod properties;
 mod rate_control;
+mod repeat_cache;
 mod submit;
 mod units;
 mod vpe;
@@ -282,6 +283,14 @@ pub struct Encoder {
     prediction: output::Prediction,
     /// `amd_output_thread`: QueryOutput runs on a thread of its own.
     output_thread: Option<output_thread::OutputThread>,
+    /// The next [`Encoder::encode_gpu`] call repeats the previous picture.
+    repeat: bool,
+    /// Last converted YUV texture kept for unchanged repeat frames, avoiding
+    /// re-running the colour conversion and HDR statistics passes on static
+    /// desktops.
+    last_converted: Option<repeat_cache::CachedConverted>,
+    #[cfg(test)]
+    converted_reuses: u64,
 }
 /// One output buffer from QueryOutput: a frame, or with slice/tile output one
 /// slice or tile of it.
@@ -301,6 +310,15 @@ struct ComputeInput {
     context: gpu::D3d12Context,
 }
 impl Encoder {
+    /// Mark whether the next [`Self::encode_gpu`] call repeats the previous
+    /// picture, allowing conversion reuse when source and shader inputs match.
+    pub fn set_repeat(&mut self, repeat: bool) {
+        self.repeat = repeat;
+    }
+    #[cfg(test)]
+    pub(crate) fn conversion_reuses(&self) -> u64 {
+        self.converted_reuses
+    }
     /// AMF's video converter refused a long run of frames for a lasting reason
     /// (`plan::GIVE_WAY_AFTER`): an encoder without it, converting on the compute queue,
     /// serves this stream better.
@@ -533,6 +551,9 @@ impl Drop for Encoder {
                 );
             }
         }
+        // Drop any cached converted surface before tearing down the converters
+        // and AMF context so no pool target remains pinned during cleanup.
+        self.last_converted.take();
         // Destroy the converter before its context and dynamically loaded runtime.
         self.gpu_convert.take();
         self.graphics_stats.take();

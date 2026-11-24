@@ -137,6 +137,7 @@ impl Rig {
             device: self.compute.device.as_raw() as usize,
             readers: Some(readers.clone()),
             reader_fence: Some(self.compute.fence.clone()),
+            compute_read: None,
         });
         let opened = self.compute.open(&source.texture)?;
         let converted = converter.convert(&opened, format(image.pixel), None, &source)?;
@@ -458,6 +459,7 @@ fn hdr_stats_skip_captures_read_on_another_timeline() -> Result<()> {
         device: rig.compute.device.as_raw() as usize,
         readers: Some(Arc::new(AtomicU64::new(0))),
         reader_fence: Some(other),
+        compute_read: None,
     });
     let opened = rig.compute.open(&source.texture)?;
     let converted = converter.convert(&opened, format(hdr.pixel), None, &source)?;
