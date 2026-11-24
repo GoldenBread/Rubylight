@@ -8,39 +8,54 @@
 //! Every call blocks and impersonates on the calling thread: run them on a
 //! blocking thread, not an async worker.
 use butterpollo_session::file_transfer::{self, NameError};
+#[cfg(test)]
+use std::os::windows::{
+    ffi::OsStrExt,
+    io::{AsRawHandle, FromRawHandle},
+};
 use std::{
-    ffi::{OsStr, OsString},
-    fs::{self, File, Metadata, OpenOptions},
+    ffi::OsStr,
+    fs::{self, File, OpenOptions},
     io::{self, Write},
-    marker::PhantomData,
     os::windows::{
-        ffi::{OsStrExt, OsStringExt},
         fs::{MetadataExt, OpenOptionsExt},
-        io::{AsRawHandle, FromRawHandle, OwnedHandle},
+        io::OwnedHandle,
     },
     path::{Path, PathBuf},
     sync::Arc,
     time::UNIX_EPOCH,
 };
+#[cfg(test)]
+use windows::{
+    Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_NO_TOKEN, HANDLE},
+    core::HRESULT,
+};
 use windows::{
     Win32::{
-        Foundation::{ERROR_FILE_NOT_FOUND, ERROR_NO_TOKEN, ERROR_SHARING_VIOLATION, HANDLE},
-        Globalization::{CSTR_EQUAL, CompareStringOrdinal},
-        Security::{ImpersonateLoggedOnUser, RevertToSelf},
+        Foundation::ERROR_SHARING_VIOLATION,
         Storage::FileSystem::{
-            DELETE, FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_NORMAL, FILE_BASIC_INFO,
-            FILE_DISPOSITION_INFO, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
-            FILE_FLAGS_AND_ATTRIBUTES, FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_NAME_NORMALIZED,
-            FILE_RENAME_INFO, FILE_SHARE_READ, FileBasicInfo, FileDispositionInfo, FileRenameInfo,
-            GetDiskFreeSpaceExW, GetFinalPathNameByHandleW, ReOpenFile, SetFileInformationByHandle,
-        },
-        System::{Com::CoTaskMemFree, RemoteDesktop::WTSQueryUserToken},
-        UI::Shell::{
-            FOLDERID_Downloads, FOLDERID_RoamingAppData, KF_FLAG_DEFAULT, SHGetKnownFolderPath,
+            DELETE, FILE_ATTRIBUTE_HIDDEN, FILE_FLAG_BACKUP_SEMANTICS,
+            FILE_FLAG_OPEN_REPARSE_POINT, FILE_FLAGS_AND_ATTRIBUTES, FILE_GENERIC_WRITE,
+            FILE_SHARE_READ, GetDiskFreeSpaceExW,
         },
     },
-    core::{GUID, HRESULT, HSTRING},
+    core::HSTRING,
 };
+
+mod handle;
+mod impersonation;
+
+pub(crate) use handle::{
+    delete_on_close, final_path, plain, raw, reopen_for_data, same_name, verbatim,
+};
+use handle::{final_name, mark_of_the_web, rename_open, unmark};
+use impersonation::downloads;
+#[cfg(test)]
+use impersonation::standard_user;
+pub(crate) use impersonation::{
+    Impersonation, as_token, known_folder, no_signed_in_user, os_error, user_token,
+};
+pub use impersonation::{as_session_user, as_user, roaming_app_data};
 
 /// The subfolder of the user's Downloads folder transfers use by default.
 pub const DEFAULT_SUBFOLDER: &str = "Rubylight";
@@ -107,326 +122,6 @@ impl From<NameError> for UserFolderError {
     fn from(error: NameError) -> Self {
         Self::InvalidName(error)
     }
-}
-
-/// A Win32 failure as the `io::Error` std would report, so callers can
-/// match its kind (`StorageFull`, `AlreadyExists`, ...).
-pub(crate) fn os_error(error: windows::core::Error) -> io::Error {
-    let code = error.code().0 as u32;
-    if code & 0xFFFF_0000 == 0x8007_0000 {
-        io::Error::from_raw_os_error((code & 0xFFFF) as i32)
-    } else {
-        io::Error::other(error)
-    }
-}
-
-/// This thread runs as the user until the guard drops, also when the work
-/// fails or panics. Not `Send`: the impersonation belongs to this thread.
-pub(crate) struct Impersonation(PhantomData<*const ()>);
-impl Impersonation {
-    pub(crate) fn begin(token: Option<&OwnedHandle>) -> io::Result<Option<Self>> {
-        let Some(token) = token else { return Ok(None) };
-        // SAFETY: token is an open primary token of the signed-in user; the
-        // returned guard reverts the impersonation on this thread.
-        unsafe { ImpersonateLoggedOnUser(HANDLE(token.as_raw_handle())) }.map_err(os_error)?;
-        Ok(Some(Self(PhantomData)))
-    }
-}
-impl Drop for Impersonation {
-    fn drop(&mut self) {
-        // SAFETY: ends the impersonation `begin` started on this thread.
-        if let Err(error) = unsafe { RevertToSelf() } {
-            tracing::error!("The host could not stop acting as the Windows user: {error}");
-            // This thread would go on with the user's rights in place of the
-            // host's, or with the host's where the user's were checked.
-            std::process::abort();
-        }
-    }
-}
-
-/// The token files are opened with: the user signed in to the host's
-/// session when the host runs as SYSTEM, the same user without
-/// administrator rights when it runs elevated, and none when the host
-/// already is that user.
-pub(crate) fn user_token() -> Result<Option<OwnedHandle>, UserFolderError> {
-    if !crate::process::is_system() {
-        return standard_user(crate::process::standard_user_token());
-    }
-    let session = crate::process::current_session()
-        .map_err(|error| io::Error::other(format!("{error:#}")))?;
-    let mut token = HANDLE::default();
-    // SAFETY: token is a writable handle slot.
-    let queried = unsafe { WTSQueryUserToken(session, &mut token) };
-    match queried {
-        // SAFETY: WTS returned an open token that only this OwnedHandle closes.
-        Ok(()) => Ok(Some(unsafe { OwnedHandle::from_raw_handle(token.0) })),
-        Err(error) if no_signed_in_user(error.code()) => Err(UserFolderError::NoConsoleUser),
-        Err(error) => Err(os_error(error).into()),
-    }
-}
-
-/// The elevated host's token of its user without administrator rights, with
-/// a missing desktop shell as [`UserFolderError::NoUserShell`].
-fn standard_user(
-    token: anyhow::Result<Option<OwnedHandle>>,
-) -> Result<Option<OwnedHandle>, UserFolderError> {
-    token.map_err(|error| {
-        if error.downcast_ref::<crate::process::NoShell>().is_some() {
-            return UserFolderError::NoUserShell;
-        }
-        io::Error::other(format!(
-            "file transfer cannot act as the Windows user without administrator rights: {error:#}"
-        ))
-        .into()
-    })
-}
-
-/// Runs `work` on this thread as the user (see [`user_token`]), so Windows
-/// checks what it opens, follows and replaces against the user's rights, not
-/// the host's: a link the user put in a folder of theirs leads nowhere the
-/// user could not reach anyway. With nobody to act as, `work` does not run.
-pub fn as_user<T>(work: impl FnOnce() -> T) -> Result<T, UserFolderError> {
-    as_token(user_token()?.as_ref(), work)
-}
-
-/// [`as_user`] with `token`, or as the host without one. The impersonation
-/// ends when `work` returns or panics.
-pub(crate) fn as_token<T>(
-    token: Option<&OwnedHandle>,
-    work: impl FnOnce() -> T,
-) -> Result<T, UserFolderError> {
-    let _user = Impersonation::begin(token)?;
-    Ok(work())
-}
-
-/// Runs `work` on this thread as the user signed in to the host's session
-/// when the host runs as SYSTEM, for what Windows keeps per user. Otherwise,
-/// or with nobody signed in, it runs as the host.
-pub fn as_session_user<T>(work: impl FnOnce() -> T) -> io::Result<T> {
-    let token = if crate::process::is_system() {
-        match user_token() {
-            Ok(token) => token,
-            Err(UserFolderError::NoConsoleUser) => None,
-            Err(UserFolderError::Io(error)) => return Err(error),
-            Err(error) => return Err(io::Error::other(error.to_string())),
-        }
-    } else {
-        None
-    };
-    let _user = Impersonation::begin(token.as_ref())?;
-    Ok(work())
-}
-
-/// How `WTSQueryUserToken` says the session has no user: ERROR_NO_TOKEN
-/// at the sign-in screen, ERROR_FILE_NOT_FOUND when the session is gone.
-pub(crate) fn no_signed_in_user(code: HRESULT) -> bool {
-    code == HRESULT::from_win32(ERROR_NO_TOKEN.0)
-        || code == HRESULT::from_win32(ERROR_FILE_NOT_FOUND.0)
-}
-
-/// The user's Downloads folder, wherever they moved it.
-fn downloads(token: Option<&OwnedHandle>) -> Result<PathBuf, UserFolderError> {
-    known_folder(&FOLDERID_Downloads, token)
-}
-
-/// The roaming AppData folder of the user signed in to the host's session
-/// (see [`user_token`]), where Nucleus Co-op keeps the user's game list.
-pub fn roaming_app_data() -> Result<PathBuf, UserFolderError> {
-    let token = user_token()?;
-    known_folder(&FOLDERID_RoamingAppData, token.as_ref())
-}
-
-/// The known folder `id` of the user `token` names, or of the host's user.
-pub(crate) fn known_folder(
-    id: &GUID,
-    token: Option<&OwnedHandle>,
-) -> Result<PathBuf, UserFolderError> {
-    let token = token.map(|token| HANDLE(token.as_raw_handle()));
-    // SAFETY: the token stays open for the call; the string Windows returns
-    // is copied, then freed once.
-    unsafe {
-        let path = SHGetKnownFolderPath(id, KF_FLAG_DEFAULT, token).map_err(os_error)?;
-        let copy = OsString::from_wide(path.as_wide());
-        CoTaskMemFree(Some(path.0 as *const _));
-        Ok(PathBuf::from(copy))
-    }
-}
-
-/// A plain file: not a folder or a link. Other reparse points, such as
-/// compressed (WOF), deduplicated or cloud files, hold the file's own data.
-pub(crate) fn plain(metadata: &Metadata) -> bool {
-    metadata.is_file()
-}
-
-/// `path` made absolute with the `\\?\` prefix, so Win32 calls take it
-/// beyond MAX_PATH (260 characters). Not NUL-terminated.
-pub(crate) fn verbatim(path: &Path) -> io::Result<Vec<u16>> {
-    let path: Vec<u16> = std::path::absolute(path)?
-        .as_os_str()
-        .encode_wide()
-        .collect();
-    let prefix = |prefix: &str| -> Vec<u16> { OsStr::new(prefix).encode_wide().collect() };
-    let (keep, from) = if path.starts_with(&prefix(r"\\?\")) {
-        return Ok(path);
-    } else if path.starts_with(&prefix(r"\\.\")) {
-        (prefix(r"\\?\"), 4)
-    } else if path.starts_with(&prefix(r"\\")) {
-        (prefix(r"\\?\UNC\"), 2)
-    } else {
-        (prefix(r"\\?\"), 0)
-    };
-    Ok([keep.as_slice(), &path[from..]].concat())
-}
-
-pub(crate) fn raw(file: &File) -> HANDLE {
-    HANDLE(file.as_raw_handle())
-}
-
-/// Renames the open file to `target`, never over a file already there.
-fn rename_open(file: &File, target: &Path) -> io::Result<()> {
-    let target = verbatim(target)?;
-    let name_bytes = target.len() * size_of::<u16>();
-    let bytes = std::mem::offset_of!(FILE_RENAME_INFO, FileName) + name_bytes + size_of::<u16>();
-    // u64 keeps the structure's alignment; zeroed is ReplaceIfExists false,
-    // no root folder and a NUL after the name.
-    let mut buffer = vec![0u64; bytes.div_ceil(size_of::<u64>())];
-    let info = buffer.as_mut_ptr().cast::<FILE_RENAME_INFO>();
-    // SAFETY: the buffer is aligned for FILE_RENAME_INFO and holds the
-    // name it is followed by; Windows reads it during the call only.
-    unsafe {
-        (*info).FileNameLength = name_bytes as u32;
-        std::ptr::copy_nonoverlapping(
-            target.as_ptr(),
-            (&raw mut (*info).FileName).cast::<u16>(),
-            target.len(),
-        );
-        SetFileInformationByHandle(
-            raw(file),
-            FileRenameInfo,
-            info.cast_const().cast(),
-            (buffer.len() * size_of::<u64>()) as u32,
-        )
-    }
-    .map_err(os_error)
-}
-
-/// Deletes the open file once its last handle closes.
-pub(crate) fn delete_on_close(file: &File) -> io::Result<()> {
-    let info = FILE_DISPOSITION_INFO { DeleteFile: true };
-    // SAFETY: info is a live FILE_DISPOSITION_INFO of the size passed.
-    unsafe {
-        SetFileInformationByHandle(
-            raw(file),
-            FileDispositionInfo,
-            (&raw const info).cast(),
-            size_of::<FILE_DISPOSITION_INFO>() as u32,
-        )
-    }
-    .map_err(os_error)
-}
-
-/// Clears [`PART_MARKER`] from the open file.
-fn unmark(file: &File) -> io::Result<()> {
-    let attributes = file.metadata()?.file_attributes() & !PART_MARKER.0;
-    let info = FILE_BASIC_INFO {
-        // Times of zero stay as they are; no attributes at all is NORMAL.
-        FileAttributes: if attributes == 0 {
-            FILE_ATTRIBUTE_NORMAL.0
-        } else {
-            attributes
-        },
-        ..Default::default()
-    };
-    // SAFETY: info is a live FILE_BASIC_INFO of the size passed.
-    unsafe {
-        SetFileInformationByHandle(
-            raw(file),
-            FileBasicInfo,
-            (&raw const info).cast(),
-            size_of::<FILE_BASIC_INFO>() as u32,
-        )
-    }
-    .map_err(os_error)
-}
-
-/// The open plain file opened again, as the user, without
-/// FILE_FLAG_OPEN_REPARSE_POINT, so a compressed, deduplicated or cloud file
-/// reads as its data; with its length.
-pub(crate) fn reopen_for_data(
-    token: Option<&OwnedHandle>,
-    file: &File,
-) -> Result<(File, u64), UserFolderError> {
-    let reopened = {
-        let _user = Impersonation::begin(token)?;
-        // SAFETY: the handle is open for the call.
-        unsafe {
-            ReOpenFile(
-                raw(file),
-                FILE_GENERIC_READ.0,
-                FILE_SHARE_READ,
-                FILE_FLAGS_AND_ATTRIBUTES(0),
-            )
-        }
-        .map_err(os_error)?
-    };
-    // SAFETY: ReOpenFile returned a new open handle only this File closes.
-    let file = unsafe { File::from_raw_handle(reopened.0) };
-    let len = file.metadata()?.len();
-    Ok((file, len))
-}
-
-/// The name the open file has in its folder, as stored on disk: the long
-/// name even when it was opened by its 8.3 short name.
-fn final_name(file: &File) -> io::Result<OsString> {
-    let path = final_path(file)?;
-    let path: Vec<u16> = path.encode_wide().collect();
-    let start = path
-        .iter()
-        .rposition(|&unit| unit == u16::from(b'\\'))
-        .map_or(0, |separator| separator + 1);
-    Ok(OsString::from_wide(&path[start..]))
-}
-
-/// The whole path of the open file as Windows resolved it, with the `\\?\`
-/// prefix: links followed and 8.3 short names replaced by the long ones.
-pub(crate) fn final_path(file: &File) -> io::Result<OsString> {
-    let mut path = vec![0u16; 512];
-    loop {
-        // SAFETY: the handle is open and path is a writable buffer.
-        let len = unsafe { GetFinalPathNameByHandleW(raw(file), &mut path, FILE_NAME_NORMALIZED) }
-            as usize;
-        if len == 0 {
-            return Err(io::Error::last_os_error());
-        }
-        if len < path.len() {
-            path.truncate(len);
-            break;
-        }
-        // Too small: len is the size needed, with the NUL.
-        path.resize(len, 0);
-    }
-    Ok(OsString::from_wide(&path))
-}
-
-/// Whether `a` and `b` are one name or path to NTFS: equal but for case as
-/// Windows maps it, code unit by code unit. Unlike Unicode lowercasing, the
-/// Kelvin sign is not a `k` there, nor the Ohm sign an omega.
-pub(crate) fn same_name(a: &OsStr, b: &OsStr) -> bool {
-    let a: Vec<u16> = a.encode_wide().collect();
-    let b: Vec<u16> = b.encode_wide().collect();
-    // SAFETY: both are live slices, passed with their lengths.
-    a == b || unsafe { CompareStringOrdinal(&a, &b, true) } == CSTR_EQUAL
-}
-
-/// Writes the Mark of the Web next to the data of the file at `path`.
-fn mark_of_the_web(path: &Path) -> io::Result<()> {
-    let mut stream = path.as_os_str().to_owned();
-    stream.push(":Zone.Identifier");
-    OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(stream)?
-        .write_all(ZONE_IDENTIFIER)
 }
 
 /// A file in the transfer folder.

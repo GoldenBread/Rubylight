@@ -1,6 +1,6 @@
 //! Native notification-area UI, owned by its Windows message thread.
 use anyhow::{Context, Result, bail};
-use butterpollo_session::tray::{Icon, NoticeAction, Notices, Post, QueuedNotice};
+use butterpollo_session::tray::{Icon, NoticeAction};
 use std::{
     mem::size_of,
     path::PathBuf,
@@ -11,15 +11,24 @@ use std::{
 use windows::{
     Win32::{
         Foundation::*,
-        Graphics::Gdi::{
-            BI_RGB, BITMAP, BITMAPINFO, BITMAPINFOHEADER, CreateBitmap, DIB_RGB_COLORS,
-            DeleteObject, GetDC, GetDIBits, GetObjectW, ReleaseDC,
-        },
         System::{LibraryLoader::GetModuleHandleW, Threading::GetCurrentThreadId},
         UI::{Shell::*, WindowsAndMessaging::*},
     },
     core::{PCWSTR, w},
 };
+
+mod icon;
+mod notices;
+
+use icon::badged;
+#[cfg(test)]
+use notices::launch_error_notice;
+use notices::{NOTICES, SHOWN, show_held};
+pub use notices::{
+    launch_error, notices_due, notify, notify_pairing, pairing_request_ended,
+    release_overdue_notices, try_notify,
+};
+
 /// Retries adding the icon while the taskbar does not accept it yet.
 const RETRY_TIMER: usize = 1;
 /// The running app changed; see [`show_app`].
@@ -237,92 +246,6 @@ pub fn show_app(icon: Icon, app: Option<&str>, summary: Option<&str>) {
                 LPARAM(0),
             );
         }
-    }
-}
-/// `base` with the state's dot in its corner; None for Idle or an icon
-/// without alpha, which then shows as is.
-unsafe fn badged(base: HICON, state: Icon) -> Option<HICON> {
-    // SAFETY: The caller retains base on the tray thread. GetIconInfo returns owned
-    // bitmaps; checked dimensions bound the 32-bit pixel and word-aligned mask buffers.
-    // GDI copies their data synchronously, and each bitmap/DC is deleted/released once.
-    unsafe {
-        let mut info = ICONINFO::default();
-        GetIconInfo(base, &mut info).ok()?;
-        let made = (|| {
-            if info.hbmColor.is_invalid() {
-                return None;
-            }
-            let mut bitmap = BITMAP::default();
-            if GetObjectW(
-                info.hbmColor.into(),
-                size_of::<BITMAP>() as i32,
-                Some((&mut bitmap as *mut BITMAP).cast()),
-            ) == 0
-            {
-                return None;
-            }
-            let (width, height) = (bitmap.bmWidth, bitmap.bmHeight);
-            if width <= 0 || height <= 0 || width > 256 || height > 256 {
-                return None;
-            }
-            let mut header = BITMAPINFO {
-                bmiHeader: BITMAPINFOHEADER {
-                    biSize: size_of::<BITMAPINFOHEADER>() as u32,
-                    biWidth: width,
-                    // Top-down rows, as CreateBitmap takes them.
-                    biHeight: -height,
-                    biPlanes: 1,
-                    biBitCount: 32,
-                    biCompression: BI_RGB.0,
-                    ..Default::default()
-                },
-                ..Default::default()
-            };
-            let mut pixels = vec![0u8; width as usize * height as usize * 4];
-            let screen = GetDC(None);
-            let lines = GetDIBits(
-                screen,
-                info.hbmColor,
-                0,
-                height as u32,
-                Some(pixels.as_mut_ptr().cast()),
-                &mut header,
-                DIB_RGB_COLORS,
-            );
-            ReleaseDC(None, screen);
-            if lines != height
-                || !butterpollo_session::tray::badge(
-                    &mut pixels,
-                    width as usize,
-                    height as usize,
-                    state,
-                )
-            {
-                return None;
-            }
-            let color = CreateBitmap(width, height, 1, 32, Some(pixels.as_ptr().cast()));
-            // An all-zero mask: the colour image's alpha decides.
-            let mask_bytes = vec![0u8; (width as usize).div_ceil(16) * 2 * height as usize];
-            let mask = CreateBitmap(width, height, 1, 1, Some(mask_bytes.as_ptr().cast()));
-            let icon = (!color.is_invalid() && !mask.is_invalid())
-                .then(|| {
-                    CreateIconIndirect(&ICONINFO {
-                        fIcon: TRUE,
-                        xHotspot: 0,
-                        yHotspot: 0,
-                        hbmMask: mask,
-                        hbmColor: color,
-                    })
-                    .ok()
-                })
-                .flatten();
-            let _ = DeleteObject(color.into());
-            let _ = DeleteObject(mask.into());
-            icon
-        })();
-        let _ = DeleteObject(info.hbmColor.into());
-        let _ = DeleteObject(info.hbmMask.into());
-        made
     }
 }
 unsafe extern "system" fn window(
@@ -630,126 +553,6 @@ impl Drop for Tray {
         }
     }
 }
-/// The tray icon's window while it is shown.
-static SHOWN: std::sync::Mutex<Option<isize>> = std::sync::Mutex::new(None);
-static NOTICES: Mutex<Notices> = Mutex::new(Notices::new());
-/// Keeps notices in the order they reach Windows. Held across the call to Windows,
-/// so never taken on the tray's window thread: a callback dispatched during that
-/// call would wait for itself. [`NOTICES`] is only ever held briefly.
-static SHOWING: Mutex<()> = Mutex::new(());
-fn notice(title: &str, text: &str, action: Option<NoticeAction>) -> QueuedNotice {
-    QueuedNotice {
-        title: title.to_owned(),
-        text: text.to_owned(),
-        action,
-        request: None,
-    }
-}
-/// Show a notification from the tray icon, if there is one.
-pub fn notify(title: &str, text: &str) {
-    let _ = post_notice(&notice(title, text, None));
-}
-/// Show pairing request `request`'s notification; clicking it opens the console at the PIN.
-pub fn notify_pairing(request: &str, title: &str, text: &str) {
-    let notice = QueuedNotice {
-        request: Some(request.to_owned()),
-        ..notice(title, text, Some(NoticeAction::EnterPin))
-    };
-    if let Err(error) = post_notice(&notice) {
-        tracing::debug!(%error, "no tray notification for a pairing request");
-    }
-}
-/// Pairing request `request` ended, so a notification still waiting about it goes.
-pub fn pairing_request_ended(request: &str) {
-    NOTICES.lock().unwrap().request_ended(request);
-}
-/// Called from the host's loop: a launch error nobody answered lets others go up.
-pub fn release_overdue_notices() {
-    let held = NOTICES.lock().unwrap().tick(Instant::now());
-    show_held(held);
-}
-/// When [`release_overdue_notices`] next has something to release.
-pub fn notices_due() -> Option<Instant> {
-    NOTICES.lock().unwrap().due()
-}
-/// Show a notification from the tray icon, or say why it could not be shown.
-pub fn try_notify(title: &str, text: &str) -> Result<()> {
-    post_notice(&notice(title, text, None))
-}
-fn launch_error_notice(app: &str, code: u32) -> butterpollo_session::tray::Notice {
-    (
-        "Launch Error",
-        format!(
-            "Application {app} exited too fast with code {}. Click here to terminate the stream.",
-            code as i32
-        ),
-    )
-}
-/// Keep the detached stream open until the user chooses to end it.
-pub fn launch_error(app: &str, code: u32) {
-    let (title, text) = launch_error_notice(app, code);
-    if let Err(error) = post_notice(&notice(title, &text, Some(NoticeAction::QuitApp))) {
-        tracing::warn!(%error, "no tray notification for a launch error");
-    }
-}
-/// Put up notices that waited for a launch error's notification to go, on a
-/// thread of their own: callers include the window procedure and the host's loop.
-fn show_held(held: Vec<QueuedNotice>) {
-    if held.is_empty() {
-        return;
-    }
-    let shown = std::thread::Builder::new()
-        .name("tray-notices".into())
-        .spawn(move || {
-            for notice in &held {
-                if let Err(error) = post_notice(notice) {
-                    tracing::warn!(%error, title = %notice.title, "no tray notification for a held notice");
-                }
-            }
-        });
-    if let Err(error) = shown {
-        tracing::warn!(%error, "no thread for held tray notifications");
-    }
-}
-fn post_notice(notice: &QueuedNotice) -> Result<()> {
-    let Some(window) = *SHOWN.lock().unwrap() else {
-        bail!("the tray icon is not shown");
-    };
-    let showing = SHOWING.lock().unwrap();
-    let post = NOTICES.lock().unwrap().post(notice, Instant::now());
-    if post == Post::Held {
-        tracing::info!(title = %notice.title, "tray notification waits for the launch error's");
-        return Ok(());
-    }
-    let cleared = post != Post::ClearThenShow || show_notification(window, "", "");
-    if cleared && show_notification(window, &notice.title, &notice.text) {
-        return Ok(());
-    }
-    let held = NOTICES.lock().unwrap().not_shown();
-    drop(showing);
-    show_held(held);
-    bail!("Windows did not show the notification")
-}
-/// Empty text takes down what is up.
-fn show_notification(window: isize, title: &str, text: &str) -> bool {
-    let mut icon = NOTIFYICONDATAW {
-        cbSize: size_of::<NOTIFYICONDATAW>() as u32,
-        hWnd: HWND(window as *mut _),
-        uID: 1,
-        uFlags: NIF_INFO,
-        dwInfoFlags: NIIF_INFO,
-        ..Default::default()
-    };
-    let copy = |target: &mut [u16], value: &str| {
-        let units: Vec<u16> = value.encode_utf16().take(target.len() - 1).collect();
-        target[..units.len()].copy_from_slice(&units);
-    };
-    copy(&mut icon.szInfoTitle, title);
-    copy(&mut icon.szInfo, text);
-    // SAFETY: icon is initialized with its exact size and terminated text buffers,
-    // and Shell_NotifyIconW consumes it synchronously; hWnd is only an opaque identifier.
-    unsafe { Shell_NotifyIconW(NIM_MODIFY, &icon) }.as_bool()
-}
 
 /// The console's Devices page with a waiting device's PIN field focused.
 pub const PAGE_ENTER_PIN: &str = "/devices?pair=pin";
@@ -806,104 +609,4 @@ pub fn open_web_page(port: u16, page: &str) -> Result<()> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_refused_tray_icon_is_logged_once_and_again_when_it_keeps_failing() {
-        let start = Instant::now();
-        let mut log = AddLog::default();
-        assert!(!log.is_added());
-        assert_eq!(log.attempt(false, start), Some(AddReport::Refused));
-        // The 3 s retries say nothing more until a minute has passed, then once.
-        assert_eq!(log.attempt(false, start + Duration::from_secs(3)), None);
-        assert_eq!(
-            log.attempt(false, start + ADD_REFUSED_LONG),
-            Some(AddReport::StillRefused)
-        );
-        log.note_still_refused(true);
-        assert_eq!(log.attempt(false, start + Duration::from_secs(120)), None);
-        assert_eq!(
-            log.attempt(true, start + Duration::from_secs(123)),
-            Some(AddReport::Added(Some(Duration::from_secs(123))))
-        );
-        assert!(log.is_added());
-        // Explorer restarting adds it again: no line; a later refusal is new.
-        assert_eq!(log.attempt(true, start + Duration::from_secs(200)), None);
-        assert_eq!(
-            log.attempt(false, start + Duration::from_secs(300)),
-            Some(AddReport::Refused)
-        );
-        assert!(!log.is_added());
-    }
-
-    #[test]
-    fn taskbar_creation_restarts_retries_only_when_it_gave_up_without_a_taskbar() {
-        let start = Instant::now();
-        let mut log = AddLog::default();
-        assert_eq!(log.attempt(false, start), Some(AddReport::Refused));
-        assert_eq!(
-            log.attempt(false, start + ADD_REFUSED_LONG),
-            Some(AddReport::StillRefused)
-        );
-        log.note_still_refused(false);
-        log.on_taskbar_created();
-        assert_eq!(
-            log.attempt(false, start + Duration::from_secs(120)),
-            Some(AddReport::Refused)
-        );
-        assert_eq!(
-            log.attempt(false, start + Duration::from_secs(180)),
-            Some(AddReport::StillRefused)
-        );
-        // Once it gave up with the taskbar present, another TaskbarCreated does not warn again.
-        log.note_still_refused(true);
-        log.on_taskbar_created();
-        assert_eq!(log.attempt(false, start + Duration::from_secs(240)), None);
-    }
-
-    #[test]
-    fn the_first_tray_icon_added_is_logged() {
-        let mut log = AddLog::default();
-        assert_eq!(
-            log.attempt(true, Instant::now()),
-            Some(AddReport::Added(None))
-        );
-        assert_eq!(log.attempt(true, Instant::now()), None);
-    }
-
-    #[test]
-    fn the_pairing_pages_lead_to_the_devices_page() {
-        assert_eq!(console_url(47990, "/"), "https://localhost:47990/");
-        assert_eq!(
-            console_url(47990, PAGE_ENTER_PIN),
-            "https://localhost:47990/devices?pair=pin"
-        );
-        assert_eq!(
-            console_url(47990, PAGE_PAIR_QR),
-            "https://localhost:47990/devices?pair=qr"
-        );
-        assert_eq!(
-            console_url(47990, PAGE_BACKUP),
-            "https://localhost:47990/troubleshoot#backup"
-        );
-        assert!(open_web_page(47990, "//evil.example/").is_err());
-    }
-
-    #[test]
-    fn launch_error_uses_vibepollos_wording_and_signed_exit_code() {
-        assert_eq!(
-            launch_error_notice("Game", 1),
-            (
-                "Launch Error",
-                "Application Game exited too fast with code 1. Click here to terminate the stream."
-                    .into()
-            )
-        );
-        assert!(
-            launch_error_notice("Game", 0xc0000005)
-                .1
-                .contains("code -1073741819.")
-        );
-    }
-}
+mod tests;
