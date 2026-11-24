@@ -867,13 +867,14 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
     // The overlay names what heat does to the stream only when it does something: warm holds the
     // bitrate of a bitrate controller, while quality has no bitrate to hold; hot eases any load it can.
     static int thermalState(int level, boolean holdsBitrate, boolean easesLoad) {
-        if (level == ThermalMonitor.HOT) {
-            return easesLoad ? R.string.perf_overlay_thermal_hot_easing : R.string.perf_overlay_thermal_hot;
+        int normalized = level == ThermalMonitor.HOT ? 2 : (level == ThermalMonitor.WARM ? 1 : 0);
+        switch (NightjarPolicyJni.videoThermalState(normalized, holdsBitrate, easesLoad)) {
+            case NightjarPolicyJni.THERMAL_STATE_HOT_EASING: return R.string.perf_overlay_thermal_hot_easing;
+            case NightjarPolicyJni.THERMAL_STATE_HOT: return R.string.perf_overlay_thermal_hot;
+            case NightjarPolicyJni.THERMAL_STATE_WARM_HOLDING: return R.string.perf_overlay_thermal_warm_holding;
+            case NightjarPolicyJni.THERMAL_STATE_WARM: return R.string.perf_overlay_thermal_warm;
+            default: return R.string.perf_overlay_thermal_normal;
         }
-        if (level == ThermalMonitor.WARM) {
-            return holdsBitrate ? R.string.perf_overlay_thermal_warm_holding : R.string.perf_overlay_thermal_warm;
-        }
-        return R.string.perf_overlay_thermal_normal;
     }
 
     // Network queueing delay above its recent minimum, ms; -1 when unknown.
@@ -2015,8 +2016,8 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
      * @param sdr10 the 10-bit formats were offered for 10-bit SDR, not HDR
      */
     static int yuv444FallbackMessage(int format, boolean sdr10) {
-        boolean hdr = (format & MoonBridge.VIDEO_FORMAT_MASK_10BIT) != 0 && !sdr10;
-        return hdr ? R.string.yuv444_fallback_hdr : R.string.yuv444_fallback;
+        return NightjarPolicyJni.videoYuv444FallbackIsHdr(format, sdr10) ?
+                R.string.yuv444_fallback_hdr : R.string.yuv444_fallback;
     }
 
     /**
@@ -2025,7 +2026,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
      * packed video is the one case in which {@link #getSupportedVideoFormats} offers no PyroWave.
      */
     static boolean pyroWaveFullChromaDrop(boolean packed444, boolean yuv444) {
-        return packed444 && !yuv444;
+        return NightjarPolicyJni.videoPyroWaveFullChromaDrop(packed444, yuv444);
     }
 
     // deviceReason: why this device cannot run PyroWave, or 0. hostCodecs: the PC's
@@ -2034,19 +2035,14 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
     // hdrFailure: why PyroWave HDR failed, or 0.
     static int pyroWaveDropReason(boolean chosen, boolean fullChroma, int deviceReason, int hostCodecs,
                                   int formats, int choice, int hdrFailure) {
-        if (!chosen) return 0;
-        if (fullChroma) return PYROWAVE_FULL_CHROMA;
-        if (deviceReason != 0) return deviceReason;
-        if ((formats & MoonBridge.VIDEO_FORMAT_MASK_PYROWAVE) == 0) {
-            if ((hostCodecs & (HOST_PYROWAVE_SDR | HOST_PYROWAVE_10BIT)) == 0) return PYROWAVE_NOT_OFFERED;
-            if ((formats & MoonBridge.VIDEO_FORMAT_MASK_10BIT) != 0 && (hostCodecs & HOST_PYROWAVE_10BIT) == 0) {
-                return PYROWAVE_NO_HDR_ON_PC;
-            }
-            // Left out for a reason neither side's codecs explain: the log says so.
-            return 0;
+        int code = NightjarPolicyJni.videoPyroWaveDropReason(
+                chosen, fullChroma, deviceReason, hostCodecs, formats, choice, hdrFailure);
+        switch (code) {
+            case NightjarPolicyJni.PYROWAVE_DROP_DEVICE_REASON: return deviceReason;
+            case NightjarPolicyJni.PYROWAVE_DROP_MISSING_SWAPCHAIN: return R.string.pyrowave_missing_swapchain;
+            case NightjarPolicyJni.PYROWAVE_DROP_HDR_FAILURE: return hdrFailure;
+            default: return code;
         }
-        if (choice == 0) return R.string.pyrowave_missing_swapchain;
-        return (choice & MoonBridge.VIDEO_FORMAT_MASK_10BIT) == 0 ? hdrFailure : 0;
     }
 
     public int getSupportedVideoFormats(boolean hdr) {
@@ -2089,10 +2085,8 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
      * 4:4:4 first, plain SDR 4:2:0 last.
      */
     public static int firstPyroWaveFormat(int formats, java.util.function.IntPredicate setup) {
-        int[] choices = { MoonBridge.VIDEO_FORMAT_PYROWAVE_MAIN10_444, MoonBridge.VIDEO_FORMAT_PYROWAVE_MAIN10,
-                MoonBridge.VIDEO_FORMAT_PYROWAVE_444, MoonBridge.VIDEO_FORMAT_PYROWAVE };
-        for (int choice : choices) {
-            if ((formats & choice) != 0 && setup.test(choice)) return choice;
+        for (int choice : NightjarPolicyJni.videoPyroWaveCandidateFormats(formats)) {
+            if (setup.test(choice)) return choice;
         }
         return 0;
     }
@@ -2200,9 +2194,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
      * without it, where HDR still works).
      */
     static String hostTenBitIssue(int deviceModes, int hostModes) {
-        if (hostModes < 0 || (hostModes & deviceModes) == 0 ||
-                (hostModes & deviceModes & PACKED_10BIT_MODES) != 0) return null;
-        return (hostModes & PACKED_10BIT_MODES) == 0 ? ISSUE_HOST_NO_TEN_BIT : ISSUE_NO_TEN_BIT_IN_COMMON;
+        return NightjarPolicyJni.videoHostTenBitIssue(deviceModes, hostModes);
     }
 
     /**
@@ -2212,9 +2204,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
      * already left HDR out.
      */
     static String hostTenBitDrop(boolean tenBitOffered, String dropAtLaunch, int negotiatedFormat, int hostModes) {
-        if (!tenBitOffered || dropAtLaunch != null ||
-                (negotiatedFormat & MoonBridge.VIDEO_FORMAT_MASK_10BIT) != 0) return dropAtLaunch;
-        return hostModes >= 0 && (hostModes & PACKED_10BIT_MODES) != 0 ? ISSUE_NO_TEN_BIT_IN_COMMON : ISSUE_HOST_NO_TEN_BIT;
+        return NightjarPolicyJni.videoHostTenBitDrop(tenBitOffered, dropAtLaunch, negotiatedFormat, hostModes);
     }
 
     @Override
@@ -2268,9 +2258,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
 
     /** Why 10-bit packed output cannot be shown, from what the display and the GPU report; null when both do. */
     static String tenBitOutputIssue(boolean displayHdr10, boolean gpuTenBitOutput) {
-        if (!displayHdr10) return ISSUE_NO_HDR10_DISPLAY;
-        if (!gpuTenBitOutput) return ISSUE_NO_TEN_BIT_OUTPUT;
-        return null;
+        return NightjarPolicyJni.videoTenBitOutputIssue(displayHdr10, gpuTenBitOutput);
     }
 
     // Package-visible so a test can count probes (each one costs a decode).
@@ -2349,7 +2337,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
 
     /** Frame Warp is asked for the next stream, as NvConnection asks it (MoonBridge.requestFrameWarp). */
     static boolean frameWarpAsked(PreferenceConfiguration prefs, boolean frameWarpListed) {
-        return prefs.frameWarp && frameWarpListed;
+        return NightjarPolicyJni.videoRendererFrameWarpAsked(prefs.frameWarp, frameWarpListed);
     }
 
     /**
@@ -2657,24 +2645,14 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
     // above 1080p for a byte per pixel: a 4K keyframe at 160 Mbps came to 4.4 MB on a MediaTek TV
     // whose decoder gave 4 MB, and growing the buffer restarts the decoder mid-stream (issue 56).
     static int maxInputSize(int bitrateKbps, int fps, int width, int height) {
-        if (bitrateKbps <= 0 || fps <= 0) {
-            return 0;
-        }
-        long bytes = Math.max((long) bitrateKbps * 1000 / 8 / fps * 4, (long) Math.max(width, 0) * Math.max(height, 0));
-        if (bytes <= 2 * 1024 * 1024) {
-            return 0;
-        }
-        return (int) Math.min(bytes, 32 * 1024 * 1024);
+        return NightjarPolicyJni.videoMaxInputSize(bitrateKbps, fps, width, height);
     }
 
     // The input buffer size to ask for when a frame of requiredBytes does not fit: twice the buffer,
     // or the frame if larger. 0 when growing cannot help: the frame fits, or the decoder already
     // ignored a request this large. From Moonlight V+ (qiin2333/moonlight-vplus, GPL-3.0).
     static int grownInputSize(long requiredBytes, int capacity, int previousRequest) {
-        if (requiredBytes <= capacity || requiredBytes <= previousRequest || requiredBytes > Integer.MAX_VALUE) {
-            return 0;
-        }
-        return (int) Math.min(Math.max(requiredBytes, capacity * 2L), Integer.MAX_VALUE);
+        return NightjarPolicyJni.videoGrownInputSize(requiredBytes, capacity, previousRequest);
     }
 
     // Asks for a restart with a larger input buffer, the way Moonlight V+ does, instead of ending
@@ -5378,13 +5356,8 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
      */
     static HdrChange hdrChange(boolean previousMode, boolean enabled, byte[] previousMetadata, byte[] metadata,
                                int sdkInt) {
-        if (previousMode == enabled && Arrays.equals(previousMetadata, metadata)) {
-            return HdrChange.NONE;
-        }
-        if (previousMode == enabled && enabled && metadata != null && sdkInt >= Build.VERSION_CODES.Q) {
-            return HdrChange.PARAMETERS;
-        }
-        return HdrChange.RESTART;
+        return HdrChange.values()[NightjarPolicyJni.videoHdrChange(
+                previousMode, enabled, previousMetadata, metadata, sdkInt)];
     }
 
     /**
@@ -5394,17 +5367,8 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
      * dequeues, DecoderHung); without the vendor keys they restarted fine.
      */
     static boolean restartRecreates(String decoderName, List<String> tuningKeys) {
-        String lower = decoderName.toLowerCase(Locale.ROOT);
-        if (lower.startsWith("c2.mtk.")) {
-            for (String key : tuningKeys) {
-                if (key.startsWith("vendor.mtk.vdec.low-latency.mode=") && !key.endsWith("=0")) return true;
-            }
-        } else if (lower.startsWith("c2.dolby.")) {
-            for (String key : tuningKeys) {
-                if (key.startsWith("vendor.qti-ext-") && !key.endsWith("=0")) return true;
-            }
-        }
-        return false;
+        if (decoderName == null || tuningKeys == null || tuningKeys.isEmpty()) return false;
+        return NightjarPolicyJni.videoRestartRecreates(decoderName, String.join("\n", tuningKeys));
     }
 
     /**
@@ -5414,7 +5378,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
      * c2.mtk.hevc.decoder) needs no restart, which would stall the stream as it starts.
      */
     static boolean decoderCarriesHdrMetadata(boolean vulkanPresents) {
-        return !vulkanPresents;
+        return NightjarPolicyJni.videoDecoderCarriesHdrMetadata(vulkanPresents);
     }
 
     // Outputs after setParameters before the metadata must show in the output format.
@@ -5487,21 +5451,12 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
      * of its twelve 16-bit values to within one, as Codec2 takes them through floats.
      */
     static boolean carriesHdrStaticInfo(ByteBuffer carried, byte[] expected) {
-        if (carried == null || carried.remaining() < expected.length || expected.length != 25) {
+        if (carried == null || expected == null || expected.length != 25 || carried.remaining() < expected.length) {
             return false;
         }
-        int at = carried.position();
-        if (carried.get(at) != expected[0]) {
-            return false;
-        }
-        for (int i = 1; i < expected.length; i += 2) {
-            int got = (carried.get(at + i) & 0xFF) | (carried.get(at + i + 1) & 0xFF) << 8;
-            int want = (expected[i] & 0xFF) | (expected[i + 1] & 0xFF) << 8;
-            if (Math.abs(got - want) > 1) {
-                return false;
-            }
-        }
-        return true;
+        byte[] bytes = new byte[expected.length];
+        carried.duplicate().get(bytes);
+        return NightjarPolicyJni.videoCarriesHdrStaticInfo(bytes, expected);
     }
 
     // Promotes None/Flush to Restart and leaves Reset alone.
@@ -5720,11 +5675,13 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
      * Returns the decoder drops taken; any left over belong to the next gap.
      */
     static long recordFrameGap(VideoStats window, int gap, long newDecoderDrops) {
+        long packed = NightjarPolicyJni.videoRecordFrameGap(gap, newDecoderDrops);
+        int decoder = (int) packed;
+        int lost = (int) (packed >>> 32);
         window.totalFrames += gap;
-        int decoder = (int) Math.max(0, Math.min(gap, newDecoderDrops));
         window.decoderDrops += decoder;
-        if (gap > decoder) {
-            window.framesLost += gap - decoder;
+        if (lost > 0) {
+            window.framesLost += lost;
             window.frameLossEvents++;
         }
         return decoder;
@@ -6564,14 +6521,11 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
     /** With the HDR format picked for the launch: erratum 23 on its Dolby Vision decoder takes this stream's RFI. */
     @Override
     public int getCapabilities(int negotiatedFormat, int hdrFormat) {
-        int capabilities = capabilitiesFor(negotiatedFormat);
-        boolean hevc = dolbyVisionCorrupts && (hdrFormat & HdrFormatPolicy.DOLBY_VISION_HEVC) != 0;
-        boolean av1 = dolbyVisionAv1Corrupts && (hdrFormat & HdrFormatPolicy.DOLBY_VISION_AV1) != 0;
-        if (hevc) capabilities &= ~MoonBridge.CAPABILITY_REFERENCE_FRAME_INVALIDATION_HEVC;
-        if (av1) capabilities &= ~MoonBridge.CAPABILITY_REFERENCE_FRAME_INVALIDATION_AV1;
-        dolbyVisionTookHevcRfi = hevc;
-        dolbyVisionTookAv1Rfi = av1;
-        return capabilities;
+        long packed = NightjarPolicyJni.videoApplyDolbyVisionRfi(
+                capabilitiesFor(negotiatedFormat), dolbyVisionCorrupts, dolbyVisionAv1Corrupts, hdrFormat);
+        dolbyVisionTookHevcRfi = (packed & (1L << 32)) != 0;
+        dolbyVisionTookAv1Rfi = (packed & (1L << 33)) != 0;
+        return (int) packed;
     }
 
     /**
@@ -6592,38 +6546,18 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
     }
 
     private int capabilitiesFor(int format) {
-        int capabilities = 0;
-        boolean tenBit = tenBitSdr(format);
-        boolean hevc = (format & MoonBridge.VIDEO_FORMAT_MASK_H265) != 0;
-        boolean av1 = (format & MoonBridge.VIDEO_FORMAT_MASK_AV1) != 0;
         // Slices and direct submit follow the decoder that will run the negotiated format: a phone
         // may pair a Codec2 AVC decoder with an OMX HEVC one. Before negotiation the AVC decoder's
         // direct submit and the larger slice count stand in.
         MediaCodecInfo runner = decoderForNegotiated(format);
-        byte slices = runner != null ? MediaCodecHelper.getDecoderOptimalSlicesPerFrame(runner.getName()) :
-                (tenBit && hevc ? optimalSlicesPerFrame10 : optimalSlicesPerFrame);
-        boolean submitDirect = runner != null ? MediaCodecHelper.decoderCanDirectSubmit(runner.getName()) : directSubmit;
-
-        // Request the optimal number of slices per frame for this decoder
-        capabilities |= MoonBridge.CAPABILITY_SLICES_PER_FRAME(slices);
-
-        // Enable reference frame invalidation on supported hardware
-        if (refFrameInvalidationAvc) {
-            capabilities |= MoonBridge.CAPABILITY_REFERENCE_FRAME_INVALIDATION_AVC;
-        }
-        if (tenBit && hevc ? refFrameInvalidationHevc10 : refFrameInvalidationHevc) {
-            capabilities |= MoonBridge.CAPABILITY_REFERENCE_FRAME_INVALIDATION_HEVC;
-        }
-        if (tenBit && av1 ? refFrameInvalidationAv110 : refFrameInvalidationAv1) {
-            capabilities |= MoonBridge.CAPABILITY_REFERENCE_FRAME_INVALIDATION_AV1;
-        }
-
-        // Enable direct submit on supported hardware
-        if (submitDirect) {
-            capabilities |= MoonBridge.CAPABILITY_DIRECT_SUBMIT;
-        }
-
-        return capabilities;
+        boolean hasRunner = runner != null;
+        byte runnerSlices = hasRunner ? MediaCodecHelper.getDecoderOptimalSlicesPerFrame(runner.getName()) : 0;
+        boolean runnerDirectSubmit = hasRunner && MediaCodecHelper.decoderCanDirectSubmit(runner.getName());
+        return NightjarPolicyJni.videoCapabilitiesFor(
+                format, sdr10, hasRunner, runnerSlices, runnerDirectSubmit,
+                optimalSlicesPerFrame, optimalSlicesPerFrame10, directSubmit,
+                refFrameInvalidationAvc, refFrameInvalidationHevc, refFrameInvalidationAv1,
+                refFrameInvalidationHevc10, refFrameInvalidationAv110);
     }
 
     public int getAverageEndToEndLatency() {

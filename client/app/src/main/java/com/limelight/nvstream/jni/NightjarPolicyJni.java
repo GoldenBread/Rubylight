@@ -335,4 +335,133 @@ public final class NightjarPolicyJni {
                                                int framesOut, int framesOutAtLastRecovery,
                                                int framesOutAtHangReset, long uptimeMs,
                                                long uptimeAtLastRecoveryMs, long uptimeAtHangResetMs);
+
+    // Video Codec, FullRangePolicy (#153), VideoRendererChoice, Sdr10Policy, HdrPolicy, HdrFormatPolicy
+    public static final int DISPLAY_HDR_HDR10 = 1 << 0;
+    public static final int DISPLAY_HDR_HLG = 1 << 1;
+    public static final int DISPLAY_HDR_DOLBY_VISION = 1 << 2;
+    public static final int DISPLAY_HDR_HDR10_PLUS = 1 << 3;
+
+    public static final int TRANSFER_NONE = 0;
+    public static final int TRANSFER_PQ = 1;
+    public static final int TRANSFER_HLG = 2;
+    public static final int TRANSFER_OTHER = 3;
+
+    public static final int COLOR_RANGE_ABSENT = 0;
+    public static final int COLOR_RANGE_FULL = 1;
+    public static final int COLOR_RANGE_LIMITED = 2;
+    public static final int COLOR_RANGE_UNKNOWN = 3;
+
+    public static final int PYROWAVE_DROP_DEVICE_REASON = 1;
+    public static final int PYROWAVE_DROP_MISSING_SWAPCHAIN = 2;
+    public static final int PYROWAVE_DROP_HDR_FAILURE = 3;
+
+    public static final int THERMAL_STATE_NORMAL = 0;
+    public static final int THERMAL_STATE_WARM = 1;
+    public static final int THERMAL_STATE_WARM_HOLDING = 2;
+    public static final int THERMAL_STATE_HOT = 3;
+    public static final int THERMAL_STATE_HOT_EASING = 4;
+
+    public static final int SURFACE_OP_VULKAN = 0;
+    public static final int SURFACE_OP_PYROWAVE = 1;
+    public static final int SURFACE_OP_PYROWAVE_WINDOW = 2;
+
+    public static final int TEXT_OP_OVERLAY_WORD = 0;
+    public static final int TEXT_OP_BASE_LAYER_NAME = 1;
+    public static final int TEXT_OP_NAME = 2;
+    public static final int TEXT_OP_CODEC_NAMES = 3;
+
+    public static native boolean fullRangeIsMediaTekDecoder(String decoderName);
+    public static native boolean fullRangeNeedsVulkanUpFront(boolean fullRange, boolean hdr, String decoderName);
+    public static native String fullRangeOutputFallbackReason(
+            boolean fullRange, boolean hdr, boolean dolbyVision, boolean packed444, boolean pyroWave,
+            String decoderName, int colorRangeCode, int rawColorRange, boolean hasColorAspects);
+    public static native boolean fullRangeCanUseVulkanSdk(int sdkInt);
+
+    public static native boolean videoRendererNeedsVulkanProbe(
+            boolean vulkanPreferred, boolean pyroWave, int sdkInt, boolean packed444,
+            boolean frameWarp, boolean fullRangeNeedsVulkan);
+    public static native int videoRendererChoose(
+            boolean vulkanPreferred, boolean pyroWave, int sdkInt, boolean vulkanSupported,
+            boolean packed444, boolean upscalingOn, boolean frameWarp, boolean hdrOrTenBit,
+            boolean fullRangeNeedsVulkan);
+    public static native boolean videoRendererFrameWarpAsked(boolean frameWarp, boolean frameWarpListed);
+
+    public static native int sdr10Refusal(
+            boolean mediaStream, boolean enabled, boolean hdrGranted, boolean hevcMain10,
+            boolean av1Main10, boolean pyroWaveChosen, boolean packed444);
+    public static native boolean sdr10WorthSaying(int refusalOrdinal);
+    public static native boolean sdr10DecoderChoiceMayChange(
+            boolean enabled, boolean hdrRequested, boolean pyroWaveChosen, boolean packed444);
+    public static native boolean sdr10Yuv444Wins(int commonFormats);
+    public static native int sdr10WithoutTenBit(int offeredFormats);
+    public static native int sdr10HostHdrStep(boolean tenBit, int hostHdr, int previous);
+    public static native int sdr10Formats(int refusalOrdinal, boolean hevcMain10, boolean av1Main10);
+    public static native int sdr10Status(boolean tenBit, int hostHdr);
+    public static native String sdr10OverlayColor(boolean tenBit, boolean sdr10, int hostHdr);
+    public static native boolean sdr10AssumeHdr(boolean tenBit, boolean sdr10);
+
+    public static native int hdrDisplayRefusal(
+            int sdk, boolean enabled, int displayMask, int anyModeMask, int hostHdrFormats, int surfaceOrdinal);
+    public static native boolean hdrShouldForceHlgOnly(boolean debugHlgOnly, int displayMask);
+    public static native boolean hdrHasHdr10(int displayMask);
+    public static native boolean hdrHlgOnly(int displayMask);
+    public static native boolean hdrReportsOutput(int displayMask, int streamTransferCode);
+    public static native int hdrDecoderRefusal(boolean hevcMain10Hdr10, boolean av1Main10, boolean pyroWave);
+    public static native int hdrMetadata(byte[] wire);
+    public static native int hdrDrawnStatus(int statusOrdinal, boolean toneMapped);
+    public static native boolean hdrHandsBackFromVulkan(boolean hdrReported, boolean toneMapped);
+    public static native boolean hdrHandOverAfterVulkanStop(boolean hadRenderer, boolean stopFinished);
+    public static native int hdrStatus(
+            boolean asked, boolean tenBit, int hostHdr, int metadataOrdinal,
+            int outputTransferCode, int streamTransferCode, boolean hlgOnlyScreen);
+
+    public static native int hdrFormatHlgWindowOf(int call);
+    public static native int hdrFormatPick(
+            int hostFormats, int displayMask, int dolbyVisionDecoders, int videoFormats, int surfaceOrdinal);
+    public static native int hdrFormatVulkanLimit(
+            int hostFormats, int displayMask, int dolbyVisionDecoders, int videoFormats);
+    public static native boolean hdrFormatNeedsHlgProbe(
+            boolean pyroWave, int hostFormats, int displayMask, int surfaceOrdinal);
+    public static native int hdrFormatSurface(int op, int hostFormats, int surfaceOrdinal, int windowOrdinal);
+    public static native boolean hdrFormatPassesHdr10Plus(int displayMask, int transferCode);
+    public static native boolean hdrFormatPyroWaveHlgRefusedByDisplay(
+            int hostFormats, int displayMask, int windowOrdinal);
+    public static native boolean hdrFormatPyroWaveHlgLost(
+            int announcedFormat, int windowOrdinal, boolean windowKeptHlg, boolean framesStopped);
+    public static native int hdrFormatPyroWaveLimit(
+            int hostFormats, int displayMask, int dolbyVisionDecoders, int format);
+    public static native boolean hdrFormatPyroWaveHlgNeedsHostUpdate(int hostFormats, int displayMask);
+    public static native boolean hdrFormatHlgInstead(int hostFormats, int displayMask);
+    public static native boolean hdrFormatDolbyVision(int format);
+    public static native int hdrFormatCarriers(int format);
+    public static native int hdrFormatVideoFormats(int format, int videoFormats, boolean automaticCodec);
+    public static native boolean hdrFormatTransferIsHlg(int format);
+    public static native String hdrFormatText(int op, int format, boolean dolbyVisionDecoding, boolean hdr10Plus);
+
+    public static native int videoMaxInputSize(int bitrateKbps, int fps, int width, int height);
+    public static native int videoGrownInputSize(long requiredBytes, int capacity, int previousRequest);
+    public static native int videoHdrChange(
+            boolean previousMode, boolean enabled, byte[] previousMetadata, byte[] metadata, int sdkInt);
+    public static native boolean videoRestartRecreates(String decoderName, String tuningKeysLines);
+    public static native boolean videoDecoderCarriesHdrMetadata(boolean vulkanPresents);
+    public static native boolean videoCarriesHdrStaticInfo(byte[] carried, byte[] expected);
+    public static native boolean videoYuv444FallbackIsHdr(int format, boolean sdr10);
+    public static native boolean videoPyroWaveFullChromaDrop(boolean packed444, boolean yuv444);
+    public static native int videoPyroWaveDropReason(
+            boolean chosen, boolean fullChroma, int deviceReason, int hostCodecs,
+            int formats, int choice, int hdrFailure);
+    public static native int[] videoPyroWaveCandidateFormats(int formats);
+    public static native String videoHostTenBitIssue(int deviceModes, int hostModes);
+    public static native String videoHostTenBitDrop(
+            boolean tenBitOffered, String dropAtLaunch, int negotiatedFormat, int hostModes);
+    public static native String videoTenBitOutputIssue(boolean displayHdr10, boolean gpuTenBitOutput);
+    public static native int videoCapabilitiesFor(
+            int format, boolean sdr10, boolean hasRunner, byte runnerSlices, boolean runnerDirectSubmit,
+            byte slices8, byte slices10, boolean directSubmit8, boolean rfiAvc, boolean rfiHevc,
+            boolean rfiAv1, boolean rfiHevc10, boolean rfiAv110);
+    public static native long videoApplyDolbyVisionRfi(
+            int capabilities, boolean dolbyVisionCorrupts, boolean dolbyVisionAv1Corrupts, int hdrFormat);
+    public static native long videoRecordFrameGap(int gap, long newDecoderDrops);
+    public static native int videoThermalState(int level, boolean holdsBitrate, boolean easesLoad);
 }

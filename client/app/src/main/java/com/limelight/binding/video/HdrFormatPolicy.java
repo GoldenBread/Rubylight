@@ -1,9 +1,8 @@
 package com.limelight.binding.video;
 
 import android.media.MediaFormat;
-import android.view.Display;
 
-import com.limelight.nvstream.jni.MoonBridge;
+import com.limelight.nvstream.jni.NightjarPolicyJni;
 
 /**
  * The HDR format beyond stock HDR10 that this client asks a Rubylight 3.0 host for
@@ -62,11 +61,7 @@ public final class HdrFormatPolicy {
 
         /** The answer of WindowDataspace.Probe.call. */
         public static HlgWindow of(int call) {
-            switch (call) {
-                case WindowDataspace.CALL_PUBLIC: return PUBLIC;
-                case WindowDataspace.CALL_PERFORM: return PERFORM;
-                default: return REFUSED;
-            }
+            return values()[NightjarPolicyJni.hdrFormatHlgWindowOf(call)];
         }
     }
 
@@ -100,9 +95,6 @@ public final class HdrFormatPolicy {
 
     public static final String MIME_DOLBY_VISION = "video/dolby-vision";
 
-    /** The order Dolby Vision formats are asked for in: AV1 first, as the handshake takes it. */
-    private static final int[] DOLBY_VISION_ORDER = {DV_101, DV_81, DV_84};
-
     /**
      * @param hostFormats  the host's HdrFormats bits and offer flags (serverinfo), 0 when it lists none
      * @param displayTypes the types from Display.getHdrCapabilities(), null when there are none
@@ -115,21 +107,9 @@ public final class HdrFormatPolicy {
      */
     public static int pick(int hostFormats, int[] displayTypes, int dolbyVisionDecoders, int videoFormats,
                            DrawnSurface surface) {
-        if (surface == DrawnSurface.PQ_ONLY) return 0;
-        if (surface == DrawnSurface.NONE && has(displayTypes, Display.HdrCapabilities.HDR_TYPE_DOLBY_VISION)) {
-            for (int format : DOLBY_VISION_ORDER) {
-                if ((hostFormats & dolbyVisionDecoders & format) != 0 && (videoFormats & carriers(format)) != 0) {
-                    return format;
-                }
-            }
-        }
-        int format = 0;
-        if ((hostFormats & HLG) != 0 && !HdrPolicy.hasHdr10(displayTypes) &&
-                has(displayTypes, Display.HdrCapabilities.HDR_TYPE_HLG)) {
-            format = HLG;
-        }
-        // A drawn surface takes nothing beyond PQ and HLG, whatever formats come later.
-        return surface == DrawnSurface.NONE ? format : format & (PQ | HLG);
+        int surf = surface == null ? DrawnSurface.NONE.ordinal() : surface.ordinal();
+        return NightjarPolicyJni.hdrFormatPick(
+                hostFormats, HdrPolicy.displayTypesMask(displayTypes), dolbyVisionDecoders, videoFormats, surf);
     }
 
     /**
@@ -139,11 +119,8 @@ public final class HdrFormatPolicy {
      */
     public static DrawnLimit vulkanLimit(int hostFormats, int[] displayTypes, int dolbyVisionDecoders,
                                          int videoFormats) {
-        if (hostFormats == 0) return DrawnLimit.NONE;
-        if (dolbyVision(pick(hostFormats, displayTypes, dolbyVisionDecoders, videoFormats, DrawnSurface.NONE))) {
-            return DrawnLimit.DOLBY_VISION;
-        }
-        return DrawnLimit.NONE;
+        return DrawnLimit.values()[NightjarPolicyJni.hdrFormatVulkanLimit(
+                hostFormats, HdrPolicy.displayTypesMask(displayTypes), dolbyVisionDecoders, videoFormats)];
     }
 
     /**
@@ -151,7 +128,9 @@ public final class HdrFormatPolicy {
      * first: the renderer draws HLG (surface PQ_HLG) and the screen shows HDR only as HLG.
      */
     public static boolean vulkanNeedsHlgProbe(int hostFormats, int[] displayTypes, DrawnSurface surface) {
-        return surface == DrawnSurface.PQ_HLG && pick(hostFormats, displayTypes, 0, 0, surface) == HLG;
+        int surf = surface == null ? DrawnSurface.NONE.ordinal() : surface.ordinal();
+        return NightjarPolicyJni.hdrFormatNeedsHlgProbe(
+                false, hostFormats, HdrPolicy.displayTypesMask(displayTypes), surf);
     }
 
     /**
@@ -160,7 +139,10 @@ public final class HdrFormatPolicy {
      * through ANativeWindow::perform, so the probe answers for both of the renderer's HDR paths.
      */
     public static DrawnSurface vulkanSurface(DrawnSurface surface, HlgWindow window) {
-        return surface == DrawnSurface.PQ_HLG && !window.accepted() ? DrawnSurface.PQ_ONLY : surface;
+        int surf = surface == null ? DrawnSurface.NONE.ordinal() : surface.ordinal();
+        int win = window == null ? HlgWindow.REFUSED.ordinal() : window.ordinal();
+        return DrawnSurface.values()[NightjarPolicyJni.hdrFormatSurface(
+                NightjarPolicyJni.SURFACE_OP_VULKAN, 0, surf, win)];
     }
 
     /**
@@ -170,19 +152,21 @@ public final class HdrFormatPolicy {
      * @param transfer the stream's MediaFormat colour transfer (transfer())
      */
     public static boolean passesHdr10Plus(int[] displayTypes, int transfer) {
-        return transfer == MediaFormat.COLOR_TRANSFER_ST2084 &&
-                has(displayTypes, Display.HdrCapabilities.HDR_TYPE_HDR10_PLUS);
+        return NightjarPolicyJni.hdrFormatPassesHdr10Plus(
+                HdrPolicy.displayTypesMask(displayTypes), HdrPolicy.transferCode(transfer));
     }
 
     /** What PyroWave draws on: PQ and HLG from a host that offers HLG on PyroWave, else PQ only. */
     public static DrawnSurface pyroWaveSurface(int hostFormats) {
-        return (hostFormats & PYROWAVE_HLG) != 0 && (hostFormats & HLG) != 0 ? DrawnSurface.PQ_HLG :
-                DrawnSurface.PQ_ONLY;
+        return DrawnSurface.values()[NightjarPolicyJni.hdrFormatSurface(
+                NightjarPolicyJni.SURFACE_OP_PYROWAVE, hostFormats, 0, HlgWindow.REFUSED.ordinal())];
     }
 
     /** What PyroWave draws on this display's window: pyroWaveSurface, PQ only where it refused HLG. */
     public static DrawnSurface pyroWaveSurface(int hostFormats, HlgWindow window) {
-        return window.accepted() ? pyroWaveSurface(hostFormats) : DrawnSurface.PQ_ONLY;
+        int win = window == null ? HlgWindow.REFUSED.ordinal() : window.ordinal();
+        return DrawnSurface.values()[NightjarPolicyJni.hdrFormatSurface(
+                NightjarPolicyJni.SURFACE_OP_PYROWAVE_WINDOW, hostFormats, 0, win)];
     }
 
     /**
@@ -190,12 +174,15 @@ public final class HdrFormatPolicy {
      * the host offers HLG on PyroWave and the screen shows HDR only as HLG.
      */
     public static boolean pyroWaveNeedsHlgProbe(int hostFormats, int[] displayTypes) {
-        return pick(hostFormats, displayTypes, 0, 0, pyroWaveSurface(hostFormats)) == HLG;
+        return NightjarPolicyJni.hdrFormatNeedsHlgProbe(
+                true, hostFormats, HdrPolicy.displayTypesMask(displayTypes), 0);
     }
 
     /** That screen gets HDR10 on PyroWave because its window refused the HLG dataspace. */
     public static boolean pyroWaveHlgRefusedByDisplay(int hostFormats, int[] displayTypes, HlgWindow window) {
-        return window == HlgWindow.REFUSED && pyroWaveNeedsHlgProbe(hostFormats, displayTypes);
+        int win = window == null ? HlgWindow.REFUSED.ordinal() : window.ordinal();
+        return NightjarPolicyJni.hdrFormatPyroWaveHlgRefusedByDisplay(
+                hostFormats, HdrPolicy.displayTypesMask(displayTypes), win);
     }
 
     /**
@@ -207,7 +194,8 @@ public final class HdrFormatPolicy {
      */
     public static boolean pyroWaveHlgLost(int announcedFormat, HlgWindow window, boolean windowKeptHlg,
             boolean framesStopped) {
-        return announcedFormat == HLG && window != null && window.accepted() && (!windowKeptHlg || framesStopped);
+        return NightjarPolicyJni.hdrFormatPyroWaveHlgLost(
+                announcedFormat, window == null ? -1 : window.ordinal(), windowKeptHlg, framesStopped);
     }
 
     /**
@@ -218,17 +206,8 @@ public final class HdrFormatPolicy {
      */
     public static DrawnLimit pyroWaveLimit(int hostFormats, int[] displayTypes, int dolbyVisionDecoders,
                                            int format) {
-        if (hostFormats == 0) return DrawnLimit.NONE;
-        // Either codec could carry it instead of PyroWave, whatever this stream negotiates.
-        int carriers = MoonBridge.VIDEO_FORMAT_H265_MAIN10 | MoonBridge.VIDEO_FORMAT_AV1_MAIN10;
-        if (dolbyVision(pick(hostFormats, displayTypes, dolbyVisionDecoders, carriers, DrawnSurface.NONE))) {
-            return DrawnLimit.DOLBY_VISION;
-        }
-        if (transfer(format) == MediaFormat.COLOR_TRANSFER_ST2084 &&
-                has(displayTypes, Display.HdrCapabilities.HDR_TYPE_HDR10_PLUS)) {
-            return DrawnLimit.HDR10_PLUS;
-        }
-        return DrawnLimit.NONE;
+        return DrawnLimit.values()[NightjarPolicyJni.hdrFormatPyroWaveLimit(
+                hostFormats, HdrPolicy.displayTypesMask(displayTypes), dolbyVisionDecoders, format)];
     }
 
     /**
@@ -236,18 +215,18 @@ public final class HdrFormatPolicy {
      * on PyroWave: updating the host would give it HLG.
      */
     public static boolean pyroWaveHlgNeedsHostUpdate(int hostFormats, int[] displayTypes) {
-        return (hostFormats & PYROWAVE_HLG) == 0 && !HdrPolicy.hasHdr10(displayTypes) &&
-                hlgInstead(hostFormats, displayTypes);
+        return NightjarPolicyJni.hdrFormatPyroWaveHlgNeedsHostUpdate(
+                hostFormats, HdrPolicy.displayTypesMask(displayTypes));
     }
 
     /** The screen can show an HLG stream from this host, which then stands in for HDR10. */
     public static boolean hlgInstead(int hostFormats, int[] displayTypes) {
-        return (hostFormats & HLG) != 0 && has(displayTypes, Display.HdrCapabilities.HDR_TYPE_HLG);
+        return NightjarPolicyJni.hdrFormatHlgInstead(hostFormats, HdrPolicy.displayTypesMask(displayTypes));
     }
 
     /** The format goes through a video/dolby-vision decoder. */
     public static boolean dolbyVision(int format) {
-        return (format & DOLBY_VISION) != 0;
+        return NightjarPolicyJni.hdrFormatDolbyVision(format);
     }
 
     /**
@@ -255,8 +234,7 @@ public final class HdrFormatPolicy {
      * profile 8 (8.1 and 8.4) is HEVC Main10 with RPUs, profile 10 (10.1) AV1 Main10.
      */
     public static int carriers(int format) {
-        if ((format & DOLBY_VISION_AV1) != 0) return MoonBridge.VIDEO_FORMAT_AV1_MAIN10;
-        return (format & DOLBY_VISION_HEVC) != 0 ? MoonBridge.VIDEO_FORMAT_H265_MAIN10 : 0;
+        return NightjarPolicyJni.hdrFormatCarriers(format);
     }
 
     /**
@@ -268,28 +246,18 @@ public final class HdrFormatPolicy {
      * user chose stays.
      */
     public static int videoFormats(int format, int videoFormats, boolean automaticCodec) {
-        int carriers = carriers(format);
-        if (!automaticCodec || carriers == 0 || (videoFormats & carriers) == 0) {
-            return videoFormats;
-        }
-        for (int codec : new int[] {MoonBridge.VIDEO_FORMAT_MASK_AV1, MoonBridge.VIDEO_FORMAT_MASK_H265}) {
-            if ((videoFormats & codec & carriers) == 0) {
-                videoFormats &= ~codec;
-            }
-        }
-        return videoFormats;
+        return NightjarPolicyJni.hdrFormatVideoFormats(format, videoFormats, automaticCodec);
     }
 
     /** "AV1", "HEVC" or "AV1 and HEVC" for the codecs that have formats in {@code formats}, for logs. */
     public static String codecNames(int formats) {
-        boolean av1 = (formats & MoonBridge.VIDEO_FORMAT_MASK_AV1) != 0;
-        boolean hevc = (formats & MoonBridge.VIDEO_FORMAT_MASK_H265) != 0;
-        return av1 && hevc ? "AV1 and HEVC" : av1 ? "AV1" : hevc ? "HEVC" : "nothing";
+        return NightjarPolicyJni.hdrFormatText(NightjarPolicyJni.TEXT_OP_CODEC_NAMES, formats, false, false);
     }
 
     /** The MediaFormat colour transfer of an HDR stream in this format: HLG for HLG and 8.4, else PQ. */
     public static int transfer(int format) {
-        return (format & (HLG | DV_84)) != 0 ? MediaFormat.COLOR_TRANSFER_HLG : MediaFormat.COLOR_TRANSFER_ST2084;
+        return NightjarPolicyJni.hdrFormatTransferIsHlg(format) ?
+                MediaFormat.COLOR_TRANSFER_HLG : MediaFormat.COLOR_TRANSFER_ST2084;
     }
 
     /**
@@ -303,27 +271,18 @@ public final class HdrFormatPolicy {
 
     /** As above; hdr10Plus: the stream's HDR10+ metadata reaches the screen through the Vulkan renderer. */
     public static String overlayWord(int format, boolean dolbyVisionDecoding, boolean hdr10Plus) {
-        if (hdr10Plus && !dolbyVision(format) && transfer(format) == MediaFormat.COLOR_TRANSFER_ST2084) return "HDR10+";
-        if (dolbyVision(format)) {
-            return dolbyVisionDecoding ? name(format) : baseLayerName(format) + " (Dolby Vision decoder failed)";
-        }
-        return format == HLG ? "HLG" : "HDR";
+        return NightjarPolicyJni.hdrFormatText(
+                NightjarPolicyJni.TEXT_OP_OVERLAY_WORD, format, dolbyVisionDecoding, hdr10Plus);
     }
 
     /** What a decoder without Dolby Vision shows of the format: HLG for HLG and 8.4, else HDR10. */
     public static String baseLayerName(int format) {
-        return transfer(format) == MediaFormat.COLOR_TRANSFER_HLG ? "HLG" : "HDR10";
+        return NightjarPolicyJni.hdrFormatText(NightjarPolicyJni.TEXT_OP_BASE_LAYER_NAME, format, false, false);
     }
 
     /** A log name for the format, "HDR10" for stock. */
     public static String name(int format) {
-        switch (format) {
-            case HLG: return "HLG";
-            case DV_81: return "Dolby Vision 8.1";
-            case DV_84: return "Dolby Vision 8.4";
-            case DV_101: return "Dolby Vision 10.1";
-            default: return "HDR10";
-        }
+        return NightjarPolicyJni.hdrFormatText(NightjarPolicyJni.TEXT_OP_NAME, format, false, false);
     }
 
     static boolean has(int[] types, int type) {

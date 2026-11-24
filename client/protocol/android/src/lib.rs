@@ -39,6 +39,7 @@ pub mod policy_connect;
 pub mod policy_quality;
 pub mod policy_recovery;
 pub mod policy_roaming;
+pub mod policy_video_codec;
 pub mod policy_video_pacing;
 pub mod policy_video_queue;
 mod renderers;
@@ -1267,10 +1268,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_clipboardSync
     _: JClass,
     text: JString,
 ) -> jint {
-    match string(&mut env, &text) {
-        Some(text) => engine::clipboard_sync_local(text),
-        None => engine::CLIPBOARD_COPY_SKIPPED,
-    }
+    string(&mut env, &text).map_or(engine::CLIPBOARD_COPY_SKIPPED, engine::clipboard_sync_local)
 }
 
 /// DualSense microphone PCM (0x5534) or USB audio endpoint status (0x5535).

@@ -43,6 +43,7 @@ pub mod stream_menu;
 pub mod tile;
 pub mod trace;
 pub mod update;
+pub mod video_codec;
 pub mod video_pacing;
 pub mod video_queue;
 pub mod vsync;

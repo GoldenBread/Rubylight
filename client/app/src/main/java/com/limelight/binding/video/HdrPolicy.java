@@ -5,6 +5,7 @@ import android.os.Build;
 import android.view.Display;
 
 import com.limelight.LimeLog;
+import com.limelight.nvstream.jni.NightjarPolicyJni;
 
 /**
  * The decisions around an HDR10 stream, apart from the Android objects so they can be tested with
@@ -62,14 +63,30 @@ public final class HdrPolicy {
      *                MediaCodecDecoderRenderer.vulkanSurface predicts it): HLG cannot stand in for
      *                HDR10 on a PQ-only surface
      */
+    static int displayTypesMask(int[] types) {
+        if (types == null) return 0;
+        int mask = 0;
+        for (int type : types) {
+            if (type == Display.HdrCapabilities.HDR_TYPE_HDR10) mask |= NightjarPolicyJni.DISPLAY_HDR_HDR10;
+            else if (type == Display.HdrCapabilities.HDR_TYPE_HLG) mask |= NightjarPolicyJni.DISPLAY_HDR_HLG;
+            else if (type == Display.HdrCapabilities.HDR_TYPE_DOLBY_VISION) mask |= NightjarPolicyJni.DISPLAY_HDR_DOLBY_VISION;
+            else if (type == Display.HdrCapabilities.HDR_TYPE_HDR10_PLUS) mask |= NightjarPolicyJni.DISPLAY_HDR_HDR10_PLUS;
+        }
+        return mask;
+    }
+
+    static int transferCode(Integer transfer) {
+        if (transfer == null) return NightjarPolicyJni.TRANSFER_NONE;
+        if (transfer == MediaFormat.COLOR_TRANSFER_ST2084) return NightjarPolicyJni.TRANSFER_PQ;
+        if (transfer == MediaFormat.COLOR_TRANSFER_HLG) return NightjarPolicyJni.TRANSFER_HLG;
+        return NightjarPolicyJni.TRANSFER_OTHER;
+    }
+
     public static Refusal displayRefusal(int sdk, boolean enabled, int[] displayTypes, int[] anyModeTypes,
                                          int hostHdrFormats, HdrFormatPolicy.DrawnSurface surface) {
-        if (!enabled) return Refusal.SETTING_OFF;
-        if (hasHdr10(displayTypes)) return Refusal.NONE;
-        boolean hlg = HdrFormatPolicy.hlgInstead(hostHdrFormats, displayTypes);
-        if (hlg && surface != HdrFormatPolicy.DrawnSurface.PQ_ONLY) return Refusal.NONE;
-        if (sdk >= 34 && hasHdr10(anyModeTypes)) return Refusal.MODE_WITHOUT_HDR10;
-        return hlg ? Refusal.HLG_NEEDS_DIRECT_OUTPUT : Refusal.DISPLAY_WITHOUT_HDR10;
+        int surf = surface == null ? HdrFormatPolicy.DrawnSurface.NONE.ordinal() : surface.ordinal();
+        return Refusal.values()[NightjarPolicyJni.hdrDisplayRefusal(
+                sdk, enabled, displayTypesMask(displayTypes), displayTypesMask(anyModeTypes), hostHdrFormats, surf)];
     }
 
     // The hidden debug_hdr_hlg_only preference (debug builds only, no UI): an HDR screen counts as
@@ -84,7 +101,7 @@ public final class HdrPolicy {
 
     /** The screen's types as the policy sees them: HLG alone for an HDR screen under debug_hdr_hlg_only. */
     static int[] effectiveHdrTypes(int[] types) {
-        if (!debugHlgOnly || !(hasHdr10(types) || HdrFormatPolicy.has(types, Display.HdrCapabilities.HDR_TYPE_HLG))) {
+        if (!NightjarPolicyJni.hdrShouldForceHlgOnly(debugHlgOnly, displayTypesMask(types))) {
             return types;
         }
         return new int[] {Display.HdrCapabilities.HDR_TYPE_HLG};
@@ -119,16 +136,12 @@ public final class HdrPolicy {
 
     /** HDR10 PQ is what the PC encodes; HLG and Dolby Vision on the panel do not stand in for it. */
     public static boolean hasHdr10(int[] types) {
-        if (types == null) return false;
-        for (int type : types) {
-            if (type == Display.HdrCapabilities.HDR_TYPE_HDR10) return true;
-        }
-        return false;
+        return NightjarPolicyJni.hdrHasHdr10(displayTypesMask(types));
     }
 
     /** The screen shows HDR as HLG and not as HDR10: only an HLG stream is HDR on it. */
     public static boolean hlgOnly(int[] displayTypes) {
-        return !hasHdr10(displayTypes) && HdrFormatPolicy.has(displayTypes, Display.HdrCapabilities.HDR_TYPE_HLG);
+        return NightjarPolicyJni.hdrHlgOnly(displayTypesMask(displayTypes));
     }
 
     /**
@@ -138,11 +151,11 @@ public final class HdrPolicy {
      * @param streamTransfer the stream's transfer (HdrFormatPolicy.transfer of the announced format)
      */
     public static boolean reportsHdrOutput(int[] displayTypes, int streamTransfer) {
-        return hasHdr10(displayTypes) || hlgOnly(displayTypes) && streamTransfer == MediaFormat.COLOR_TRANSFER_HLG;
+        return NightjarPolicyJni.hdrReportsOutput(displayTypesMask(displayTypes), transferCode(streamTransfer));
     }
 
     public static Refusal decoderRefusal(boolean hevcMain10Hdr10, boolean av1Main10, boolean pyroWave) {
-        return hevcMain10Hdr10 || av1Main10 || pyroWave ? Refusal.NONE : Refusal.DECODER_WITHOUT_HDR10;
+        return Refusal.values()[NightjarPolicyJni.hdrDecoderRefusal(hevcMain10Hdr10, av1Main10, pyroWave)];
     }
 
     /** How the host's mastering metadata looks, from its 24 byte wire form (CTA-861.3 without the type byte). */
@@ -155,11 +168,7 @@ public final class HdrPolicy {
     }
 
     public static Metadata metadata(byte[] wire) {
-        if (wire == null || wire.length < 24) return Metadata.ABSENT;
-        boolean primaries = false;
-        for (int i = 0; i < 12; i++) primaries |= wire[i] != 0;
-        int maxLuminance = (wire[16] & 0xff) | (wire[17] & 0xff) << 8;
-        return primaries && maxLuminance > 0 ? Metadata.USABLE : Metadata.EMPTY;
+        return Metadata.values()[NightjarPolicyJni.hdrMetadata(wire)];
     }
 
     /** What the running stream says about HDR, for the overlay's status line. */
@@ -192,7 +201,8 @@ public final class HdrPolicy {
      * @param toneMapped VulkanRendererBridge.isHdrToneMapped, false without the Vulkan renderer
      */
     public static Status drawnStatus(Status status, boolean toneMapped) {
-        return toneMapped && (status == Status.QUIET || status == Status.NO_METADATA) ? Status.SHOWN_AS_SDR : status;
+        if (status == null) return null;
+        return Status.values()[NightjarPolicyJni.hdrDrawnStatus(status.ordinal(), toneMapped)];
     }
 
     /**
@@ -203,7 +213,7 @@ public final class HdrPolicy {
      * @param toneMapped the Vulkan renderer tone maps its current swapchain (isHdrToneMapped)
      */
     public static boolean handsBackFromVulkan(boolean hdrReported, boolean toneMapped) {
-        return hdrReported && toneMapped;
+        return NightjarPolicyJni.hdrHandsBackFromVulkan(hdrReported, toneMapped);
     }
 
     /**
@@ -216,7 +226,7 @@ public final class HdrPolicy {
      * @param stopFinished VulkanRendererBridge.stop returned true: the native stop completed
      */
     public static boolean handOverAfterVulkanStop(boolean hadRenderer, boolean stopFinished) {
-        return !hadRenderer || stopFinished;
+        return NightjarPolicyJni.hdrHandOverAfterVulkanStop(hadRenderer, stopFinished);
     }
 
     /**
@@ -245,15 +255,9 @@ public final class HdrPolicy {
      */
     public static Status status(boolean asked, boolean tenBit, Boolean hostHdr, Metadata metadata,
                                 Integer outputTransfer, int streamTransfer, boolean hlgOnlyScreen) {
-        if (!asked) return Status.QUIET;
-        if (!tenBit) return Status.NOT_NEGOTIATED;
-        if (hlgOnlyScreen && streamTransfer != MediaFormat.COLOR_TRANSFER_HLG) return Status.PQ_ON_HLG_SCREEN;
-        if (hostHdr == null) return Status.WAITING;
-        if (!hostHdr) return Status.HOST_SDR;
-        if (outputTransfer != null && outputTransfer != streamTransfer) {
-            return Status.OUTPUT_NOT_PQ;
-        }
-        if (streamTransfer == MediaFormat.COLOR_TRANSFER_HLG) return Status.QUIET;
-        return metadata == Metadata.USABLE ? Status.QUIET : Status.NO_METADATA;
+        int host = hostHdr == null ? -1 : (hostHdr ? 1 : 0);
+        int meta = metadata == null ? Metadata.ABSENT.ordinal() : metadata.ordinal();
+        return Status.values()[NightjarPolicyJni.hdrStatus(
+                asked, tenBit, host, meta, transferCode(outputTransfer), transferCode(streamTransfer), hlgOnlyScreen)];
     }
 }

@@ -1,5 +1,7 @@
 package com.limelight.binding.video;
 
+import com.limelight.nvstream.jni.NightjarPolicyJni;
+
 import java.util.function.BooleanSupplier;
 
 /**
@@ -55,10 +57,6 @@ public final class VideoRendererChoice {
     public final boolean frameWarp;
     public final FrameWarpReason frameWarpReason;
 
-    private VideoRendererChoice(Renderer renderer, Reason reason, boolean upscalingOverridden) {
-        this(renderer, reason, upscalingOverridden, false, FrameWarpReason.NONE);
-    }
-
     private VideoRendererChoice(Renderer renderer, Reason reason, boolean upscalingOverridden, boolean frameWarp,
                                 FrameWarpReason frameWarpReason) {
         this.renderer = renderer;
@@ -68,21 +66,10 @@ public final class VideoRendererChoice {
         this.frameWarpReason = frameWarpReason;
     }
 
-    /**
-     * @param vulkanSupported asked only once nothing else rules Vulkan out, because probing loads
-     *                        the native library and creates a Vulkan instance
-     */
     public static VideoRendererChoice choose(boolean vulkanPreferred, boolean pyroWave, int sdkInt,
                                              BooleanSupplier vulkanSupported, boolean packed444,
                                              UpscalingPolicy.Mode upscaling) {
-        boolean upscale = upscaling != UpscalingPolicy.Mode.OFF;
-        Renderer without = pyroWave ? Renderer.DIRECT : (upscale || packed444 ? Renderer.GLES : Renderer.DIRECT);
-        if (!vulkanPreferred) return new VideoRendererChoice(without, Reason.NONE, false);
-        if (pyroWave) return new VideoRendererChoice(without, Reason.PYROWAVE, false);
-        if (packed444) return new VideoRendererChoice(without, Reason.PACKED_444, false);
-        if (sdkInt < MIN_SDK) return new VideoRendererChoice(without, Reason.API_LEVEL, false);
-        if (!vulkanSupported.getAsBoolean()) return new VideoRendererChoice(without, Reason.UNSUPPORTED, false);
-        return new VideoRendererChoice(Renderer.VULKAN, Reason.NONE, upscale);
+        return choose(vulkanPreferred, pyroWave, sdkInt, vulkanSupported, packed444, upscaling, false, false, false);
     }
 
     /**
@@ -95,27 +82,8 @@ public final class VideoRendererChoice {
                                              BooleanSupplier vulkanSupported, boolean packed444,
                                              UpscalingPolicy.Mode upscaling, boolean frameWarp,
                                              boolean hdrOrTenBit) {
-        VideoRendererChoice plain = choose(vulkanPreferred, pyroWave, sdkInt, vulkanSupported, packed444, upscaling);
-        if (!frameWarp) return plain;
-        if (pyroWave) {
-            // Its own renderer shifts the picture, with its upscaling and in HDR alike
-            return new VideoRendererChoice(plain.renderer, plain.reason, plain.upscalingOverridden, true,
-                    FrameWarpReason.NONE);
-        }
-        if (packed444) {
-            return new VideoRendererChoice(plain.renderer, plain.reason, plain.upscalingOverridden, false,
-                    FrameWarpReason.FULL_CHROMA);
-        }
-        boolean upscale = upscaling != UpscalingPolicy.Mode.OFF;
-        if (plain.renderer == Renderer.VULKAN ||
-                (!vulkanPreferred && sdkInt >= MIN_SDK && vulkanSupported.getAsBoolean())) {
-            return new VideoRendererChoice(Renderer.VULKAN, plain.reason, upscale, true, FrameWarpReason.NONE);
-        }
-        if (hdrOrTenBit) {
-            return new VideoRendererChoice(plain.renderer, plain.reason, plain.upscalingOverridden, false,
-                    FrameWarpReason.HDR);
-        }
-        return new VideoRendererChoice(Renderer.GLES, plain.reason, upscale, true, FrameWarpReason.NONE);
+        return choose(vulkanPreferred, pyroWave, sdkInt, vulkanSupported, packed444, upscaling,
+                frameWarp, hdrOrTenBit, false);
     }
 
     /**
@@ -128,15 +96,18 @@ public final class VideoRendererChoice {
                                              BooleanSupplier vulkanSupported, boolean packed444,
                                              UpscalingPolicy.Mode upscaling, boolean frameWarp,
                                              boolean hdrOrTenBit, boolean fullRangeNeedsVulkan) {
-        VideoRendererChoice chosen = choose(vulkanPreferred, pyroWave, sdkInt, vulkanSupported, packed444,
-                upscaling, frameWarp, hdrOrTenBit);
-        if (!fullRangeNeedsVulkan || pyroWave || packed444 || chosen.renderer == Renderer.VULKAN) {
-            return chosen;
-        }
-        if (!vulkanPreferred && !frameWarp && sdkInt >= MIN_SDK && vulkanSupported.getAsBoolean()) {
-            return new VideoRendererChoice(Renderer.VULKAN, Reason.NONE, upscaling != UpscalingPolicy.Mode.OFF,
-                    chosen.frameWarp, chosen.frameWarpReason);
-        }
-        return chosen;
+        boolean upscale = upscaling != UpscalingPolicy.Mode.OFF;
+        boolean supported = NightjarPolicyJni.videoRendererNeedsVulkanProbe(
+                vulkanPreferred, pyroWave, sdkInt, packed444, frameWarp, fullRangeNeedsVulkan)
+                && vulkanSupported.getAsBoolean();
+        int packed = NightjarPolicyJni.videoRendererChoose(
+                vulkanPreferred, pyroWave, sdkInt, supported, packed444, upscale, frameWarp,
+                hdrOrTenBit, fullRangeNeedsVulkan);
+        return new VideoRendererChoice(
+                Renderer.values()[packed & 0x3],
+                Reason.values()[(packed >>> 2) & 0x7],
+                ((packed >>> 5) & 1) != 0,
+                ((packed >>> 6) & 1) != 0,
+                FrameWarpReason.values()[(packed >>> 7) & 0x3]);
     }
 }

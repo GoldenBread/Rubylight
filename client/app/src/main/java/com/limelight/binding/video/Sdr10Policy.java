@@ -1,6 +1,6 @@
 package com.limelight.binding.video;
 
-import com.limelight.nvstream.jni.MoonBridge;
+import com.limelight.nvstream.jni.NightjarPolicyJni;
 
 /**
  * The decisions around a 10-bit SDR stream, apart from the Android objects so they can be tested
@@ -28,25 +28,25 @@ public final class Sdr10Policy {
         PACKED_444
     }
 
+    private static int triBool(Boolean value) {
+        return value == null ? -1 : (value ? 1 : 0);
+    }
+
     public static Refusal refusal(boolean mediaStream, boolean enabled, boolean hdrGranted, boolean hevcMain10,
                                   boolean av1Main10, boolean pyroWaveChosen, boolean packed444) {
-        if (!enabled) return Refusal.SETTING_OFF;
-        if (!mediaStream) return Refusal.NO_VIDEO;
-        if (hdrGranted) return Refusal.HDR_STREAM;
-        if (pyroWaveChosen) return Refusal.PYROWAVE;
-        if (packed444) return Refusal.PACKED_444;
-        return hevcMain10 || av1Main10 ? Refusal.NONE : Refusal.NO_MAIN10;
+        return Refusal.values()[NightjarPolicyJni.sdr10Refusal(
+                mediaStream, enabled, hdrGranted, hevcMain10, av1Main10, pyroWaveChosen, packed444)];
     }
 
     /** Whether the user should be told why an enabled setting is not used for this stream. */
     public static boolean worthSaying(Refusal refusal) {
-        return refusal == Refusal.NO_MAIN10 || refusal == Refusal.PYROWAVE || refusal == Refusal.PACKED_444;
+        return NightjarPolicyJni.sdr10WorthSaying(refusal == null ? -1 : refusal.ordinal());
     }
 
     /** Whether the setting could change which decoders are used: only for a stream that may offer it. */
     public static boolean decoderChoiceMayChange(boolean enabled, boolean hdrRequested, boolean pyroWaveChosen,
                                                  boolean packed444) {
-        return enabled && !hdrRequested && !pyroWaveChosen && !packed444;
+        return NightjarPolicyJni.sdr10DecoderChoiceMayChange(enabled, hdrRequested, pyroWaveChosen, packed444);
     }
 
     /**
@@ -57,12 +57,12 @@ public final class Sdr10Policy {
      * @param commonFormats the offered formats the PC also supports
      */
     public static boolean yuv444Wins(int commonFormats) {
-        return (commonFormats & MoonBridge.VIDEO_FORMAT_MASK_YUV444 & ~MoonBridge.VIDEO_FORMAT_MASK_PYROWAVE) != 0;
+        return NightjarPolicyJni.sdr10Yuv444Wins(commonFormats);
     }
 
     /** The offered formats without the 10-bit ones, which is how 4:4:4 wins over 10-bit SDR. */
     public static int withoutTenBit(int offeredFormats) {
-        return offeredFormats & ~MoonBridge.VIDEO_FORMAT_MASK_10BIT;
+        return NightjarPolicyJni.sdr10WithoutTenBit(offeredFormats);
     }
 
     /** What the HDR-in-SDR notice does on a status check. */
@@ -75,15 +75,12 @@ public final class Sdr10Policy {
      * @param previous the report seen at the last check, null before any
      */
     public static HostHdrStep hostHdrStep(boolean tenBit, Boolean hostHdr, Boolean previous) {
-        if (!tenBit || hostHdr == null || hostHdr.equals(previous)) return HostHdrStep.NONE;
-        return hostHdr ? HostHdrStep.SAY : HostHdrStep.REARM;
+        return HostHdrStep.values()[NightjarPolicyJni.sdr10HostHdrStep(tenBit, triBool(hostHdr), triBool(previous))];
     }
 
     /** The 10-bit formats to offer in addition to the 8-bit ones: 0 unless the refusal is NONE. */
     public static int formats(Refusal refusal, boolean hevcMain10, boolean av1Main10) {
-        if (refusal != Refusal.NONE) return 0;
-        return (hevcMain10 ? MoonBridge.VIDEO_FORMAT_H265_MAIN10 : 0) |
-                (av1Main10 ? MoonBridge.VIDEO_FORMAT_AV1_MAIN10 : 0);
+        return NightjarPolicyJni.sdr10Formats(refusal == null ? -1 : refusal.ordinal(), hevcMain10, av1Main10);
     }
 
     /** What the running 10-bit SDR stream says about colour, for the overlay's status line. */
@@ -98,7 +95,7 @@ public final class Sdr10Policy {
      * @param hostHdr the host's HDR report (setHdrMode), null before it arrives
      */
     public static Status status(boolean tenBit, Boolean hostHdr) {
-        return tenBit && Boolean.TRUE.equals(hostHdr) ? Status.HOST_HDR : Status.QUIET;
+        return Status.values()[NightjarPolicyJni.sdr10Status(tenBit, triBool(hostHdr))];
     }
 
     /**
@@ -106,13 +103,11 @@ public final class Sdr10Policy {
      * first report, unless it was asked for as 10-bit SDR.
      */
     public static String overlayColor(boolean tenBit, boolean sdr10, Boolean hostHdr) {
-        if (Boolean.TRUE.equals(hostHdr)) return "HDR";
-        if (sdr10 && tenBit) return "10-bit SDR";
-        return hostHdr == null && tenBit ? "10-bit" : "SDR";
+        return NightjarPolicyJni.sdr10OverlayColor(tenBit, sdr10, triBool(hostHdr));
     }
 
     /** Whether the decoder starts out configured for HDR before the PC has reported anything. */
     public static boolean assumeHdr(boolean tenBit, boolean sdr10) {
-        return tenBit && !sdr10;
+        return NightjarPolicyJni.sdr10AssumeHdr(tenBit, sdr10);
     }
 }

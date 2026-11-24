@@ -3,8 +3,8 @@ package com.limelight.binding.video;
 import android.media.MediaFormat;
 
 import com.limelight.nvstream.jni.MoonBridge;
+import com.limelight.nvstream.jni.NightjarPolicyJni;
 
-import java.util.Locale;
 import java.util.function.BooleanSupplier;
 
 /**
@@ -28,9 +28,7 @@ public final class FullRangePolicy {
 
     /** Whether {@code decoderName} is a MediaTek hardware decoder ({@code c2.mtk.*} or {@code omx.mtk.*}). */
     public static boolean isMediaTekDecoder(String decoderName) {
-        if (decoderName == null) return false;
-        String lower = decoderName.toLowerCase(Locale.ROOT);
-        return lower.startsWith("c2.mtk.") || lower.startsWith("omx.mtk.");
+        return NightjarPolicyJni.fullRangeIsMediaTekDecoder(decoderName);
     }
 
     /**
@@ -39,7 +37,7 @@ public final class FullRangePolicy {
      * decoder is MediaTek's, whose direct YUV/P010 SurfaceView path mishandles full-range SDR.
      */
     public static boolean needsVulkanUpFront(boolean fullRange, boolean hdr, String decoderName) {
-        return fullRange && !hdr && isMediaTekDecoder(decoderName);
+        return NightjarPolicyJni.fullRangeNeedsVulkanUpFront(fullRange, hdr, decoderName);
     }
 
     /**
@@ -68,27 +66,18 @@ public final class FullRangePolicy {
     public static String outputFallbackReason(boolean fullRange, boolean hdr, boolean dolbyVision,
                                               boolean packed444, boolean pyroWave, String decoderName,
                                               Integer outputColorRange, boolean hasColorAspects) {
-        if (!fullRange || hdr || dolbyVision || packed444 || pyroWave) {
-            return null;
-        }
-        if (outputColorRange != null) {
-            if (outputColorRange != MediaFormat.COLOR_RANGE_FULL) {
-                return "reported " + rangeName(outputColorRange) + " color range for a full-range SDR stream";
-            }
-        } else if (hasColorAspects) {
-            // Codec2 populated colour standard/transfer while leaving range unspecified, which
-            // Android's ColorUtils maps to RANGE_LIMITED for BT.709/BT.601 YUV surfaces.
-            return "omitted color range (defaults to limited) for a full-range SDR stream";
-        }
-        if (isMediaTekDecoder(decoderName)) {
-            return "uses MediaTek direct output for a full-range SDR stream";
-        }
-        return null;
+        int rangeCode = outputColorRange == null ? NightjarPolicyJni.COLOR_RANGE_ABSENT :
+                outputColorRange == MediaFormat.COLOR_RANGE_FULL ? NightjarPolicyJni.COLOR_RANGE_FULL :
+                        outputColorRange == MediaFormat.COLOR_RANGE_LIMITED ? NightjarPolicyJni.COLOR_RANGE_LIMITED :
+                                NightjarPolicyJni.COLOR_RANGE_UNKNOWN;
+        int rawRange = outputColorRange == null ? 0 : outputColorRange;
+        return NightjarPolicyJni.fullRangeOutputFallbackReason(fullRange, hdr, dolbyVision, packed444,
+                pyroWave, decoderName, rangeCode, rawRange, hasColorAspects);
     }
 
     /** Whether the Vulkan renderer can take over on this API level and GPU; probes lazily. */
     public static boolean canUseVulkan(int sdkInt, BooleanSupplier vulkanSupported) {
-        return sdkInt >= VideoRendererChoice.MIN_SDK && vulkanSupported.getAsBoolean();
+        return NightjarPolicyJni.fullRangeCanUseVulkanSdk(sdkInt) && vulkanSupported.getAsBoolean();
     }
 
     /** Sets the initial colour keys on a decoder's base {@link MediaFormat}. */
@@ -121,13 +110,6 @@ public final class FullRangePolicy {
                 " standard " + outputKey(format, MediaFormat.KEY_COLOR_STANDARD) +
                 " transfer " + outputKey(format, MediaFormat.KEY_COLOR_TRANSFER) +
                 " range " + outputKey(format, MediaFormat.KEY_COLOR_RANGE);
-    }
-
-    static String rangeName(Integer colorRange) {
-        if (colorRange == null) return "unspecified";
-        if (colorRange == MediaFormat.COLOR_RANGE_FULL) return "full (1)";
-        if (colorRange == MediaFormat.COLOR_RANGE_LIMITED) return "limited (2)";
-        return "unknown (" + colorRange + ")";
     }
 
     private static String outputKey(MediaFormat format, String key) {
