@@ -13,6 +13,7 @@ mod output;
 mod output_thread;
 mod properties;
 mod rate_control;
+mod reencode_pool;
 mod repeat_cache;
 mod submit;
 mod units;
