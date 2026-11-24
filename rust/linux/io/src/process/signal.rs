@@ -116,12 +116,16 @@ pub fn stop_processes(processes: &BTreeMap<u32, u64>, timeout: Duration) {
     if !alive() {
         return;
     }
+    tracing::info!(processes = processes.len(), "asking processes to end");
     for (&pid, &started) in processes {
         signal_if(pid, libc::SIGTERM, || same(pid, started));
     }
     let deadline = Instant::now() + timeout;
     while alive() && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(50));
+    }
+    if alive() {
+        tracing::info!(?timeout, "processes still running: ending them");
     }
     for (&pid, &started) in processes {
         signal_if(pid, libc::SIGKILL, || same(pid, started));

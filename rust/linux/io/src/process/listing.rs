@@ -1,7 +1,12 @@
 //! The running processes as `/proc` shows them: the list, a process's program, start time and usage, and the tree a started command grew. Nothing here is unavailable on Linux.
 
 use anyhow::{Context, Result};
-use std::{collections::BTreeSet, sync::OnceLock, time::Duration};
+use std::{
+    collections::BTreeSet,
+    path::{Path, PathBuf},
+    sync::OnceLock,
+    time::Duration,
+};
 
 /// The clock's units in a second: process times are in 100 ns units, as the host keeps them.
 const UNITS_PER_SECOND: u128 = 10_000_000;
@@ -223,13 +228,59 @@ pub fn processes() -> Result<Vec<butterpollo_session::steam::Process>> {
 }
 
 /// A process's full program path (`/proc/<pid>/exe`); None for a process of another user,
-/// a kernel thread, or one that has ended. A Windows program under Wine or Proton reports
-/// the loader that runs it.
+/// a kernel thread, or one that has ended. A Windows program under Wine or Proton, whose
+/// `exe` is the Wine loader, reports the Windows program it runs, as a path of this PC
+/// ([`wine_program`]): a game's tracker finds it in the game's folder.
 pub fn image_path(pid: u32) -> Option<String> {
     let path = std::fs::read_link(format!("/proc/{pid}/exe")).ok()?;
     let path = path.to_string_lossy();
     // The kernel marks a program whose file was replaced or removed since it started.
-    Some(path.strip_suffix(" (deleted)").unwrap_or(&path).to_owned())
+    let path = path.strip_suffix(" (deleted)").unwrap_or(&path).to_owned();
+    if file_name(&path).starts_with("wine")
+        && let Some(program) = wine_program(pid)
+    {
+        return Some(program);
+    }
+    Some(path)
+}
+
+/// The program a Wine process runs, from the Windows path Wine puts first on its command
+/// line (`Z:\home\me\Game\game.exe`), through the drive links of the process's prefix
+/// (`WINEPREFIX`, Proton's `STEAM_COMPAT_DATA_PATH/pfx`, else `~/.wine`).
+fn wine_program(pid: u32) -> Option<String> {
+    let started_as = std::fs::read(format!("/proc/{pid}/cmdline")).ok()?;
+    let first = started_as.split(|byte| *byte == 0).next()?;
+    let environment = std::fs::read(format!("/proc/{pid}/environ")).unwrap_or_default();
+    let variable = |name: &str| {
+        environment
+            .split(|byte| *byte == 0)
+            .filter_map(|entry| std::str::from_utf8(entry).ok()?.split_once('='))
+            .find(|(key, _)| *key == name)
+            .map(|(_, value)| PathBuf::from(value))
+    };
+    let prefix = variable("WINEPREFIX")
+        .or_else(|| variable("STEAM_COMPAT_DATA_PATH").map(|data| data.join("pfx")))
+        .or_else(|| variable("HOME").map(|home| home.join(".wine")))?;
+    unix_path(&String::from_utf8_lossy(first), &prefix)
+}
+
+/// `windows` (`C:\Games\game.exe`) as a path of this PC, through the drive link of the Wine
+/// `prefix` (`dosdevices/c:`, which leads to `drive_c`, or `/` for `Z:`). None for a path
+/// without a drive letter or a drive the prefix does not have.
+fn unix_path(windows: &str, prefix: &Path) -> Option<String> {
+    let mut characters = windows.chars();
+    let letter = characters.next().filter(char::is_ascii_alphabetic)?;
+    let rest = characters.as_str().strip_prefix(":\\")?;
+    let device = prefix
+        .join("dosdevices")
+        .join(format!("{}:", letter.to_ascii_lowercase()));
+    let target = std::fs::read_link(&device).ok()?;
+    let drive = device.parent()?.join(target);
+    let mut path = std::fs::canonicalize(&drive).unwrap_or(drive);
+    path.extend(rest.split('\\').filter(|part| !part.is_empty()));
+    // A link on the way (`~/.steam/steam`) resolved as the game's library records it.
+    let path = std::fs::canonicalize(&path).unwrap_or(path);
+    Some(path.to_string_lossy().into_owned())
 }
 
 /// The running processes of the tree a command started as `root` grew, each with its
@@ -291,6 +342,38 @@ mod tests {
             start_ticks: u64::from(pid),
             resident_pages: 0,
         }
+    }
+
+    #[test]
+    fn a_wine_program_is_found_through_its_prefix_drives() {
+        let root = std::env::temp_dir().join(format!("wine-prefix-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let prefix = root.join("pfx");
+        let game = root.join("library/common/Some Game");
+        std::fs::create_dir_all(prefix.join("dosdevices")).unwrap();
+        std::fs::create_dir_all(prefix.join("drive_c/Games")).unwrap();
+        std::fs::create_dir_all(&game).unwrap();
+        std::os::unix::fs::symlink("../drive_c", prefix.join("dosdevices/c:")).unwrap();
+        std::os::unix::fs::symlink("/", prefix.join("dosdevices/z:")).unwrap();
+        let on_z = format!("Z:{}\\game.exe", game.display()).replace('/', "\\");
+        assert_eq!(
+            unix_path(&on_z, &prefix).unwrap(),
+            std::fs::canonicalize(&game)
+                .unwrap()
+                .join("game.exe")
+                .to_string_lossy()
+        );
+        assert_eq!(
+            unix_path("c:\\Games\\x.exe", &prefix).unwrap(),
+            std::fs::canonicalize(prefix.join("drive_c/Games"))
+                .unwrap()
+                .join("x.exe")
+                .to_string_lossy()
+        );
+        // No drive letter, or a drive the prefix lacks.
+        assert!(unix_path("/usr/bin/wine", &prefix).is_none());
+        assert!(unix_path("D:\\x.exe", &prefix).is_none());
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]

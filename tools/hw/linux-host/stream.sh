@@ -43,8 +43,19 @@ if app.startswith('steam:'):
     # A Steam game as the library import writes it (rust/core/session/src/library.rs).
     appid = app.split(':', 1)[1]
     command = f'cmd /c start "" steam://rungameid/{appid}'
+    import re
+    install = ''
+    steam = os.path.expanduser('~/.local/share/Steam')
+    vdf = os.path.join(steam, 'steamapps', 'libraryfolders.vdf')
+    libraries = re.findall(r'"path"\s+"([^"]+)"', open(vdf).read()) if os.path.exists(vdf) else [steam]
+    for library in libraries:
+        manifest = os.path.join(library, 'steamapps', f'appmanifest_{appid}.acf')
+        if os.path.exists(manifest):
+            folder = re.search(r'"installdir"\s+"([^"]+)"', open(manifest).read()).group(1)
+            install = os.path.join(library, 'steamapps', 'common', folder)
     entry.update({'cmd': command, 'auto-detach': True, 'launcher-source': 'steam', 'launcher-id': appid,
-                  'launcher-command': command, 'steam-id': appid,
+                  'launcher-command': command, 'steam-id': appid, 'launcher-install-dir': install,
+                  'steam-install-dir': install,
                   'launcher-launch': {'kind': 'uri', 'uri': f'steam://rungameid/{appid}'}})
 json.dump({'apps': [entry]}, open(p + '/apps.json', 'w'))
 salt = os.urandom(8).hex()
