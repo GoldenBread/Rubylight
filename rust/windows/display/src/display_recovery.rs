@@ -3,15 +3,31 @@ use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
-    os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle},
     path::{Path, PathBuf},
-    process::{Child, Command},
     sync::{
-        Mutex, OnceLock,
+        OnceLock,
         atomic::{AtomicBool, Ordering},
     },
 };
+
+#[cfg(test)]
+use std::{os::windows::io::AsRawHandle, process::Command};
+#[cfg(test)]
 use windows::Win32::{Foundation::*, System::Threading::*};
+
+mod hooks;
+mod restore;
+mod watcher;
+
+pub use hooks::{RecoveryHooks, initialize_with, set_hooks, wait_and_recover_with};
+use restore::recover;
+#[cfg(test)]
+use restore::{restore_mode_needed, restored, restored_all};
+pub use watcher::wait_and_recover;
+#[cfg(test)]
+use watcher::{KILLED_WATCH_EXIT_MS, stop_watch, wait_for_watch, watch_done};
+use watcher::{finish_watch, identity, lock, watch};
+
 type Mode = (u32, u32, u32);
 #[derive(Clone, Default, Serialize, Deserialize)]
 struct Entry {
@@ -111,168 +127,17 @@ pub(crate) fn put_back<T: PartialEq>(
         Ok(())
     }
 }
-/// Keep the original value until restoration succeeds (or the operation
-/// establishes that the user has since changed it).
-fn restored<T>(pending: &mut Option<T>, result: Result<()>) -> Result<()> {
-    result?;
-    *pending = None;
-    Ok(())
-}
-/// The same for a restore that covers every entry at once, such as the
-/// frame limiter or the audio route.
-fn restored_all(
-    kept: &mut Journal,
-    flag: fn(&mut Entry) -> &mut bool,
-    result: Result<()>,
-) -> Result<()> {
-    result?;
-    for entry in kept.entries.values_mut() {
-        *flag(entry) = false;
-    }
-    Ok(())
-}
+
 #[derive(Clone, Default, Serialize, Deserialize)]
 struct Journal {
     pid: u32,
     started: u64,
     entries: BTreeMap<String, Entry>,
 }
+
 static PATH: OnceLock<PathBuf> = OnceLock::new();
 static PENDING_STARTUP: AtomicBool = AtomicBool::new(false);
-static WATCH: Mutex<Option<(Child, OwnedHandle)>> = Mutex::new(None);
 
-fn watch_done(pid: u32) -> Result<OwnedHandle> {
-    let name: Vec<u16> = format!("Local\\Butterpollo.DisplayWatch.{pid}\0")
-        .encode_utf16()
-        .collect();
-    // SAFETY: The name is NUL-terminated, and the returned handle is owned exactly once.
-    unsafe {
-        let event = CreateEventW(None, true, false, windows::core::PCWSTR(name.as_ptr()))?;
-        Ok(OwnedHandle::from_raw_handle(event.0))
-    }
-}
-
-fn finish_watch(path: &Path) -> Result<()> {
-    let guard = lock(path)?;
-    let journal: Journal = serde_json::from_slice(&std::fs::read(path)?)?;
-    if !journal.entries.is_empty() {
-        return Ok(());
-    }
-    let mut watch = WATCH.lock().unwrap();
-    let Some((process, event)) = watch.as_mut() else {
-        return Ok(());
-    };
-    // SAFETY: The owned event remains live until the watcher exits.
-    unsafe { SetEvent(HANDLE(event.as_raw_handle()))? };
-    drop(guard);
-    // Keep WATCH locked so a new watcher cannot reset this event before the old
-    // watcher observes it. Native process exit must not hold the journal lock.
-    wait_for_watch(process)?;
-    watch.take();
-    Ok(())
-}
-/// How long a killed watcher may take to go. Termination is asynchronous and
-/// on a busy PC took longer than 100 ms; only a stalled watcher waits this.
-const KILLED_WATCH_EXIT_MS: u32 = 2000;
-fn wait_for_watch(process: &mut Child) -> Result<()> {
-    let handle = HANDLE(process.as_raw_handle());
-    stop_watch(
-        // SAFETY: Child owns the process handle for the entire bounded wait,
-        // and still after requesting termination.
-        |ms| unsafe { WaitForSingleObject(handle, ms) },
-        || Ok(process.kill()?),
-    )
-}
-/// [`wait_for_watch`] with the process wait and kill passed in.
-fn stop_watch(
-    mut wait: impl FnMut(u32) -> WAIT_EVENT,
-    kill: impl FnOnce() -> Result<()>,
-) -> Result<()> {
-    match wait(100) {
-        WAIT_OBJECT_0 => {}
-        WAIT_TIMEOUT => {
-            // Its journal is empty; a stalled watcher has nothing left to restore.
-            tracing::warn!("display recovery helper did not exit within 100 ms; stopping it");
-            kill()?;
-            // Termination is asynchronous. Keep the signaled watcher registered
-            // unless it exits, so a new watcher cannot reuse its named event.
-            match wait(KILLED_WATCH_EXIT_MS) {
-                WAIT_OBJECT_0 => {}
-                WAIT_TIMEOUT => bail!(
-                    "display recovery helper did not stop within {KILLED_WATCH_EXIT_MS} ms of being killed"
-                ),
-                _ => return Err(windows::core::Error::from_thread().into()),
-            }
-        }
-        _ => return Err(windows::core::Error::from_thread().into()),
-    }
-    Ok(())
-}
-struct JournalLock(HANDLE);
-impl Drop for JournalLock {
-    fn drop(&mut self) {
-        // SAFETY: lock() acquired this mutex on the current thread, and its local
-        // guard owns the handle until this single release and close.
-        unsafe {
-            let _ = ReleaseMutex(self.0);
-            let _ = CloseHandle(self.0);
-        }
-    }
-}
-fn lock(path: &Path) -> Result<JournalLock> {
-    let hash = butterpollo_crypto::crypto::hash(path.to_string_lossy().to_lowercase().as_bytes());
-    let name: Vec<u16> = format!(
-        "Local\\Butterpollo.DisplayJournal.{:x}\0",
-        u64::from_le_bytes(hash[..8].try_into().unwrap())
-    )
-    .encode_utf16()
-    .collect();
-    // SAFETY: name is terminated and lives through CreateMutexW. The returned handle
-    // is either closed on failure or transferred to a guard after this thread acquires it.
-    unsafe {
-        let handle = CreateMutexW(None, false, windows::core::PCWSTR(name.as_ptr()))?;
-        let result = WaitForSingleObject(handle, 30000);
-        if result != WAIT_OBJECT_0 && result != WAIT_ABANDONED {
-            let _ = CloseHandle(handle);
-            bail!("display journal is busy");
-        }
-        Ok(JournalLock(handle))
-    }
-}
-
-fn identity(pid: u32) -> Result<Option<u64>> {
-    // SAFETY: OpenProcess supplies an owned query handle; the four initialized outputs
-    // remain writable for GetProcessTimes, and the handle is closed exactly once afterward.
-    unsafe {
-        if pid == 0 {
-            return Ok(None);
-        }
-        let process = match OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) {
-            Ok(handle) => handle,
-            Err(e) if e.code() == windows::core::HRESULT::from_win32(ERROR_INVALID_PARAMETER.0) => {
-                return Ok(None);
-            }
-            Err(e) => return Err(e.into()),
-        };
-        let (mut created, mut exited, mut kernel, mut user) = (
-            FILETIME::default(),
-            FILETIME::default(),
-            FILETIME::default(),
-            FILETIME::default(),
-        );
-        let result = GetProcessTimes(process, &mut created, &mut exited, &mut kernel, &mut user);
-        let _ = CloseHandle(process);
-        result?;
-        if exited.dwLowDateTime != 0 || exited.dwHighDateTime != 0 {
-            return Ok(None);
-        }
-        Ok(Some(
-            u64::from(created.dwLowDateTime) | (u64::from(created.dwHighDateTime) << 32),
-        ))
-    }
-}
-mod hooks;
-pub use hooks::{RecoveryHooks, initialize_with, set_hooks, wait_and_recover_with};
 /// Take the journal and undo what an interrupted host left behind. An
 /// incomplete recovery is returned for the log rather than as an error: a
 /// display that cannot take back a setting must not stop the host from
@@ -336,44 +201,7 @@ fn recover_pending_at(path: &Path, recover_fn: impl FnOnce(&Path) -> Result<()>)
     recover_fn(path)?;
     Ok(true)
 }
-fn watch(path: &Path) -> Result<()> {
-    use std::os::windows::process::CommandExt;
-    let mut child = WATCH.lock().unwrap();
-    if let Some((process, event)) = child.as_mut()
-        && process.try_wait()?.is_none()
-    {
-        // SAFETY: The watcher entry owns the event for this nonblocking check.
-        if unsafe { WaitForSingleObject(HANDLE(event.as_raw_handle()), 0) } == WAIT_OBJECT_0 {
-            bail!("display recovery helper is still stopping");
-        }
-        return Ok(());
-    }
-    let done = watch_done(std::process::id())?;
-    // SAFETY: This new watcher owns the event until it exits; the previous child is already done.
-    unsafe { ResetEvent(HANDLE(done.as_raw_handle()))? };
-    let spawn = |flags: u32| -> Result<std::process::Child> {
-        Ok(Command::new(std::env::current_exe()?)
-            .arg("--display-watch")
-            .arg(std::process::id().to_string())
-            .arg("--config-dir")
-            .arg(path.parent().context("journal directory missing")?)
-            .creation_flags(flags)
-            .spawn()?)
-    };
-    // Escape the host's job, otherwise a service stop would also kill recovery.
-    // A job that forbids breaking away (a launcher, a terminal) refuses that
-    // with access denied, and every frame limit and display change failed on
-    // it; the helper then stays in the job and still covers a host crash.
-    let started = spawn(CREATE_BREAKAWAY_FROM_JOB.0 | CREATE_NO_WINDOW.0).or_else(|error| {
-        tracing::debug!(%error, "display recovery helper cannot leave the host's job");
-        spawn(CREATE_NO_WINDOW.0)
-    });
-    *child = Some((
-        started.context("cannot start the display recovery helper")?,
-        done,
-    ));
-    Ok(())
-}
+
 fn change(id: &str, output: &str, update: impl FnOnce(&mut Entry)) -> Result<()> {
     let path = PATH.get().context("display recovery is not initialized")?;
     let guard = lock(path)?;
@@ -400,6 +228,7 @@ fn change(id: &str, output: &str, update: impl FnOnce(&mut Entry)) -> Result<()>
     }
     Ok(())
 }
+
 // A pending entry's original value wins over a newer "before": an entry kept
 // for a display that was away holds the value to restore, and a later stream
 // would otherwise record the changed value as the original.
@@ -408,6 +237,7 @@ pub fn mode(id: &str, output: &str, before: Mode, applied: Mode) -> Result<()> {
         e.mode = Some((e.mode.map_or(before, |(original, _)| original), applied))
     })
 }
+
 pub fn mode_rate(id: &str, output: &str, before: Mode, applied: Mode) -> Result<()> {
     change(id, output, |e| {
         e.mode_rate = Some((
@@ -417,6 +247,7 @@ pub fn mode_rate(id: &str, output: &str, before: Mode, applied: Mode) -> Result<
         e.mode_rate_requested = false;
     })
 }
+
 /// Journal the mode a stream is about to apply, before the apply. A crash
 /// after this but before the mode the display actually took is recorded
 /// leaves this requested value behind; recovery restores the original then
@@ -430,32 +261,39 @@ pub fn mode_rate_requested(id: &str, output: &str, before: Mode, requested: Mode
         e.mode_rate_requested = true;
     })
 }
+
 pub fn hdr(id: &str, output: &str, before: bool, applied: bool) -> Result<()> {
     change(id, output, |e| {
         e.hdr = Some((e.hdr.map_or(before, |(original, _)| original), applied))
     })
 }
+
 /// A display's rotation, as `DISPLAYCONFIG_ROTATION`.
 pub fn rotation(id: &str, output: &str, before: u32, applied: u32) -> Result<()> {
     change(id, output, |e| {
         e.rotation = Some((e.rotation.map_or(before, |(original, _)| original), applied))
     })
 }
+
 /// A display's Windows scale, in percent.
 pub fn scale(id: &str, output: &str, before: u32, applied: u32) -> Result<()> {
     change(id, output, |e| {
         e.scale = Some((e.scale.map_or(before, |(original, _)| original), applied))
     })
 }
+
 pub fn external(pending: bool) -> Result<()> {
     change("external-limiter", "", |e| e.external = pending)
 }
+
 pub fn audio(pending: bool) -> Result<()> {
     change("audio-routing", "", |e| e.audio = pending)
 }
+
 pub fn microphone(pending: bool) -> Result<()> {
     change("microphone-routing", "", |e| e.microphone = pending)
 }
+
 pub fn arrangement(
     value: Option<(
         crate::display::Snapshot,
@@ -464,6 +302,7 @@ pub fn arrangement(
 ) -> Result<()> {
     change("display-arrangement", "", |e| e.arrangement = value)
 }
+
 /// Adopt an unfinished arrangement before another stream journals its layout.
 /// Otherwise a failed restore becomes the next stream's apparent baseline.
 pub fn pending_arrangement() -> Result<Option<crate::display::Snapshot>> {
@@ -473,6 +312,7 @@ pub fn pending_arrangement() -> Result<Option<crate::display::Snapshot>> {
     let _guard = lock(path)?;
     read_pending_arrangement(path)
 }
+
 fn read_pending_arrangement(path: &Path) -> Result<Option<crate::display::Snapshot>> {
     let bytes = match std::fs::read(path) {
         Ok(bytes) => bytes,
@@ -485,9 +325,11 @@ fn read_pending_arrangement(path: &Path) -> Result<Option<crate::display::Snapsh
         .remove("display-arrangement")
         .and_then(|entry| entry.arrangement.map(|(before, _)| before)))
 }
+
 pub fn baseline(value: Option<(crate::display::Snapshot, Vec<String>)>) -> Result<()> {
     change("saved-display-baseline", "", |entry| entry.baseline = value)
 }
+
 pub fn activation(
     value: Option<(
         crate::display::Snapshot,
@@ -496,6 +338,7 @@ pub fn activation(
 ) -> Result<()> {
     change("display-activation", "", |entry| entry.activation = value)
 }
+
 pub fn reset() -> Result<()> {
     let path = PATH.get().context("display recovery is not initialized")?;
     let guard = lock(path)?;
@@ -506,6 +349,7 @@ pub fn reset() -> Result<()> {
     }
     result
 }
+
 /// What a kept entry holds for a display, which was away when a stream
 /// ended and still has what that stream applied: the original values, and
 /// for the mode also the one applied.
@@ -520,6 +364,7 @@ pub struct Pending {
     /// The original Windows scale, in percent.
     pub scale: Option<u32>,
 }
+
 /// What an earlier stream left to restore on a display. A stream that takes
 /// the display over restores these rather than the values it finds, or its
 /// release would clear the entry and leave them changed for good. A journal
@@ -535,6 +380,7 @@ pub fn pending(id: &str) -> Pending {
             Pending::default()
         })
 }
+
 pub(crate) fn pending_in(path: &Path, id: &str) -> Result<Pending> {
     let journal: Journal = serde_json::from_slice(&std::fs::read(path)?)?;
     Ok(journal
@@ -552,6 +398,7 @@ pub(crate) fn pending_in(path: &Path, id: &str) -> Result<Pending> {
         })
         .unwrap_or_default())
 }
+
 pub fn release(id: &str) -> Result<()> {
     let Some(path) = PATH.get().filter(|p| p.exists()) else {
         return Ok(());
@@ -561,6 +408,7 @@ pub fn release(id: &str) -> Result<()> {
     drop(guard);
     finish_watch(path)
 }
+
 pub(crate) fn release_in(path: &Path, id: &str) -> Result<()> {
     let mut journal: Journal = serde_json::from_slice(&std::fs::read(path)?)?;
     if let Some(entry) = journal.entries.get_mut(id) {
@@ -574,6 +422,7 @@ pub(crate) fn release_in(path: &Path, id: &str) -> Result<()> {
     journal.entries.retain(|_, e| e.pending());
     butterpollo_session::state::write_json(path, &journal)
 }
+
 pub fn position(
     id: &str,
     output: &str,
@@ -582,6 +431,7 @@ pub fn position(
 ) -> Result<()> {
     change(id, output, |e| e.position = Some((before, applied)))
 }
+
 pub fn release_position(id: &str) -> Result<()> {
     let Some(path) = PATH.get().filter(|p| p.exists()) else {
         return Ok(());
@@ -596,6 +446,7 @@ pub fn release_position(id: &str) -> Result<()> {
     drop(guard);
     finish_watch(path)
 }
+
 pub fn profile(
     id: &str,
     output: &str,
@@ -608,6 +459,7 @@ pub fn profile(
         e.profile = Some((original, applied.into(), system))
     })
 }
+
 pub fn release_profile(id: &str) -> Result<()> {
     let Some(path) = PATH.get().filter(|p| p.exists()) else {
         return Ok(());
@@ -621,340 +473,6 @@ pub fn release_profile(id: &str) -> Result<()> {
     butterpollo_session::state::write_json(path, &journal)?;
     drop(guard);
     finish_watch(path)
-}
-/// Undo what an interrupted host changed. Every step is attempted even when
-/// an earlier one fails, and the failures are reported together. A display
-/// that is not connected now, such as a TV that was switched off, keeps its
-/// own HDR, colour profile, mode and position entries for a later recovery:
-/// Windows remembers those settings per display, so they would otherwise
-/// stay changed. Failed per-display changes and arrangement restoration are
-/// kept for a later recovery as well.
-fn recover(path: &Path) -> Result<()> {
-    // Switching to the active input desktop (Winlogon or Default) avoids
-    // Access Denied when restoring display HDR or modes across lock transitions.
-    crate::desktop::on_input_desktop(|| recover_inline(path))
-}
-
-fn recover_inline(path: &Path) -> Result<()> {
-    if !path.exists() {
-        return Ok(());
-    }
-    let journal: Journal = serde_json::from_slice(&std::fs::read(path)?)?;
-    let directory = path.parent().context("journal directory missing")?;
-    let mut failures = Vec::new();
-    let mut step = |what: &str, result: Result<()>| {
-        if let Err(error) = result {
-            failures.push(format!("{what}: {error:#}"));
-        }
-    };
-    let mut kept = Journal {
-        entries: journal
-            .entries
-            .iter()
-            .map(|(id, entry)| (id.clone(), entry.display_settings()))
-            .collect(),
-        ..Default::default()
-    };
-    if journal.entries.values().any(|e| e.external) {
-        step(
-            "frame limiter",
-            restored_all(&mut kept, |e| &mut e.external, hooks::limiter(directory)),
-        );
-    }
-    if journal.entries.values().any(|e| e.audio) {
-        step(
-            "audio routing",
-            restored_all(&mut kept, |e| &mut e.audio, hooks::audio(directory)),
-        );
-    }
-    let mut pending_arrangements = BTreeMap::new();
-    for (id, entry) in &journal.entries {
-        if let Some((before, applied)) = &entry.arrangement {
-            let result = crate::display_arrangement::restore_arrangement(before, applied);
-            if result.is_err() {
-                pending_arrangements.insert(id.clone(), entry.arrangement.clone());
-            }
-            step("display arrangement", result);
-        }
-    }
-    let monitors = crate::display::monitors().unwrap_or_else(|error| {
-        step("display list", Err(error));
-        Vec::new()
-    });
-    for (id, arrangement) in pending_arrangements {
-        kept.entries.entry(id).or_default().arrangement = arrangement;
-    }
-    for entry in kept.entries.values_mut().filter(|entry| entry.microphone) {
-        let result = hooks::microphone(directory);
-        // An unplugged original microphone must remain recoverable after a
-        // later restart, just like a display that is temporarily unavailable.
-        entry.microphone = result.is_err();
-        step("microphone routing", result);
-    }
-    for (id, entry) in &journal.entries {
-        let Some(m) = monitors.iter().find(|m| &m.device_id == id) else {
-            // Each setting is restored later only if the display still has
-            // the value the stream applied.
-            continue;
-        };
-        let pending = kept.entries.get_mut(id).expect("copied display entry");
-        let what = |setting: &str| format!("{} {setting}", m.display_name);
-        if let Some((previous, applied, system)) = &entry.profile {
-            step(
-                &what("colour profile"),
-                restored(
-                    &mut pending.profile,
-                    crate::hdr_profile::restore(m, previous.as_deref(), applied, *system),
-                ),
-            );
-        }
-        if let Some((previous, applied)) = entry.hdr {
-            let result = if crate::display::hdr_matches_applied(
-                m.hdr_enabled,
-                m.hdr_requested,
-                applied,
-            ) {
-                tracing::info!(
-                    output = %m.display_name,
-                    previous,
-                    applied,
-                    current = m.hdr_enabled,
-                    requested = m.hdr_requested,
-                    "restoring HDR after a stream"
-                );
-                crate::display::set_hdr(m, previous)
-            } else {
-                tracing::info!(
-                    output = %m.display_name,
-                    previous,
-                    applied,
-                    current = m.hdr_enabled,
-                    requested = m.hdr_requested,
-                    "leaving HDR as it is; the display no longer has the value the stream applied"
-                );
-                Ok(())
-            };
-            step(&what("HDR"), restored(&mut pending.hdr, result));
-        }
-        // Before the mode: the mode applied was recorded in the shape the
-        // display had before it turned.
-        if let Some((previous, applied)) = entry.rotation {
-            step(
-                &what("rotation"),
-                restored(
-                    &mut pending.rotation,
-                    put_back(
-                        crate::display::rotation(id),
-                        previous,
-                        applied,
-                        |previous| crate::display::set_rotation(id, previous),
-                    ),
-                ),
-            );
-        }
-        if let Some((previous, applied)) = entry.mode {
-            step(
-                &what("mode"),
-                restored(
-                    &mut pending.mode,
-                    crate::display::mode(&m.display_name).and_then(|current| {
-                        if (
-                            current.dmPelsWidth,
-                            current.dmPelsHeight,
-                            current.dmDisplayFrequency,
-                        ) == applied
-                        {
-                            crate::display::set_mode(
-                                &m.display_name,
-                                previous.0,
-                                previous.1,
-                                previous.2,
-                            )
-                        } else {
-                            Ok(())
-                        }
-                    }),
-                ),
-            );
-        }
-        if let Some((previous, applied)) = entry.mode_rate {
-            step(
-                &what("mode and refresh"),
-                restored(
-                    &mut pending.mode_rate,
-                    (|| {
-                        let current = crate::display::mode(&m.display_name)?;
-                        let rate = crate::display::Topology::query()?.refresh(id)?;
-                        let now = (current.dmPelsWidth, current.dmPelsHeight, rate.0);
-                        // A stream that ended cleanly recorded the mode the
-                        // display actually took, so it is put back only while
-                        // the display still has it: a change the user made
-                        // since stays. After a crash the recorded mode may be
-                        // the one requested before the apply, which the display
-                        // may have taken only in part: the original comes back
-                        // while the display shows nothing but requested or
-                        // original values.
-                        if !restore_mode_needed(entry.mode_rate_requested, now, applied, previous) {
-                            return Ok(());
-                        }
-                        crate::display::Topology::set_mode_rate(
-                            id,
-                            previous.0,
-                            previous.1,
-                            butterpollo_media_policy::framegen::Rate(previous.2),
-                        )?;
-                        Ok(())
-                    })(),
-                ),
-            );
-        }
-        if let Some((previous, applied)) = entry.scale {
-            step(
-                &what("scale"),
-                restored(
-                    &mut pending.scale,
-                    put_back(
-                        crate::display::dpi_scale(m),
-                        previous,
-                        applied,
-                        |previous| crate::display::set_dpi_scale(m, previous),
-                    ),
-                ),
-            );
-        }
-    }
-    step(
-        "display positions",
-        (|| {
-            let mut topology = crate::display::Topology::query()?;
-            let nodes = topology.nodes()?;
-            let positions = journal
-                .entries
-                .iter()
-                .filter_map(|(id, entry)| {
-                    let (before, applied) = entry.position?;
-                    nodes
-                        .iter()
-                        .find(|n| &n.device_id == id && n.desired_position == applied)
-                        .map(|_| (id.clone(), before))
-                })
-                .collect::<BTreeMap<_, _>>();
-            if !positions.is_empty() {
-                topology.set_positions(&positions)?;
-            }
-            for (id, pending) in &mut kept.entries {
-                if nodes.iter().any(|node| &node.device_id == id) {
-                    pending.position = None;
-                }
-            }
-            Ok(())
-        })(),
-    );
-    for (id, entry) in &journal.entries {
-        let pending = kept.entries.get_mut(id).expect("copied display entry");
-        if let Some((before, applied)) = &entry.activation {
-            step(
-                "display activation",
-                restored(
-                    &mut pending.activation,
-                    (|| {
-                        if applied.is_empty() || crate::display_arrangement::unchanged(applied)? {
-                            before.restore()?;
-                        }
-                        Ok(())
-                    })(),
-                ),
-            );
-        }
-        if let Some((snapshot, excluded)) = &entry.baseline {
-            step(
-                "saved display layout",
-                restored(&mut pending.baseline, snapshot.restore_excluding(excluded)),
-            );
-        }
-    }
-    // Keep a valid document so interrupted reads never see partial JSON. The
-    // kept entries have no owner until the next host records a change.
-    kept.entries.retain(|_, entry| entry.pending());
-    butterpollo_session::state::write_json(path, &kept)?;
-    if !failures.is_empty() {
-        bail!("display recovery incomplete: {}", failures.join("; "));
-    }
-    Ok(())
-}
-pub fn wait_and_recover(pid: u32, directory: &Path) -> Result<()> {
-    let path = directory.join("display-recovery.json");
-    let owner: Journal = if path.exists() {
-        serde_json::from_slice(&std::fs::read(&path)?)?
-    } else {
-        Journal::default()
-    };
-    if owner.pid != pid {
-        return Ok(());
-    }
-    let done = watch_done(pid)?;
-    // SAFETY: The successfully opened process handle has synchronization rights and
-    // remains owned until the wait finishes; every exit path closes it exactly once.
-    unsafe {
-        match OpenProcess(
-            PROCESS_SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION,
-            false,
-            pid,
-        ) {
-            Ok(process) => {
-                let identity = identity(pid);
-                if identity.is_err() {
-                    let _ = CloseHandle(process);
-                }
-                let result = if identity? == Some(owner.started) {
-                    WaitForMultipleObjects(
-                        &[process, HANDLE(done.as_raw_handle())],
-                        false,
-                        u32::MAX,
-                    )
-                } else {
-                    WAIT_OBJECT_0
-                };
-                let _ = CloseHandle(process);
-                if result == WAIT_EVENT(WAIT_OBJECT_0.0 + 1) {
-                    return Ok(());
-                }
-                if result != WAIT_OBJECT_0 {
-                    bail!("display watcher wait failed");
-                }
-            }
-            Err(e) if e.code() == windows::core::HRESULT::from_win32(ERROR_INVALID_PARAMETER.0) => {
-            }
-            Err(e) => return Err(e.into()),
-        }
-    }
-    let _guard = lock(&path)?;
-    if path.exists() {
-        let journal: Journal = serde_json::from_slice(&std::fs::read(&path)?)?;
-        // A newly started host may already have reclaimed the journal.
-        if journal.pid != pid {
-            return Ok(());
-        }
-    }
-    recover(&path)
-}
-/// Whether the mode a stream left on a display is put back. `requested`: the
-/// journal recorded the mode requested before the apply, not the one that
-/// landed. A clean end records the mode the display actually took, so it is
-/// put back only while the display still has it. A crash inside the apply
-/// leaves the requested mode, and the display may have taken only part of it
-/// (a TV takes the resolution and keeps its old rate): every part of its mode
-/// is then the requested or the original one, so the original comes back only
-/// when the resolution and the refresh each are. Any other mode, such as one
-/// the user set by hand after the crash, stays.
-fn restore_mode_needed(requested: bool, current: Mode, applied: Mode, previous: Mode) -> bool {
-    let size = |mode: Mode| (mode.0, mode.1);
-    current == applied
-        || (requested
-            && [applied, previous]
-                .iter()
-                .any(|m| size(*m) == size(current))
-            && [applied, previous].iter().any(|m| m.2 == current.2))
 }
 
 #[cfg(test)]
