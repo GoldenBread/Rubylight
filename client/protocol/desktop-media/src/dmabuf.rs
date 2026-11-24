@@ -542,6 +542,8 @@ mod linux {
     #[cfg(target_os = "macos")]
     impl Importer {
         pub fn new() -> Result<Self, String> { Err("DMA-BUF EGL import is unavailable on macOS".into()) }
+        /// # Safety
+        /// Stub matching Linux `Importer::import`; never dereferences its arguments.
         pub unsafe fn import(&mut self, _: *mut SDL_Renderer, _: *mut SDL_Texture, _: &Export, _: u32, _: u32) -> Result<(), String> { Err("DMA-BUF EGL import is unavailable on macOS".into()) }
         pub fn macos_slot<T: 'static>(value: T) -> Self { Self { slot: Some(Box::new(value)) } }
         pub fn macos_slot_mut<T: 'static>(&mut self) -> Option<&mut T> { self.slot.as_deref_mut()?.downcast_mut() }
