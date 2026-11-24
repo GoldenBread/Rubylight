@@ -1,8 +1,11 @@
 //! Tests for local game folder scanning, settings, and cross-launcher matching.
 use super::*;
 use serde_json::json;
-use std::path::{Path, PathBuf};
+#[cfg(windows)]
+use std::path::PathBuf;
+use std::path::Path;
 
+#[cfg(windows)]
 #[test]
 fn library_settings_turn_launchers_on_by_default_and_read_the_game_folders() {
     let defaults = Settings::default();
@@ -57,6 +60,7 @@ fn the_scan_skips_steam_while_steam_library_is_off() {
     assert!(epic_off.enabled(Source::Steam) && !epic_off.enabled(Source::Epic));
 }
 
+#[cfg(windows)]
 #[test]
 fn a_game_folder_starts_its_game_not_its_installers_redistributables_or_crash_reporters() {
     let games = local_games();
@@ -215,6 +219,7 @@ fn games_steam_or_playnite_already_keep_are_already_added() {
     assert_eq!(apps.len(), 1);
 }
 
+#[cfg(windows)]
 #[test]
 fn a_game_folder_import_starts_its_program_from_its_folder() {
     let hades = local_games().remove(1);

@@ -242,6 +242,7 @@ fn a_steam_game_with_valve_anti_cheat_says_so() {
             .vac
     );
 }
+#[cfg(windows)]
 /// A link's app and an .exe in a Steam library both answer with their
 /// app's flag; a plain folder has none, and a cache that can't say is
 /// an error.
@@ -271,6 +272,7 @@ fn valve_anti_cheat_is_read_for_a_link_and_for_an_exe_in_a_library() {
         Err("Steam's app cache does not list app 7: start it once in Steam".into())
     );
 }
+#[cfg(windows)]
 #[test]
 fn an_exe_started_directly_in_a_steam_library_is_its_apps() {
     let launch = option("0", r"bin\AC4BFSP.exe", "default", &[]);
@@ -323,6 +325,7 @@ fn an_exe_started_directly_in_a_steam_library_is_its_apps() {
         "{error}"
     );
 }
+#[cfg(windows)]
 #[test]
 fn a_steam_apps_files_in_a_library_no_steam_lists_are_refused() {
     let launch = option("0", r"bin\AC4BFSP.exe", "default", &[]);
@@ -372,11 +375,13 @@ fn a_library_spelled_another_way_is_the_one_steam_lists() {
     assert_eq!(found.unwrap().appid, 242050);
     std::fs::remove_dir(&link).unwrap();
 }
+#[cfg(windows)]
 /// A Steam folder with apps that all install to `Half-Life 2`, each with
 /// its type, launch options (executable, arguments) and VAC flag.
 /// An app: its id, type, launch options (executable, arguments) and
 /// whether Steam lists Valve Anti-Cheat for it.
 type TestApp<'a> = (u32, &'a str, &'a [(&'a str, &'a str)], bool);
+#[cfg(windows)]
 fn half_life_2(apps: &[TestApp]) -> tempfile::TempDir {
     let root = tempfile::tempdir().unwrap();
     let steamapps = root.path().join("steamapps");
@@ -422,6 +427,7 @@ fn half_life_2(apps: &[TestApp]) -> tempfile::TempDir {
     std::fs::write(root.path().join(r"appcache\appinfo.vdf"), data).unwrap();
     root
 }
+#[cfg(windows)]
 #[test]
 fn half_life_2_and_its_episodes_in_one_folder_are_told_apart() {
     let steam = half_life_2(&[
@@ -456,6 +462,7 @@ fn half_life_2_and_its_episodes_in_one_folder_are_told_apart() {
         "Steam apps 220, 221 install to Half-Life 2, and none of them starts other.exe: start the game from its Steam link"
     );
 }
+#[cfg(windows)]
 #[test]
 fn valve_anti_cheat_of_any_app_starting_the_exe_is_never_narrowed_away() {
     // The .exe loads Counter-Strike's game with `-game cstrike`, whichever
@@ -495,6 +502,7 @@ fn valve_anti_cheat_of_any_app_starting_the_exe_is_never_narrowed_away() {
         .unwrap();
     assert_eq!((found.appid, found.vac), (70, false));
 }
+#[cfg(windows)]
 fn exe_in(steam: &tempfile::TempDir, name: &str) -> PathBuf {
     steam
         .path()

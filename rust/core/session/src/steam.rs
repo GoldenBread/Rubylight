@@ -304,11 +304,11 @@ pub fn library_stamp(roots: &[PathBuf]) -> u64 {
     hasher.finish()
 }
 
-/// Whether `path` is on one of this PC's drives. The host runs as SYSTEM:
-/// opening a network share would hand it the PC's account, so a library on
-/// a share is skipped before anything opens it.
+/// Whether `path` is on this PC's drives (on Linux, where the host is the user's, any absolute
+/// path): the Windows host runs as SYSTEM and skips a share before anything opens it.
 fn on_this_pc(path: &Path) -> bool {
-    crate::nucleus::generic::on_this_pc(&path.to_string_lossy()).is_some()
+    (!cfg!(windows) && path.is_absolute())
+        || crate::nucleus::generic::on_this_pc(&path.to_string_lossy()).is_some()
 }
 
 /// The roots on this PC's drives ([`on_this_pc`]).

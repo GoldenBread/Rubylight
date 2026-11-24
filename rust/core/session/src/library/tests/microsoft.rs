@@ -187,6 +187,7 @@ fn a_game_with_no_registered_package_is_listed_but_cannot_start() {
     );
 }
 
+#[cfg(windows)]
 #[test]
 fn the_cover_is_the_config_logo_when_the_file_is_there() {
     let folder = tempfile::tempdir().unwrap();

@@ -1,6 +1,7 @@
 //! Tests for anti-cheat detection and path safety in generic Nucleus Co-op handlers.
 use super::super::*;
 
+#[cfg(windows)]
 #[test]
 fn anti_cheat_is_found_beside_the_exe_and_up_to_the_root() {
     let dir = tempfile::tempdir().unwrap();
@@ -37,6 +38,7 @@ fn anti_cheat_is_found_beside_the_exe_and_up_to_the_root() {
     assert_eq!(anti_cheat(&protected), Some("Easy Anti-Cheat"));
 }
 
+#[cfg(windows)]
 #[test]
 fn an_unreal_scan_stops_at_the_game_holding_binaries_unless_engine_is_above() {
     let dir = tempfile::tempdir().unwrap();
@@ -98,6 +100,7 @@ fn an_unreal_scan_stops_at_the_game_holding_binaries_unless_engine_is_above() {
     assert_eq!(stub_name(r"C:\G\HogwartsLegacy.exe"), "HogwartsLegacy.exe");
 }
 
+#[cfg(windows)]
 #[test]
 fn a_battle_net_game_has_blizzards_anti_cheat() {
     let dir = tempfile::tempdir().unwrap();

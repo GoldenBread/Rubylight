@@ -293,13 +293,6 @@ fn restore_turns_on_only_the_rules_that_were_on_when_names_repeat() {
 }
 
 #[test]
-fn the_setup_record_is_one_for_the_pc() {
-    let record = setup_record();
-    assert!(record.ends_with(r"Butterpollo\windows-settings\child_session_setup.json"));
-    assert!(!record.starts_with(crate::paths::installed_profile()));
-}
-
-#[test]
 fn child_sessions_that_stay_on_after_restore_are_a_failure() {
     let mut fake = Fake::new();
     let mut state = set_up(&mut fake);
@@ -690,3 +683,6 @@ fn a_password_that_cannot_be_deleted_is_named_and_the_others_still_go() {
     assert!(stuck.is_file() && folders[0].is_dir());
     assert!(!folders[1].exists());
 }
+
+#[cfg(windows)]
+mod windows;

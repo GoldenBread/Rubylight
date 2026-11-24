@@ -327,6 +327,7 @@ fn a_launcher_is_no_game() {
     }
 }
 
+#[cfg(windows)]
 #[test]
 fn an_unreal_root_stub_starts_its_one_shipping_exe() {
     let root = tempfile::tempdir().unwrap();

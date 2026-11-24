@@ -522,6 +522,7 @@ fn manually_imported_steam_games_survive_automatic_removal_and_keep_existing_met
     );
     assert_eq!(apps, saved);
 }
+#[cfg(windows)]
 #[test]
 fn a_gog_registry_record_without_an_info_file_is_a_game() {
     let values = gog_registry_values();
