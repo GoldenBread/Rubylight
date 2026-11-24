@@ -258,8 +258,9 @@ impl Harness {
             directory,
             started,
         };
+        // Three times WAIT, as for the stop below: 5 s ran out once on the fork's Linux CI.
         for port in [ports.http, ports.https, ports.rtsp] {
-            let deadline = Instant::now() + WAIT;
+            let deadline = Instant::now() + WAIT * 3;
             loop {
                 if tokio::net::TcpStream::connect(address(port)).await.is_ok() {
                     break;
