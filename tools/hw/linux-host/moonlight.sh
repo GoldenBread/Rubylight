@@ -14,8 +14,10 @@ else MOONLIGHT=${MOONLIGHT:-flatpak run com.moonlight_stream.Moonlight}; fi
 HOST_EXE=$(realpath "$HOST_EXE")
 PORT=38989
 CODEC=${1:-HEVC}; W=${2:-1920}; H=${3:-1080}; FPS=${4:-60}; SECS=${5:-30}; KBPS=${6:-30000}
-rm -rf "$WORK"; mkdir -p "$WORK/profile/logs"
+rm -rf "$WORK"; mkdir -p "$WORK/profile/logs" "$WORK/moonlight-config"
 P=$WORK/profile
+# Moonlight keeps its pairings in a folder of the run's own, not the user's settings.
+export XDG_CONFIG_HOME="$WORK/moonlight-config"
 cat > "$P/sunshine.conf" <<EOF
 port = $PORT
 upnp = false
@@ -71,8 +73,14 @@ for c in s.get(web + '/api/clients/list', timeout=10).json()['clients']:
     s.post(web + '/api/clients/update', json={'uuid': c['uuid'], 'perm': 0x071f1f00}, timeout=10).raise_for_status()
 print('clients', [c['name'] for c in s.get(web + '/api/clients/list', timeout=10).json()['clients']])
 EOF
-wait $PAIR || { cat "$WORK/pair.log"; exit 1; }
-echo "PAIRED: $(tail -1 "$WORK/pair.log")"
+# moonlight-qt 6.2's `pair` stores the pairing but may not exit afterwards: the host's own line
+# says when it is done.
+for i in $(seq 30); do
+  grep -q 'Client paired and saved' "$P/logs/butterpollo.log" && break; sleep 1
+done
+grep -q 'Client paired and saved' "$P/logs/butterpollo.log" || { cat "$WORK/pair.log"; exit 1; }
+sleep 3; kill $PAIR 2>/dev/null || true; wait $PAIR 2>/dev/null || true
+echo "PAIRED"
 # The stream, inside a headless gamescope of its own, for SECS seconds.
 timeout $((SECS + 15)) gamescope --backend headless -W "$W" -H "$H" -r "$FPS" -- \
   sh -c "$MOONLIGHT stream 127.0.0.1:$PORT Test --resolution ${W}x${H} --fps $FPS --bitrate $KBPS --video-codec $CODEC --display-mode fullscreen --audio-config stereo --quit-after & M=\$!; sleep $SECS; $MOONLIGHT quit 127.0.0.1:$PORT >/dev/null 2>&1; sleep 3; kill \$M 2>/dev/null; wait \$M" \
