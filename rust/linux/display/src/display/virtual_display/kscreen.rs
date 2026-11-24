@@ -39,6 +39,9 @@ pub struct Output {
     pub connected: bool,
     pub current_mode_id: String,
     pub modes: Vec<Mode>,
+    /// The ids of the modes the monitor prefers (its native one), which KScreen keeps right
+    /// when it numbers and orders the modes afresh.
+    pub preferred_modes: Vec<String>,
     pub pos: Pos,
     pub priority: i32,
     pub scale: f64,
@@ -55,6 +58,7 @@ impl Default for Output {
             connected: false,
             current_mode_id: String::new(),
             modes: Vec::new(),
+            preferred_modes: Vec::new(),
             pos: Pos::default(),
             priority: 0,
             scale: 1.0,
@@ -305,10 +309,11 @@ pub fn apply_args(
 /// Points each saved output's mode at the id `present` gives that mode now. KScreen numbers
 /// modes afresh when an output comes or goes (DP-1's 1920x1080@60 was mode 51, then 99 while a
 /// virtual output was on), so a saved id can name another mode. Modes alike in name, size and
-/// rate differ in timings KScreen does not show (DP-1 lists 1920x1080@60 at 60 Hz twice: its
-/// preferred mode first, another later); KScreen keeps their order, so the one at the same rank
-/// among them is taken. A mode `present` no longer lists is left out, and the output keeps the
-/// mode it has.
+/// rate differ in timings KScreen does not show: DP-1 lists 1920x1080@60 at 60 Hz twice, its
+/// preferred mode and another. KScreen reorders them too (the preferred one is first, and last
+/// while a virtual output is on), but marks the preferred one in both, so the match is the
+/// mode alike and as preferred, at the same rank among those. A mode `present` no longer lists
+/// is left out, and the output keeps the mode it has.
 pub fn renumber_modes(snapshot: &mut Layout, present: &Layout) {
     let alike = |a: &Mode, b: &Mode| {
         a.name == b.name
@@ -325,10 +330,18 @@ pub fn renumber_modes(snapshot: &mut Layout, present: &Layout) {
             continue;
         };
         let mode = &saved.modes[at];
-        let rank = saved.modes[..at].iter().filter(|m| alike(m, mode)).count();
-        let now = present
-            .output(&saved.name)
-            .and_then(|o| o.modes.iter().filter(|m| alike(m, mode)).nth(rank));
+        let preferred = |o: &Output, m: &Mode| o.preferred_modes.contains(&m.id);
+        let wanted = preferred(saved, mode);
+        let rank = saved.modes[..at]
+            .iter()
+            .filter(|m| alike(m, mode) && preferred(saved, m) == wanted)
+            .count();
+        let now = present.output(&saved.name).and_then(|o| {
+            o.modes
+                .iter()
+                .filter(|m| alike(m, mode) && preferred(o, m) == wanted)
+                .nth(rank)
+        });
         saved.current_mode_id = now.map(|m| m.id.clone()).unwrap_or_default();
     }
 }
@@ -516,6 +529,40 @@ mod tests {
         }
         renumber_modes(&mut twin, &renumbered);
         assert_eq!(twin.output("DP-1").unwrap().current_mode_id, "97");
+        // DP-1 on this PC: its preferred 60 Hz mode is first, then a second 60 Hz one; while a
+        // virtual output is on, the second comes first and the preferred one last.
+        let dp = |modes: &[(&str, f64)], preferred: &str, current: &str| {
+            let mut output = Output {
+                name: "DP-1".into(),
+                current_mode_id: current.into(),
+                preferred_modes: vec![preferred.into()],
+                ..Output::default()
+            };
+            output.modes = modes
+                .iter()
+                .map(|(id, rate)| Mode {
+                    id: (*id).into(),
+                    name: "1920x1080@60".into(),
+                    refresh_rate: *rate,
+                    size: Size {
+                        width: 1920,
+                        height: 1080,
+                    },
+                })
+                .collect();
+            Layout {
+                outputs: vec![output],
+            }
+        };
+        let during = dp(&[("106", 60.0), ("107", 59.94), ("99", 60.0)], "99", "99");
+        for (saved, expected) in [("51", "99"), ("58", "106"), ("59", "107")] {
+            let mut snapshot = dp(&[("51", 60.0), ("58", 60.0), ("59", 59.94)], "51", saved);
+            renumber_modes(&mut snapshot, &during);
+            assert_eq!(
+                snapshot.outputs[0].current_mode_id, expected,
+                "saved {saved}"
+            );
+        }
         // A mode the output no longer lists is not set.
         let mut gone = layout();
         present.outputs.retain(|o| o.name != "DP-1");
