@@ -13,25 +13,37 @@ use std::{
     time::{Duration, Instant},
 };
 
-fn pads() -> (
+pub(super) fn pads() -> (
+    GamepadThread,
+    std::sync::Arc<butterpollo_session::session::Warnings>,
+) {
+    pads_with(0, |_| {})
+}
+
+/// Pads for the `gamepad` setting `profile`, with the input policy changed by `adjust`.
+pub(super) fn pads_with(
+    profile: u16,
+    adjust: impl FnOnce(&mut butterpollo_input_policy::input_policy::Policy),
+) -> (
     GamepadThread,
     std::sync::Arc<butterpollo_session::session::Warnings>,
 ) {
     let warnings = std::sync::Arc::new(butterpollo_session::session::Warnings::default());
-    let policy = butterpollo_input_policy::input_policy::Policy::resolve(
+    let mut policy = butterpollo_input_policy::input_policy::Policy::resolve(
         &butterpollo_config::config::Config::default(),
     )
     .unwrap();
+    adjust(&mut policy);
     (
-        GamepadThread::new(0, policy, warnings.clone()).unwrap(),
+        GamepadThread::new(profile, policy, warnings.clone()).unwrap(),
         warnings,
     )
 }
 
 /// An event the kernel delivered: type, code, value.
-type Ev = (u16, u16, i32);
+pub(super) type Ev = (u16, u16, i32);
 
-fn read_events(device: &mut File) -> Vec<Ev> {
+pub(super) fn read_events(device: &mut File) -> Vec<Ev> {
     let mut seen = Vec::new();
     let mut buf = [0u8; 24 * 64];
     while let Ok(n) = device.read(&mut buf) {
@@ -49,20 +61,20 @@ fn read_events(device: &mut File) -> Vec<Ev> {
     seen
 }
 
-fn nonblocking(file: &File) {
+pub(super) fn nonblocking(file: &File) {
     // SAFETY: `file` is open; F_SETFL takes an integer.
     unsafe { libc::fcntl(file.as_raw_fd(), libc::F_SETFL, libc::O_NONBLOCK) };
 }
 
 /// Opens an event node as a game does, waiting for udev to make it accessible.
-fn open_event(sys_dir: &Path) -> File {
+pub(super) fn open_event(sys_dir: &Path) -> File {
     try_open_event(sys_dir, Duration::from_secs(8))
         .unwrap_or_else(|| panic!("no accessible event node in {}", sys_dir.display()))
 }
 
 /// The event node of the input device `sys_dir`, if udev makes it accessible within `wait`.
 /// Only joystick devices get an ACL for the logged-in user; the rest need the `input` group.
-fn try_open_event(sys_dir: &Path, wait: Duration) -> Option<File> {
+pub(super) fn try_open_event(sys_dir: &Path, wait: Duration) -> Option<File> {
     let deadline = Instant::now() + wait;
     loop {
         let found = std::fs::read_dir(sys_dir).ok().and_then(|dir| {
@@ -87,9 +99,9 @@ fn try_open_event(sys_dir: &Path, wait: Duration) -> Option<File> {
 /// events read as `(3, axis, value)` and `(1, button, value)` like an event node's when the
 /// device's axes and buttons are numbered from 0 in order. A first read also reports the
 /// device's state at that time (joydev's initial events).
-struct Joydev(File);
+pub(super) struct Joydev(File);
 impl Joydev {
-    fn open(sys_dir: &Path) -> Option<Self> {
+    pub(super) fn open(sys_dir: &Path) -> Option<Self> {
         let name = std::fs::read_dir(sys_dir)
             .ok()?
             .flatten()
@@ -99,7 +111,7 @@ impl Joydev {
         nonblocking(&file);
         Some(Self(file))
     }
-    fn read(&mut self) -> Vec<Ev> {
+    pub(super) fn read(&mut self) -> Vec<Ev> {
         let mut seen = Vec::new();
         let mut buf = [0u8; 8 * 64];
         while let Ok(n) = self.0.read(&mut buf) {
@@ -126,7 +138,7 @@ const fn eviocrmff() -> libc::c_ulong {
 }
 
 /// Uploads a rumble effect to the event node as a game does and returns its id.
-fn upload_rumble(device: &File, strong: u16, weak: u16, length_ms: u16) -> i16 {
+pub(super) fn upload_rumble(device: &File, strong: u16, weak: u16, length_ms: u16) -> i16 {
     let mut effect = [0u8; 48];
     effect[..2].copy_from_slice(&0x50u16.to_ne_bytes());
     effect[2..4].copy_from_slice(&(-1i16).to_ne_bytes());
@@ -139,14 +151,14 @@ fn upload_rumble(device: &File, strong: u16, weak: u16, length_ms: u16) -> i16 {
     i16::from_ne_bytes([effect[2], effect[3]])
 }
 
-fn remove_effect(device: &File, id: i16) {
+pub(super) fn remove_effect(device: &File, id: i16) {
     // SAFETY: EVIOCRMFF takes the effect id as an integer.
     let result = unsafe { libc::ioctl(device.as_raw_fd(), eviocrmff(), libc::c_int::from(id)) };
     assert_eq!(result, 0, "EVIOCRMFF: {}", std::io::Error::last_os_error());
 }
 
 /// An `EV_FF` event that plays effect `id` `count` times (0 stops it).
-fn play(device: &mut File, id: i16, count: i32) {
+pub(super) fn play(device: &mut File, id: i16, count: i32) {
     let mut event = [0u8; 24];
     event[16..18].copy_from_slice(&0x15u16.to_ne_bytes());
     event[18..20].copy_from_slice(&(id as u16).to_ne_bytes());
@@ -155,7 +167,7 @@ fn play(device: &mut File, id: i16, count: i32) {
 }
 
 /// The feedback reports (kind, data) that arrive within `timeout` or until `done` holds.
-fn feedback_until(
+pub(super) fn feedback_until(
     pads: &GamepadThread,
     timeout: Duration,
     done: impl Fn(&[(u16, Vec<u8>)]) -> bool,
@@ -173,7 +185,7 @@ fn feedback_until(
     seen
 }
 
-fn state(buttons: u32, left: u8, sticks: [i16; 4]) -> Event {
+pub(super) fn state(buttons: u32, left: u8, sticks: [i16; 4]) -> Event {
     Event::Controller {
         id: 0,
         active: 1,
@@ -240,7 +252,7 @@ fn uinput_pad_rumbles() {
 }
 
 /// The sysfs folder of the HID device whose `phys` is `phys`.
-fn find_hid(phys: &str) -> PathBuf {
+pub(super) fn find_hid(phys: &str) -> PathBuf {
     let deadline = Instant::now() + Duration::from_secs(8);
     loop {
         for entry in std::fs::read_dir("/sys/class/hidraw").unwrap().flatten() {
@@ -259,7 +271,7 @@ fn find_hid(phys: &str) -> PathBuf {
 }
 
 /// The sysfs input folder under `hid` whose name ends with `suffix`.
-fn find_input(hid: &Path, suffix: &str) -> PathBuf {
+pub(super) fn find_input(hid: &Path, suffix: &str) -> PathBuf {
     let deadline = Instant::now() + Duration::from_secs(8);
     loop {
         if let Ok(dir) = std::fs::read_dir(hid.join("input")) {
@@ -276,7 +288,7 @@ fn find_input(hid: &Path, suffix: &str) -> PathBuf {
 }
 
 /// The hidraw node of the HID device `hid` (readable by this user through the Steam rules).
-fn hidraw_name(hid: &Path) -> std::ffi::OsString {
+pub(super) fn hidraw_name(hid: &Path) -> std::ffi::OsString {
     std::fs::read_dir(hid.join("hidraw"))
         .unwrap()
         .flatten()
@@ -285,7 +297,7 @@ fn hidraw_name(hid: &Path) -> std::ffi::OsString {
         .file_name()
 }
 
-fn hidraw(hid: &Path) -> File {
+pub(super) fn hidraw(hid: &Path) -> File {
     let name = hidraw_name(hid);
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
@@ -303,7 +315,7 @@ fn hidraw(hid: &Path) -> File {
 }
 
 /// The raw input reports that arrive on `hidraw` within `wait`.
-fn raw_reports(hidraw: &File, wait: Duration) -> Vec<Vec<u8>> {
+pub(super) fn raw_reports(hidraw: &File, wait: Duration) -> Vec<Vec<u8>> {
     let deadline = Instant::now() + wait;
     let mut reports = Vec::new();
     let mut file = hidraw;
@@ -318,7 +330,11 @@ fn raw_reports(hidraw: &File, wait: Duration) -> Vec<Vec<u8>> {
 }
 
 /// Reads events from `device` for up to `timeout` until `done` holds.
-fn events_until(device: &mut File, timeout: Duration, done: impl Fn(&[Ev]) -> bool) -> Vec<Ev> {
+pub(super) fn events_until(
+    device: &mut File,
+    timeout: Duration,
+    done: impl Fn(&[Ev]) -> bool,
+) -> Vec<Ev> {
     let deadline = Instant::now() + timeout;
     let mut seen = Vec::new();
     while Instant::now() < deadline && !done(&seen) {

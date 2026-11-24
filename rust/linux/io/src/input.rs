@@ -1,14 +1,16 @@
 //! Input injection for streams: keyboard and mouse into the game's gamescope session through
-//! XTEST, and virtual gamepads: an Xbox 360 pad on `/dev/uinput`, or a DualSense on `/dev/uhid`
-//! that the kernel gives motion sensors and a touchpad, both with rumble back to the client
-//! (the DualSense also lights and adaptive triggers). Touch, pen and a tablet's touchpad are
-//! not injected yet, so the host offers clients none of them. The event and report types are
-//! the same as on Windows.
-
+//! XTEST, and virtual gamepads: an Xbox 360 pad on `/dev/uinput`, or on `/dev/uhid` the pads
+//! the Windows host presents that the kernel has a driver for (a DualSense and a DualShock 4 on
+//! hid-playstation, a Switch Pro Controller on hid-nintendo, a Steam Deck and a Steam
+//! Controller on hid-steam), each with motion, touchpad and battery where the controller has
+//! them and with rumble, lights and trigger effects back to the client. `pad_choice` picks the
+//! pad as Windows does. Touch, pen and a tablet's touchpad are not injected yet, so the host
+//! offers clients none of them. The event and report types are the same as on Windows.
 use anyhow::Result;
 use butterpollo_input_policy::input::Input as Event;
 use std::{sync::Arc, time::Instant};
 
+mod deck_model;
 mod desktop;
 mod evdev_desktop;
 mod evdev_keys;
@@ -18,13 +20,19 @@ mod gamepad_thread;
 mod hid_pad;
 mod keyboard_mouse;
 mod keymap;
+mod lizard;
+mod pad_choice;
 #[cfg(test)]
 mod pad_tests;
 #[cfg(test)]
 mod tests;
 mod uhid;
+mod uhid_pad;
+#[cfg(test)]
+mod uhid_pad_tests;
 mod uinput;
 mod usbip_pad;
+mod vhf_model;
 mod xserver;
 
 pub use desktop::{

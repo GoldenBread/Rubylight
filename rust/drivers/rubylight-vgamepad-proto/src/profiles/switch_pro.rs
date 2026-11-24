@@ -198,21 +198,54 @@ const fn clamp_i16(value: i64) -> i16 {
     }
 }
 
+/// Where the factory stick calibration is in the controller's flash, and its size.
+const STICK_CALIBRATION: u32 = 0x603D;
+const STICK_CALIBRATION_SIZE: usize = 18;
+
 fn read_spi(address: u32, length: u8, out: &mut [u8]) {
     let n = usize::from(length).min(out.len());
     out[..n].fill(0xFF);
 
     match address {
-        0x603D => {
-            if n < 18 {
-                return;
+        // The factory stick calibration, the left stick's 9 bytes then the right stick's. SDL
+        // reads both at once; the Linux kernel's hid-nintendo reads each stick on its own
+        // (0x603D and 0x6046), so any read within the 18 bytes gets its part.
+        STICK_CALIBRATION..=0x604D => {
+            let mut calibration = [0u8; STICK_CALIBRATION_SIZE];
+            pack_stick(
+                &mut calibration[0..3],
+                STICK_RANGE as u16,
+                STICK_RANGE as u16,
+            );
+            pack_stick(
+                &mut calibration[3..6],
+                STICK_CENTER as u16,
+                STICK_CENTER as u16,
+            );
+            pack_stick(
+                &mut calibration[6..9],
+                STICK_RANGE as u16,
+                STICK_RANGE as u16,
+            );
+            pack_stick(
+                &mut calibration[9..12],
+                STICK_CENTER as u16,
+                STICK_CENTER as u16,
+            );
+            pack_stick(
+                &mut calibration[12..15],
+                STICK_RANGE as u16,
+                STICK_RANGE as u16,
+            );
+            pack_stick(
+                &mut calibration[15..18],
+                STICK_RANGE as u16,
+                STICK_RANGE as u16,
+            );
+            let start = (address - STICK_CALIBRATION) as usize;
+            if start + n <= STICK_CALIBRATION_SIZE {
+                out[..n].copy_from_slice(&calibration[start..start + n]);
             }
-            pack_stick(&mut out[0..3], STICK_RANGE as u16, STICK_RANGE as u16);
-            pack_stick(&mut out[3..6], STICK_CENTER as u16, STICK_CENTER as u16);
-            pack_stick(&mut out[6..9], STICK_RANGE as u16, STICK_RANGE as u16);
-            pack_stick(&mut out[9..12], STICK_CENTER as u16, STICK_CENTER as u16);
-            pack_stick(&mut out[12..15], STICK_RANGE as u16, STICK_RANGE as u16);
-            pack_stick(&mut out[15..18], STICK_RANGE as u16, STICK_RANGE as u16);
         }
         0x6020 => {
             if n < 24 {
@@ -566,6 +599,23 @@ mod tests {
         );
         let ly = u16::from(r[7] >> 4) | (u16::from(r[8]) << 4);
         assert!(ly > STICK_CENTER as u16);
+
+        // Each stick's calibration on its own, as hid-nintendo reads it.
+        let mut cmd = [0u8; 64];
+        cmd[0] = RUMBLE_SUBCOMMAND_ID;
+        cmd[10] = SUB_SPI_READ;
+        cmd[11..15].copy_from_slice(&0x6046u32.to_le_bytes());
+        cmd[15] = 9;
+        assert_eq!(
+            handle_subcommand(&cmd, &input, &mut st, &mut reply),
+            REPORT_SIZE
+        );
+        let mut both = [0u8; 18];
+        read_spi(0x603D, 18, &mut both);
+        assert_eq!(&reply[20..29], &both[9..18]);
+        cmd[11..15].copy_from_slice(&0x603Du32.to_le_bytes());
+        handle_subcommand(&cmd, &input, &mut st, &mut reply);
+        assert_eq!(&reply[20..29], &both[..9]);
 
         // SPI stick calibration + motion calibration + IMU rotation.
         let mut cmd = [0u8; 64];

@@ -49,13 +49,14 @@ pub(super) fn available() -> bool {
 /// driver requires to be unique among the DualSenses it drives.
 static SLOTS: AtomicU16 = AtomicU16::new(0);
 
-struct Slot(u8);
+/// A pad's place among the process's uhid pads.
+pub(super) struct Slot(pub(super) u8);
 impl Slot {
-    fn reserve() -> Result<Self> {
+    pub(super) fn reserve() -> Result<Self> {
         loop {
             let taken = SLOTS.load(Ordering::Acquire);
             let Some(slot) = (0..16u8).find(|slot| taken & (1 << slot) == 0) else {
-                bail!("all 16 virtual DualSense slots are in use");
+                bail!("all 16 virtual HID pad slots are in use");
             };
             if SLOTS
                 .compare_exchange(

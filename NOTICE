@@ -527,6 +527,14 @@ and rust/drivers/rubylight-vgamepad/LICENSE-MIT:
 - Input report pacing pump and Steam Controller haptic/settings rings (from
   driver/src/report_pump.{h,cpp} and driver/src/steam_haptic_queue.h):
   rust/drivers/rubylight-vgamepad-proto/src/report_pump.rs and steam_haptic_queue.rs.
+- The Linux host runs the same profiles and lifecycle state machine over /dev/uhid
+  (rust/linux/io/src/input/vhf_model.rs, uhid_pad.rs) for a Switch Pro Controller, a DualShock 4
+  and a Steam Controller, and the Steam Deck model of rust/core/input-policy/src/steam_deck.rs
+  (InputPlumber's captures, above) in deck_model.rs, so that the kernel's hid-nintendo,
+  hid-playstation and hid-steam drivers (GPL-2.0-or-later, read for their start-up exchanges,
+  none of their code is copied) bind them. The Switch Pro Controller profile there also answers
+  reads of one stick's calibration, which hid-nintendo makes (a change to
+  rust/drivers/rubylight-vgamepad-proto/src/profiles/switch_pro.rs, modified 2026-11-24 for Rubylight).
 - HID/PID profiles, descriptors, reports, motion/touch/battery encoding and force-feedback engine
   (from driver/src/{profile,xbox_one,xbox_series,dualshock4,dualsense,switch_pro,steam_controller,
   pid_ff}.{h,cpp} and include/libvirtualgamepad/{ds4_usb,ds5_usb,sc26_usb}.h):
