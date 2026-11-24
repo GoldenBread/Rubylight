@@ -12,7 +12,7 @@ Keep the copyright and license notices and credit RamazanKara as the original au
 
 Nightjar, the client, lives in `client/` ([client/AGENTS.md](client/AGENTS.md)).
 
-- Start from the [code map](docs/code-map.md) and its narrowest test; fix the map when code moves (`python tools/code_map.py check`). Search `rust/PERFORMANCE.md`, `rust/RELEASE_NOTES.md`, `docs/configuration.md` and `docs/status.md`, never read them whole. Guides: [builds](docs/building.md), [releases](rust/release/README.md).
+- Start from the [code map](docs/code-map.md) and its narrowest test; fix the map when code moves (`python tools/code_map.py check`). On-demand workflows live in `.agents/skills/`; batch locale edits use `tools/i18n.py` and boilerplate uses `tools/scaffold.py`. Search `rust/PERFORMANCE.md`, `rust/RELEASE_NOTES.md`, `docs/configuration.md` and `docs/status.md`, never read them whole. Guides: [builds](docs/building.md), [releases](rust/release/README.md).
 - Internal names stay Butterpollo/ApolloService; Rubylight is the brand. Preserve `PROTOCOL_VERSION` and Moonlight compatibility, gate client extras by host capabilities, and land protocol changes with their client side.
 - Keep AMD AMF, NVIDIA NVENC, Windows 10, physical displays, WGC, Desktop Duplication and D3D11 working. NVIDIA code is checked against the vendor's headers and samples ([how](docs/nvenc.md#checking-nvidia-code)) and never claimed as run on hardware.
 - Fail visibly instead of switching encoders silently; add no latency to the default path; performance claims need our own release-build measurements.
