@@ -137,7 +137,7 @@ fn raise_clock(va: &Va, warnings: &dyn WarningSink) -> Option<crate::encoder_clo
             warnings.set(
                 "encoder_clock",
                 &format!(
-                    "The GPU's video encoder runs at its low clock at 60 fps and below, about twice as slow per frame, because the host may not raise it ({error:#})."
+                    "The GPU runs at its low clocks at 60 fps and below, where each frame takes about four times as long, because the host may not raise them ({error:#})."
                 ),
             );
             None

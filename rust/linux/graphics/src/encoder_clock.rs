@@ -1,21 +1,21 @@
 //! The video encoder's clock on AMD GPUs while a stream runs.
 //!
-//! The GPU's firmware runs its video engines (VCN) only as fast as their load needs: a 60 fps
-//! stream fits at the engine's low clock, where a 1080p HEVC frame takes about twice as long
-//! as at the top one (docs/linux-host-spike.md, "The encoder's clock follows its load"). While
-//! a stream runs, [`raise`] pins each video clock domain (`pp_dpm_vclk`, `pp_dpm_vclk1`) to its
-//! top level through the amdgpu sysfs files, leaving the shader and memory clocks dynamic, and
-//! the returned [`Raised`] puts the automatic mode back when the last stream ends.
+//! The GPU's firmware runs its clocks only as fast as their load needs: a 60 fps stream fits at
+//! low clocks, where a 1080p HEVC frame takes about four times as long as at the top ones
+//! (docs/linux-host-spike.md, "The encoder's clock follows its load"). While a stream runs,
+//! [`raise`] sets the GPU's performance level to `high` through the amdgpu sysfs file, and the
+//! returned [`Raised`] puts `auto` back when the last stream ends. Forcing only the video
+//! clocks (`manual` with `pp_dpm_vclk`) did not hold them up on an RX 7800 XT and gained 5%.
 //!
-//! The files are root's. `rust/linux/packaging/udev/70-rubylight-encoder-clock.rules` lets
-//! the `video` group write these three, and only these; without it [`raise`] fails with the
-//! rule's name and the stream runs at the firmware's clock, as before.
+//! The file is root's. `rust/linux/packaging/udev/70-rubylight-encoder-clock.rules` lets the
+//! `video` group write it; without it [`raise`] fails with the rule's name and the stream runs
+//! at the firmware's clocks, as before.
 //!
 //! Every change is journaled before it is made, so a host that crashed mid-stream restores
 //! the clock at its next start ([`recover`]). A GPU whose level someone else set (anything but
 //! `auto`) is left alone.
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use std::{
     path::{Path, PathBuf},
     sync::Mutex,
@@ -23,10 +23,8 @@ use std::{
 
 /// The level the firmware chooses by itself; the only one [`raise`] changes and restores.
 const AUTO: &str = "auto";
-/// The level that lets the clock files take a forced level.
-const MANUAL: &str = "manual";
-/// The video clock domains: one per VCN instance.
-const DOMAINS: [&str; 2] = ["pp_dpm_vclk", "pp_dpm_vclk1"];
+/// The level a stream holds: every clock at its top.
+const HIGH: &str = "high";
 const LEVEL: &str = "power_dpm_force_performance_level";
 /// The udev rule that grants the `video` group these files.
 pub const RULE: &str = "rust/linux/packaging/udev/70-rubylight-encoder-clock.rules";
@@ -61,14 +59,6 @@ fn journal_of(folder: &Path, device: &Path) -> PathBuf {
     folder.join(format!("encoder-clock-{tag}"))
 }
 
-/// The highest level index a clock file lists (`0: 24Mhz`, `1: 513Mhz *`, `2: 2934Mhz`).
-fn top_level(listing: &str) -> Option<u32> {
-    listing
-        .lines()
-        .filter_map(|line| line.split(':').next()?.trim().parse().ok())
-        .max()
-}
-
 fn read(path: &Path) -> Result<String> {
     std::fs::read_to_string(path)
         .map(|text| text.trim().to_owned())
@@ -86,11 +76,18 @@ fn write(path: &Path, value: &str) -> Result<()> {
     })
 }
 
-/// Pins the video clocks of the GPU at `device` (its sysfs device folder) to their top level
-/// while the returned value lives; `None` when the GPU has no such control, or when someone
+/// Holds the clocks of the GPU at `device` (its sysfs device folder) at their top level while
+/// the returned value lives; `None` when the GPU has no such control, or when someone
 /// else set its level (anything but `auto`), which is then theirs. Several streams share one
 /// raise.
 pub fn raise(device: &Path) -> Result<Option<Raised>> {
+    // For A/B measurements of the raise against the firmware's own choice.
+    if std::env::var("RUBYLIGHT_ENCODER_CLOCK").is_ok_and(|value| value == "firmware") {
+        tracing::info!(
+            "RUBYLIGHT_ENCODER_CLOCK=firmware: the GPU's clocks are left to the firmware"
+        );
+        return Ok(None);
+    }
     raise_in(device, &journal_folder())
 }
 
@@ -109,36 +106,19 @@ fn raise_in(device: &Path, journal_folder: &Path) -> Result<Option<Raised>> {
     }
     let level = read(&device.join(LEVEL))?;
     if level != AUTO {
-        tracing::info!(%level, "the GPU's performance level was set by someone else; its video clock is left as it is");
+        tracing::info!(%level, "the GPU's performance level was set by someone else; it is left as it is");
         return Ok(None);
-    }
-    let domains: Vec<(PathBuf, u32)> = DOMAINS
-        .iter()
-        .map(|name| device.join(name))
-        .filter(|path| path.exists())
-        .map(|path| {
-            let top = top_level(&read(&path)?).context("the clock file lists no level")?;
-            Ok((path, top))
-        })
-        .collect::<Result<_>>()?;
-    if domains.is_empty() {
-        bail!("this GPU lists no video clock to raise");
     }
     std::fs::create_dir_all(journal_folder)
         .with_context(|| format!("creating {}", journal_folder.display()))?;
     std::fs::write(&journal, device.to_string_lossy().as_bytes())
         .with_context(|| format!("writing {}", journal.display()))?;
-    let forced = write(&device.join(LEVEL), MANUAL).and_then(|()| {
-        domains
-            .iter()
-            .try_for_each(|(path, top)| write(path, &top.to_string()))
-    });
-    if let Err(error) = forced {
+    if let Err(error) = write(&device.join(LEVEL), HIGH) {
         restore(device, &journal);
         return Err(error);
     }
     holders.push((device.to_owned(), 1));
-    tracing::info!(device = %device.display(), "video encoder clock raised for the stream");
+    tracing::info!(device = %device.display(), "GPU clocks raised for the stream");
     Ok(Some(Raised {
         device: device.to_owned(),
         journal,
@@ -170,7 +150,7 @@ impl Drop for Raised {
         if holders[index].1 == 0 {
             holders.remove(index);
             restore(&self.device, &self.journal);
-            tracing::info!(device = %self.device.display(), "video encoder clock back to automatic");
+            tracing::info!(device = %self.device.display(), "GPU clocks back to automatic");
         }
     }
 }
@@ -210,21 +190,11 @@ fn recover_in(folder: &Path) {
 mod tests {
     use super::*;
 
-    /// A fake amdgpu device folder with the three files.
+    /// A fake amdgpu device folder with its level file.
     fn device(root: &Path, level: &str) -> PathBuf {
         let device = root.join("device");
         std::fs::create_dir_all(&device).unwrap();
         std::fs::write(device.join(LEVEL), format!("{level}\n")).unwrap();
-        std::fs::write(
-            device.join("pp_dpm_vclk"),
-            "0: 24Mhz *\n1: 513Mhz\n2: 2934Mhz\n",
-        )
-        .unwrap();
-        std::fs::write(
-            device.join("pp_dpm_vclk1"),
-            "0: 24Mhz *\n1: 513Mhz\n2: 2200Mhz\n",
-        )
-        .unwrap();
         device
     }
 
@@ -236,21 +206,12 @@ mod tests {
     }
 
     #[test]
-    fn the_top_level_is_the_highest_index_listed() {
-        assert_eq!(top_level("0: 24Mhz *\n1: 513Mhz\n2: 2934Mhz\n"), Some(2));
-        assert_eq!(top_level("S: 28Mhz *\n1: 513Mhz\n2: 2934Mhz\n"), Some(2));
-        assert_eq!(top_level(""), None);
-    }
-
-    #[test]
     fn streams_share_a_raise_and_the_last_one_restores_it() {
         let root = root("share");
         let device = device(&root, AUTO);
         let journal = root.join("state");
         let first = raise_in(&device, &journal).unwrap().unwrap();
-        assert_eq!(read(&device.join(LEVEL)).unwrap(), MANUAL);
-        assert_eq!(read(&device.join("pp_dpm_vclk")).unwrap(), "2");
-        assert_eq!(read(&device.join("pp_dpm_vclk1")).unwrap(), "2");
+        assert_eq!(read(&device.join(LEVEL)).unwrap(), HIGH);
         assert!(
             journal_of(&journal, &device).exists(),
             "journaled while raised"
@@ -259,7 +220,7 @@ mod tests {
         drop(first);
         assert_eq!(
             read(&device.join(LEVEL)).unwrap(),
-            MANUAL,
+            HIGH,
             "one stream still runs"
         );
         drop(second);
@@ -271,14 +232,14 @@ mod tests {
     #[test]
     fn a_level_someone_else_set_is_left_alone() {
         let root = root("other");
-        let device = device(&root, "high");
+        let device = device(&root, "profile_peak");
         assert!(raise_in(&device, &root.join("state")).unwrap().is_none());
         assert!(
             raise_in(&root.join("no-gpu"), &root.join("state"))
                 .unwrap()
                 .is_none()
         );
-        assert_eq!(read(&device.join(LEVEL)).unwrap(), "high");
+        assert_eq!(read(&device.join(LEVEL)).unwrap(), "profile_peak");
         std::fs::remove_dir_all(&root).unwrap();
     }
 
@@ -289,7 +250,7 @@ mod tests {
         let journal = root.join("state");
         std::mem::forget(raise_in(&device, &journal).unwrap());
         HOLDERS.lock().unwrap().retain(|(held, _)| *held != device);
-        assert_eq!(read(&device.join(LEVEL)).unwrap(), MANUAL);
+        assert_eq!(read(&device.join(LEVEL)).unwrap(), HIGH);
         recover_in(&journal);
         assert_eq!(read(&device.join(LEVEL)).unwrap(), AUTO);
         assert!(!journal_of(&journal, &device).exists());

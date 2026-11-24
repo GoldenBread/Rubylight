@@ -108,12 +108,18 @@ pub fn prepare_stream(
         );
     }
     // Otherwise, on Linux, an app with a command draws into its own gamescope session
-    // (`os_ext::game_command`), which the capture finds by itself once the game has started,
-    // and one without (the desktop) streams the user's desktop: no display of the system is
-    // prepared or changed either way.
+    // (`os_ext::game_command`), which the capture finds by itself once the game has started.
+    // The desktop app, and a game imported from a library, whose launcher (Steam, Heroic,
+    // Lutris) runs on the user's desktop and starts it there (`library::launch`), stream the
+    // desktop. No display of the system is prepared or changed either way.
     if cfg!(target_os = "linux") {
-        let desktop =
-            crate::stream::launch_app(h, launch).is_none_or(|app| app.cmd.trim().is_empty());
+        let desktop = crate::stream::launch_app(h, launch).is_none_or(|app| {
+            let imported = app
+                .extra
+                .get("launcher-command")
+                .and_then(serde_json::Value::as_str);
+            app.cmd.trim().is_empty() || imported == Some(app.cmd.as_str())
+        });
         let target = if desktop {
             DESKTOP_TARGET
         } else {

@@ -1,18 +1,14 @@
 //! Starting an imported game through its launcher, on Linux.
 //!
-//! # Steam games and the stream's session
+//! # Where the game runs
 //!
 //! A game started through a Steam client that is already running starts in that client's
-//! own environment (its X or Wayland display, its audio), not in the gamescope session the
-//! host built for the stream: `steam steam://rungameid/N` only hands the address to the
-//! running client over `~/.steam/steam.pipe` and exits. The game would run on the desktop
-//! and the stream would show an empty session. When no Steam is running, the same command
-//! starts the Steam client with the environment of the caller, so the client and the game
-//! it starts both live inside the stream's session. The host therefore runs **the Steam
-//! client itself inside the session** and refuses, visibly, to hand a game to a Steam that
-//! runs elsewhere ([`steam_elsewhere`]). Heroic and Lutris pass their address to a running
-//! instance the same way; for those the host cannot tell where the instance runs, so the
-//! limit is documented, not checked.
+//! own environment (its X or Wayland display, its audio): `steam steam://rungameid/N` only
+//! hands the address to the running client over `~/.steam/steam.pipe` and exits. Heroic and
+//! Lutris pass their address to a running instance the same way. The host therefore streams
+//! the user's desktop for a library game (`display_session::prepare_stream`) and starts its
+//! launcher there, with the host's own environment. [`steam_elsewhere`] still refuses,
+//! visibly, a Steam that runs on another display than the one the game is meant for.
 
 use anyhow::{Context, Result, bail};
 use butterpollo_session::library::Launch;

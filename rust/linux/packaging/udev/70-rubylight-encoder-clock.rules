@@ -1,7 +1,7 @@
-# Lets the video group raise an AMD GPU's video encoder clock while Rubylight streams, and put
-# it back to automatic afterwards (rust/linux/graphics/src/encoder_clock.rs). Only these three
-# files change group: the performance level and the two video clock domains. Install with
+# Lets the video group raise an AMD GPU's clocks while Rubylight streams, and put them back to
+# automatic afterwards (rust/linux/graphics/src/encoder_clock.rs). Only the performance level
+# file changes group. Install with
 #   sudo install -m 644 70-rubylight-encoder-clock.rules /etc/udev/rules.d/
 #   sudo udevadm control --reload && sudo udevadm trigger --subsystem-match=drm --action=change
 ACTION=="add|change", SUBSYSTEM=="drm", KERNEL=="card[0-9]*", ENV{DEVTYPE}=="drm_minor", DRIVERS=="amdgpu", \
-  RUN+="/bin/sh -c 'cd /sys%p/device && for f in power_dpm_force_performance_level pp_dpm_vclk pp_dpm_vclk1; do [ -e $$f ] && chgrp video $$f && chmod g+w $$f; done'"
+  RUN+="/bin/sh -c 'f=/sys%p/device/power_dpm_force_performance_level; [ -e $$f ] && chgrp video $$f && chmod g+w $$f'"

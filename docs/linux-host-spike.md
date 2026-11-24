@@ -10,7 +10,7 @@ Rubylight hosts on Windows only. The [3.0 plan](rubylight-3.0-plan.md) leaves a 
 | --- | --- |
 | Can a captured frame reach the encoder without entering system memory? | Yes. A gamescope session's frames arrive on PipeWire as DMA-BUFs and VA-API encodes them where they are. |
 | Is hardware HEVC encoding fast enough on Mesa? | Yes at 120 fps: 3.1 ms a frame at 2560x1440 and 5.7 ms at 3840x2160, none over its frame interval. |
-| Is it fast enough at 60 fps? | Not without work. The encoder's clock follows its load, and a 2560x1440 frame takes 10.6 ms at 75 fps and below. See [the clock](#the-encoders-clock-follows-its-load). |
+| Is it fast enough at 60 fps? | Yes, with the GPU's clocks held up during a stream: 1080p60 HEVC host time p95 1.7 ms instead of 7.0, for about 40 W more GPU power. See [the clock](#the-encoders-clock-follows-its-load). |
 | VA-API or Vulkan Video first? | VA-API. It encodes HEVC, 10-bit HEVC and AV1 here. Vulkan Video encodes H.264 and AV1, and its HEVC encoder fails to start through FFmpeg. |
 
 ## The machine
@@ -87,11 +87,20 @@ It is not the capture, the imported buffers or the frame rate the encoder is tol
 
 More load brings the fast clock back. With a second encode running flat out beside it, the 60 fps stream's frames took 2.62 ms. A small 640x368 encode at 240 fps beside it brought them to 8.20 ms only, and a second 60 fps stream beside it left them at 10.2 ms.
 
-This needs an answer before a Linux host can claim low latency at 60 fps. The candidates, none of them built or measured yet:
+### The answer: the GPU's level held at `high` while a stream runs
 
-- Raise the clock from a privileged helper while a stream runs (`power_dpm_force_performance_level`, or a power profile), and put it back at the stream's end, journaled like every other change the host makes to the PC.
-- Keep the encoder loaded with work of the host's own. It costs power, and the figures above say a little load is not enough.
-- Leave it, and state the encode time honestly per frame rate.
+`rust/linux/graphics/src/encoder_clock.rs` sets `power_dpm_force_performance_level` to `high` when a stream's encoder opens and puts `auto` back when the last one ends, journaled, so a host that crashed restores it at its next start. A level someone else set is left alone. The file is root's; `rust/linux/packaging/udev/70-rubylight-encoder-clock.rules` gives the `video` group that one file. Without the rule the stream runs as before and the console says why.
+
+Release builds, HEVC through gamescope to the headless client, 30 Mbit/s at 1080p and 50 at 2160p, runs interleaved (raised, firmware, firmware, raised; 60 s each at 1080p, 40 s at 2160p), GPU power the mean of `power1_average` over 30 s of each 1080p run:
+
+| | Host time mean / p95 / max, ms | Host output | GPU power |
+| --- | --- | --- | --- |
+| 1920x1080 60 fps, firmware's clocks | 6.94 / 7.0 / 7.1 | 60 fps | 18.9 W |
+| 1920x1080 60 fps, `high` | 1.70 / 1.7 / 1.9 | 60 fps | 58.5 W |
+| 3840x2160 60 fps, firmware's clocks | 12.87 / 22.2 / 23.0 | 55.9 fps | |
+| 3840x2160 60 fps, `high` | 5.37 / 5.4 / 5.5 | 60 fps | |
+
+The idle GPU drew 15.6 W. At 2160p the headless client's software decoder took 52 fps in both runs; the host's own output rate is the figure above. Forcing only the video clocks (`manual`, then the top index in `pp_dpm_vclk` and `pp_dpm_vclk1`) did not hold them up: the clock files read 24 and 513 MHz during the stream, host time 6.6 ms. `profile_peak` measured the same as `high`, 1.7 ms. Holding `high` costs about 40 W while a stream of a light picture runs; a game that loads the GPU raises its clocks by itself. `RUBYLIGHT_ENCODER_CLOCK=firmware` in the host's environment leaves the clocks to the firmware, for measurements.
 
 The Windows host meets the same kind of problem on NVIDIA, where a driver profile keeps the GPU's clocks up while it encodes (`rust/windows/graphics/src/nvidia_profile.rs`).
 
@@ -147,11 +156,13 @@ Phases, each with the check that ends it:
    - **Controllers**: rumble on the `uinput` Xbox pad (force feedback uploads become the client's rumble reports); a DualSense over `uhid` with motion, touchpad, rumble, lightbar and trigger effects, bound by the kernel's hid-playstation driver, chosen as Windows chooses its pads. DualShock 4, Switch and Steam Deck pads fall back to the Xbox pad. Games need `rust/linux/packaging/udev/71-rubylight-pads.rules` for the motion and touchpad devices.
    - **Microphone**: a PipeWire "Rubylight Microphone" source the client's microphone plays into, the default source while a stream runs and restored after, journaled.
    - **The user's desktop**: an app without a command streams the desktop through the ScreenCast portal (`desktop`, `desktop:N`; DMA-BUF, else memory buffers), with keyboard and mouse through `uinput`. Not yet streamed: the portal asks the user once, and no one has answered it on this PC.
-   - **Libraries**: Steam (3 games here), Heroic (Epic, GOG, Amazon, sideloaded; 1 here) and Lutris. A Steam game started while the user's Steam client runs opens in that client's session, not the stream's gamescope; the host does not handle that yet.
+   - **Libraries**: Steam (3 games here), Heroic (Epic, GOG, Amazon, sideloaded; 1 here) and Lutris. A launcher hands its game to an instance already running, so a library game streams the desktop the launcher runs on (not yet streamed, as the portal question is unanswered here).
    - **Clipboard** (gamescope's X selections; the desktop through `wl-clipboard`), a logind sleep inhibitor while streaming, suspend and power actions, and session end.
-   - **The encoder's clock**: raised to its top level while a stream's encoder lives and put back after, journaled for a crash (`rust/linux/graphics/src/encoder_clock.rs`). It needs `rust/linux/packaging/udev/70-rubylight-encoder-clock.rules`; without it the console says the encoder runs at its low clock. Not measured yet, as the rule needs root to install.
+   - **The encoder's clock**: the GPU's level held at `high` while a stream runs: 1080p60 host time p95 7.0 → 1.7 ms, and 2160p60 from 55.9 fps to 60 fps, for about 40 W ([the clock](#the-encoders-clock-follows-its-load)).
 
-   Left in this phase: HDR capture, the desktop stream once the portal is answered, Steam games while Steam runs, the other pads, and a measurement of the raised clock. Original phase description: HDR and 10-bit, the `uhid` controllers with rumble and motion, the microphone, intra refresh for loss recovery, AV1, PyroWave, the user's own desktop through the portal, library import from Steam, Heroic and Lutris, clipboard, sleep and wake.
+      - **Library games** stream the desktop, where their launcher (Steam, Heroic, Lutris) starts them; a game with its own command streams its gamescope session.
+
+   Left in this phase: HDR capture, the desktop stream once the portal is answered, the other pads. Original phase description: HDR and 10-bit, the `uhid` controllers with rumble and motion, the microphone, intra refresh for loss recovery, AV1, PyroWave, the user's own desktop through the portal, library import from Steam, Heroic and Lutris, clipboard, sleep and wake.
 5. **Ship.** Packages, a Linux CI workflow, the hardware matrix with only what ran, and capability flags so a client sees only what a Linux host offers.
 
 Out of scope: Radeon controls and AMD Direct Capture (ADLX has no Linux counterpart), the RTSS limiter, Lossless Scaling, Playnite, Nucleus Co-op, RTX HDR and RTX Video, the 1000 Hz VRR virtual display, and Intel.
