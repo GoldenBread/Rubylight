@@ -81,6 +81,10 @@ pub(crate) fn hold_off_wake_watch() -> display_arrangement::WakeWatchOff {
 /// so the work moves there (issue #6). If the virtual display or its layout
 /// still cannot be set up, the stream shows the physical display, as
 /// Vibepollo does while Windows is locked.
+/// The capture target of the game's gamescope session on Linux: the capture waits for the
+/// newest session to offer its picture.
+const GAMESCOPE_TARGET: &str = "gamescope";
+
 pub fn prepare_stream(
     h: &Shared,
     launch: &Launch,
@@ -98,6 +102,20 @@ pub fn prepare_stream(
             config,
             name.clone(),
             Box::new(move || configured_window_open(&target).map(|()| name.clone())),
+            launch.warnings.clone(),
+        );
+    }
+    // Otherwise, on Linux, the game draws into its own gamescope session
+    // (`os_ext::game_command`), which the capture finds by itself once the game has started:
+    // no display of the system is prepared or changed.
+    if cfg!(target_os = "linux") {
+        tracing::info!("streaming the game's gamescope session");
+        return Ready::window(
+            h,
+            stream,
+            config,
+            GAMESCOPE_TARGET.into(),
+            Box::new(|| Ok(GAMESCOPE_TARGET.into())),
             launch.warnings.clone(),
         );
     }

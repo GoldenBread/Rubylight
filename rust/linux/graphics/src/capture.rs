@@ -1,4 +1,10 @@
-//! Displays, GPUs and screen capture as the host names them. On Linux the picture and device types, the display and GPU selection rules and the capture target grammar are here; no display, GPU or window is listed yet and no capture backend opens, so every capture fails with an error that says so.
+//! Displays, GPUs and screen capture as the host names them. On Linux the GPUs are the AMD and NVIDIA render nodes, and a capture takes the picture of a gamescope session (the target `gamescope`) or of a PipeWire node (`pipewire-node:<id>`) as DMA-BUFs that VA-API converts into surfaces the encoder reads in place. No desktop display or window is listed or captured yet.
+use crate::vaapi::{
+    Va,
+    node::{self, Node},
+    pool::{Pool, Pooled},
+    vpp::Converter,
+};
 use anyhow::{Context, Result, bail};
 use butterpollo_media_policy::encoder_gpu;
 use serde::Serialize;
@@ -8,9 +14,16 @@ use std::{
 };
 
 pub mod idd_push;
+mod pw_capture;
 
 pub use butterpollo_media_policy::app_window::WindowTarget;
 use butterpollo_media_policy::app_window::{Candidate, WINDOW_TARGET_PREFIX};
+
+/// The capture target of the newest gamescope session.
+pub const GAMESCOPE_TARGET: &str = "gamescope";
+
+/// How long a gamescope target waits for the session to offer its picture.
+const GAMESCOPE_WAIT: Duration = Duration::from_secs(10);
 
 /// How long a stream waits for a capture helper to start.
 pub const WGC_START_TIMEOUT: Duration = Duration::from_secs(5);
@@ -63,6 +76,8 @@ fn select_display<'a>(choices: &'a [Display], name: &str) -> Result<Option<&'a D
 /// a reason to show the primary display in the window's place.
 pub fn display_present(name: &str) -> bool {
     name.starts_with(WINDOW_TARGET_PREFIX)
+        || name == GAMESCOPE_TARGET
+        || butterpollo_linux_io::gamescope::node_of(name).is_some()
         || displays().is_ok_and(|choices| select_display(&choices, name).is_ok_and(|d| d.is_some()))
 }
 
@@ -137,9 +152,23 @@ pub fn select_gpu<'a>(
     Ok(gpu)
 }
 
-/// The hardware GPUs. None is listed on Linux yet.
+/// The hardware GPUs: the AMD and NVIDIA GPUs with a render node. The adapter identity is the
+/// node's minor number; the PnP identity names the PCI vendor, device and slot.
 pub fn gpus() -> Result<Vec<Gpu>> {
-    Ok(Vec::new())
+    Ok(node::nodes()
+        .iter()
+        .map(|node| Gpu {
+            name: node.name.clone(),
+            vendor: node.vendor,
+            dedicated_memory: node.memory,
+            device: node.device,
+            luid: (node.minor, 0),
+            pnp_id: Some(format!(
+                "PCI\\VEN_{:04X}&DEV_{:04X}&SLOT_{}",
+                node.vendor, node.device, node.slot
+            )),
+        })
+        .collect())
 }
 
 /// The hardware GPUs as the encoder GPU check reads them.
@@ -193,15 +222,20 @@ pub fn stream_adapter(
 }
 
 /// The GPU a stream of `display` captures and encodes on, by name and adapter identity: the
-/// one the Graphics card setting names or [`stream_adapter`] pins. Without either the GPU
-/// that drives the display would decide, which Linux cannot tell yet: that is the error.
+/// one the Graphics card setting names or [`stream_adapter`] pins, else the one with the most
+/// video memory (Linux cannot tell which GPU drives a display).
 pub fn stream_gpu(display: &str, adapter_name: &str, pnp_id: &str) -> Result<(String, (u32, i32))> {
     let gpus = gpus()?;
     let (name, pnp_id) = stream_adapter(Some(display), adapter_name, pnp_id);
     if let Some(gpu) = select_gpu(&gpus, &name, &pnp_id)? {
         return Ok((gpu.name.clone(), gpu.luid));
     }
-    Err(crate::unsupported("Finding the GPU that drives a display"))
+    // Nothing chosen and nothing to pin: the GPU with the most video memory, since no desktop
+    // display says which GPU drives it.
+    gpus.iter()
+        .max_by_key(|gpu| gpu.dedicated_memory)
+        .map(|gpu| (gpu.name.clone(), gpu.luid))
+        .context("no AMD or NVIDIA GPU with a render node was found")
 }
 
 /// The PCI vendor of [`stream_gpu`]'s GPU for the configured display and adapter, None when it
@@ -276,25 +310,28 @@ pub struct Image {
     pub pixel: Pixel,
 }
 
-/// The identity of a graphics device, to compare two of them. None exists on Linux yet.
+/// The identity of a graphics device, to compare two of them: the render node's number.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct D3d11Device {
     id: usize,
 }
 
-/// A texture a CPU readback keeps between pictures. None exists on Linux yet.
+/// What a CPU readback keeps between pictures: a converter to RGB and the surfaces it writes.
 pub struct D3d11Texture {
-    _private: (),
+    converter: Converter,
+    rgb: Arc<Pool>,
+    size: (u32, u32),
 }
 
 /// The graphics device a capture and its encoders share, with the display it was opened
-/// for. No backend opens one on Linux yet.
+/// for: a VA-API display on a render node.
 #[derive(Clone)]
 pub struct Device {
     pub device: D3d11Device,
     pub display: Arc<Display>,
     /// The PCI vendor of the device's adapter. Streams encode only on AMD and NVIDIA.
     pub vendor: u32,
+    va: Arc<Va>,
 }
 
 impl Device {
@@ -320,9 +357,46 @@ impl Device {
         Self::new_adapter(name, "", "")
     }
     /// A device for work that needs a GPU, not a particular picture: encoder probes and
-    /// tools. Not available on Linux yet.
-    pub fn new_adapter(_name: &str, _adapter_name: &str, _pnp_id: &str) -> Result<Self> {
-        Err(crate::unsupported("Opening a graphics device"))
+    /// tools. The GPU is the one the adapter settings name, else the one with the most video
+    /// memory.
+    pub fn new_adapter(name: &str, adapter_name: &str, pnp_id: &str) -> Result<Self> {
+        let (_, luid) = stream_gpu(name, adapter_name, pnp_id)?;
+        let node = node::nodes()
+            .iter()
+            .find(|node| node.minor == luid.0)
+            .context("the GPU's render node is gone")?;
+        let va = Va::open(&node.path)
+            .with_context(|| format!("opening VA-API on {} ({})", node.path, node.name))?;
+        Ok(Self::on(Arc::new(va), node, name, (0, 0)))
+    }
+
+    /// A device on `va`, which was opened on `node`, for a display of `size` pixels.
+    fn on(va: Arc<Va>, node: &Node, name: &str, size: (u32, u32)) -> Self {
+        Self {
+            device: D3d11Device {
+                id: node.minor as usize,
+            },
+            display: Arc::new(Display {
+                device_id: node.path.clone(),
+                display_name: name.to_string(),
+                friendly_name: name.to_string(),
+                width: size.0,
+                height: size.1,
+                x: 0,
+                y: 0,
+                primary: true,
+                adapter: node.name.clone(),
+                adapter_index: 0,
+                output_index: 0,
+            }),
+            vendor: node.vendor,
+            va,
+        }
+    }
+
+    /// The VA-API display the device's surfaces and encoders live on.
+    pub(crate) fn va(&self) -> &Arc<Va> {
+        &self.va
     }
 }
 
@@ -353,6 +427,9 @@ pub struct GpuImage {
     /// The capture publication that first carried this content, when the capture publishes
     /// repeats: a repeat keeps it. 0 when the capture does not repeat.
     pub origin: u64,
+    /// The VA-API surface that holds the picture, back in its pool when the last copy of the
+    /// image is dropped.
+    surface: Option<Arc<Pooled>>,
 }
 
 /// A shown pointer a capture supplied beside a picture.
@@ -377,9 +454,48 @@ impl GpuImage {
     /// Leave the pointer out of this picture, for a device that draws it itself. Only a
     /// pointer the capture supplies apart can be left out, and none is.
     pub fn leave_pointer_out(&mut self) {}
-    /// The picture in CPU memory. Not available on Linux yet.
-    pub fn readback(&self, _staging: &mut Option<D3d11Texture>) -> Result<Image> {
-        Err(crate::unsupported("Reading a captured picture back"))
+    /// The VA-API surface of the picture and the size of the part of it that is the picture.
+    pub(crate) fn surface(&self) -> Option<&Arc<Pooled>> {
+        self.surface.as_ref()
+    }
+
+    /// The picture in CPU memory, converted back to BGRA by video processing. `staging` keeps
+    /// the converter between calls.
+    pub fn readback(&self, staging: &mut Option<D3d11Texture>) -> Result<Image> {
+        let surface = self
+            .surface
+            .as_ref()
+            .context("this picture is not on a VA-API surface")?;
+        let size = (self.width, self.height);
+        let va = surface.va();
+        if staging.as_ref().is_none_or(|texture| texture.size != size) {
+            *staging = Some(D3d11Texture {
+                converter: Converter::new(va, size.0, size.1)?,
+                rgb: Pool::new(
+                    va,
+                    crate::vaapi::ffi::VA_RT_FORMAT_RGB32,
+                    crate::vaapi::BGRX,
+                    size.0,
+                    size.1,
+                    1,
+                    1,
+                )?,
+                size,
+            });
+        }
+        let texture = staging.as_ref().expect("made above");
+        let target = texture.rgb.take().context("no surface for the readback")?;
+        texture.converter.to_rgb(surface.id(), size, target.id())?;
+        let mut bytes = Vec::new();
+        va.download_bgra(target.id(), size.0, size.1, &mut bytes)?;
+        Ok(Image {
+            width: size.0,
+            height: size.1,
+            stride: size.0 as usize * 4,
+            bytes,
+            captured: self.captured,
+            pixel: Pixel::Bgra8,
+        })
     }
 }
 
@@ -432,13 +548,103 @@ pub fn run_wgc_worker_with(
     Err(crate::unsupported("The capture helper"))
 }
 
-/// A capture of one display or window. No backend opens on Linux yet, so the only value is
-/// the place a lost capture leaves.
+/// A capture of one display or window: the picture of a gamescope session or of a PipeWire
+/// node, or the place a lost capture leaves.
 pub enum Capture {
     /// Holds no device: the place of a lost capture while a new one is made.
     Closed,
+    /// A PipeWire node's DMA-BUF frames, converted into VA-API surfaces.
+    PipeWire(Box<PipeWire>),
 }
-/// Ends what the value holds, at the point the host drops it. It holds no capture session on Linux yet, so there is nothing to close.
+
+/// An open PipeWire capture with the device its frames are on.
+pub struct PipeWire {
+    capture: pw_capture::PipeWireCapture,
+    device: Device,
+    /// The gamescope session's folder, when the target is a session: its end ends the capture
+    /// even when PipeWire does not say so.
+    session: Option<std::path::PathBuf>,
+    last_check: Instant,
+    /// Keeps the readback converter for `next_frame`.
+    staging: Option<D3d11Texture>,
+}
+
+impl PipeWire {
+    /// Opens the target on a device chosen like an encoder's: the configured adapter, else the
+    /// GPU with the most video memory.
+    fn open(name: &str, hdr: bool, config: &butterpollo_config::config::Config) -> Result<Self> {
+        if hdr {
+            return Err(crate::unsupported("HDR capture"));
+        }
+        let (node, session) = if name == GAMESCOPE_TARGET {
+            let session = butterpollo_linux_io::gamescope::wait_for_node(GAMESCOPE_WAIT)?;
+            (
+                session
+                    .node
+                    .context("the gamescope session names no node")?,
+                Some(session.folder),
+            )
+        } else if let Some(node) = butterpollo_linux_io::gamescope::node_of(name) {
+            (node, None)
+        } else {
+            bail!(
+                "this Linux host captures the target \"{GAMESCOPE_TARGET}\" or \"pipewire-node:<id>\", not {name:?}"
+            );
+        };
+        let probe = Device::new_adapter(
+            name,
+            config.get("adapter_name", ""),
+            config.get("adapter_pnp_id", ""),
+        )?;
+        let capture = pw_capture::PipeWireCapture::open(node, probe.va())?;
+        let size = capture.size;
+        let found = node::nodes()
+            .iter()
+            .find(|candidate| candidate.minor as usize == probe.key())
+            .context("the GPU's render node is gone")?;
+        let device = Device::on(probe.va().clone(), found, name, size);
+        Ok(Self {
+            capture,
+            device,
+            session,
+            last_check: Instant::now(),
+            staging: None,
+        })
+    }
+
+    fn next_gpu(&mut self, origin: u64) -> Result<Option<Arc<GpuImage>>> {
+        let Some(frame) = self.capture.take()? else {
+            // PipeWire may not tell when the producer is gone: the session's own record does.
+            if let Some(folder) = &self.session
+                && self.last_check.elapsed() >= Duration::from_millis(250)
+            {
+                self.last_check = Instant::now();
+                if butterpollo_linux_io::gamescope::read(folder).is_none() {
+                    bail!("the game's display closed: gamescope is no longer running");
+                }
+            }
+            return Ok(None);
+        };
+        let (width, height) = self.capture.size;
+        Ok(Some(Arc::new(GpuImage {
+            width,
+            height,
+            pixel: Pixel::Bgra8,
+            captured: frame.captured,
+            wgc_stamp: None,
+            acquired: frame.acquired,
+            published: frame.published,
+            gpu: self.device.clone(),
+            focus: None,
+            repeat: false,
+            origin,
+            surface: Some(frame.surface),
+        })))
+    }
+}
+
+/// Ends what the value holds, at the point the host drops it. The PipeWire capture stops its own
+/// thread when it drops, so there is nothing more to close here.
 impl Drop for Capture {
     fn drop(&mut self) {}
 }
@@ -461,6 +667,7 @@ impl Capture {
     pub fn backend(&self) -> &'static str {
         match self {
             Self::Closed => "closed",
+            Self::PipeWire(_) => "pipewire",
         }
     }
     /// The grid a capture that publishes on one aligns to. A closed capture publishes
@@ -472,20 +679,23 @@ impl Capture {
     }
     /// Set when the capture announces a frame. A closed capture announces none.
     pub fn frame_signal(&self) -> Option<&crate::timing::Signal> {
-        None
+        match self {
+            Self::Closed => None,
+            Self::PipeWire(capture) => Some(capture.capture.signal()),
+        }
     }
     /// How long the caller waits before its next poll: `poll`, since a closed capture has
     /// no announcement to wait for.
     pub fn wait_interval(&self, _idle: Duration, poll: Duration) -> Duration {
         poll
     }
-    /// Opens the capture of a stream, with the host's bridges. Not available on Linux yet;
-    /// a malformed window target is still refused as such.
+    /// Opens the capture of a stream, with the host's bridges: the target `gamescope` or
+    /// `pipewire-node:<id>`. A window target is refused, as is any other.
     pub fn open_for_stream_with_env(
         name: &str,
         _kind: &str,
-        _hdr: bool,
-        _config: &butterpollo_config::config::Config,
+        hdr: bool,
+        config: &butterpollo_config::config::Config,
         warnings: Arc<dyn butterpollo_media_policy::WarningSink>,
         _env: &CaptureEnv,
     ) -> Result<Self> {
@@ -496,7 +706,7 @@ impl Capture {
         if WindowTarget::parse(name)?.is_some() {
             return Err(crate::unsupported("Window capture"));
         }
-        Err(crate::unsupported("Screen capture"))
+        Ok(Self::PipeWire(Box::new(PipeWire::open(name, hdr, config)?)))
     }
     /// Changes the target on the capture's own device, when it can: `None` when the capture
     /// has to be reopened instead, as every capture on Linux does.
@@ -511,26 +721,33 @@ impl Capture {
     ) -> Option<Result<Self>> {
         None
     }
-    /// A capture of display `name` with backend `kind`, for probes and tools. Not available
-    /// on Linux yet.
-    pub fn new_format(name: &str, _kind: &str, _hdr: bool) -> Result<Self> {
+    /// A capture of display `name` with backend `kind`, for probes and tools.
+    pub fn new_format(name: &str, _kind: &str, hdr: bool) -> Result<Self> {
         if WindowTarget::parse(name)?.is_some() {
             return Err(crate::unsupported("Window capture"));
         }
-        Err(crate::unsupported("Screen capture"))
+        let config = butterpollo_config::config::Config::default();
+        Ok(Self::PipeWire(Box::new(PipeWire::open(
+            name, hdr, &config,
+        )?)))
     }
     /// The newest picture in CPU memory.
     pub fn next_frame(&mut self) -> Result<Option<Image>> {
         match self {
             Self::Closed => bail!("capture is closed"),
+            Self::PipeWire(capture) => match capture.next_gpu(0)? {
+                Some(image) => image.readback(&mut capture.staging).map(Some),
+                None => Ok(None),
+            },
         }
     }
     /// The newest picture, wrapped for the stream threads. `origin` is the publication
     /// identity the caller stamps into it when the capture publishes repeats; 0 when the
     /// capture does not repeat.
-    pub fn next_gpu(&mut self, _origin: u64) -> Result<Option<Arc<GpuImage>>> {
+    pub fn next_gpu(&mut self, origin: u64) -> Result<Option<Arc<GpuImage>>> {
         match self {
             Self::Closed => bail!("capture is closed"),
+            Self::PipeWire(capture) => capture.next_gpu(origin),
         }
     }
 }

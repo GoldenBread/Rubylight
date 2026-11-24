@@ -497,8 +497,8 @@ impl RunningApp {
                 if output.contains(['\0', '\r', '\n', '"', '%', '!']) {
                     bail!("application output path contains shell metacharacters");
                 }
-                let output = if output == "null" { "NUL" } else { output };
-                if output != "NUL"
+                let output = crate::os_ext::output_file(output);
+                if output != crate::os_ext::NULL_DEVICE
                     && let Some(parent) = Path::new(output)
                         .parent()
                         .filter(|p| !p.as_os_str().is_empty())
@@ -510,7 +510,7 @@ impl RunningApp {
                 app.cmd.clone()
             };
             running.child = Some(Process::shell(
-                &command,
+                &crate::os_ext::game_command(command, &running.environment)?,
                 directory(&running.working),
                 app_bool(app, "elevated", false),
                 &running.environment,

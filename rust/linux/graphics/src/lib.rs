@@ -30,6 +30,7 @@ pub mod telemetry;
 pub mod timing;
 pub mod truehdr;
 pub mod user_helper;
+pub mod vaapi;
 pub mod vulkan;
 
 /// The error of an action Linux cannot carry out yet. `what` names the action in the words a

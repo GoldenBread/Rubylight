@@ -1,17 +1,21 @@
-//! One client's virtual gamepads and what they hand back to the control stream. Linux has no
-//! virtual gamepad backend yet: a [`GamepadThread`] plugs in no pad, drops the controller
-//! input it is sent and says so in the stream's warnings, and never has feedback to report.
-use super::Event;
+//! One client's virtual gamepads and what they hand back to the control stream. Each Moonlight
+//! controller is an Xbox 360 pad on `/dev/uinput`, written to as events arrive (a uinput write
+//! is quick, so no thread is needed). Rumble, lights, motion and audio are not supported: no
+//! feedback is ever reported.
+use super::{Event, uinput};
 use anyhow::Result;
 use butterpollo_input_policy::haptics;
 use std::{
+    collections::BTreeMap,
     sync::{Arc, Mutex, PoisonError},
     thread::JoinHandle,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
-/// The warning for controllers that cannot be had, as when a host has no gamepad driver.
+/// The warning for controllers that cannot be had, as when `/dev/uinput` is not writable.
 const UNAVAILABLE: &str = "input_gamepad";
+/// How long after a pad failed to plug in the next try waits, so input does not retry per event.
+const RETRY: Duration = Duration::from_secs(1);
 
 /// What the gamepad thread hands back to the control stream.
 #[derive(Debug, PartialEq)]
@@ -32,16 +36,22 @@ pub enum PadReport {
     },
 }
 
-/// One client's virtual gamepads. On Linux it runs no thread and holds no pad: it only keeps
-/// the stream's warnings, to say that controller input is ignored.
+/// One client's virtual gamepads, a pad per controller number.
 pub struct GamepadThread {
     warnings: Mutex<Arc<butterpollo_session::session::Warnings>>,
+    pads: Mutex<Pads>,
+}
+
+#[derive(Default)]
+struct Pads {
+    plugged: BTreeMap<u16, uinput::Pad>,
+    failed: Option<Instant>,
 }
 
 impl GamepadThread {
-    /// The controllers of one client with the `gamepad` profile and input policy. Succeeds
-    /// on Linux without plugging anything in: no pad follows, and the first controller input
-    /// raises the warning.
+    /// The controllers of one client with the `gamepad` profile and input policy. No pad is
+    /// plugged in until a controller arrives or sends its state; the profile and policy
+    /// make no difference on Linux, where every pad is an Xbox 360 pad.
     pub fn new(
         profile: u16,
         policy: butterpollo_input_policy::input_policy::Policy,
@@ -50,33 +60,88 @@ impl GamepadThread {
         let _ = (profile, policy);
         Ok(Self {
             warnings: Mutex::new(warnings),
+            pads: Mutex::default(),
         })
     }
     /// The warnings of the stream these controllers now belong to.
     pub fn set_warnings(&self, warnings: Arc<butterpollo_session::session::Warnings>) {
         *self.warnings.lock().unwrap_or_else(PoisonError::into_inner) = warnings;
     }
-    /// Hand an event to the pads. On Linux there are none: the event is dropped and the
-    /// stream warns that controllers are unavailable.
+    /// The sysfs name of pad `id`'s device, for the device tests.
+    #[cfg(test)]
+    pub(super) fn sysname(&self, id: u16) -> Option<String> {
+        Some(self.pads().plugged.get(&id)?.sysname.clone())
+    }
+    fn pads(&self) -> std::sync::MutexGuard<'_, Pads> {
+        self.pads.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+    /// Plugs in controller `id` unless it is, saying in the warnings why it could not be.
+    fn plug<'a>(&self, pads: &'a mut Pads, id: u16) -> Option<&'a mut uinput::Pad> {
+        if !pads.plugged.contains_key(&id) {
+            if pads.failed.is_some_and(|at| at.elapsed() < RETRY) {
+                return None;
+            }
+            match uinput::Pad::create(id) {
+                Ok(pad) => {
+                    pads.failed = None;
+                    pads.plugged.insert(id, pad);
+                    self.warnings
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .clear(UNAVAILABLE);
+                }
+                Err(error) => {
+                    pads.failed = Some(Instant::now());
+                    self.warnings
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .set(
+                            UNAVAILABLE,
+                            format!("{error:#}; controller input is ignored."),
+                        );
+                    return None;
+                }
+            }
+        }
+        pads.plugged.get_mut(&id)
+    }
+    /// Hand an event to the pads: an arrival plugs a pad in, a state updates it and unplugs
+    /// the pads whose controller is no longer active. Other events are dropped.
     pub fn send(&self, event: Event) {
-        drop(event);
-        self.warnings
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .set(
-                UNAVAILABLE,
-                format!(
-                    "{:#}; controller input is ignored.",
-                    crate::unsupported("A virtual gamepad")
-                ),
-            );
+        let mut pads = self.pads();
+        match event {
+            Event::Arrival { id, .. } if id < 16 => {
+                // A controller that arrives again is a fresh pad.
+                pads.plugged.remove(&u16::from(id));
+                self.plug(&mut pads, u16::from(id));
+            }
+            Event::Controller {
+                id,
+                active,
+                buttons,
+                left_trigger,
+                right_trigger,
+                sticks,
+            } => {
+                pads.plugged.retain(|pad, _| active & (1 << *pad) != 0);
+                if id < 16 && active & (1 << id) != 0 {
+                    let state =
+                        uinput::State::from_report(buttons, left_trigger, right_trigger, &sticks);
+                    if let Some(pad) = self.plug(&mut pads, id)
+                        && let Err(error) = pad.set(state)
+                    {
+                        tracing::warn!(%error, id, "virtual gamepad write failed");
+                    }
+                }
+            }
+            _ => {}
+        }
     }
     /// Feedback and motion requests the pads produced since the last call: none on Linux.
     pub fn reports(&self) -> impl Iterator<Item = PadReport> + '_ {
         std::iter::empty()
     }
-    /// Audio for a controller's speaker or haptics. Dropped on Linux, which has no pad to
-    /// play it.
+    /// Audio for a controller's speaker or haptics. Dropped: the virtual pads have none.
     pub fn audio(&self, id: u16, kind: u16, payload: &[u8]) {
         let _ = (id, kind, payload);
     }
@@ -85,30 +150,49 @@ impl GamepadThread {
         let _ = id;
         false
     }
-    /// Release the controls while the client is away. Nothing is held on Linux.
-    pub fn park(&self) {}
-    /// Take the controllers up again for a client. Nothing to take up on Linux.
+    /// Release the controls while the client is away: every pad goes neutral and stays plugged in.
+    pub fn park(&self) {
+        for pad in self.pads().plugged.values_mut() {
+            if let Err(error) = pad.set(uinput::State::default()) {
+                tracing::debug!(%error, "virtual gamepad release failed");
+            }
+        }
+    }
+    /// Take the controllers up again for a client. Pads follow the next state they get.
     pub fn activate(&self) {}
     /// Whether the controllers in `mask` are plugged in, waiting up to `timeout` for them.
-    /// On Linux no pad ever plugs in, so this answers at once: true only for an empty mask.
+    /// Pads plug in as events arrive, so this waits (up to `timeout`) only for events not
+    /// yet sent.
     pub fn wait_ready(&self, mask: u16, timeout: Duration) -> bool {
-        let _ = timeout;
-        mask == 0
+        let deadline = Instant::now() + timeout;
+        loop {
+            let ready = self.pads().plugged.keys().fold(0u16, |m, id| m | (1 << id));
+            if ready & mask == mask {
+                return true;
+            }
+            if Instant::now() >= deadline {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
     }
-    /// How many of its pads are plugged in: none on Linux.
+    /// How many of its pads are plugged in.
     pub fn plugged_pads(&self) -> u32 {
-        0
+        self.pads().plugged.len() as u32
     }
-    /// Tell the pads to unplug, without waiting. Nothing is plugged in on Linux.
-    pub fn request_stop(&self) {}
-    /// Stop the pads and return their thread to wait for. There is no thread on Linux.
+    /// Unplug the pads. Nothing runs on a thread, so this is done at once.
+    pub fn request_stop(&self) {
+        self.pads().plugged.clear();
+    }
+    /// Unplug the pads; there is no thread to wait for.
     pub fn stop(&self) -> Option<JoinHandle<()>> {
+        self.request_stop();
         None
     }
-    /// Stop the pads and wait up to `timeout` for them to unplug. Succeeds at once on Linux,
-    /// where nothing is plugged in.
+    /// Unplug the pads, which is done when this returns.
     pub fn stop_within(&self, timeout: Duration) -> Result<()> {
         let _ = timeout;
+        self.request_stop();
         Ok(())
     }
 }

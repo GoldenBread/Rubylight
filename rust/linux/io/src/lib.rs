@@ -16,6 +16,7 @@ pub mod clipboard;
 pub mod crash;
 pub mod files;
 pub mod firewall;
+pub mod gamescope;
 pub mod hip;
 pub mod hotkey;
 pub mod input;

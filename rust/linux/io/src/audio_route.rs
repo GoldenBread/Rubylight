@@ -1,6 +1,6 @@
 //! Audio routing on Linux: no playback or recording device can be listed or switched yet, so
-//! a stream's route cannot be made, the device lists are empty, the virtual microphone is
-//! never found, and there is nothing to recover.
+//! a stream's route captures the default output as it is, the device lists are empty, the
+//! virtual microphone is never found, and there is nothing to recover.
 
 use anyhow::Result;
 use butterpollo_config::config::Config;
@@ -38,7 +38,8 @@ pub fn steam_microphone(endpoints: &[Endpoint]) -> Option<&Endpoint> {
 }
 
 /// A stream's audio route: the device it captures from, and the defaults it holds while it
-/// lives. None can be made on Linux.
+/// lives. On Linux it captures what the default output plays, where a game in its gamescope
+/// session plays too, and changes no default (`sink` empty).
 pub struct Route {
     pub sink: String,
 }
@@ -60,14 +61,16 @@ impl Route {
     pub fn warning(&self, _host_audio: bool) -> Option<&'static str> {
         None
     }
-    /// Route a stream's audio. Fails on Linux.
+    /// Route a stream's audio: on Linux, the default output's monitor.
     pub fn acquire(
         _config: &Config,
         _directory: &Path,
         _host_audio: bool,
         _channels: usize,
     ) -> Result<Self> {
-        Err(crate::unsupported("Audio routing"))
+        Ok(Self {
+            sink: String::new(),
+        })
     }
     /// Keep the virtual speakers the default device.
     pub fn maintain_default(&self) -> Result<()> {

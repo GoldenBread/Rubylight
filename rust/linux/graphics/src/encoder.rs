@@ -1,7 +1,19 @@
-//! The video encoder of a stream. On Linux the encoded-frame types are here as the senders read them; there is no encoder backend yet, so creating an [`Encoder`] fails with an error that says so and no stream can encode.
-use crate::capture::{GpuImage, Image};
-use anyhow::Result;
+//! The video encoder of a stream. On Linux it is a VA-API session (H.264 High and HEVC Main,
+//! 8-bit 4:2:0, constant bitrate, one reference picture) that encodes a captured picture where
+//! it is in GPU memory, or a BGRA picture from system memory for the codec probe. Encoding is
+//! synchronous: a call returns the picture it encoded, so nothing is ever pending. AV1, HDR and
+//! 4:4:4 fail when the encoder is created. The encoded-frame types are as the senders read them.
+use crate::{
+    capture::{Device, GpuImage, Image, Pixel},
+    vaapi::{
+        Va,
+        encoder::{Backend, Output},
+        session::Codec,
+    },
+};
+use anyhow::{Context, Result, bail};
 use butterpollo_media_policy::{WarningSink, encoder_focus, rtsp::Negotiated};
+use std::{sync::Arc, time::Instant};
 
 /// How `Encoded::bytes` relates to a picture. Only slice delivery returns
 /// anything but `Whole`: a P-frame then comes as `Slice` units in order,
@@ -60,17 +72,71 @@ impl Drop for Encoded {
     }
 }
 
-/// The encoder of one stream. No backend exists on Linux yet: every constructor returns an
-/// error, so no value of this type is ever made, and its methods answer as an encoder that
-/// holds no frame and offers no feature.
+/// The encoder of one stream. It offers none of the advanced features (frame caps, reference
+/// invalidation, focus, overlays) and answers their queries as an encoder without them.
 pub struct Encoder {
-    _private: (),
+    backend: Backend,
+    adapter: String,
+    /// The device the encoder's surfaces live on.
+    device: usize,
+    /// When the last encode call handed its picture to the encoder.
+    submitted: Option<Instant>,
 }
-/// Ends what the value holds, at the point the host drops it. It holds no encoder session on Linux yet, so there is nothing to close.
-impl Drop for Encoder {
-    fn drop(&mut self) {}
+
+/// The codec a negotiation asks for, or why this host cannot encode it.
+fn codec_of(config: &Negotiated) -> Result<Codec> {
+    if config.hdr || config.sdr_10bit {
+        bail!("10-bit and HDR encoding is not available on a Linux host yet");
+    }
+    if config.yuv444 {
+        bail!("4:4:4 encoding is not available on a Linux host yet");
+    }
+    match config.codec {
+        0 => Ok(Codec::H264),
+        1 => Ok(Codec::Hevc),
+        2 => bail!("AV1 encoding is not available on a Linux host yet"),
+        other => bail!("codec {other} is not available on a Linux host yet"),
+    }
 }
+
 impl Encoder {
+    fn on(va: &Arc<Va>, device: &Device, config: &Negotiated) -> Result<Self> {
+        let codec = codec_of(config)?;
+        let backend = Backend::new(va, codec, config.width, config.height, config.fps.max(1))
+            .with_context(|| {
+                format!(
+                    "the {} encoder could not start on {} ({}x{} at {} fps)",
+                    codec.name(),
+                    device.display.adapter,
+                    config.width,
+                    config.height,
+                    config.fps
+                )
+            })?;
+        Ok(Self {
+            backend,
+            adapter: device.display.adapter.clone(),
+            device: device.key(),
+            submitted: None,
+        })
+    }
+
+    /// The bytes of one encoded picture as the senders take them.
+    fn encoded(output: Output, started: Instant) -> Vec<Encoded> {
+        vec![Encoded {
+            bytes: output.bytes,
+            framing: None,
+            unit: Unit::Whole,
+            idr: output.idr,
+            after_invalidation: false,
+            frame_cap_bytes: None,
+            reencoded: false,
+            frame_cap_target: None,
+            latency: Some(started.elapsed()),
+            presentation: None,
+        }]
+    }
+
     /// Best-effort pace-based frame cap; the cap in effect, `None` without one.
     pub fn set_frame_cap(&mut self, _bytes: u64, _floor: u64) -> Option<u64> {
         None
@@ -99,7 +165,7 @@ impl Encoder {
     pub fn set_luminance(&mut self, _white_nits: f32, _linear_scale: f32) {}
     /// The next picture repeats the one last encoded.
     pub fn set_repeat(&mut self, _repeat: bool) {}
-    /// An encoder for pictures on the capture's GPU. Not available on Linux yet.
+    /// An encoder for pictures on the capture's GPU.
     pub fn new_gpu(config: &Negotiated, image: &GpuImage) -> Result<Self> {
         Self::new_gpu_options(
             config,
@@ -108,17 +174,17 @@ impl Encoder {
         )
     }
     pub fn new_gpu_options(
-        _config: &Negotiated,
-        _image: &GpuImage,
+        config: &Negotiated,
+        image: &GpuImage,
         _tuning: &butterpollo_config::config::Config,
     ) -> Result<Self> {
-        Err(crate::unsupported("Video encoding"))
+        Self::on(image.gpu.va(), &image.gpu, config)
     }
     /// [`Self::new_gpu_options`], with the session's warnings.
     pub fn new_gpu_reported(
-        _config: &Negotiated,
-        _image: &GpuImage,
-        _tuning: &butterpollo_config::config::Config,
+        config: &Negotiated,
+        image: &GpuImage,
+        tuning: &butterpollo_config::config::Config,
         warnings: &std::sync::Arc<dyn WarningSink>,
     ) -> Result<Self> {
         warnings.clear("encoder_conversion");
@@ -126,15 +192,27 @@ impl Encoder {
         warnings.clear("encoder_intra_refresh");
         warnings.clear("hdr_dynamic_metadata");
         warnings.clear("encoder_vpe");
-        Err(crate::unsupported("Video encoding"))
+        Self::new_gpu_options(config, image, tuning)
     }
+    /// Encodes a captured picture where it is, at `bitrate` kilobits a second.
     pub fn encode_gpu(
         &mut self,
-        _image: &GpuImage,
-        _idr: bool,
-        _bitrate: u32,
+        image: &GpuImage,
+        idr: bool,
+        bitrate: u32,
     ) -> Result<Vec<Encoded>> {
-        Err(crate::unsupported("Video encoding"))
+        let started = Instant::now();
+        let surface = image
+            .surface()
+            .context("the picture is not on a VA-API surface")?;
+        self.submitted = Some(started);
+        let output = self.backend.encode_surface(
+            surface,
+            (image.width, image.height),
+            idr,
+            bitrate.saturating_mul(1000),
+        )?;
+        Ok(Self::encoded(output, started))
     }
     /// The encoder's own colour converter gave way and the encoder should be rebuilt
     /// without it.
@@ -150,8 +228,9 @@ impl Encoder {
     pub fn compute_fell_back(&self) -> bool {
         false
     }
-    pub fn accepts_gpu_device(&self, _image: &GpuImage) -> bool {
-        false
+    /// Whether the picture is on the device the encoder was made on.
+    pub fn accepts_gpu_device(&self, image: &GpuImage) -> bool {
+        image.gpu.key() == self.device
     }
     pub fn pending(&self) -> bool {
         false
@@ -172,7 +251,7 @@ impl Encoder {
     /// When the encoder accepted the input of the last encode call, after
     /// its colour conversion.
     pub fn last_submitted(&self) -> Option<std::time::Instant> {
-        None
+        self.submitted
     }
     /// Frames the GPU encoder has accepted and not yet finished.
     pub fn backlog(&self) -> usize {
@@ -193,7 +272,7 @@ impl Encoder {
     }
     /// The GPU the encoder opened on, for wording what it cannot do.
     pub fn adapter(&self) -> Option<&str> {
-        None
+        Some(&self.adapter)
     }
     /// An integer capability of the encoder, such as its throughput limit.
     pub fn capability(&self, _name: &str) -> Option<i64> {
@@ -201,7 +280,7 @@ impl Encoder {
     }
     /// The encoder family, as the encoder setting names it.
     pub fn backend(&self) -> &'static str {
-        "none"
+        "vaapi"
     }
     pub fn supports_invalidation(&self) -> bool {
         false
@@ -236,16 +315,37 @@ impl Encoder {
             &butterpollo_config::config::Config::default(),
         )
     }
-    /// An encoder for CPU images, such as the codec probe's. Not available on Linux yet.
+    /// An encoder for CPU images, such as the codec probe's, on the GPU the adapter settings
+    /// name.
     pub fn new_options(
-        _config: &Negotiated,
-        _display: &str,
-        _tuning: &butterpollo_config::config::Config,
+        config: &Negotiated,
+        display: &str,
+        tuning: &butterpollo_config::config::Config,
     ) -> Result<Self> {
-        Err(crate::unsupported("Video encoding"))
+        codec_of(config)?;
+        let device = Device::new_adapter(
+            display,
+            tuning.get("adapter_name", ""),
+            tuning.get("adapter_pnp_id", ""),
+        )?;
+        Self::on(device.va(), &device, config)
     }
-    pub fn encode(&mut self, _image: &Image, _idr: bool, _bitrate: u32) -> Result<Vec<Encoded>> {
-        Err(crate::unsupported("Video encoding"))
+    /// Encodes a BGRA picture in system memory, at `bitrate` kilobits a second.
+    pub fn encode(&mut self, image: &Image, idr: bool, bitrate: u32) -> Result<Vec<Encoded>> {
+        if image.pixel != Pixel::Bgra8 {
+            bail!(
+                "the encoder takes 8-bit BGRA pictures from system memory, not {:?}",
+                image.pixel
+            );
+        }
+        let started = Instant::now();
+        self.submitted = Some(started);
+        let output = self.backend.encode_bgra(
+            (image.width, image.height, image.stride, &image.bytes),
+            idr,
+            bitrate.saturating_mul(1000),
+        )?;
+        Ok(Self::encoded(output, started))
     }
 }
 // The couch menu's hook.

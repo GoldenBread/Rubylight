@@ -254,7 +254,11 @@ async fn connection(
                         && config.boolean("native_pen_touch", true)
                         && input_capabilities & 1 == 0
                     {
-                        launch.warnings.set("input_touch_pen", "Native touch and pen unavailable: Windows does not expose synthetic pointer input. The client may emulate a mouse instead; update Windows or disable native touch/pen in Input settings.");
+                        launch.warnings.set("input_touch_pen", if cfg!(windows) {
+                            "Native touch and pen unavailable: Windows does not expose synthetic pointer input. The client may emulate a mouse instead; update Windows or disable native touch/pen in Input settings."
+                        } else {
+                            "Native touch and pen are not available on a Linux host yet. The client may emulate a mouse instead, or turn native touch/pen off in Input settings."
+                        });
                     }
                     // Video encryption is offered unless turned off for this
                     // network, and audio and video are required where mandatory.

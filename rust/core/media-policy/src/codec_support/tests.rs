@@ -140,6 +140,26 @@ fn a_setting_is_not_a_warning() {
 }
 
 #[test]
+fn a_codec_the_host_has_no_encoder_for_is_no_driver_fault() {
+    let name = "AMD Radeon RX 7800 XT";
+    let outcomes = [
+        (H264, Outcome::Available),
+        (HEVC, Outcome::Available),
+        (
+            AV1,
+            Outcome::Failed("AV1 encoding is not available on a Linux host yet".into()),
+        ),
+    ];
+    let missing = explain_all(name, &outcomes);
+    assert_eq!(missing.len(), 1);
+    assert_eq!(
+        missing[0].reason,
+        "AV1 is not available: AV1 encoding is not available on a Linux host yet"
+    );
+    assert_eq!(warning(&missing), None);
+}
+
+#[test]
 fn launch_refusal_names_the_probe_reason() {
     let name = "AMD Radeon RX 6800 XT";
     let missing = explain_all(name, &pass(name, &[H264, HEVC, HEVC10]));

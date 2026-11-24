@@ -1,8 +1,7 @@
-//! Input injection for streams: keyboard, mouse, touch, pen and virtual gamepads. Linux has
-//! no injection backend yet (`uinput` and `uhid` are not driven), so an [`Injector`] cannot
-//! be made, the host offers clients no native touch, pen or controller-touch input, and
-//! virtual gamepads ignore what they are sent. The event and report types are the same as
-//! on Windows.
+//! Input injection for streams: keyboard and mouse into the game's gamescope session through
+//! XTEST, and virtual gamepads through `/dev/uinput`. Touch, pen, controller touchpads, motion
+//! sensors and rumble are not injected yet, so the host offers clients none of them. The event
+//! and report types are the same as on Windows.
 
 use anyhow::Result;
 use butterpollo_input_policy::input::Input as Event;
@@ -10,7 +9,13 @@ use std::{sync::Arc, time::Instant};
 
 mod desktop;
 mod gamepad_thread;
+mod keyboard_mouse;
+mod keymap;
+#[cfg(test)]
+mod tests;
+mod uinput;
 mod usbip_pad;
+mod xserver;
 
 pub use desktop::{
     desktop_refused, follow_input_desktop, input_desktop_name, keep_on_input_desktop,
@@ -42,11 +47,17 @@ pub fn set_rect_hooks(hooks: RectHooks) {
     let _ = RECT_HOOKS.set(hooks);
 }
 
-/// One stream's keyboard, mouse, touch, pen and controller input. None can be made on Linux
-/// yet: every constructor fails, and the stream reports that its controls are unavailable.
+/// One stream's keyboard, mouse and controller input. Keys and the mouse go into the game's
+/// gamescope session through XTEST, connected when a session runs; controllers are virtual
+/// pads of `/dev/uinput`. Touch and pen are not injected.
 pub struct Injector {
-    /// The controllers a controller session lent ([`Self::use_gamepads`]).
+    /// The controllers a controller session lent ([`Self::use_gamepads`]), or the injector's
+    /// own once a controller sends input.
     gamepads: Option<Arc<GamepadThread>>,
+    policy: butterpollo_input_policy::input_policy::Policy,
+    profile: u16,
+    warnings: Arc<butterpollo_session::session::Warnings>,
+    keyboard_mouse: keyboard_mouse::KeyboardMouse,
 }
 
 impl Injector {
@@ -64,18 +75,23 @@ impl Injector {
     ) -> Result<Self> {
         Self::new_options_reported(output, profile, config, Default::default())
     }
-    /// The injector for the display `output` with the `gamepad` profile and the input
-    /// settings of `config`. Fails on Linux, after the settings were checked: input cannot
-    /// be injected there yet.
+    /// The injector with the `gamepad` profile and the input settings of `config`. The display
+    /// `output` is not used: input goes to the newest gamescope session, whenever one runs.
+    /// Fails only for settings that cannot be resolved.
     pub fn new_options_reported(
         output: &str,
         profile: &str,
         config: &butterpollo_config::config::Config,
         warnings: Arc<butterpollo_session::session::Warnings>,
     ) -> Result<Self> {
-        let _ = (output, profile, warnings);
-        butterpollo_input_policy::input_policy::Policy::resolve(config)?;
-        Err(crate::unsupported("Input injection"))
+        let _ = output;
+        Ok(Self {
+            gamepads: None,
+            policy: butterpollo_input_policy::input_policy::Policy::resolve(config)?,
+            profile: butterpollo_input_policy::input_policy::gamepad_profile(profile),
+            warnings,
+            keyboard_mouse: Default::default(),
+        })
     }
     /// The keyboard layout keys the client did not normalize go with (None: the host's).
     /// Unused on Linux, where no key is injected.
@@ -85,10 +101,9 @@ impl Injector {
     /// Each pass: the layout set last takes over once no key is held. Nothing to follow on
     /// Linux.
     pub fn follow_keyboard_layout(&mut self) {}
-    /// The stream's size, for placing absolute input. Unused on Linux, where none is
-    /// injected.
+    /// The stream's size, for placing absolute input that carries no size of its own.
     pub fn set_stream_size(&mut self, width: u32, height: u32) {
-        let _ = (width, height);
+        self.keyboard_mouse.stream = Some((width, height));
     }
     /// The host cursor as fractions of the whole stream. None on Linux, where the cursor's
     /// position is not read.
@@ -118,18 +133,48 @@ impl Injector {
     pub fn due(&mut self) -> Result<()> {
         Ok(())
     }
-    /// Inject one event. Fails on Linux, where input cannot be injected yet.
+    /// Inject one event.
     pub fn apply(&mut self, e: &Event) -> Result<()> {
         let mut errors = self.apply_all(std::slice::from_ref(e));
         errors.pop().map_or(Ok(()), Err)
     }
-    /// Apply a pass of events in order; returns why events failed. On Linux every event
-    /// fails: input cannot be injected yet.
+    /// Apply a pass of events in order; returns why events failed. Keyboard and mouse input
+    /// with no gamescope session to take it is dropped, not failed; touch, pen and controller
+    /// touchpads fail, as they cannot be injected.
     pub fn apply_all(&mut self, events: &[Event]) -> Vec<anyhow::Error> {
-        events
-            .iter()
-            .map(|_| crate::unsupported("Input injection"))
-            .collect()
+        let mut errors = Vec::new();
+        for e in events {
+            if !self.policy.allows(e) {
+                continue;
+            }
+            let result = match e {
+                Event::Relative { .. }
+                | Event::Absolute { .. }
+                | Event::MouseButton { .. }
+                | Event::Scroll { .. }
+                | Event::Keyboard { .. }
+                | Event::Text(_) => self.keyboard_mouse.apply(e, &self.policy, &self.warnings),
+                Event::Touch { .. } | Event::Pen { .. } | Event::Touchpad { .. } => {
+                    Err(crate::unsupported("Touch, pen and touchpad input"))
+                }
+                _ => self.send_to_gamepads(e),
+            };
+            errors.extend(result.err());
+        }
+        errors.extend(self.keyboard_mouse.finish().err());
+        errors
+    }
+    /// Controller input goes to the pads, which the injector starts if it has none yet.
+    fn send_to_gamepads(&mut self, e: &Event) -> Result<()> {
+        if self.gamepads.is_none() {
+            let pads =
+                GamepadThread::new(self.profile, self.policy.clone(), self.warnings.clone())?;
+            self.gamepads = Some(Arc::new(pads));
+        }
+        if let Some(pads) = &self.gamepads {
+            pads.send(e.clone());
+        }
+        Ok(())
     }
     /// Audio for a controller's speaker or haptics, handed to the controllers.
     pub fn controller_audio(&self, id: u16, kind: u16, payload: &[u8]) {
@@ -176,8 +221,18 @@ impl Injector {
         }
     }
     /// Lets go of the keys, mouse buttons and touches this injector holds and keeps its
-    /// controllers. Nothing is held on Linux.
-    pub fn release_keyboard_mouse(&mut self) {}
-    /// Lets go of everything this injector holds. Nothing is held on Linux.
-    pub fn release_all(&mut self) {}
+    /// controllers.
+    pub fn release_keyboard_mouse(&mut self) {
+        if let Err(error) = self.keyboard_mouse.release() {
+            tracing::debug!(%error, "keyboard and mouse release failed");
+        }
+    }
+    /// Lets go of everything this injector holds: its keys and buttons and its controllers'
+    /// controls.
+    pub fn release_all(&mut self) {
+        self.release_keyboard_mouse();
+        if let Some(gamepads) = &self.gamepads {
+            gamepads.park();
+        }
+    }
 }

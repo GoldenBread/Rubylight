@@ -12,11 +12,17 @@ serde_json.workspace = true
 tracing.workspace = true
 butterpollo-config = { path = "../../core/config" }
 butterpollo-crypto = { path = "../../core/crypto" }
+butterpollo-linux-io = { path = "../io" }
 butterpollo-media-policy = { path = "../../core/media-policy" }
 rubylight-protocol = { path = "../../../client/protocol/core" }
 rubylight-vdisplay-proto = { path = "../../drivers/rubylight-vdisplay-proto" }
 libloading = "0.8"
 libc = "0.2"
+pipewire = "0.10"
+
+[build-dependencies]
+bindgen = "0.72"
+pkg-config = "0.3"
 
 [lints]
 workspace = true

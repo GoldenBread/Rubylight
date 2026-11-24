@@ -268,7 +268,7 @@ pub fn explain(adapter: &str, codec: Codec, outcome: &Outcome) -> Option<Unavail
         ),
         // AMD's table says nothing about 4:4:4, which VCN never encodes: the
         // encoder's own words say why (NVENC's capability or AMF's 4:2:0).
-        Outcome::Failed(error) if codec.yuv444 => (
+        Outcome::Failed(error) if codec.yuv444 || host_limit(error) => (
             Cause::Failed,
             format!("{} is not available: {}", codec.label(), error.trim()),
         ),
@@ -312,6 +312,15 @@ pub fn explain(adapter: &str, codec: Codec, outcome: &Outcome) -> Option<Unavail
 }
 
 /// The unavailable codecs for a full probe pass, in `Codec::ALL` order.
+/// Words of an encoder error that mean the host's platform has no such encoder yet (the
+/// Linux host's `unsupported` errors), which no driver update changes.
+const HOST_LIMIT: &str = "not available on a Linux host yet";
+
+/// Whether `error` is the host's own limit ([`HOST_LIMIT`]) rather than the driver's.
+fn host_limit(error: &str) -> bool {
+    error.contains(HOST_LIMIT)
+}
+
 pub fn explain_all(adapter: &str, outcomes: &[(Codec, Outcome)]) -> Vec<Unavailable> {
     outcomes
         .iter()
@@ -321,12 +330,13 @@ pub fn explain_all(adapter: &str, outcomes: &[(Codec, Outcome)]) -> Vec<Unavaila
 
 /// The one-line console warning for a pass where some standard codecs work and
 /// others do not. Codecs the user turned off are not a warning, and neither is
-/// a missing native 4:4:4 mode: most GPUs encode 4:2:0 only. None when
-/// nothing a user would expect is missing.
+/// a missing native 4:4:4 mode: most GPUs encode 4:2:0 only. Nor is a codec the
+/// host's platform has no encoder for yet: the log and a refused launch say so.
+/// None when nothing a user would expect is missing.
 pub fn warning(missing: &[Unavailable]) -> Option<String> {
     let failed: Vec<&Unavailable> = missing
         .iter()
-        .filter(|m| !m.codec.yuv444 && m.cause != Cause::Disabled)
+        .filter(|m| !m.codec.yuv444 && m.cause != Cause::Disabled && !host_limit(&m.reason))
         .collect();
     if failed.is_empty() {
         return None;

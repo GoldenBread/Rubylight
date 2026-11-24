@@ -1,9 +1,14 @@
 //! Audio on Linux: the Opus encoder and the microphone's Opus decoder load libopus at run
-//! time and work. Capturing what the host plays, and capturing one game's sound, have no
-//! backend yet, so opening either fails.
+//! time and work, and `Loopback` captures what the host plays through PipeWire. Capturing one
+//! game's sound has no backend yet, so opening it fails.
 
 use anyhow::{Context, Result, bail};
 use std::{ffi::c_void, path::Path, time::Duration};
+
+mod capture;
+mod queue;
+#[cfg(test)]
+mod tests;
 
 /// The library's name; the system's library path finds it.
 const LIBRARY: &str = "libopus.so.0";
@@ -25,8 +30,17 @@ fn load(directory: &Path) -> Result<libloading::Library> {
         .with_context(|| format!("loading {}", target.display()))
 }
 
-/// Capture of what the host plays. It cannot be opened on Linux.
-pub struct Loopback(());
+/// Capture of what the host plays, through a PipeWire stream on a sink's monitor. PipeWire
+/// converts the device to 48 kHz and `channels` channels in Moonlight's order, so the samples
+/// are the packet's own.
+pub struct Loopback {
+    capture: capture::Capture,
+    channels: usize,
+    drained: Option<std::time::Instant>,
+    /// Packets of audio `read_into` handed out, for the trace.
+    trace: Option<Vec<butterpollo_media_policy::audio_cadence::Captured>>,
+    started: std::time::Instant,
+}
 
 impl Loopback {
     /// Capture the default device, mixed to `output_channels`.
@@ -39,57 +53,100 @@ impl Loopback {
     }
     /// [`Self::new_sink`], recording every captured packet for `drain_trace` when `trace` is
     /// set.
-    pub fn new_sink_traced(_output_channels: usize, _sink: &str, _trace: bool) -> Result<Self> {
-        Err(crate::unsupported("Audio capture"))
+    pub fn new_sink_traced(output_channels: usize, sink: &str, trace: bool) -> Result<Self> {
+        Ok(Self {
+            capture: capture::Capture::open(output_channels, sink)
+                .with_context(|| format!("opening audio capture ({})", sink_name(sink)))?,
+            channels: output_channels,
+            drained: None,
+            trace: trace.then(Vec::new),
+            started: std::time::Instant::now(),
+        })
     }
     /// The identity of the game process this captures; none for a device capture.
     pub fn process_identity(&self) -> Option<butterpollo_session::audio_scope::Identity> {
         None
     }
-    /// Wait up to `timeout` for captured audio.
+    /// Wait up to `timeout` for captured audio. An idle sink delivers nothing; the timeout
+    /// keeps the caller's silence on time.
     pub fn wait(&self, timeout: Duration) {
-        std::thread::sleep(timeout);
+        self.capture.shared.wait(timeout);
     }
     /// Whether the capture wakes the caller when audio arrives.
     pub fn event_driven(&self) -> bool {
-        false
+        true
     }
-    /// The device's own channel count and speaker mask; a mask of 0 means the standard order.
+    /// The capture's channel count and speaker mask; PipeWire already mixed the device to the
+    /// output channels in the standard order, so the mask is 0.
     pub fn source(&self) -> (usize, u32) {
-        (0, 0)
+        (self.channels, 0)
     }
-    /// How much audio the system holds between reads; zero when unknown.
+    /// How much audio this capture holds between reads: its queue's bound.
     pub fn buffer(&self) -> Duration {
-        Duration::ZERO
+        Duration::from_millis(100)
     }
     /// The time since the previous call, None on the first.
     pub fn since_drained(&mut self) -> Option<Duration> {
-        None
+        let now = std::time::Instant::now();
+        self.drained
+            .replace(now)
+            .map(|at| now.saturating_duration_since(at))
     }
     /// None when no audio arrived since the last call, else how much the system skipped
-    /// before it.
+    /// before it: PipeWire skips nothing.
     pub fn take_delivered(&mut self) -> Option<Duration> {
-        None
+        self.capture
+            .shared
+            .lock()
+            .take_arrived()
+            .then_some(Duration::ZERO)
     }
     /// How much captured audio this host discarded since the last call, in 48 kHz samples.
     pub fn take_trimmed(&mut self) -> u64 {
-        0
+        self.capture.shared.lock().take_trimmed()
     }
     /// What this capture holds that will never be sent, in 48 kHz samples.
     pub fn take_discarded(&mut self) -> u64 {
-        0
+        let mut queue = self.capture.shared.lock();
+        queue.take_trimmed() + queue.queued()
     }
     /// Moves the packets traced since the last call into `into`.
-    pub fn drain_trace(&mut self, _into: &mut butterpollo_media_policy::audio_cadence::Trace) {}
+    pub fn drain_trace(&mut self, into: &mut butterpollo_media_policy::audio_cadence::Trace) {
+        for entry in self.trace.iter_mut().flat_map(|trace| trace.drain(..)) {
+            into.capture(entry);
+        }
+    }
     /// One packet of `frames`, when a whole one was there.
     pub fn read(&mut self, frames: usize) -> Result<Option<Vec<f32>>> {
         let mut out = Vec::new();
         Ok(self.read_into(frames, &mut out)?.then_some(out))
     }
-    /// As [`Self::read`], into `out` (emptied first): whether a whole packet was there.
-    pub fn read_into(&mut self, _frames: usize, out: &mut Vec<f32>) -> Result<bool> {
-        out.clear();
-        Ok(false)
+    /// As [`Self::read`], into `out` (emptied first): whether a whole packet was there. Fails
+    /// once PipeWire's stream or daemon is gone.
+    pub fn read_into(&mut self, frames: usize, out: &mut Vec<f32>) -> Result<bool> {
+        let mut queue = self.capture.shared.lock();
+        let full = queue.read_into(frames, out);
+        if !full && let Some(error) = &queue.error {
+            bail!("audio capture failed: {error}");
+        }
+        if full && let Some(trace) = &mut self.trace {
+            trace.push(butterpollo_media_policy::audio_cadence::Captured {
+                read_ms: self.started.elapsed().as_secs_f64() * 1000.,
+                device_qpc_ms: self.started.elapsed().as_secs_f64() * 1000.,
+                position: 0,
+                frames: frames as u32,
+                flags: 0,
+            });
+        }
+        Ok(full)
+    }
+}
+
+fn sink_name(sink: &str) -> String {
+    if sink.is_empty() {
+        "default sink".into()
+    } else {
+        format!("sink {sink}")
     }
 }
 

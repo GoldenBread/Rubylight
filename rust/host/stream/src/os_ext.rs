@@ -11,6 +11,39 @@ pub use std::os::windows::{
 #[cfg(not(windows))]
 pub use other::*;
 
+/// The file an app's output setting of `null` sends its output to.
+pub const NULL_DEVICE: &str = if cfg!(windows) { "NUL" } else { "/dev/null" };
+
+/// The file an app's output setting names: [`NULL_DEVICE`] for `null`.
+pub fn output_file(setting: &str) -> &str {
+    if setting == "null" {
+        NULL_DEVICE
+    } else {
+        setting
+    }
+}
+
+/// The shell command that starts an app's own command. On Windows it is the command itself.
+/// On Linux the app runs inside a headless gamescope session at the stream's mode, whose
+/// picture the stream captures and whose X server takes the keyboard and mouse
+/// (`butterpollo_win_io::gamescope`).
+pub fn game_command(
+    command: String,
+    environment: &std::collections::BTreeMap<String, String>,
+) -> anyhow::Result<String> {
+    #[cfg(target_os = "linux")]
+    {
+        let (wrapped, folder) = butterpollo_win_io::gamescope::wrap(&command, environment)?;
+        tracing::info!(session = %folder.display(), "the app starts inside a gamescope session");
+        Ok(wrapped)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = environment;
+        Ok(command)
+    }
+}
+
 #[cfg(not(windows))]
 mod other {
     use std::os::fd::{AsRawFd, RawFd};
