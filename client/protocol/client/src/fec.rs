@@ -6,7 +6,12 @@
 //! Cauchy matrix `p[j][i] = 1 / ((parity + i) ^ j)`; Moonlight audio replaces it with a fixed
 //! OpenFEC matrix ([`ReedSolomon::with_parity_matrix`]).
 
+mod simd;
+
 use std::fmt;
+use std::mem::MaybeUninit;
+
+use simd::{Kernel, axpy, axpy_n, scal};
 
 /// nanors limit on data + parity shards.
 pub const MAX_SHARDS: usize = 255;
@@ -63,280 +68,13 @@ const fn inverse_table() -> [u8; 256] {
     inv
 }
 
-/// Per coefficient `u`, the products of every low nibble (`[0][n] = u * n`) and every high
-/// nibble (`[1][n] = u * (n << 4)`). Multiplication distributes over XOR, so
-/// `u * b == [0][b & 15] ^ [1][b >> 4]`: the 16-byte tables the SIMD kernels shuffle, like
-/// nanors' oblas_lite.
-#[cfg_attr(
-    not(any(target_arch = "x86_64", target_arch = "aarch64")),
-    allow(dead_code)
-)]
-const fn nibble_tables() -> [[[u8; 16]; 2]; 256] {
-    let (exp, log) = EXP_LOG;
-    let mut table = [[[0u8; 16]; 2]; 256];
-    let mut u = 1;
-    while u < 256 {
-        let mut n = 1;
-        while n < 16 {
-            table[u][0][n] = exp[log[u] as usize + log[n] as usize];
-            table[u][1][n] = exp[log[u] as usize + log[n << 4] as usize];
-            n += 1;
-        }
-        u += 1;
-    }
-    table
-}
-
 static MUL: [[u8; 256]; 256] = mul_table();
 /// `INV[0]` is 0, as in nanors.
 static INV: [u8; 256] = inverse_table();
-#[cfg_attr(
-    not(any(target_arch = "x86_64", target_arch = "aarch64")),
-    allow(dead_code)
-)]
-static NIBBLES: [[[u8; 16]; 2]; 256] = nibble_tables();
 
 /// Multiplies two field elements.
 pub fn gf_mul(a: u8, b: u8) -> u8 {
     MUL[a as usize][b as usize]
-}
-
-/// The vector unit `axpy` and `scal` use; the scalar table loop finishes the tail bytes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Kernel {
-    /// AArch64 always has NEON; there only the tests run the scalar loop alone.
-    #[cfg_attr(target_arch = "aarch64", allow(dead_code))]
-    Scalar,
-    #[cfg(target_arch = "x86_64")]
-    Ssse3,
-    #[cfg(target_arch = "x86_64")]
-    Avx2,
-    #[cfg(target_arch = "aarch64")]
-    Neon,
-}
-
-impl Kernel {
-    /// The widest kernel this CPU runs. std caches the CPUID probe.
-    fn best() -> Self {
-        #[cfg(target_arch = "x86_64")]
-        {
-            if is_x86_feature_detected!("avx2") {
-                Kernel::Avx2
-            } else if is_x86_feature_detected!("ssse3") {
-                Kernel::Ssse3
-            } else {
-                Kernel::Scalar
-            }
-        }
-        // NEON is part of the AArch64 baseline.
-        #[cfg(target_arch = "aarch64")]
-        {
-            Kernel::Neon
-        }
-        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-        {
-            Kernel::Scalar
-        }
-    }
-}
-
-/// `a ^= u * b`
-fn axpy(kernel: Kernel, a: &mut [u8], b: &[u8], u: u8) {
-    let len = a.len().min(b.len());
-    let (a, b) = (&mut a[..len], &b[..len]);
-    match u {
-        0 => {}
-        1 => a.iter_mut().zip(b).for_each(|(a, b)| *a ^= b),
-        _ => {
-            // SAFETY: `best` (or a test that probed the CPU) picked a kernel this CPU runs, and
-            // `a` and `b` have the same length.
-            let done = match kernel {
-                Kernel::Scalar => 0,
-                #[cfg(target_arch = "x86_64")]
-                Kernel::Ssse3 => unsafe { x86::axpy_ssse3(a, b, &NIBBLES[u as usize]) },
-                #[cfg(target_arch = "x86_64")]
-                Kernel::Avx2 => unsafe { x86::axpy_avx2(a, b, &NIBBLES[u as usize]) },
-                #[cfg(target_arch = "aarch64")]
-                Kernel::Neon => unsafe { neon::axpy(a, b, &NIBBLES[u as usize]) },
-            };
-            let row = &MUL[u as usize];
-            a[done..]
-                .iter_mut()
-                .zip(&b[done..])
-                .for_each(|(a, b)| *a ^= row[*b as usize]);
-        }
-    }
-}
-
-/// `a *= u`
-fn scal(kernel: Kernel, a: &mut [u8], u: u8) {
-    if u < 2 {
-        return;
-    }
-    // SAFETY: as in `axpy`.
-    let done = match kernel {
-        Kernel::Scalar => 0,
-        #[cfg(target_arch = "x86_64")]
-        Kernel::Ssse3 => unsafe { x86::scal_ssse3(a, &NIBBLES[u as usize]) },
-        #[cfg(target_arch = "x86_64")]
-        Kernel::Avx2 => unsafe { x86::scal_avx2(a, &NIBBLES[u as usize]) },
-        #[cfg(target_arch = "aarch64")]
-        Kernel::Neon => unsafe { neon::scal(a, &NIBBLES[u as usize]) },
-    };
-    let row = &MUL[u as usize];
-    a[done..].iter_mut().for_each(|a| *a = row[*a as usize]);
-}
-
-/// Split-nibble `pshufb` kernels. Each handles whole 16- or 32-byte blocks and returns how many
-/// bytes it did; callers guarantee the CPU feature and `a.len() == b.len()`.
-#[cfg(target_arch = "x86_64")]
-mod x86 {
-    use std::arch::x86_64::*;
-
-    #[inline]
-    #[target_feature(enable = "ssse3")]
-    unsafe fn mul128(x: __m128i, lo: __m128i, hi: __m128i) -> __m128i {
-        let mask = _mm_set1_epi8(0x0f);
-        let l = _mm_and_si128(x, mask);
-        let h = _mm_and_si128(_mm_srli_epi64::<4>(x), mask);
-        _mm_xor_si128(_mm_shuffle_epi8(lo, l), _mm_shuffle_epi8(hi, h))
-    }
-
-    #[inline]
-    #[target_feature(enable = "avx2")]
-    unsafe fn mul256(x: __m256i, lo: __m256i, hi: __m256i) -> __m256i {
-        let mask = _mm256_set1_epi8(0x0f);
-        let l = _mm256_and_si256(x, mask);
-        let h = _mm256_and_si256(_mm256_srli_epi64::<4>(x), mask);
-        _mm256_xor_si256(_mm256_shuffle_epi8(lo, l), _mm256_shuffle_epi8(hi, h))
-    }
-
-    #[target_feature(enable = "ssse3")]
-    pub unsafe fn axpy_ssse3(a: &mut [u8], b: &[u8], t: &[[u8; 16]; 2]) -> usize {
-        // SAFETY: caller guarantees SSSE3 is supported and `a.len() == b.len()`.
-        unsafe {
-            let lo = _mm_loadu_si128(t[0].as_ptr().cast());
-            let hi = _mm_loadu_si128(t[1].as_ptr().cast());
-            let end = a.len() & !15;
-            let (pa, pb) = (a.as_mut_ptr(), b.as_ptr());
-            let mut i = 0;
-            while i < end {
-                let x = _mm_loadu_si128(pb.add(i).cast());
-                let y = _mm_loadu_si128(pa.add(i).cast());
-                _mm_storeu_si128(pa.add(i).cast(), _mm_xor_si128(y, mul128(x, lo, hi)));
-                i += 16;
-            }
-            end
-        }
-    }
-
-    #[target_feature(enable = "ssse3")]
-    pub unsafe fn scal_ssse3(a: &mut [u8], t: &[[u8; 16]; 2]) -> usize {
-        // SAFETY: caller guarantees SSSE3 is supported and `t` is valid.
-        unsafe {
-            let lo = _mm_loadu_si128(t[0].as_ptr().cast());
-            let hi = _mm_loadu_si128(t[1].as_ptr().cast());
-            let end = a.len() & !15;
-            let pa = a.as_mut_ptr();
-            let mut i = 0;
-            while i < end {
-                let x = _mm_loadu_si128(pa.add(i).cast());
-                _mm_storeu_si128(pa.add(i).cast(), mul128(x, lo, hi));
-                i += 16;
-            }
-            end
-        }
-    }
-
-    /// 32-byte blocks, then one 16-byte block.
-    #[target_feature(enable = "avx2")]
-    pub unsafe fn axpy_avx2(a: &mut [u8], b: &[u8], t: &[[u8; 16]; 2]) -> usize {
-        // SAFETY: caller guarantees AVX2 is supported and `a.len() == b.len()`.
-        unsafe {
-            let lo = _mm256_broadcastsi128_si256(_mm_loadu_si128(t[0].as_ptr().cast()));
-            let hi = _mm256_broadcastsi128_si256(_mm_loadu_si128(t[1].as_ptr().cast()));
-            let end = a.len() & !31;
-            let (pa, pb) = (a.as_mut_ptr(), b.as_ptr());
-            let mut i = 0;
-            while i < end {
-                let x = _mm256_loadu_si256(pb.add(i).cast());
-                let y = _mm256_loadu_si256(pa.add(i).cast());
-                _mm256_storeu_si256(pa.add(i).cast(), _mm256_xor_si256(y, mul256(x, lo, hi)));
-                i += 32;
-            }
-            end + axpy_ssse3(&mut a[end..], &b[end..], t)
-        }
-    }
-
-    /// 32-byte blocks, then one 16-byte block.
-    #[target_feature(enable = "avx2")]
-    pub unsafe fn scal_avx2(a: &mut [u8], t: &[[u8; 16]; 2]) -> usize {
-        // SAFETY: caller guarantees AVX2 is supported.
-        unsafe {
-            let lo = _mm256_broadcastsi128_si256(_mm_loadu_si128(t[0].as_ptr().cast()));
-            let hi = _mm256_broadcastsi128_si256(_mm_loadu_si128(t[1].as_ptr().cast()));
-            let end = a.len() & !31;
-            let pa = a.as_mut_ptr();
-            let mut i = 0;
-            while i < end {
-                let x = _mm256_loadu_si256(pa.add(i).cast());
-                _mm256_storeu_si256(pa.add(i).cast(), mul256(x, lo, hi));
-                i += 32;
-            }
-            end + scal_ssse3(&mut a[end..], t)
-        }
-    }
-}
-
-/// Split-nibble `tbl` kernels on 16-byte blocks; same contract as the x86 ones.
-#[cfg(target_arch = "aarch64")]
-mod neon {
-    use std::arch::aarch64::*;
-
-    #[inline]
-    unsafe fn mul(x: uint8x16_t, lo: uint8x16_t, hi: uint8x16_t) -> uint8x16_t {
-        // SAFETY: caller guarantees NEON is available on aarch64.
-        unsafe {
-            let l = vandq_u8(x, vdupq_n_u8(0x0f));
-            let h = vshrq_n_u8::<4>(x);
-            veorq_u8(vqtbl1q_u8(lo, l), vqtbl1q_u8(hi, h))
-        }
-    }
-
-    pub unsafe fn axpy(a: &mut [u8], b: &[u8], t: &[[u8; 16]; 2]) -> usize {
-        // SAFETY: caller guarantees NEON is available and `a.len() == b.len()`.
-        unsafe {
-            let lo = vld1q_u8(t[0].as_ptr());
-            let hi = vld1q_u8(t[1].as_ptr());
-            let end = a.len() & !15;
-            let (pa, pb) = (a.as_mut_ptr(), b.as_ptr());
-            let mut i = 0;
-            while i < end {
-                let x = vld1q_u8(pb.add(i));
-                let y = vld1q_u8(pa.add(i));
-                vst1q_u8(pa.add(i), veorq_u8(y, mul(x, lo, hi)));
-                i += 16;
-            }
-            end
-        }
-    }
-
-    pub unsafe fn scal(a: &mut [u8], t: &[[u8; 16]; 2]) -> usize {
-        // SAFETY: caller guarantees NEON is available.
-        unsafe {
-            let lo = vld1q_u8(t[0].as_ptr());
-            let hi = vld1q_u8(t[1].as_ptr());
-            let end = a.len() & !15;
-            let pa = a.as_mut_ptr();
-            let mut i = 0;
-            while i < end {
-                let x = vld1q_u8(pa.add(i));
-                vst1q_u8(pa.add(i), mul(x, lo, hi));
-                i += 16;
-            }
-            end
-        }
-    }
 }
 
 /// Mutable `shards[to]` and shared `shards[from]`; `to != from`.
@@ -353,6 +91,48 @@ fn pair<S: AsMut<[u8]> + AsRef<[u8]>>(
         let (low, high) = shards.split_at_mut(to);
         (high[0].as_mut(), low[from].as_ref())
     }
+}
+
+/// `N` disjoint mutable output shards and one disjoint shared input shard (`N <= 4`).
+fn strip_n<const N: usize, S: AsMut<[u8]> + AsRef<[u8]>>(
+    shards: &mut [S],
+    to: [usize; N],
+    from: usize,
+) -> ([&mut [u8]; N], &[u8]) {
+    let mut order = [(0usize, 0usize); 5];
+    let count = N + 1;
+    debug_assert!(count <= 5);
+    for i in 0..N {
+        order[i] = (to[i], i);
+    }
+    order[N] = (from, N);
+    for i in 1..count {
+        let mut j = i;
+        while j > 0 && order[j - 1].0 > order[j].0 {
+            order.swap(j - 1, j);
+            j -= 1;
+        }
+    }
+    let mut out: [Option<&mut [u8]>; N] = [const { None }; N];
+    let mut src: Option<&[u8]> = None;
+    let mut rest = shards;
+    let mut base = 0;
+    for &(idx, slot) in &order[..count] {
+        assert!(idx >= base, "duplicate shard index");
+        let (_, tail) = rest.split_at_mut(idx - base);
+        let (head, after) = tail.split_first_mut().expect("shard index in bounds");
+        if slot == N {
+            src = Some((*head).as_ref());
+        } else {
+            out[slot] = Some(head.as_mut());
+        }
+        rest = after;
+        base = idx + 1;
+    }
+    (
+        out.map(|shard| shard.expect("output shard")),
+        src.expect("input shard"),
+    )
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -379,6 +159,8 @@ impl std::error::Error for FecError {}
 pub struct ReedSolomon {
     data: usize,
     parity: usize,
+    /// True when built with [`ReedSolomon::with_parity_matrix`] rather than the Cauchy matrix.
+    custom: bool,
     /// `parity` rows of `data` coefficients.
     matrix: Vec<u8>,
 }
@@ -390,6 +172,7 @@ impl ReedSolomon {
         let mut code = Self {
             data: 0,
             parity: 0,
+            custom: false,
             matrix: Vec::new(),
         };
         code.renew(data, parity).then_some(code)
@@ -401,6 +184,10 @@ impl ReedSolomon {
         if data == 0 || parity == 0 || data + parity > MAX_SHARDS {
             return false;
         }
+        if !self.custom && self.data == data && self.parity == parity {
+            return true;
+        }
+        self.custom = false;
         self.data = data;
         self.parity = parity;
         self.matrix.clear();
@@ -420,6 +207,7 @@ impl ReedSolomon {
             return None;
         }
         code.matrix.copy_from_slice(matrix);
+        code.custom = true;
         Some(code)
     }
 
@@ -449,10 +237,36 @@ impl ReedSolomon {
         self.check(shards, len)?;
         let kernel = Kernel::best();
         let (data, parity) = shards.split_at_mut(self.data);
-        for (row, out) in self.matrix.chunks_exact(self.data).zip(parity.iter_mut()) {
+        for out in parity.iter_mut() {
+            out[..len].fill(0);
+        }
+        let mut row = 0;
+        while row + 4 <= self.parity {
+            let r0 = row * self.data;
+            let (p0, rest) = parity[row..row + 4].split_first_mut().unwrap();
+            let (p1, rest) = rest.split_first_mut().unwrap();
+            let (p2, rest) = rest.split_first_mut().unwrap();
+            let p3 = &mut rest[0];
+            let mut outs = [&mut p0[..len], &mut p1[..len], &mut p2[..len], &mut p3[..len]];
+            for (col, input) in data.iter().enumerate() {
+                axpy_n(
+                    kernel,
+                    &mut outs,
+                    &input[..len],
+                    [
+                        self.matrix[r0 + col],
+                        self.matrix[r0 + self.data + col],
+                        self.matrix[r0 + 2 * self.data + col],
+                        self.matrix[r0 + 3 * self.data + col],
+                    ],
+                );
+            }
+            row += 4;
+        }
+        for (r, out) in parity[row..self.parity].iter_mut().enumerate() {
+            let coeffs = &self.matrix[(row + r) * self.data..(row + r + 1) * self.data];
             let out = &mut out[..len];
-            out.fill(0);
-            for (input, &u) in data.iter().zip(row) {
+            for (input, &u) in data.iter().zip(coeffs) {
                 axpy(kernel, out, &input[..len], u);
             }
         }
@@ -461,36 +275,44 @@ impl ReedSolomon {
 
     /// Recovers the data shards marked missing in `missing` (one flag per shard, data first)
     /// from the received data and parity shards, like `reed_solomon_decode`. Missing parity
-    /// shards are not rebuilt. Allocates nothing.
+    /// shards are not rebuilt and need not be sized. Allocates nothing.
     pub fn decode<S: AsMut<[u8]> + AsRef<[u8]>>(
         &self,
         shards: &mut [S],
         missing: &[bool],
         len: usize,
     ) -> Result<(), FecError> {
-        self.check(shards, len)?;
         let (ds, ts) = (self.data, self.data + self.parity);
-        if missing.len() < ts {
+        if len == 0
+            || shards.len() < ts
+            || missing.len() < ts
+            || shards[..ts]
+                .iter()
+                .enumerate()
+                .any(|(i, s)| (i < ds || !missing[i]) && s.as_ref().len() < len)
+        {
             return Err(FecError::BadShards);
         }
-        let mut erasures = [0u8; MAX_SHARDS];
-        let mut colperm = [0u8; MAX_SHARDS];
-        let mut rowperm = [0u8; MAX_SHARDS];
+        let mut erasures = [MaybeUninit::<u8>::uninit(); MAX_SHARDS];
+        let mut colperm = [MaybeUninit::<u8>::uninit(); MAX_SHARDS];
+        let mut rowperm = [MaybeUninit::<u8>::uninit(); MAX_SHARDS];
         let mut gaps = 0;
         for (i, _) in missing[..ds].iter().enumerate().filter(|(_, m)| **m) {
-            erasures[gaps] = i as u8;
+            erasures[gaps].write(i as u8);
             gaps += 1;
         }
         let mut j = 0;
-        for slot in colperm.iter_mut().take(ds - gaps) {
+        for slot in &mut colperm[..ds - gaps] {
             while missing[j] {
                 j += 1;
             }
-            *slot = j as u8;
+            slot.write(j as u8);
             j += 1;
         }
         for i in 0..gaps {
-            colperm[ds - gaps + i] = erasures[i];
+            // SAFETY: `erasures[i]` was initialized above for `i < gaps`.
+            let erasure = unsafe { erasures[i].assume_init() };
+            colperm[ds - gaps + i].write(erasure);
         }
         let mut j = ds;
         for i in 0..gaps {
@@ -500,13 +322,40 @@ impl ReedSolomon {
             if j >= ts {
                 return Err(FecError::TooFewShards);
             }
-            rowperm[i] = (j - ds) as u8;
-            let (to, from) = pair(shards, erasures[i] as usize, j);
+            rowperm[i].write((j - ds) as u8);
+            // SAFETY: `erasures[i]` was initialized above for `i < gaps`.
+            let erasure = unsafe { erasures[i].assume_init() } as usize;
+            let (to, from) = pair(shards, erasure, j);
             to[..len].copy_from_slice(&from[..len]);
             j += 1;
         }
-        self.invert(Kernel::best(), shards, ds - gaps, len, &colperm, &rowperm);
+        // SAFETY: `colperm[..ds]` and `rowperm[..gaps]` were initialized above.
+        let colperm = unsafe { std::slice::from_raw_parts(colperm.as_ptr().cast::<u8>(), ds) };
+        let rowperm = unsafe { std::slice::from_raw_parts(rowperm.as_ptr().cast::<u8>(), gaps) };
+        self.invert(Kernel::best(), shards, ds - gaps, len, colperm, rowperm);
         Ok(())
+    }
+
+    /// Eliminates the known columns `known` into the first `N` output erasures of `erased`/`rows`.
+    fn eliminate_strip<const N: usize, S: AsMut<[u8]> + AsRef<[u8]>>(
+        &self,
+        kernel: Kernel,
+        dst: &mut [S],
+        len: usize,
+        known: &[u8],
+        erased: &[u8],
+        rows: &[u8],
+    ) {
+        let k = self.data;
+        let src = &self.matrix;
+        let to: [usize; N] = std::array::from_fn(|r| erased[r] as usize);
+        let drs: [usize; N] = std::array::from_fn(|r| rows[r] as usize * k);
+        for &col in known {
+            let col = col as usize;
+            let coeffs: [u8; N] = std::array::from_fn(|r| src[drs[r] + col]);
+            let (mut outs, from) = strip_n(dst, to, col);
+            axpy_n(kernel, &mut outs, &from[..len], coeffs);
+        }
     }
 
     /// nanors' `invert_mat`: eliminates the known columns from the copied parity rows, then
@@ -528,21 +377,34 @@ impl ReedSolomon {
         }
         // Each erasure took a parity shard, so `w` is at most the smaller shard count.
         debug_assert!(w <= MAX_ERASURES);
-        let mut work = [0u8; MAX_ERASURES * MAX_ERASURES];
-        let wrk = &mut work[..w * w];
+        let mut work = [MaybeUninit::<u8>::uninit(); MAX_ERASURES * MAX_ERASURES];
         for i in 0..w {
             let dr = d[i] as usize * k;
             for j in 0..w {
-                wrk[i * w + j] = src[dr + c[v0 + j] as usize];
+                work[i * w + j].write(src[dr + c[v0 + j] as usize]);
             }
         }
-        for v in v0..k {
-            let dr = d[v - v0] as usize * k;
-            for row in 0..v0 {
-                let u = src[dr + c[row] as usize];
-                let (to, from) = pair(dst, c[v] as usize, c[row] as usize);
-                axpy(kernel, &mut to[..len], &from[..len], u);
+        // SAFETY: `work[..w * w]` was fully initialized above.
+        let wrk = unsafe { std::slice::from_raw_parts_mut(work.as_mut_ptr().cast::<u8>(), w * w) };
+        let (known, erased) = c.split_at(v0);
+        let mut e = 0;
+        while e + 4 <= w {
+            self.eliminate_strip::<4, _>(kernel, dst, len, known, &erased[e..], &d[e..]);
+            e += 4;
+        }
+        match w - e {
+            3 => self.eliminate_strip::<3, _>(kernel, dst, len, known, &erased[e..], &d[e..]),
+            2 => self.eliminate_strip::<2, _>(kernel, dst, len, known, &erased[e..], &d[e..]),
+            1 => {
+                let to = erased[e] as usize;
+                let dr = d[e] as usize * k;
+                for &col in known {
+                    let col = col as usize;
+                    let (out, from) = pair(dst, to, col);
+                    axpy(kernel, &mut out[..len], &from[..len], src[dr + col]);
+                }
             }
+            _ => {}
         }
         for x in 0..w {
             let u = INV[wrk[x * w + x] as usize];
@@ -568,6 +430,7 @@ impl ReedSolomon {
 
 #[cfg(test)]
 mod tests {
+    use super::simd::NIBBLES;
     use super::*;
 
     fn shards(count: usize, len: usize, seed: u32) -> Vec<Vec<u8>> {
@@ -603,6 +466,9 @@ mod tests {
             }
             if is_x86_feature_detected!("avx2") {
                 kernels.push(Kernel::Avx2);
+                if is_x86_feature_detected!("gfni") {
+                    kernels.push(Kernel::Avx2Gfni);
+                }
             }
             kernels
         }
@@ -751,5 +617,63 @@ mod tests {
         assert!(ReedSolomon::new(200, 56).is_none());
         assert!(ReedSolomon::new(200, 55).is_some());
         assert!(ReedSolomon::with_parity_matrix(4, 2, &AUDIO_PARITY_MATRIX).is_some());
+    }
+
+    #[test]
+    fn tiled_axpy_matches_scalar_for_all_kernels_and_widths() {
+        let set = shards(5, 1392 + 5, 41);
+        for kernel in simd_kernels() {
+            for len in [0, 1, 7, 8, 9, 15, 16, 17, 23, 24, 31, 32, 33, 48, 63, 64, 1392] {
+                let src = &set[4][1..1 + len];
+                for coeffs in [
+                    [0u8, 1, 2, 255],
+                    [1, 1, 1, 1],
+                    [0, 0, 0, 0],
+                    [13, 77, 142, 211],
+                ] {
+                    let mut want: [Vec<u8>; 4] = std::array::from_fn(|r| set[r][..len].to_vec());
+                    let mut got = want.clone();
+                    for r in 0..4 {
+                        axpy(Kernel::Scalar, &mut want[r], src, coeffs[r]);
+                    }
+                    let [g0, g1, g2, g3] = &mut got;
+                    axpy_n(
+                        kernel,
+                        &mut [
+                            g0.as_mut_slice(),
+                            g1.as_mut_slice(),
+                            g2.as_mut_slice(),
+                            g3.as_mut_slice(),
+                        ],
+                        src,
+                        coeffs,
+                    );
+                    assert_eq!(got, want, "{kernel:?} axpy4 len {len} coeffs {coeffs:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn renew_reuses_same_shape_rebuilds_custom_and_decode_ignores_missing_parity_len() {
+        let mut rs = ReedSolomon::with_parity_matrix(4, 2, &AUDIO_PARITY_MATRIX).unwrap();
+        let custom = rs.matrix.clone();
+        assert!(rs.renew(4, 2));
+        assert_ne!(rs.matrix, custom, "custom matrix replaced by Cauchy");
+        let cauchy = rs.matrix.clone();
+        assert!(rs.renew(4, 2));
+        assert_eq!(rs.matrix, cauchy);
+
+        let len = 37;
+        let mut set = shards(6, len, 99);
+        let original = set.clone();
+        let mut refs: Vec<&mut [u8]> = set.iter_mut().map(|s| &mut s[..]).collect();
+        rs.encode(&mut refs, len).unwrap();
+        // Drop data shard 1 and parity shard 5 (leaving parity shard 5 empty).
+        let missing = [false, true, false, false, false, true];
+        set[1].fill(0);
+        set[5].clear();
+        rs.decode(&mut set, &missing, len).unwrap();
+        assert_eq!(set[..4], original[..4]);
     }
 }

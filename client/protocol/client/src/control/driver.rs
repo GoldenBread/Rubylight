@@ -16,12 +16,18 @@
 //! sees them, and starts an attempt on [`ControlHandle::network_changed`] or after a second
 //! without a word from the host.
 
+mod waker;
+
 use std::collections::VecDeque;
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
+
+#[cfg(test)]
+use waker::wake_bind;
+use waker::Waker;
 
 use rand_core::{OsRng, RngCore};
 use rubylight_protocol::roaming::{is_roaming, PROBE_FLAG_MEDIA_REBOUND};
@@ -201,53 +207,6 @@ pub enum Outcome {
     /// The host ended it, or the connection failed; the code is also delivered as
     /// [`ControlEvent::Terminated`].
     Terminated(i32),
-}
-
-/// Wakes the control thread with a datagram to the control socket; connected to it, so a
-/// moved control socket ([`ControlHandle::move_to`]) is a reconnect away. Bound to the
-/// unspecified address, so it still reaches the control socket after a roam took the old
-/// local address away.
-struct Waker {
-    socket: UdpSocket,
-}
-
-/// Where wakes for the control socket at `enet_local` go. A specific local address keeps its
-/// IPv6 scope, which a link-local one needs.
-fn wake_target(enet_local: SocketAddr) -> SocketAddr {
-    let mut target = enet_local;
-    if target.ip().is_unspecified() {
-        target.set_ip(match target.ip() {
-            IpAddr::V4(_) => Ipv4Addr::LOCALHOST.into(),
-            IpAddr::V6(_) => Ipv6Addr::LOCALHOST.into(),
-        });
-    }
-    target
-}
-
-/// Where the waker for `target` is bound: no local address, only the family's.
-fn wake_bind(target: SocketAddr) -> SocketAddr {
-    match target {
-        SocketAddr::V4(_) => (Ipv4Addr::UNSPECIFIED, 0).into(),
-        SocketAddr::V6(_) => (Ipv6Addr::UNSPECIFIED, 0).into(),
-    }
-}
-
-impl Waker {
-    fn new(enet_local: SocketAddr) -> io::Result<Self> {
-        let target = wake_target(enet_local);
-        let socket = UdpSocket::bind(wake_bind(target))?;
-        socket.set_nonblocking(true)?;
-        socket.connect(target)?;
-        Ok(Self { socket })
-    }
-
-    fn retarget(&self, enet_local: SocketAddr) -> io::Result<()> {
-        self.socket.connect(wake_target(enet_local))
-    }
-
-    fn wake(&self) {
-        let _ = self.socket.send(&[0]);
-    }
 }
 
 struct Shared {
@@ -782,6 +741,8 @@ pub struct ControlClient {
     input: Vec<InputPacket>,
     /// Queued control datagrams, kept for the same reason.
     outgoing: Vec<super::session::Outgoing>,
+    /// Reusable plaintext scratch so input packets seal in place into their existing `Vec<u8>`.
+    seal_buf: Vec<u8>,
     /// Input was left queued because ENet's reliable window was full.
     input_waits_for_window: bool,
 }
@@ -982,6 +943,7 @@ pub fn connect(
         roam_events: Vec::new(),
         input: Vec::new(),
         outgoing: Vec::new(),
+        seal_buf: Vec::new(),
         input_waits_for_window: false,
     };
     Ok((client, handle))
@@ -1051,7 +1013,9 @@ impl ControlClient {
                 delivery,
             } in self.input.drain(..)
             {
-                let _ = session.send_input(&data, channel, delivery);
+                self.seal_buf.clear();
+                self.seal_buf.extend_from_slice(&data);
+                let _ = session.send_input_into(&self.seal_buf, data, channel, delivery);
             }
             let wake = session.poll(now);
             self.outgoing

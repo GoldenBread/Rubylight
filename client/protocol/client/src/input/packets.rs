@@ -264,14 +264,23 @@ impl InputEvent {
     /// The packet as the host parses it. `sunshine` carries the upper controller button
     /// flags, which GFE does not take.
     pub fn encode(&self, sunshine: bool) -> Vec<u8> {
-        let mut out = Vec::with_capacity(40);
+        let mut out = Vec::with_capacity(64);
+        self.encode_into(sunshine, &mut out);
+        out
+    }
+
+    /// Encodes the packet into `out` (replacing its contents), avoiding a per-event allocation
+    /// for callers that reuse a buffer.
+    pub fn encode_into(&self, sunshine: bool, out: &mut Vec<u8>) {
+        out.clear();
+        out.reserve(64);
         out.extend_from_slice(&[0; 4]);
         out.extend_from_slice(&self.magic().to_le_bytes());
         let le16 = |out: &mut Vec<u8>, v: u16| out.extend_from_slice(&v.to_le_bytes());
         let be16 = |out: &mut Vec<u8>, v: i16| out.extend_from_slice(&v.to_be_bytes());
         let float = |out: &mut Vec<u8>, v: f32| out.extend_from_slice(&v.to_le_bytes());
         match *self {
-            Self::EnableHaptics => le16(&mut out, 1),
+            Self::EnableHaptics => le16(out, 1),
             Self::Keyboard {
                 key_code,
                 modifiers,
@@ -279,14 +288,14 @@ impl InputEvent {
                 ..
             } => {
                 out.push(flags);
-                le16(&mut out, key_code);
+                le16(out, key_code);
                 out.push(modifiers);
-                le16(&mut out, 0);
+                le16(out, 0);
             }
             Self::Text(ref text) => out.extend_from_slice(text),
             Self::MouseMove { dx, dy } => {
-                be16(&mut out, dx);
-                be16(&mut out, dy);
+                be16(out, dx);
+                be16(out, dy);
             }
             Self::MousePosition {
                 x,
@@ -294,19 +303,19 @@ impl InputEvent {
                 width,
                 height,
             } => {
-                be16(&mut out, x);
-                be16(&mut out, y);
-                be16(&mut out, 0);
-                be16(&mut out, width);
-                be16(&mut out, height);
+                be16(out, x);
+                be16(out, y);
+                be16(out, 0);
+                be16(out, width);
+                be16(out, height);
             }
             Self::MouseButton { button, .. } => out.push(button),
             Self::Scroll { amount } => {
-                be16(&mut out, amount);
-                be16(&mut out, amount);
-                be16(&mut out, 0);
+                be16(out, amount);
+                be16(out, amount);
+                be16(out, 0);
             }
-            Self::HScroll { amount } => be16(&mut out, amount),
+            Self::HScroll { amount } => be16(out, amount),
             Self::Controller {
                 number,
                 active_mask,
@@ -316,19 +325,19 @@ impl InputEvent {
                 left_stick,
                 right_stick,
             } => {
-                le16(&mut out, 0x001A);
-                le16(&mut out, number);
-                le16(&mut out, active_mask);
-                le16(&mut out, 0x0014);
-                le16(&mut out, buttons as u16);
+                le16(out, 0x001A);
+                le16(out, number);
+                le16(out, active_mask);
+                le16(out, 0x0014);
+                le16(out, buttons as u16);
                 out.push(left_trigger);
                 out.push(right_trigger);
                 for axis in [left_stick.0, left_stick.1, right_stick.0, right_stick.1] {
-                    le16(&mut out, axis as u16);
+                    le16(out, axis as u16);
                 }
-                le16(&mut out, 0x009C);
-                le16(&mut out, if sunshine { (buttons >> 16) as u16 } else { 0 });
-                le16(&mut out, 0x0055);
+                le16(out, 0x009C);
+                le16(out, if sunshine { (buttons >> 16) as u16 } else { 0 });
+                le16(out, 0x0055);
             }
             Self::ControllerArrival {
                 number,
@@ -338,7 +347,7 @@ impl InputEvent {
             } => {
                 out.push(number);
                 out.push(kind);
-                le16(&mut out, capabilities);
+                le16(out, capabilities);
                 out.extend_from_slice(&supported_buttons.to_le_bytes());
             }
             Self::ControllerIdentity {
@@ -348,8 +357,8 @@ impl InputEvent {
             } => {
                 // `ControllerIdentity::encode`: controller, reserved, vendor, product, reserved.
                 out.extend_from_slice(&[number, 0]);
-                le16(&mut out, vendor);
-                le16(&mut out, product);
+                le16(out, vendor);
+                le16(out, product);
                 out.extend_from_slice(&[0, 0]);
             }
             Self::Touch {
@@ -364,10 +373,10 @@ impl InputEvent {
             } => {
                 out.push(event);
                 out.push(0);
-                le16(&mut out, rotation);
+                le16(out, rotation);
                 out.extend_from_slice(&pointer_id.to_le_bytes());
                 for v in [x, y, pressure_or_distance, contact_major, contact_minor] {
-                    float(&mut out, v);
+                    float(out, v);
                 }
             }
             Self::Pen {
@@ -385,15 +394,15 @@ impl InputEvent {
             } => {
                 out.extend_from_slice(&[event, tool, buttons, 0]);
                 for v in [x, y, pressure_or_distance] {
-                    float(&mut out, v);
+                    float(out, v);
                 }
-                le16(&mut out, rotation);
+                le16(out, rotation);
                 out.extend_from_slice(&[tilt, 0]);
-                float(&mut out, contact_major);
-                float(&mut out, contact_minor);
+                float(out, contact_major);
+                float(out, contact_minor);
                 if roll != rubylight_protocol::pen::ROLL_UNKNOWN {
-                    le16(&mut out, roll);
-                    le16(&mut out, 0);
+                    le16(out, roll);
+                    le16(out, 0);
                 }
             }
             Self::ControllerTouch {
@@ -408,7 +417,7 @@ impl InputEvent {
                 out.extend_from_slice(&[number, event, 0, touchpad]);
                 out.extend_from_slice(&pointer_id.to_le_bytes());
                 for v in [x, y, pressure] {
-                    float(&mut out, v);
+                    float(out, v);
                 }
             }
             Self::ControllerMotion {
@@ -420,7 +429,7 @@ impl InputEvent {
             } => {
                 out.extend_from_slice(&[number, motion_type, 0, 0]);
                 for v in [x, y, z] {
-                    float(&mut out, v);
+                    float(out, v);
                 }
             }
             Self::ControllerBattery {
@@ -444,12 +453,12 @@ impl InputEvent {
                 contact_minor,
             } => {
                 out.extend_from_slice(&[event, buttons]);
-                le16(&mut out, rotation);
+                le16(out, rotation);
                 out.extend_from_slice(&pointer_id.to_le_bytes());
-                le16(&mut out, width_mm);
-                le16(&mut out, height_mm);
+                le16(out, width_mm);
+                le16(out, height_mm);
                 for v in [x, y, pressure, contact_major, contact_minor] {
-                    float(&mut out, v);
+                    float(out, v);
                 }
             }
             Self::TouchpadFrame {
@@ -461,22 +470,21 @@ impl InputEvent {
                 contacts,
             } => {
                 out.extend_from_slice(&[count, buttons]);
-                le16(&mut out, rotation);
-                le16(&mut out, width_mm);
-                le16(&mut out, height_mm);
+                le16(out, rotation);
+                le16(out, width_mm);
+                le16(out, height_mm);
                 for (i, c) in contacts.iter().enumerate() {
                     let c = if i < usize::from(count) { *c } else { TouchpadContact::default() };
                     out.extend_from_slice(&[c.event, 0]);
-                    le16(&mut out, unit_u16(c.pressure));
+                    le16(out, unit_u16(c.pressure));
                     out.extend_from_slice(&c.pointer_id.to_le_bytes());
-                    le16(&mut out, unit_u16(c.x));
-                    le16(&mut out, unit_u16(c.y));
+                    le16(out, unit_u16(c.x));
+                    le16(out, unit_u16(c.y));
                 }
             }
         }
         let size = (out.len() - 4) as u32;
         out[..4].copy_from_slice(&size.to_be_bytes());
-        out
     }
 
     /// The ENet channel the C sends it on.

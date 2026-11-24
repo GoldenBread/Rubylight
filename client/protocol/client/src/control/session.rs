@@ -106,6 +106,8 @@ pub struct ControlSession {
     options: SessionOptions,
     sealer: Sealer,
     opener: Opener,
+    /// Scratch buffer for encoding control message payloads before sealing.
+    payload_buf: Vec<u8>,
     started: bool,
     stopped: bool,
     terminated: Option<i32>,
@@ -147,6 +149,7 @@ impl ControlSession {
             options,
             sealer: Sealer::new(key, v2),
             opener: Opener::new(key, v2),
+            payload_buf: Vec::new(),
             started: false,
             stopped: false,
             terminated: None,
@@ -280,19 +283,53 @@ impl ControlSession {
         }
     }
 
+    /// Queues an encoded input packet, sealing into the caller's existing `out` buffer so the
+    /// input packet's allocation is reused as the outgoing ENet datagram.
+    pub(super) fn send_input_into(
+        &mut self,
+        packet: &[u8],
+        out: Vec<u8>,
+        channel: u8,
+        delivery: Delivery,
+    ) -> Result<(), SendError> {
+        if self.is_stopped() {
+            return Err(SendError::Stopped);
+        }
+        if self.push_into(ptype::INPUT_DATA, packet, out, channel, delivery) {
+            Ok(())
+        } else {
+            Err(SendError::Invalid)
+        }
+    }
+
     fn queue(&mut self, message: &ClientMessage) -> bool {
-        self.push(
+        let mut payload = std::mem::take(&mut self.payload_buf);
+        message.encode_payload_into(&mut payload);
+        let ok = self.push(
             message.message_type(),
-            &message.payload(),
+            &payload,
             message.channel(),
             message.delivery(),
-        )
+        );
+        self.payload_buf = payload;
+        ok
     }
 
     fn push(&mut self, message_type: u16, payload: &[u8], channel: u8, delivery: Delivery) -> bool {
-        let Some(datagram) = self.sealer.seal(message_type, payload) else {
+        self.push_into(message_type, payload, Vec::new(), channel, delivery)
+    }
+
+    fn push_into(
+        &mut self,
+        message_type: u16,
+        payload: &[u8],
+        mut datagram: Vec<u8>,
+        channel: u8,
+        delivery: Delivery,
+    ) -> bool {
+        if !self.sealer.seal_into(message_type, payload, &mut datagram) {
             return false;
-        };
+        }
         // GFE takes only reliable messages, and only on channel 0.
         let (channel, delivery) = if self.caps.is_sunshine() {
             (channel, delivery)

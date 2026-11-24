@@ -397,11 +397,11 @@ impl Depacketizer {
                 self.frame_type = FrameType::Idr;
             }
 
-            Self::skip_to_next_nal_or_end(data, &mut cur);
             if contains_pic_data {
-                while cur.length != 0 {
-                    Self::skip_to_next_nal_or_end(data, &mut cur);
-                }
+                cur.offset += cur.length;
+                cur.length = 0;
+            } else {
+                Self::skip_to_next_nal_or_end(data, &mut cur);
             }
             let fragment = &data[start..cur.offset];
             if self.buffer_type(fragment) == BufferType::PicData {

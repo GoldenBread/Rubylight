@@ -891,8 +891,8 @@ fn a_frame_completed_mid_call_is_queued_and_wakes_the_decoder_with_its_datagram(
         },
     );
     assert_eq!(completed, Some((1, 1, 14)), "the frame and its 14 chunks were queued");
-    // The frame woke the decoder; the chunks behind it found the queue busy.
-    assert_eq!(wakes(&shared.queue), 2);
+    // The queue already held frame one's first block, so empty-queue wakeups fire only once.
+    assert_eq!(wakes(&shared.queue), 1);
     let queued = drain(&shared.queue);
     assert_eq!(queued.len(), 14 + 1 + 8, "{queued:?}");
     assert!(matches!(queued[0], Queued::Chunk { first: true, .. }));

@@ -61,8 +61,9 @@ impl RtpHeader {
 }
 
 struct FecBlock {
-    /// Four data packets (header and payload) then two parity shards.
-    storage: Box<[u8]>,
+    /// Four data packets (header and payload) then two parity shards, kept in a `Vec` so
+    /// cached blocks resize in place when audio packet sizes change.
+    storage: Vec<u8>,
     marks: [bool; TOTAL_SHARDS],
     payload_type: u8,
     base_seq: u16,
@@ -98,18 +99,22 @@ impl FecBlock {
     }
 
     /// The six RS shards: data payloads after their RTP headers, then the parity shards.
-    fn shards(&mut self) -> Vec<&mut [u8]> {
+    fn shards(&mut self) -> [&mut [u8]; TOTAL_SHARDS] {
         let size = self.data_packet_size();
+        let block = self.block_size as usize;
         let (data, fec) = self.storage.split_at_mut(DATA_SHARDS * size);
-        let mut shards: Vec<&mut [u8]> = data
-            .chunks_exact_mut(size)
-            .map(|p| &mut p[RTP_HEADER..])
-            .collect();
-        shards.extend(
-            fec.chunks_exact_mut(self.block_size.max(1) as usize)
-                .take(FEC_SHARDS),
-        );
-        shards
+        let (d0, data) = data.split_at_mut(size);
+        let (d1, data) = data.split_at_mut(size);
+        let (d2, d3) = data.split_at_mut(size);
+        let (f0, f1) = fec.split_at_mut(block);
+        [
+            &mut d0[RTP_HEADER..],
+            &mut d1[RTP_HEADER..],
+            &mut d2[RTP_HEADER..],
+            &mut d3[RTP_HEADER..],
+            f0,
+            &mut f1[..block],
+        ]
     }
 }
 
@@ -163,15 +168,15 @@ impl AudioQueue {
     }
 
     fn allocate_block(&mut self, block_size: u16) -> FecBlock {
-        if let Some(block) = self.free_blocks.pop()
-            && block.block_size == block_size
-        {
-            return block;
-        }
         let size =
             DATA_SHARDS * (RTP_HEADER + block_size as usize) + FEC_SHARDS * block_size as usize;
+        if let Some(mut block) = self.free_blocks.pop() {
+            block.storage.resize(size, 0);
+            block.block_size = block_size;
+            return block;
+        }
         FecBlock {
-            storage: vec![0; size].into_boxed_slice(),
+            storage: vec![0; size],
             marks: [true; TOTAL_SHARDS],
             payload_type: 0,
             base_seq: 0,
@@ -411,18 +416,25 @@ impl AudioQueue {
             if !block.marks[pos] {
                 return AddResult::Queued;
             }
-            block.data_packet_mut(pos).copy_from_slice(packet);
+            let next_seq = header.seq.wrapping_add(1);
+            let in_order = header.seq == self.next_rtp_seq;
+            let finishes_block =
+                in_order && next_seq == block.base_seq.wrapping_add(DATA_SHARDS as u16);
+            // The 4th in-order head packet plays straight from `datagram` and frees the block.
+            if !finishes_block {
+                block.data_packet_mut(pos).copy_from_slice(packet);
+            }
             block.marks[pos] = false;
             block.data_received += 1;
 
             // The common case: the next packet in order is played right away.
-            if header.seq == self.next_rtp_seq {
+            if in_order {
                 if usize::from(block.data_received) == DATA_SHARDS {
                     block.fully_reassembled = true;
                 }
-                self.next_rtp_seq = header.seq.wrapping_add(1);
+                self.next_rtp_seq = next_seq;
                 block.next_data_index += 1;
-                if self.next_rtp_seq == block.base_seq.wrapping_add(DATA_SHARDS as u16) {
+                if finishes_block {
                     self.free_block_head();
                 }
                 return if self.has_packet_ready() {

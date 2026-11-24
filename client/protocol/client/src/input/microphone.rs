@@ -7,9 +7,13 @@
 //! One datagram per Opus packet: flags 0, type 0x61, sequence (LE u16), client
 //! milliseconds (LE u32), magic 0x12345678 (LE), then the Opus packet AES-128-CBC encrypted
 //! under the launch's `rikey` with [`crate::crypto::rikey_iv`] and the reference's double
-//! padding ([`CbcPadding::BlockThenPkcs7`]).
+//! padding ([`crate::crypto::CbcPadding::BlockThenPkcs7`]).
 
-use crate::crypto::{CbcPadding, Key, cbc_encrypt, rikey_iv};
+use aes::cipher::block_padding::Pkcs7;
+use aes::cipher::{BlockEncryptMut, KeyInit};
+use cbc::cipher::InnerIvInit;
+
+use crate::crypto::{BLOCK_BYTES, Key, rikey_iv};
 
 pub const PACKET_TYPE_OPUS: u8 = 0x61;
 pub const MAGIC: u32 = 0x1234_5678;
@@ -18,6 +22,42 @@ pub const MAX_PACKET_BYTES: usize = 1400;
 /// The SDP lines with which a host offers a microphone; the client sends mono either way.
 pub const SDP_RTPMAP: &str = "a=rtpmap:96 opus/48000/1";
 pub const SDP_RTPMAP_STEREO: &str = "a=rtpmap:96 opus/48000/2";
+
+/// Writes one microphone datagram into `out` using a pre-expanded AES-128 cipher and returns
+/// its byte length, or `None` when `opus` is empty or the datagram exceeds [`MAX_PACKET_BYTES`]
+/// or `out.len()`.
+pub fn build_packet_into(
+    cipher: &aes::Aes128,
+    key_id: u32,
+    sequence: u16,
+    timestamp_ms: u32,
+    opus: &[u8],
+    out: &mut [u8],
+) -> Option<usize> {
+    if opus.is_empty() {
+        return None;
+    }
+    let pad = (BLOCK_BYTES - opus.len() % BLOCK_BYTES) % BLOCK_BYTES;
+    let padded_len = opus.len().checked_add(pad)?;
+    let cipher_len = padded_len.checked_add(BLOCK_BYTES)?;
+    let total = HEADER_BYTES.checked_add(cipher_len)?;
+    if total > MAX_PACKET_BYTES || total > out.len() {
+        return None;
+    }
+    out[0] = 0;
+    out[1] = PACKET_TYPE_OPUS;
+    out[2..4].copy_from_slice(&sequence.to_le_bytes());
+    out[4..8].copy_from_slice(&timestamp_ms.to_le_bytes());
+    out[8..12].copy_from_slice(&MAGIC.to_le_bytes());
+    let body = &mut out[HEADER_BYTES..total];
+    body[..opus.len()].copy_from_slice(opus);
+    body[opus.len()..padded_len].fill(pad as u8);
+    let iv = rikey_iv(key_id, u32::from(sequence));
+    let encryptor = cbc::Encryptor::<&aes::Aes128>::inner_iv_init(cipher, &iv.into());
+    let written = encryptor.encrypt_padded_mut::<Pkcs7>(body, padded_len).ok()?.len();
+    debug_assert_eq!(written, cipher_len);
+    Some(HEADER_BYTES + written)
+}
 
 /// The datagram for one Opus packet, or `None` when it is empty or would exceed
 /// [`MAX_PACKET_BYTES`].
@@ -28,21 +68,10 @@ pub fn build_packet(
     timestamp_ms: u32,
     opus: &[u8],
 ) -> Option<Vec<u8>> {
-    if opus.is_empty() || opus.len() > MAX_PACKET_BYTES - HEADER_BYTES {
-        return None;
-    }
-    let iv = rikey_iv(key_id, u32::from(sequence));
-    let ciphertext = cbc_encrypt(key, &iv, opus, CbcPadding::BlockThenPkcs7).ok()?;
-    if HEADER_BYTES + ciphertext.len() > MAX_PACKET_BYTES {
-        return None;
-    }
-    let mut out = Vec::with_capacity(HEADER_BYTES + ciphertext.len());
-    out.extend_from_slice(&[0, PACKET_TYPE_OPUS]);
-    out.extend_from_slice(&sequence.to_le_bytes());
-    out.extend_from_slice(&timestamp_ms.to_le_bytes());
-    out.extend_from_slice(&MAGIC.to_le_bytes());
-    out.extend_from_slice(&ciphertext);
-    Some(out)
+    let cipher = aes::Aes128::new(key.into());
+    let mut buf = [0u8; MAX_PACKET_BYTES];
+    let len = build_packet_into(&cipher, key_id, sequence, timestamp_ms, opus, &mut buf)?;
+    Some(buf[..len].to_vec())
 }
 
 #[cfg(test)]

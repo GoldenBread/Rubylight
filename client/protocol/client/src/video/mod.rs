@@ -571,18 +571,20 @@ impl VideoReceiver {
             }
         }
         // A datagram the queue would reject (its frame or block is finished) is dropped before a
-        // packet buffer is taken for it. Encrypted ones are checked after decryption, as before.
-        if self.decryptor.is_none() && self.queue.rejects_datagram(datagram) {
-            return;
+        // packet buffer is taken for it. Encrypted ones drop stale frames from the clear header
+        // first, and check the rest after decryption.
+        if self.decryptor.is_none() {
+            if self.queue.rejects_datagram(datagram) {
+                return;
+            }
+        } else {
+            let frame = le32(datagram, 12);
+            if frame != 0 && frame < self.queue.current_frame_number() {
+                return;
+            }
         }
         let mut buf = self.pools.packet();
         let len = if let Some(decryptor) = &self.decryptor {
-            // Drop shards of frames already reassembled before spending time on decryption.
-            let frame = le32(datagram, 12);
-            if frame != 0 && frame < self.queue.current_frame_number() {
-                self.pools.recycle_packet(buf);
-                return;
-            }
             match decryptor.open(datagram, &mut buf) {
                 Some(len) => len,
                 None => {

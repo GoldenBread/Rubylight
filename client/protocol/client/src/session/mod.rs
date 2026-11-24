@@ -13,6 +13,7 @@
 //! Android JNI bridge and the desktop clients use the same API.
 
 mod audio;
+mod gauges;
 mod net;
 mod roam;
 mod trace;
@@ -26,7 +27,10 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
+use aes::cipher::KeyInit;
+
 pub use audio::AUDIO_QUEUE_BOUND;
+pub use gauges::{AudioGauges, VideoGauges};
 pub use net::{is_nat64_with, is_private, ReceiveBuffer};
 pub use roam::{NetworkChange, NetworkHint, RoamingConfig};
 pub use video::DECODE_UNIT_QUEUE_BOUND;
@@ -354,24 +358,6 @@ impl std::fmt::Display for StartError {
 
 impl std::error::Error for StartError {}
 
-/// A session's video figures that are safe to read from inside a decoder's submit: atomics and
-/// the decode queue's own lock, never the receiver's ([`Session::video_gauges`]).
-#[derive(Clone)]
-pub struct VideoGauges(Arc<video::VideoShared>);
-
-impl VideoGauges {
-    /// Frames dropped because the decode queue overflowed (`VideoStats::decoder_drops`), as of
-    /// the last datagram received.
-    pub fn decoder_drops(&self) -> u64 {
-        self.0.counters.decoder_drops.load(Ordering::Relaxed)
-    }
-
-    /// Frames waiting in the decode queue now.
-    pub fn decode_queue_len(&self) -> usize {
-        self.0.queue.len()
-    }
-}
-
 /// Counters and measurements of a running session.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct SessionStats {
@@ -578,10 +564,11 @@ fn first_outcome(seen: &Mutex<Vec<String>>, outcome: String) -> bool {
 struct Microphone {
     socket: UdpSocket,
     target: SocketAddr,
-    key: [u8; 16],
+    cipher: aes::Aes128,
     key_id: u32,
     sequence: u16,
     started: Instant,
+    packet: [u8; microphone::MAX_PACKET_BYTES],
 }
 
 /// Everything a session owns; filled stage by stage so a failed start tears down exactly
@@ -878,10 +865,17 @@ impl Session {
             .as_mut()
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotConnected, "no microphone stream"))?;
         let timestamp = mic.started.elapsed().as_millis() as u32;
-        let packet = microphone::build_packet(&mic.key, mic.key_id, mic.sequence, timestamp, opus)
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "bad Opus packet size"))?;
+        let len = microphone::build_packet_into(
+            &mic.cipher,
+            mic.key_id,
+            mic.sequence,
+            timestamp,
+            opus,
+            &mut mic.packet,
+        )
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "bad Opus packet size"))?;
         mic.sequence = mic.sequence.wrapping_add(1);
-        mic.socket.send_to(&packet, mic.target).map(|_| ())
+        mic.socket.send_to(&mic.packet[..len], mic.target).map(|_| ())
     }
 
     /// The front end's word that the network changed (Android's default network callback),
@@ -955,6 +949,11 @@ impl Session {
     /// take the receiver's lock, which a direct-submit decoder holds while it submits.
     pub fn video_gauges(&self) -> Option<VideoGauges> {
         self.parts.video_shared.clone().map(VideoGauges)
+    }
+
+    /// The audio figures a caller may read from any thread without taking any lock.
+    pub fn audio_gauges(&self) -> AudioGauges {
+        AudioGauges(self.parts.audio_shared.clone())
     }
 
     pub fn stats(&self) -> SessionStats {
@@ -1482,12 +1481,13 @@ fn start(
                 *parts.microphone.lock().unwrap_or_else(|p| p.into_inner()) = Some(Microphone {
                     socket,
                     target: net::with_port(remote, outcome.mic_port),
-                    key: stream.remote_input_aes_key,
+                    cipher: aes::Aes128::new(&stream.remote_input_aes_key.into()),
                     key_id: u32::from_be_bytes(
                         stream.remote_input_aes_iv[..4].try_into().expect("4 bytes"),
                     ),
                     sequence: 0,
                     started: Instant::now(),
+                    packet: [0u8; microphone::MAX_PACKET_BYTES],
                 });
             }
         }

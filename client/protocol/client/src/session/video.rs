@@ -5,12 +5,16 @@
 //! Ported from moonlight-common-c's `VideoStream.c` and the queue handling of
 //! `VideoDepacketizer.c` (GPL-3.0, Cameron Gutman and contributors).
 
+mod refresh;
+
 use std::collections::VecDeque;
 use std::net::UdpSocket;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
+
+use refresh::KeyFrameRequests;
 
 use super::net::{self, NextSocket, PingHandle, Pinger, REBIND_WAIT, UDP_RECV_POLL_TIMEOUT};
 use super::trace::{PacketTrace, Stream};
@@ -154,6 +158,8 @@ impl StagedChunks {
 pub struct FrameQueue {
     state: Mutex<QueueState>,
     ready: Condvar,
+    /// Mirror of `state.frames`, updated under `state` so [`Self::len`] is lock-free.
+    len: AtomicUsize,
     /// Flushes so far, which [`StagedChunks`] reads without the lock. Changed under the lock.
     flushes: AtomicU64,
     /// Frames queued at most: a frame over it is refused, and the receiver flushes the queue
@@ -176,6 +182,7 @@ impl FrameQueue {
         Self {
             state: Mutex::default(),
             ready: Condvar::new(),
+            len: AtomicUsize::new(0),
             flushes: AtomicU64::new(0),
             bound: decode_queue_bound(bound),
             #[cfg(test)]
@@ -200,9 +207,16 @@ impl FrameQueue {
         if state.shutdown || state.frames >= self.bound {
             return Err(frame);
         }
+        // The decoder thread only sleeps on an empty queue.
+        let empty = state.items.is_empty();
         state.items.push_back(Item::Frame(frame));
         state.frames += 1;
-        self.wake();
+        self.len.store(state.frames, Ordering::Relaxed);
+        let wake = empty && !state.items.is_empty();
+        drop(state);
+        if wake {
+            self.wake();
+        }
         Ok(())
     }
 
@@ -222,10 +236,11 @@ impl FrameQueue {
         } else {
             state.items.push_back(Item::Frame(frame));
             state.frames += 1;
+            self.len.store(state.frames, Ordering::Relaxed);
             Ok(())
         };
-        // A refused frame still leaves the chunks before it queued.
-        let wake = result.is_ok() || (empty && !state.items.is_empty());
+        // The decoder thread only sleeps on an empty queue.
+        let wake = empty && !state.items.is_empty();
         drop(state);
         if wake {
             self.wake();
@@ -317,7 +332,20 @@ impl FrameQueue {
 
     /// [`flush`](Self::flush) that drops the chunks `staged` holds too: the flush comes after
     /// them in the receiver's order.
+    #[cfg(test)]
     pub fn flush_staged(&self, staged: Option<&mut StagedChunks>) -> Vec<Frame> {
+        let mut frames = Vec::new();
+        self.flush_staged_into(staged, |frame| frames.push(frame));
+        frames
+    }
+
+    /// Drops every queued frame and chunk (plus any chunks `staged` holds), handing each flushed
+    /// frame to `on_frame` and returning how many frames were flushed, without allocating a `Vec`.
+    pub fn flush_staged_into(
+        &self,
+        staged: Option<&mut StagedChunks>,
+        mut on_frame: impl FnMut(Frame),
+    ) -> usize {
         let mut state = lock(&self.state);
         let flushes = self.flushes.fetch_add(1, Ordering::Relaxed) + 1;
         if let Some(staged) = staged {
@@ -325,12 +353,16 @@ impl FrameQueue {
             staged.flushes = flushes;
         }
         state.frames = 0;
+        self.len.store(0, Ordering::Relaxed);
         state.chunks = 0;
         let QueueState { items, spare, .. } = &mut *state;
-        let mut frames = Vec::new();
+        let mut count = 0;
         for item in items.drain(..) {
             match item {
-                Item::Frame(frame) => frames.push(frame),
+                Item::Frame(frame) => {
+                    count += 1;
+                    on_frame(frame);
+                }
                 Item::Chunk(chunk) => {
                     if spare.len() < CHUNK_QUEUE_BOUND {
                         spare.push(chunk.data);
@@ -338,7 +370,7 @@ impl FrameQueue {
                 }
             }
         }
-        frames
+        count
     }
 
     /// [`wait_behind`](Self::wait_behind) without the frame count.
@@ -369,6 +401,7 @@ impl FrameQueue {
                 match item {
                     Item::Frame(_) => {
                         state.frames -= 1;
+                        self.len.store(state.frames, Ordering::Relaxed);
                         state.take_spares(returned);
                     }
                     Item::Chunk(_) => state.chunks -= 1,
@@ -393,7 +426,7 @@ impl FrameQueue {
     }
 
     pub fn len(&self) -> usize {
-        lock(&self.state).frames
+        self.len.load(Ordering::Relaxed)
     }
 
     pub fn shutdown(&self) {
@@ -692,8 +725,9 @@ impl VideoSink for Sink<'_> {
     fn flush_frames(&mut self) -> usize {
         self.shared
             .queue
-            .flush_staged(self.staged.as_deref_mut())
-            .len()
+            .flush_staged_into(self.staged.as_deref_mut(), |frame| {
+                self.shared.returns.give(frame);
+            })
     }
 
     fn signal(&mut self, signal: VideoSignal) {
@@ -1055,6 +1089,16 @@ fn receive_batch<'b>(
     );
 }
 
+/// Whether `signal` ends the current receiver lock section so it routes ahead of later
+/// datagrams. Routine per-block and start signals (`FrameSeen`, `FecBlock`, `FecStatus`) stay
+/// batched until a frame completes, an urgent recovery signal fires, or the call ends.
+fn ends_section(signal: &VideoSignal) -> bool {
+    !matches!(
+        signal,
+        VideoSignal::FrameSeen { .. } | VideoSignal::FecBlock(_) | VideoSignal::FecStatus(_)
+    )
+}
+
 /// [`receive_batch`] with each datagram's own arrival where the receive has one.
 #[allow(clippy::too_many_arguments)]
 fn receive_batch_stamped<'b>(
@@ -1077,7 +1121,8 @@ fn receive_batch_stamped<'b>(
                 d.settle(&mut receiver, shared, signals);
             }
             let mut section_us = None;
-            while signals.is_empty() && next < count {
+            let mut section_ended = signals.iter().any(ends_section);
+            while !section_ended && next < count {
                 let datagram = datagram_at(next);
                 let arrival = arrival_at(next);
                 next += 1;
@@ -1085,6 +1130,7 @@ fn receive_batch_stamped<'b>(
                 if let Some(trace) = trace.as_mut() {
                     trace.push(now, datagram);
                 }
+                let before = signals.len();
                 let mut sink = Sink {
                     shared,
                     direct: direct.as_deref_mut(),
@@ -1092,10 +1138,7 @@ fn receive_batch_stamped<'b>(
                     signals: &mut *signals,
                 };
                 receiver.receive(datagram, now, &mut sink);
-                shared
-                    .counters
-                    .decoder_drops
-                    .store(receiver.decoder_drops(), Ordering::Relaxed);
+                section_ended = signals[before..].iter().any(ends_section);
                 if let Some(d) = direct.as_deref_mut() {
                     if !d.decoder.recovers_with_rfi() {
                         receiver.recover_with_idr_only();
@@ -1105,7 +1148,12 @@ fn receive_batch_stamped<'b>(
                     }
                 }
             }
-            *lock(&shared.stats) = receiver.stats();
+            let stats = receiver.stats();
+            shared
+                .counters
+                .decoder_drops
+                .store(stats.decoder_drops, Ordering::Relaxed);
+            *lock(&shared.stats) = stats;
         }
         // Outside the lock.
         if let Some(d) = direct.as_deref_mut().filter(|d| !d.ready.is_empty()) {
@@ -1121,90 +1169,6 @@ fn receive_batch_stamped<'b>(
         route_signals(signals);
         if next >= count {
             break;
-        }
-    }
-}
-
-/// Paces the key frame requests of a decoder that keeps failing (Nightjar issue 77: a V4L2
-/// decoder that could not set up its buffers answered every frame, the requested key frames
-/// too, with [`DecodeStatus::NeedIdr`], and the stream asked for 99 key frames in 2 s while the
-/// app took a second to replace the decoder). The first request goes out at once, so a single
-/// failure recovers as fast as before. It then stays outstanding until a key frame decodes or
-/// the window passes. A requested key frame that arrives but fails to decode does not clear
-/// it: that is the failing case, and the answer to an immediate new request would fail alike.
-/// Asked again within the window, the request is deferred, not dropped: it goes out when the
-/// window ends ([`held_until_us`](Self::held_until_us)), with the next frame or, without one (a
-/// still picture the host does not resend), from the decoder thread's timed wait or the receive
-/// thread's poll, so a decoder replaced meanwhile still gets its key frame. Only
-/// the decoder's requests are paced; the receiver's own, for frames lost on the way, are not.
-/// The receiver ([`VideoReceiver::request_decoder_refresh`]) stays as the C core's, which the
-/// differential tests compare it with.
-pub(super) struct KeyFrameRequests {
-    window_us: u64,
-    /// When the request not yet answered by a decoded key frame went out.
-    sent_us: Option<u64>,
-    /// The decoder asked again within the window.
-    deferred: bool,
-}
-
-impl KeyFrameRequests {
-    /// The window is the time the host needs to answer: a round trip, for which 100 ms allows
-    /// Wi-Fi and most internet paths, plus four frame intervals for the host to wait for the
-    /// next captured frame, encode it, send the key frame (several times an inter frame's size,
-    /// paced over more than one interval) and for the decoder to take it. That is 133 ms at
-    /// 120 fps and 167 ms at 60 fps, so a decoder failing on every frame makes at most 6 to 8
-    /// requests a second instead of one per frame, and a request answered in time is never
-    /// repeated. An unknown frame rate counts as 60 fps.
-    pub(super) fn new(fps: i32) -> Self {
-        let fps = if fps > 0 { fps as u64 } else { 60 };
-        Self {
-            window_us: 100_000 + 4 * 1_000_000 / fps,
-            sent_us: None,
-            deferred: false,
-        }
-    }
-
-    /// A window of its own, for tests.
-    #[cfg(test)]
-    pub(super) fn with_window_us(window_us: u64) -> Self {
-        Self {
-            window_us,
-            sent_us: None,
-            deferred: false,
-        }
-    }
-
-    /// When a deferred request falls due (session clock, us), if one waits.
-    pub(super) fn held_until_us(&self) -> Option<u64> {
-        if !self.deferred {
-            return None;
-        }
-        self.sent_us.map(|sent| sent + self.window_us)
-    }
-
-    /// The decoder took a key frame: the request is answered and the next goes out at once.
-    pub(super) fn key_frame_decoded(&mut self) {
-        self.sent_us = None;
-        self.deferred = false;
-    }
-
-    /// Whether to request a key frame after a frame the decoder answered with `need_idr`. The
-    /// clock is read only when the decoder asks or a request waits.
-    pub(super) fn request(&mut self, need_idr: bool, now_us: impl FnOnce() -> u64) -> bool {
-        if !need_idr && !self.deferred {
-            return false;
-        }
-        let now = now_us();
-        match self.sent_us {
-            Some(sent) if now.saturating_sub(sent) < self.window_us => {
-                self.deferred = true;
-                false
-            }
-            _ => {
-                self.sent_us = Some(now);
-                self.deferred = false;
-                true
-            }
         }
     }
 }

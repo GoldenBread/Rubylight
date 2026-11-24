@@ -8,7 +8,7 @@
 
 use std::collections::VecDeque;
 use std::net::UdpSocket;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::thread::JoinHandle;
 
@@ -51,6 +51,8 @@ impl QueueState {
 pub struct PacketQueue {
     state: Mutex<QueueState>,
     ready: Condvar,
+    /// Mirror of `state.items.len()`, updated under `state` so [`Self::len`] is lock-free.
+    len: AtomicUsize,
     pub overflows: AtomicU64,
 }
 
@@ -62,12 +64,17 @@ impl PacketQueue {
         if state.shutdown {
             return false;
         }
+        let empty = state.items.is_empty();
         if state.items.len() >= AUDIO_QUEUE_BOUND {
             state.items.clear();
             self.overflows.fetch_add(1, Ordering::Relaxed);
         }
         state.items.push_back(item);
-        self.ready.notify_one();
+        self.len.store(state.items.len(), Ordering::Relaxed);
+        drop(state);
+        if empty {
+            self.ready.notify_one();
+        }
         true
     }
 
@@ -79,6 +86,7 @@ impl PacketQueue {
         if state.shutdown {
             return false;
         }
+        let empty = state.items.is_empty();
         if state.items.len() >= AUDIO_QUEUE_BOUND {
             while let Some(flushed) = state.items.pop_front() {
                 if let Some(buffer) = flushed {
@@ -94,7 +102,11 @@ impl PacketQueue {
             buffer
         });
         state.items.push_back(item);
-        self.ready.notify_one();
+        self.len.store(state.items.len(), Ordering::Relaxed);
+        drop(state);
+        if empty {
+            self.ready.notify_one();
+        }
         true
     }
 
@@ -114,6 +126,7 @@ impl PacketQueue {
                 return None;
             }
             if let Some(item) = state.items.pop_front() {
+                self.len.store(state.items.len(), Ordering::Relaxed);
                 return Some(item);
             }
             state = self.ready.wait(state).unwrap_or_else(|p| p.into_inner());
@@ -121,7 +134,7 @@ impl PacketQueue {
     }
 
     pub fn len(&self) -> usize {
-        lock(&self.state).items.len()
+        self.len.load(Ordering::Relaxed)
     }
 
     fn shutdown(&self) {
@@ -247,7 +260,7 @@ impl ArrivalJitter {
         }
         self.last_us = now_us;
         let late = now_us as i64 - due as i64;
-        let second = (now_us - self.start_us) / 1_000_000;
+        let second = now_us.saturating_sub(self.start_us) / 1_000_000;
         if second != self.second_at {
             self.end_second(second);
             self.second_at = second;
@@ -385,7 +398,7 @@ fn receive_thread(
     session: Arc<Shared>,
     stop: Arc<AtomicBool>,
 ) -> Option<Box<dyn AudioRenderer>> {
-    let mut buffer = vec![0u8; 65536];
+    let mut batch = net::BatchReceiver::new(&socket, crate::audio::MAX_PACKET_SIZE, false);
     let mut received = false;
     let mut jitter: Option<ArrivalJitter> = None;
     let mut trace = PacketTrace::from_env(Stream::Audio);
@@ -393,9 +406,8 @@ fn receive_thread(
         if let Some(trace) = trace.as_mut() {
             trace.waiting();
         }
-        let length = match net::receive(&socket, &mut buffer) {
-            Ok(Some(length)) => length,
-            Ok(None) => {
+        let count = match batch.receive(&socket) {
+            Ok(0) => {
                 if let Some(next) = next_socket.take() {
                     session.log("Audio moved to the roam's new socket");
                     socket = next;
@@ -403,6 +415,7 @@ fn receive_thread(
                 receiver.receive_timeout();
                 continue;
             }
+            Ok(count) => count,
             Err(e) => {
                 // The old socket's address went away with the network, maybe ahead of the
                 // rebind: wait a while for the roam's new socket, then fail.
@@ -421,35 +434,38 @@ fn receive_thread(
                 break;
             }
         };
-        session.received(length);
-        if !received && length >= 12 {
-            received = true;
-            session.log("Received first audio packet");
-        }
+        session.received((0..count).map(|i| batch.length(i)).sum());
         let now = now_us();
-        if let Some(trace) = trace.as_mut() {
-            trace.push(now, &buffer[..length]);
-        }
-        receiver.receive(&buffer[..length], now, &mut |output| {
-            shared.packets.fetch_add(1, Ordering::Relaxed);
-            let lost = matches!(output, AudioOutput::Lost);
-            let jitter = jitter.get_or_insert_with(|| {
-                ArrivalJitter::new(shared.packet_ms.load(Ordering::Relaxed))
-            });
-            if let Some(line) = jitter.packet(now, lost) {
-                session.log(&line);
+        for i in 0..count {
+            let datagram = batch.datagram(i);
+            if !received && datagram.len() >= 12 {
+                received = true;
+                session.log("Received first audio packet");
             }
-            let item = match output {
-                AudioOutput::Packet(packet) => Some(packet),
-                AudioOutput::Lost => None,
-            };
-            match direct.as_mut() {
-                Some(renderer) => renderer.play(item),
-                None => {
-                    shared.queue.offer_copy(item);
+            if let Some(trace) = trace.as_mut() {
+                trace.push(now, datagram);
+            }
+            receiver.receive(datagram, now, &mut |output| {
+                shared.packets.fetch_add(1, Ordering::Relaxed);
+                let lost = matches!(output, AudioOutput::Lost);
+                let jitter = jitter.get_or_insert_with(|| {
+                    ArrivalJitter::new(shared.packet_ms.load(Ordering::Relaxed))
+                });
+                if let Some(line) = jitter.packet(now, lost) {
+                    session.log(&line);
                 }
-            }
-        });
+                let item = match output {
+                    AudioOutput::Packet(packet) => Some(packet),
+                    AudioOutput::Lost => None,
+                };
+                match direct.as_mut() {
+                    Some(renderer) => renderer.play(item),
+                    None => {
+                        shared.queue.offer_copy(item);
+                    }
+                }
+            });
+        }
         *lock(&shared.stats) = receiver.stats();
     }
     if let Some(trace) = trace {

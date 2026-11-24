@@ -100,25 +100,37 @@ pub struct TransportFeedback {
 }
 
 impl TransportFeedback {
+    /// Whether the report satisfies the rules [`encode`](Self::encode) and
+    /// [`decode`](Self::decode) enforce.
+    pub fn is_valid(&self) -> bool {
+        (1..=MAX_ENTRIES).contains(&self.entries.len()) && (1..=MAX_STRIDE).contains(&self.stride)
+    }
+
+    /// Appends the wire form to `out`; returns `false` without touching `out` when invalid.
+    pub fn encode_into(&self, out: &mut Vec<u8>) -> bool {
+        if !self.is_valid() {
+            return false;
+        }
+        out.reserve(HEADER_BYTES + 2 * self.entries.len());
+        out.push(VERSION);
+        out.push(self.flags);
+        out.extend_from_slice(&(self.entries.len() as u16).to_le_bytes());
+        out.extend_from_slice(&self.base.to_le_bytes());
+        out.extend_from_slice(&self.stride.to_le_bytes());
+        out.extend_from_slice(&self.seq.to_le_bytes());
+        out.extend_from_slice(&self.base_arrival_us.to_le_bytes());
+        out.extend_from_slice(&self.late.to_le_bytes());
+        out.extend_from_slice(&[0, 0]);
+        for entry in &self.entries {
+            out.extend_from_slice(&entry.to_le_bytes());
+        }
+        true
+    }
+
     /// The wire form; `None` when the report breaks the rules [`decode`](Self::decode) checks.
     pub fn encode(&self) -> Option<Vec<u8>> {
-        if !self.valid() {
-            return None;
-        }
-        let mut out = vec![0; HEADER_BYTES + 2 * self.entries.len()];
-        out[0] = VERSION;
-        out[1] = self.flags;
-        out[2..4].copy_from_slice(&(self.entries.len() as u16).to_le_bytes());
-        out[4..6].copy_from_slice(&self.base.to_le_bytes());
-        out[6..8].copy_from_slice(&self.stride.to_le_bytes());
-        out[8..12].copy_from_slice(&self.seq.to_le_bytes());
-        out[12..16].copy_from_slice(&self.base_arrival_us.to_le_bytes());
-        out[16..18].copy_from_slice(&self.late.to_le_bytes());
-        for (i, entry) in self.entries.iter().enumerate() {
-            let at = HEADER_BYTES + 2 * i;
-            out[at..at + 2].copy_from_slice(&entry.to_le_bytes());
-        }
-        Some(out)
+        let mut out = Vec::new();
+        self.encode_into(&mut out).then_some(out)
     }
 
     /// Parses a report. Version 0, no entries, more than [`MAX_ENTRIES`], a stride outside
@@ -143,11 +155,7 @@ impl TransportFeedback {
             late: u16_at(16),
             entries: (0..count).map(|i| u16_at(HEADER_BYTES + 2 * i)).collect(),
         };
-        report.valid().then_some(report)
-    }
-
-    fn valid(&self) -> bool {
-        (1..=MAX_ENTRIES).contains(&self.entries.len()) && (1..=MAX_STRIDE).contains(&self.stride)
+        report.is_valid().then_some(report)
     }
 
     /// The id of entry `index`.
@@ -273,8 +281,8 @@ impl FeedbackTally {
     }
 
     fn open(&mut self, base: u16, now_us: u64, flags: u8) {
+        debug_assert_eq!(self.used, 0);
         self.base = Some(base);
-        self.slots.fill(u64::MAX);
         self.used = 0;
         self.opened_us = now_us;
         self.flags |= flags;
@@ -323,7 +331,7 @@ impl FeedbackTally {
         };
         self.seq = self.seq.wrapping_add(1);
         self.next_stride(now_us);
-        self.slots.fill(u64::MAX);
+        self.slots[..self.used].fill(u64::MAX);
         self.used = 0;
         Some(report)
     }
@@ -583,5 +591,33 @@ mod tests {
         assert_eq!(second.stride, 1);
         assert_eq!(tally.stride(), 1);
         assert_ne!(tally.stride(), MAX_STRIDE);
+    }
+
+    #[test]
+    fn encode_into_matches_encode_and_preserves_buf_when_invalid() {
+        let report = TransportFeedback {
+            flags: FLAG_SKIPPED,
+            base: 42,
+            stride: 3,
+            seq: 9,
+            base_arrival_us: 123_456,
+            late: 2,
+            entries: vec![0, 5, NOT_RECEIVED],
+        };
+        assert!(report.is_valid());
+        let mut buf = vec![0xAA];
+        assert!(report.encode_into(&mut buf));
+        assert_eq!(buf[0], 0xAA);
+        assert_eq!(&buf[1..], report.encode().unwrap().as_slice());
+
+        let invalid = TransportFeedback {
+            stride: 0,
+            entries: vec![0],
+            ..Default::default()
+        };
+        assert!(!invalid.is_valid());
+        let before = buf.clone();
+        assert!(!invalid.encode_into(&mut buf));
+        assert_eq!(buf, before);
     }
 }

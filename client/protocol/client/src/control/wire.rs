@@ -143,13 +143,22 @@ impl Sealer {
     /// The datagram for one message: envelope header, tag, then the encrypted V2 header and
     /// payload. `None` when the payload does not fit the envelope.
     pub fn seal(&mut self, message_type: u16, payload: &[u8]) -> Option<Vec<u8>> {
+        let mut out = Vec::new();
+        self.seal_into(message_type, payload, &mut out)
+            .then_some(out)
+    }
+
+    /// Seals one message into `out` (replacing its contents), returning `false` without
+    /// advancing the sequence number when `payload` does not fit the envelope.
+    pub fn seal_into(&mut self, message_type: u16, payload: &[u8], out: &mut Vec<u8>) -> bool {
         if payload.len() > MAX_PAYLOAD {
-            return None;
+            return false;
         }
         let sequence = self.next_sequence;
         let iv = control_iv(sequence, self.v2, Origin::Client);
         let body = INNER_HEADER_BYTES + payload.len();
-        let mut out = Vec::with_capacity(ENCRYPTED_HEADER_BYTES + TAG_BYTES + body);
+        out.clear();
+        out.reserve(ENCRYPTED_HEADER_BYTES + TAG_BYTES + body);
         out.extend_from_slice(&ENCRYPTED_HEADER_TYPE.to_le_bytes());
         out.extend_from_slice(&((4 + TAG_BYTES + body) as u16).to_le_bytes());
         out.extend_from_slice(&sequence.to_le_bytes());
@@ -158,13 +167,13 @@ impl Sealer {
         out.extend_from_slice(&(payload.len() as u16).to_le_bytes());
         out.extend_from_slice(payload);
         let start = ENCRYPTED_HEADER_BYTES + TAG_BYTES;
-        let tag = self
-            .gcm
-            .seal_in_place(iv.as_slice(), &mut out[start..])
-            .ok()?;
+        let Ok(tag) = self.gcm.seal_in_place(iv.as_slice(), &mut out[start..]) else {
+            out.clear();
+            return false;
+        };
         out[ENCRYPTED_HEADER_BYTES..start].copy_from_slice(&tag);
         self.next_sequence = sequence.wrapping_add(1);
-        Some(out)
+        true
     }
 }
 

@@ -345,8 +345,8 @@ fn failure(e: io::Error) -> Failure {
     }
 }
 
-/// One receive: `Ok(None)` on the poll timeout. ICMP port-unreachable reports (a ping sent
-/// before the host bound its port) are skipped, as in recvUdpSocket.
+/// One receive (`Ok(None)` on timeout); skips ICMP port-unreachable as in `recvUdpSocket`.
+#[cfg(test)]
 pub fn receive(socket: &UdpSocket, buffer: &mut [u8]) -> io::Result<Option<usize>> {
     loop {
         match socket.recv(buffer).map_err(failure) {
@@ -372,7 +372,7 @@ const WHOLE_DATAGRAM: usize = 65536;
 /// (`UDP_RECV_MAX_COALESCED_SIZE`): the stack hands over consecutive datagrams of one sender
 /// in one buffer, which `WSARecvMsg` reads with their size (`UDP_COALESCED_INFO`), and the
 /// receiver splits it again. Where the kernel refuses `recvmmsg` or the system refuses
-/// coalescing (older Windows versions), one datagram per receive as [`receive`]; where the
+/// coalescing (older Windows versions), one datagram per receive as `receive`; where the
 /// adapter does not coalesce, each read is one datagram all the same. (Windows' Registered I/O takes batches too, but its sockets
 /// refuse the plain sends and the clone the video socket needs.)
 pub struct BatchReceiver {
@@ -542,7 +542,7 @@ impl BatchReceiver {
 
     /// Waits up to the socket's poll timeout for a datagram and takes it with every other one
     /// already queued, up to [`RECEIVE_BATCH`]: their count, 0 on the timeout. ICMP
-    /// port-unreachable reports are skipped as in [`receive`].
+    /// port-unreachable reports are skipped as in `receive`.
     pub fn receive(&mut self, socket: &UdpSocket) -> io::Result<usize> {
         #[cfg(windows)]
         if (self.coalesce.is_some() || self.pending.left() > 0)

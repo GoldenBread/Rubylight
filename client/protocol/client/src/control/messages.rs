@@ -159,53 +159,83 @@ impl ClientMessage {
         }
     }
 
-    pub fn payload(&self) -> Vec<u8> {
+    /// Encodes the message payload into `out` (replacing its contents), avoiding a per-message
+    /// allocation when the caller reuses a scratch buffer.
+    pub fn encode_payload_into(&self, out: &mut Vec<u8>) {
+        out.clear();
         match self {
-            Self::StartA | Self::RequestIdrFrame => vec![0, 0],
-            Self::StartB => vec![0],
+            Self::StartA | Self::RequestIdrFrame => out.extend_from_slice(&[0, 0]),
+            Self::StartB => out.push(0),
             // Length 4, then a zero timestamp.
-            Self::PeriodicPing => vec![4, 0, 0, 0, 0, 0, 0, 0],
+            Self::PeriodicPing => out.extend_from_slice(&[4, 0, 0, 0, 0, 0, 0, 0]),
             Self::InvalidateReferenceFrames { first, last } => {
-                let mut out = vec![0; 24];
-                out[..4].copy_from_slice(&first.to_le_bytes());
-                out[8..12].copy_from_slice(&last.to_le_bytes());
-                out
+                let mut buf = [0u8; 24];
+                buf[..4].copy_from_slice(&first.to_le_bytes());
+                buf[8..12].copy_from_slice(&last.to_le_bytes());
+                out.extend_from_slice(&buf);
             }
             Self::LtrFrameAck { frame } => {
-                let mut out = vec![0; 8];
-                out[..4].copy_from_slice(&frame.to_le_bytes());
-                out
+                let mut buf = [0u8; 8];
+                buf[..4].copy_from_slice(&frame.to_le_bytes());
+                out.extend_from_slice(&buf);
             }
-            Self::FrameFecStatus(status) => status.encode().to_vec(),
-            Self::ServerCommand(bytes) | Self::ControllerMicrophone(bytes) => bytes.clone(),
-            Self::PhaseLockReport(report) => report.encode().to_vec(),
-            Self::DisplayCaps(caps) => caps.encode().to_vec(),
-            Self::Reconfigure(request) => request.encode().to_vec(),
-            Self::HostTimingRequest(request) => request.encode().to_vec(),
-            Self::ClockSync(request) => request.encode().to_vec(),
-            Self::LinkNoticeRequest(request) => request.encode().to_vec(),
-            Self::FecReport(report) => report.encode().to_vec(),
-            Self::FecSummary(summary) => summary.encode().to_vec(),
-            Self::PipelineRatesRequest(request) => request.encode().to_vec(),
-            Self::RateChange(request) => request.encode().to_vec(),
+            Self::FrameFecStatus(status) => out.extend_from_slice(&status.encode()),
+            Self::ServerCommand(bytes) | Self::ControllerMicrophone(bytes) => {
+                out.extend_from_slice(bytes);
+            }
+            Self::PhaseLockReport(report) => out.extend_from_slice(&report.encode()),
+            Self::DisplayCaps(caps) => out.extend_from_slice(&caps.encode()),
+            Self::Reconfigure(request) => out.extend_from_slice(&request.encode()),
+            Self::HostTimingRequest(request) => out.extend_from_slice(&request.encode()),
+            Self::ClockSync(request) => out.extend_from_slice(&request.encode()),
+            Self::LinkNoticeRequest(request) => out.extend_from_slice(&request.encode()),
+            Self::FecReport(report) => out.extend_from_slice(&report.encode()),
+            Self::FecSummary(summary) => out.extend_from_slice(&summary.encode()),
+            Self::PipelineRatesRequest(request) => out.extend_from_slice(&request.encode()),
+            Self::RateChange(request) => out.extend_from_slice(&request.encode()),
             Self::CursorShapeRequest { enabled } => {
                 let edge = CURSOR_SHAPE_MAX_EDGE.to_le_bytes();
-                vec![CURSOR_SHAPE_VERSION, u8::from(*enabled), edge[0], edge[1]]
+                out.extend_from_slice(&[
+                    CURSOR_SHAPE_VERSION,
+                    u8::from(*enabled),
+                    edge[0],
+                    edge[1],
+                ]);
             }
-            Self::TextInputRequest(request) => request.encode().to_vec(),
+            Self::TextInputRequest(request) => out.extend_from_slice(&request.encode()),
             // is_valid refuses a layout that does not encode.
-            Self::KeyboardLayout(layout) => layout.encode().unwrap_or_default(),
+            Self::KeyboardLayout(layout) => {
+                if let Some(bytes) = layout.encode() {
+                    out.extend_from_slice(&bytes);
+                }
+            }
             Self::ControllerAudioStatus { controller, flags } => {
                 let id = controller.to_le_bytes();
-                vec![1, 1, id[0], id[1], *flags, 0, 0, 0]
+                out.extend_from_slice(&[1, 1, id[0], id[1], *flags, 0, 0, 0]);
             }
             // `is_valid` refused what does not encode.
-            Self::Usb(message) => message.encode().unwrap_or_default(),
-            Self::ClipboardSync(frame) => frame.encode().unwrap_or_default(),
-            Self::FrameWarpRequest(request) => request.encode().to_vec(),
+            Self::Usb(message) => {
+                if let Some(bytes) = message.encode() {
+                    out.extend_from_slice(&bytes);
+                }
+            }
+            Self::ClipboardSync(frame) => {
+                if let Some(bytes) = frame.encode() {
+                    out.extend_from_slice(&bytes);
+                }
+            }
+            Self::FrameWarpRequest(request) => out.extend_from_slice(&request.encode()),
             // `is_valid` refused what does not encode.
-            Self::TransportFeedback(report) => report.encode().unwrap_or_default(),
+            Self::TransportFeedback(report) => {
+                let _ = report.encode_into(out);
+            }
         }
+    }
+
+    pub fn payload(&self) -> Vec<u8> {
+        let mut out = Vec::new();
+        self.encode_payload_into(&mut out);
+        out
     }
 
     pub fn channel(&self) -> u8 {
@@ -286,18 +316,34 @@ impl ClientMessage {
             Self::ControllerAudioStatus { controller, flags } => {
                 *controller < 16 && flags & !15 == 0
             }
-            Self::KeyboardLayout(layout) => layout.encode().is_some(),
+            Self::KeyboardLayout(layout) => {
+                let tag = layout.tag.as_bytes();
+                tag.len() <= rubylight_protocol::keyboard_layout::MAX_TAG_BYTES
+                    && tag.iter().all(u8::is_ascii_graphic)
+            }
             // A change, or the query that asks for nothing.
             Self::RateChange(request) => request.valid() || request.is_query(),
-            Self::ClipboardSync(frame) => frame.encode().is_some(),
-            Self::TransportFeedback(report) => report.encode().is_some(),
-            // Only the client's kinds, and only what encodes.
-            Self::Usb(message) => {
-                matches!(
-                    message,
-                    UsbMessage::AttachRequest { .. } | UsbMessage::Detach { .. }
-                ) && message.encode().is_some()
+            Self::ClipboardSync(frame) => {
+                frame.payload.len() <= rubylight_protocol::clipboard_sync::MAX_PAYLOAD_BYTES
             }
+            Self::TransportFeedback(report) => report.is_valid(),
+            // Only the client's kinds, and only what encodes.
+            Self::Usb(message) => match message {
+                UsbMessage::AttachRequest {
+                    request_id,
+                    busid,
+                    name,
+                    ..
+                } => {
+                    let busid = busid.as_bytes();
+                    *request_id != 0
+                        && (1..=rubylight_protocol::usb::MAX_BUSID_BYTES).contains(&busid.len())
+                        && busid.iter().all(u8::is_ascii_graphic)
+                        && name.len() <= rubylight_protocol::usb::MAX_NAME_BYTES
+                }
+                UsbMessage::Detach { request_id } => *request_id != 0,
+                _ => false,
+            },
             _ => true,
         }
     }

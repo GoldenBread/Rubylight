@@ -12,13 +12,14 @@ compile_error!(
     "aarch64 builds need --cfg aes_armv8 --cfg polyval_armv8: run cargo from protocol/, whose .cargo/config.toml sets them"
 );
 
+use aes_gcm::AesGcm;
 use aes_gcm::aead::consts::U16;
 use aes_gcm::aead::generic_array::GenericArray;
 use aes_gcm::aead::{AeadInPlace, KeyInit};
 use aes_gcm::aes::Aes128;
-use aes_gcm::{Aes128Gcm, AesGcm};
 use cbc::cipher::block_padding::{NoPadding, Pkcs7};
 use cbc::cipher::{BlockDecryptMut, BlockEncryptMut, KeyIvInit};
+use ring::aead::{AES_128_GCM, Aad, LessSafeKey, Nonce, Tag, UnboundKey};
 
 pub const KEY_BYTES: usize = 16;
 pub const TAG_BYTES: usize = 16;
@@ -40,16 +41,17 @@ impl std::fmt::Display for CryptoError {
 impl std::error::Error for CryptoError {}
 
 /// An AES-128-GCM key with its schedule expanded once. Takes the 12-byte IVs of Sunshine's
-/// streams and the 16-byte IVs of GFE's original encrypted control stream.
+/// streams (through `ring`) and the 16-byte IVs of GFE's original encrypted control stream.
 pub struct Gcm {
-    iv12: Aes128Gcm,
+    iv12: LessSafeKey,
     iv16: AesGcm<Aes128, U16>,
 }
 
 impl Gcm {
     pub fn new(key: &Key) -> Self {
+        let unbound = UnboundKey::new(&AES_128_GCM, key).expect("16-byte AES-128 key");
         Self {
-            iv12: Aes128Gcm::new(key.into()),
+            iv12: LessSafeKey::new(unbound),
             iv16: AesGcm::new(key.into()),
         }
     }
@@ -60,17 +62,28 @@ impl Gcm {
         iv: &[u8],
         buffer: &mut [u8],
     ) -> Result<[u8; TAG_BYTES], CryptoError> {
-        let tag = match iv.len() {
-            12 => self
-                .iv12
-                .encrypt_in_place_detached(GenericArray::from_slice(iv), b"", buffer),
-            16 => self
-                .iv16
-                .encrypt_in_place_detached(GenericArray::from_slice(iv), b"", buffer),
-            _ => return Err(CryptoError),
+        match iv.len() {
+            12 => {
+                let iv: [u8; 12] = iv.try_into().map_err(|_| CryptoError)?;
+                let tag = self
+                    .iv12
+                    .seal_in_place_separate_tag(
+                        Nonce::assume_unique_for_key(iv),
+                        Aad::empty(),
+                        buffer,
+                    )
+                    .map_err(|_| CryptoError)?;
+                tag.as_ref().try_into().map_err(|_| CryptoError)
+            }
+            16 => {
+                let tag = self
+                    .iv16
+                    .encrypt_in_place_detached(GenericArray::from_slice(iv), b"", buffer)
+                    .map_err(|_| CryptoError)?;
+                Ok(tag.into())
+            }
+            _ => Err(CryptoError),
         }
-        .map_err(|_| CryptoError)?;
-        Ok(tag.into())
     }
 
     /// Returns the tag and the ciphertext.
@@ -105,19 +118,28 @@ impl Gcm {
         }
         buffer.clear();
         buffer.extend_from_slice(ciphertext);
-        let tag = GenericArray::from_slice(tag);
         match iv.len() {
             12 => {
+                let iv: [u8; 12] = iv.try_into().map_err(|_| CryptoError)?;
+                let tag: [u8; TAG_BYTES] = tag.try_into().map_err(|_| CryptoError)?;
                 self.iv12
-                    .decrypt_in_place_detached(GenericArray::from_slice(iv), b"", buffer, tag)
+                    .open_in_place_separate_tag(
+                        Nonce::assume_unique_for_key(iv),
+                        Aad::empty(),
+                        Tag::from(tag),
+                        buffer,
+                        0..,
+                    )
+                    .map_err(|_| CryptoError)?;
             }
             16 => {
+                let tag = GenericArray::from_slice(tag);
                 self.iv16
                     .decrypt_in_place_detached(GenericArray::from_slice(iv), b"", buffer, tag)
+                    .map_err(|_| CryptoError)?;
             }
             _ => return Err(CryptoError),
         }
-        .map_err(|_| CryptoError)?;
         Ok(())
     }
 }
