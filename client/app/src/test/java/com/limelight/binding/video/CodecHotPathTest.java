@@ -233,8 +233,8 @@ public class CodecHotPathTest {
 
     @Test
     public void rustFastCallbacksMatchMoonBridgeAndAreKeptByProguard() throws Exception {
-        String renderersRs = new String(Files.readAllBytes(findFile(
-                "../protocol/android/src/renderers.rs", "protocol/android/src/renderers.rs").toPath()),
+        String bridgeRs = new String(Files.readAllBytes(findFile(
+                "../protocol/android/src/bridge.rs", "protocol/android/src/bridge.rs").toPath()),
                 StandardCharsets.UTF_8);
         String proguard = new String(Files.readAllBytes(findFile(
                 "proguard-rules.pro", "app/proguard-rules.pro").toPath()), StandardCharsets.UTF_8);
@@ -252,11 +252,14 @@ public class CodecHotPathTest {
             methods.put(m.getName(), m);
         }
 
-        Matcher lookup = Pattern.compile("id\\(\"(\\w+)\",\\s*\"([^\"]+)\"\\)").matcher(renderersRs);
+        Matcher lookup = Pattern.compile("id\\(\"(\\w+)\",\\s*\"([^\"]+)\"\\)").matcher(bridgeRs);
         int found = 0;
         while (lookup.find()) {
-            found++;
             String name = lookup.group(1);
+            if (name.startsWith("bridge")) {
+                continue;
+            }
+            found++;
             String expectedDesc = lookup.group(2);
             Method method = methods.get(name);
             assertNotNull("MoonBridge missing fast callback " + name, method);
@@ -267,6 +270,6 @@ public class CodecHotPathTest {
             assertTrue("proguard-rules.pro missing keep rule: " + expectedRule,
                     keptMoonBridge.contains(expectedRule));
         }
-        assertEquals("expected 4 fast callbacks in renderers.rs", 4, found);
+        assertEquals("expected 4 fast callbacks in bridge.rs", 4, found);
     }
 }

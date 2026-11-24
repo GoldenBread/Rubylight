@@ -6645,36 +6645,9 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
             str += "AVC Decoder: "+((renderer.avcDecoder != null) ? renderer.avcDecoder.getName():"(none)")+DELIMITER;
             str += "HEVC Decoder: "+((hevcShown != null) ? hevcShown.getName():"(none)")+DELIMITER;
             str += "AV1 Decoder: "+((av1Shown != null) ? av1Shown.getName():"(none)")+DELIMITER;
-            if (renderer.avcDecoder != null) {
-                Range<Integer> avcWidthRange = renderer.avcDecoder.getCapabilitiesForType("video/avc").getVideoCapabilities().getSupportedWidths();
-                str += "AVC supported width range: "+avcWidthRange+DELIMITER;
-                try {
-                    Range<Double> avcFpsRange = renderer.avcDecoder.getCapabilitiesForType("video/avc").getVideoCapabilities().getAchievableFrameRatesFor(renderer.initialWidth, renderer.initialHeight);
-                    str += "AVC achievable FPS range: "+avcFpsRange+DELIMITER;
-                } catch (IllegalArgumentException e) {
-                    str += "AVC achievable FPS range: UNSUPPORTED!"+DELIMITER;
-                }
-            }
-            if (hevcShown != null) {
-                Range<Integer> hevcWidthRange = hevcShown.getCapabilitiesForType("video/hevc").getVideoCapabilities().getSupportedWidths();
-                str += "HEVC supported width range: "+hevcWidthRange+DELIMITER;
-                try {
-                    Range<Double> hevcFpsRange = hevcShown.getCapabilitiesForType("video/hevc").getVideoCapabilities().getAchievableFrameRatesFor(renderer.initialWidth, renderer.initialHeight);
-                    str += "HEVC achievable FPS range: " + hevcFpsRange + DELIMITER;
-                } catch (IllegalArgumentException e) {
-                    str += "HEVC achievable FPS range: UNSUPPORTED!"+DELIMITER;
-                }
-            }
-            if (av1Shown != null) {
-                Range<Integer> av1WidthRange = av1Shown.getCapabilitiesForType("video/av01").getVideoCapabilities().getSupportedWidths();
-                str += "AV1 supported width range: "+av1WidthRange+DELIMITER;
-                try {
-                    Range<Double> av1FpsRange = av1Shown.getCapabilitiesForType("video/av01").getVideoCapabilities().getAchievableFrameRatesFor(renderer.initialWidth, renderer.initialHeight);
-                    str += "AV1 achievable FPS range: " + av1FpsRange + DELIMITER;
-                } catch (IllegalArgumentException e) {
-                    str += "AV1 achievable FPS range: UNSUPPORTED!"+DELIMITER;
-                }
-            }
+            str += codecCapabilities("AVC", "video/avc", renderer.avcDecoder, renderer.initialWidth, renderer.initialHeight);
+            str += codecCapabilities("HEVC", "video/hevc", hevcShown, renderer.initialWidth, renderer.initialHeight);
+            str += codecCapabilities("AV1", "video/av01", av1Shown, renderer.initialWidth, renderer.initialHeight);
             str += "Configured format: "+renderer.configuredFormat+DELIMITER;
             str += "Input format: "+renderer.inputFormat+DELIMITER;
             str += "Output format: "+renderer.outputFormat+DELIMITER;
@@ -6725,6 +6698,17 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
             str += originalException.toString();
 
             return str;
+        }
+
+        private static String codecCapabilities(String label, String mime, MediaCodecInfo codec, int width, int height) {
+            if (codec == null) return "";
+            MediaCodecInfo.VideoCapabilities caps = codec.getCapabilitiesForType(mime).getVideoCapabilities();
+            String s = label + " supported width range: " + caps.getSupportedWidths() + DELIMITER;
+            try {
+                return s + label + " achievable FPS range: " + caps.getAchievableFrameRatesFor(width, height) + DELIMITER;
+            } catch (IllegalArgumentException e) {
+                return s + label + " achievable FPS range: UNSUPPORTED!" + DELIMITER;
+            }
         }
     }
 }

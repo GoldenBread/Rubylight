@@ -381,7 +381,12 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarInputJni_gyroLive
     state: JLongArray,
 ) -> jboolean {
     let mut buf = [0i64; 3];
-    if state.is_null() || env.get_long_array_region(&state, 0, &mut buf).is_err() {
+    if state.is_null()
+        || !env
+            .get_array_length(&state)
+            .is_ok_and(|len| len >= buf.len() as i32)
+        || env.get_long_array_region(&state, 0, &mut buf).is_err()
+    {
         return jbool(false);
     }
     let mut tracker = GyroLivenessTracker {

@@ -339,8 +339,8 @@ def generate():
     constants = dict(re.findall(r"static final String (\w+) = \"([^\"]+)\";", config))
     seekbar = (JAVA / "preferences/SeekBarPreference.java").read_text(encoding="utf-8")
     slider_defaults = dict(re.findall(r'getAttributeIntValue\(\w+, "(min|max|step|keyStep|divisor)", (\d+)\)', seekbar))
-    policy = (JAVA / "binding/video/DisplayFrameRatePolicy.java").read_text(encoding="utf-8")
-    bounds = re.search(r"Math.max\((\d+), Math.min\((\d+), Math.round\(panelMaxHz\)\)\)", policy)
+    policy = (ROOT / "protocol/policy/src/video_pacing.rs").read_text(encoding="utf-8")
+    bounds = re.search(r"java_round_f32\(panel_max_hz\)\.clamp\((\d+),\s*(\d+)\)", policy)
     if not bounds:
         raise ValueError("Review the changed preset refresh-rate policy")
     native_defaults = config.split("static boolean migrateToNativeDefaults(", 1)[1].split("return true;", 1)[0]

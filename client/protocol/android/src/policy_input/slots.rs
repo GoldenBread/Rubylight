@@ -230,10 +230,15 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarInputJni_fuseCont
     out: JIntArray,
 ) {
     let n = count.max(0) as usize;
-    let needed = n * 6;
+    let needed = n.saturating_mul(6);
     let mut stack_buf = [0i32; 96];
     let mut heap_buf = Vec::new();
-    let slice: &[i32] = if needed == 0 || packed_contexts.is_null() {
+    let available = if needed == 0 || packed_contexts.is_null() {
+        0
+    } else {
+        env.get_array_length(&packed_contexts).unwrap_or(0).max(0) as usize
+    };
+    let slice: &[i32] = if needed == 0 || available < needed {
         &[]
     } else if needed <= stack_buf.len() {
         if env

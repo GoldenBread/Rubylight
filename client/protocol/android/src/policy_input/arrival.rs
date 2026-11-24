@@ -434,7 +434,11 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarInputJni_computeB
 ) -> jint {
     let mut keys_buf = [JNI_FALSE; ANDROID_TO_LI_BUTTON_MAP.len()];
     if !has_keys.is_null() {
-        let _ = env.get_boolean_array_region(&has_keys, 0, &mut keys_buf);
+        let len = env.get_array_length(&has_keys).unwrap_or(0).max(0) as usize;
+        let read_len = len.min(keys_buf.len());
+        if read_len > 0 {
+            let _ = env.get_boolean_array_region(&has_keys, 0, &mut keys_buf[..read_len]);
+        }
     }
     let bools: Vec<bool> = keys_buf.iter().map(|&v| v != JNI_FALSE).collect();
     let mut flags = supported_buttons_from_keys(&bools);

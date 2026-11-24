@@ -646,9 +646,7 @@ impl AudioRenderer for Audio {
         let pending_ms = crate::engine::pending_audio_ms() as i32;
         let try_direct = &mut self.try_direct_audio;
         b.with_env(|env| {
-            if *try_direct
-                && crate::engine::microphone_state() != crate::engine::MIC_STATE_READY
-            {
+            if *try_direct && crate::engine::microphone_state() != crate::engine::MIC_STATE_READY {
                 let status = b.int(
                     env,
                     b.m.ar_play_direct,

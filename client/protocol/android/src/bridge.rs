@@ -28,6 +28,8 @@ pub struct Methods {
     pub ar_start: JStaticMethodID,
     pub ar_stop: JStaticMethodID,
     pub ar_cleanup: JStaticMethodID,
+    #[allow(dead_code)]
+    pub ar_play: JStaticMethodID,
     pub ar_play_direct: JStaticMethodID,
     pub ar_play_pending: JStaticMethodID,
     pub ar_init_encoded: JStaticMethodID,
@@ -104,6 +106,7 @@ pub fn init(env: &mut JNIEnv, class: &JClass) -> jni::errors::Result<()> {
         ar_start: id("bridgeArStart", "()V")?,
         ar_stop: id("bridgeArStop", "()V")?,
         ar_cleanup: id("bridgeArCleanup", "()V")?,
+        ar_play: id("bridgeArPlaySample", "([SI)V")?,
         ar_play_direct: id("arPlaySampleDirect", "(JII)I")?,
         ar_play_pending: id("arPlaySamplePending", "([SII)V")?,
         ar_init_encoded: id("bridgeArInitEncoded", "(II)I")?,
