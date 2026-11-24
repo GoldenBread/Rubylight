@@ -130,7 +130,9 @@ impl Output {
 
 /// Run `command` and return its stdout and stderr together. Killed when it outlives `timeout`.
 pub fn run_bounded(mut command: Command, timeout: Duration) -> Result<(bool, String)> {
-    let mut child = command
+    // Its own process group, so a timeout ends whatever it started too: a child left running
+    // would hold the pipes open and the reads below would wait for it.
+    let mut child = std::os::unix::process::CommandExt::process_group(&mut command, 0)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -155,6 +157,11 @@ pub fn run_bounded(mut command: Command, timeout: Duration) -> Result<(bool, Str
             break Some(status);
         }
         if Instant::now() >= deadline {
+            if let Ok(group) = libc::pid_t::try_from(child.id()) {
+                // SAFETY: a signal to the group this function made, whose leader it has not
+                // reaped, so the id is not reused.
+                unsafe { libc::kill(-group, libc::SIGKILL) };
+            }
             let _ = child.kill();
             let _ = child.wait();
             break None;
@@ -545,7 +552,8 @@ mod tests {
     #[test]
     fn a_tool_that_hangs_is_killed_and_one_that_prints_is_read() {
         let mut slow = Command::new("sh");
-        slow.args(["-c", "sleep 30"]);
+        // `; true` makes every shell run sleep as its child, which holds the pipes.
+        slow.args(["-c", "sleep 30; true"]);
         let started = Instant::now();
         let error = run_bounded(slow, Duration::from_millis(200)).unwrap_err();
         assert!(format!("{error:#}").contains("did not finish"));
