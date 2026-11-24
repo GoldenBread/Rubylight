@@ -55,7 +55,7 @@ fn config_default_snapshot_covers_all_generated_typed_accessors() {
 
 #[test]
 fn generated_tables_match_settings_toml_counts_and_uniqueness() {
-    let toml = include_str!("../../../settings.toml");
+    let toml = include_str!("../../../settings.toml").replace("\r\n", "\n");
     let mut toml_keys = BTreeSet::new();
     let mut toml_overrides = BTreeSet::new();
     let mut toml_restarts = BTreeSet::new();

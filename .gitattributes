@@ -5,6 +5,11 @@
 client/protocol/native-api/tests/fixtures/** text eol=lf
 # The timing-report tests edit these byte by byte and check they stay LF.
 rust/release/fixtures/timing/** text eol=lf
+# Host settings catalog, locales, and skills are LF-checked on Windows runners.
+rust/core/config/settings.toml text eol=lf
+rust/assets/locale/*.json text eol=lf
+client/app/src/main/res/values*/*.xml text eol=lf
+.agents/skills/**/*.md text eol=lf
 
 # Unified patches use a single space to mark blank context lines.
 rust/compatibility/**/*.patch whitespace=-blank-at-eol
@@ -16,13 +21,13 @@ rust/core/media-policy/src/audio_dsp/*.bin binary
 # Nightjar's desktop string tables hold one entry per line between `TABLE: &[` and
 # `];`: two branches that append entries both keep theirs (union). An entry both
 # change then appears twice, which strings/tests.rs every_table_is_clean rejects.
-client/protocol/desktop-config/src/strings/*.rs merge=union
+client/protocol/desktop-config/src/strings/*.rs text eol=lf merge=union
 client/protocol/desktop-config/src/strings/tests.rs !merge
 # Generated docs and host settings catalog: `python tools/generated_docs.py install`
 # registers the driver, which takes one side's generated output on a conflict inside
 # it; regenerate it afterwards with `python tools/generated_docs.py`.
-client/docs/settings.md merge=rubylight-generated
-client/docs/devices.md merge=rubylight-generated
-docs/configuration.md merge=rubylight-generated
-rust/core/config/src/config/*_gen.rs merge=rubylight-generated
-rust/web/src/lib/schema/*.gen.ts merge=rubylight-generated
+client/docs/settings.md text eol=lf merge=rubylight-generated
+client/docs/devices.md text eol=lf merge=rubylight-generated
+docs/configuration.md text eol=lf merge=rubylight-generated
+rust/core/config/src/config/*_gen.rs text eol=lf merge=rubylight-generated
+rust/web/src/lib/schema/*.gen.ts text eol=lf merge=rubylight-generated

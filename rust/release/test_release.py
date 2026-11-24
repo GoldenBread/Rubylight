@@ -731,7 +731,7 @@ class Signing(unittest.TestCase):
         self.assertNotIn('rubylight-nvidia-setup', self.workflow)
         script = (ROOT / 'rust/release/sign-local.ps1').read_text(encoding='utf-8')
         self.assertNotIn('rubylight-nvidia-setup', script)
-        updater = (ROOT / 'rust/host/stream/src/updater.rs').read_text(encoding='utf-8')
+        updater = (ROOT / 'rust/host/stream/src/updater/release.rs').read_text(encoding='utf-8')
         self.assertIn('const INSTALLERS: &[&str] = &["rubylight-setup", "butterpollo-setup"];', updater)
 
     def test_local_signing_holds_the_release_as_a_draft(self):
@@ -900,7 +900,10 @@ class Signing(unittest.TestCase):
         self.assertNotIn(r"'drivers\display'", build)
         self.assertNotIn('libvirtualdisplay v1.6.3', build)
         self.assertNotIn('remove-libvirtualdisplay', build)
-        install = (ROOT / 'rust/setup/src/install.rs').read_text(encoding='utf-8')
+        install = '\n'.join(
+            (ROOT / path).read_text(encoding='utf-8')
+            for path in ('rust/setup/src/install.rs', 'rust/setup/src/install/drivers.rs')
+        )
         self.assertIn('crate::libvirtualdisplay::remove(', install)
         self.assertNotIn('remove-libvirtualdisplay', install)
         self.assertNotIn(r'"drivers\\display\\install.ps1"', install)
@@ -908,7 +911,7 @@ class Signing(unittest.TestCase):
         # packaged driver carries the release version.
         self.assertIn("'build-package.ps1') -Version $driverVersion", build)
         script = r'drivers\\rubylight-display\\install-local.ps1'
-        self.assertIn(f'"{script}"', (ROOT / 'rust/setup/src/install.rs').read_text(encoding='utf-8'))
+        self.assertIn(f'"{script}"', install)
         # The service sets the driver up again only when it is missing
         # (--repair-drivers), never after a settings edit: an unattended
         # uninstall after one broke measurements on the development PC.
@@ -960,7 +963,10 @@ class Signing(unittest.TestCase):
         self.assertNotIn(r"'drivers\gamepad'", build)
         self.assertNotIn('VibeshineVhfGamepad.cat', build)
         self.assertNotIn('libvirtualgamepad v0.1.0-beta.10', build)
-        install = (ROOT / 'rust/setup/src/install.rs').read_text(encoding='utf-8')
+        install = '\n'.join(
+            (ROOT / path).read_text(encoding='utf-8')
+            for path in ('rust/setup/src/install.rs', 'rust/setup/src/install/drivers.rs')
+        )
         self.assertIn('crate::libvirtualgamepad::remove(', install)
         self.assertIn(r'"drivers\\rubylight-gamepad\\install-local.ps1"', install)
         self.assertNotIn(r'"drivers\\gamepad\\install.ps1"', install)
