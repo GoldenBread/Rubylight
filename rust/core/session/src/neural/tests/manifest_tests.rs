@@ -354,7 +354,12 @@ fn app_keys_pending_records_and_manifest_transitions_stay_pure() {
     assert_eq!(app_install_dir(&app), Some(PathBuf::from("C:/Games/G")));
     assert!(!app_has_files(&app));
 
-    let value = app_key_value(Path::new("C:/Games/G/Game.exe"), "FG-V.B16", "dxgi.dll", Mode::Full);
+    let value = app_key_value(
+        Path::new("C:/Games/G/Game.exe"),
+        "FG-V.B16",
+        "dxgi.dll",
+        Mode::Full,
+    );
     app.extra.insert(KEY.into(), value.clone());
     app.extra.insert(
         LEGACY_KEY.into(),
@@ -402,7 +407,10 @@ fn app_keys_pending_records_and_manifest_transitions_stay_pure() {
     assert!(compact.files.contains_key("dxgi.dll"));
     assert_eq!(compact.folders, vec!["OptiScaler"]);
 
-    assert_eq!(prepare_file_check("OptiScaler.ini", Now::Changed, "G"), Ok(()));
+    assert_eq!(
+        prepare_file_check("OptiScaler.ini", Now::Changed, "G"),
+        Ok(())
+    );
     assert!(
         prepare_file_check("dxgi.dll", Now::Missing, "G")
             .unwrap_err()
@@ -413,7 +421,12 @@ fn app_keys_pending_records_and_manifest_transitions_stay_pure() {
             .contains("from an earlier install")
     );
     assert!(
-        kept_text(&[format!("OptiScaler/custom/{PROVIDER}/dlssg/nvngx_dlssg.dll")], true)
-            .contains("frame generation's nvngx_dlssg.dll")
+        kept_text(
+            &[format!(
+                "OptiScaler/custom/{PROVIDER}/dlssg/nvngx_dlssg.dll"
+            )],
+            true
+        )
+        .contains("frame generation's nvngx_dlssg.dll")
     );
 }

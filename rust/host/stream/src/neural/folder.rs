@@ -26,8 +26,8 @@ pub use butterpollo_session::neural::{
 };
 #[cfg(any(test, feature = "test-support"))]
 pub use find::anti_cheat_refusal;
-pub use find::{same, shared_folders};
 pub(super) use find::{inside, not_the_game};
+pub use find::{same, shared_folders};
 pub use layout::Gone;
 pub use place::{check, place, prepare};
 pub use remove::remove;
@@ -139,7 +139,9 @@ pub enum Request {
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum Response {
     /// The game's program ([`Request::Find`]).
-    Found { exe: PathBuf },
+    Found {
+        exe: PathBuf,
+    },
     Placed {
         exe: PathBuf,
         release: String,
@@ -156,18 +158,30 @@ pub enum Response {
     /// As [`Response::Removed`], for Rubylight 3.0's AMDNR in a folder other
     /// than the one the install goes to (the paths followed): its manifest
     /// stays, naming only what is left, so a later removal finishes it.
-    Left { kept: Vec<String> },
+    Left {
+        kept: Vec<String>,
+    },
     /// The folder's drive or share is not there now; the mod may still be in it.
-    Unreachable { folder: String },
+    Unreachable {
+        folder: String,
+    },
     /// No single .exe in the install is the game's: the user chooses it.
-    ChooseExe { reason: String },
+    ChooseExe {
+        reason: String,
+    },
     /// The game cannot have it (anti-cheat, another mod, no DLSS frame
     /// generation, a name taken).
-    Refused { reason: String },
-    Error { message: String },
+    Refused {
+        reason: String,
+    },
+    Error {
+        message: String,
+    },
     /// The signed-in user may not write the game's folder (a game in
     /// Program Files): a SYSTEM host may write it itself ([`Writer::System`]).
-    NotWritable { folder: PathBuf },
+    NotWritable {
+        folder: PathBuf,
+    },
 }
 
 pub fn handle(request: Request, writer: Writer, progress: &dyn Fn(u64, u64)) -> Response {
@@ -285,7 +299,7 @@ pub enum Failure {
     NotWritable(PathBuf),
 }
 impl Failure {
-    pub(self) fn message(&self) -> String {
+    fn message(&self) -> String {
         match self {
             Self::ChooseExe(text) | Self::Refused(text) | Self::Error(text) => text.clone(),
             Self::NotWritable(folder) => format!("cannot write {}", folder.display()),
@@ -294,7 +308,7 @@ impl Failure {
 }
 pub type Outcome<T> = Result<T, Failure>;
 
-pub(self) fn folder_of(exe: &Path) -> &Path {
+fn folder_of(exe: &Path) -> &Path {
     exe.parent().unwrap_or(exe)
 }
 

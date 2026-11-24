@@ -167,7 +167,9 @@ fn walkdir(folder: &Path) -> Vec<PathBuf> {
 
 /// The cached release `folder` as the host hands it to the helper.
 pub(crate) fn cached_at(folder: &Path) -> butterpollo_stream::neural::folder::Cached {
-    Package::read(folder).unwrap().with(folder.to_path_buf())
+    butterpollo_stream::neural::folder::read_package(folder)
+        .unwrap()
+        .with(folder.to_path_buf())
 }
 
 pub(crate) fn install(exe: Option<&Path>, install: Option<&Path>, package: &Path) -> Response {
@@ -368,7 +370,7 @@ pub(crate) fn pin(h: &Shared, folder: &Path) -> Using {
 /// The cached release `folder` as the one this host pins: [`fetch`] takes
 /// it without asking GitHub.
 pub(crate) fn pin_to(h: &Shared, folder: &Path) {
-    let package = Package::read(folder).unwrap();
+    let package = butterpollo_stream::neural::folder::read_package(folder).unwrap();
     let file = |part: &str| {
         let (asset, sha256) = package
             .archives

@@ -1,7 +1,7 @@
 //! Placement, hash verification, executable discovery, and anti-cheat refusal tests for Neural Rendering.
 use super::common::*;
 use butterpollo_session::neural::{MANIFEST, Manifest, Mode, Placed};
-use butterpollo_stream::neural::folder::{PACKAGE, Package, Request, Response, Writer, handle};
+use butterpollo_stream::neural::folder::{PACKAGE, Request, Response, Writer, handle};
 use std::path::{Path, PathBuf};
 
 #[test]
@@ -277,7 +277,7 @@ fn only_an_install_applies_another_release_and_a_launch_fails_on_a_changed_file(
     std::fs::remove_file(folder.join("dxgi.dll")).unwrap();
     // The older release had a file the newer one dropped.
     std::fs::write(old.join("files/full/game/old.dll"), "old").unwrap();
-    let mut package = Package::read(&old).unwrap();
+    let mut package = butterpollo_stream::neural::folder::read_package(&old).unwrap();
     package.files.insert(
         "full/game/old.dll".into(),
         Placed {

@@ -163,7 +163,10 @@ fn anti_cheat_is_recognised_by_its_files_and_folders() {
 #[test]
 fn non_game_executables_acl_verdict_and_switch_state_machine() {
     assert_eq!(classify_non_game_exe("Steam.exe"), Some("a launcher"));
-    assert_eq!(classify_non_game_exe("Playnite.FullscreenApp.exe"), Some("a launcher"));
+    assert_eq!(
+        classify_non_game_exe("Playnite.FullscreenApp.exe"),
+        Some("a launcher")
+    );
     assert_eq!(
         classify_non_game_exe("python3.exe"),
         Some("a script host or interpreter")
@@ -173,7 +176,10 @@ fn non_game_executables_acl_verdict_and_switch_state_machine() {
     assert!(is_shared_folder_name("Program Files") && !is_shared_folder_name("MyGame"));
 
     assert_eq!(game_why(&format!("{NO_DLSS} here")), "no_frame_generation");
-    assert_eq!(game_why(&format!("uses EAC, and {ANTI_CHEAT}")), "anti_cheat");
+    assert_eq!(
+        game_why(&format!("uses EAC, and {ANTI_CHEAT}")),
+        "anti_cheat"
+    );
     assert_eq!(game_why("another mod is installed"), "game");
 
     assert_eq!(
@@ -233,7 +239,10 @@ fn non_game_executables_acl_verdict_and_switch_state_machine() {
         enable_preconditions(true, Ok(()), true, false, true),
         Err(Refusal::Streaming)
     );
-    assert_eq!(enable_preconditions(true, Ok(()), true, false, false), Ok(()));
+    assert_eq!(
+        enable_preconditions(true, Ok(()), true, false, false),
+        Ok(())
+    );
     assert!(should_run_game_check(true, false, true, false));
     assert!(!should_run_game_check(true, true, true, false));
 

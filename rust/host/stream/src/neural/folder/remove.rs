@@ -186,9 +186,8 @@ fn remove_by(folder: &Path, name: &str, writer: Writer, keep_record: bool) -> Ou
     if keep_record && !kept.is_empty() {
         // What a later removal needs: the files and folders left, with
         // nothing more to put back.
-        let left = neural::retained_manifest(manifest, &kept, |relative| {
-            folder.join(relative).is_dir()
-        });
+        let left =
+            neural::retained_manifest(manifest, &kept, |relative| folder.join(relative).is_dir());
         return write_named(folder, name, &left, writer).map(|()| kept);
     }
     guard(folder, name, writer)?;

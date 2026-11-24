@@ -4,7 +4,9 @@ use super::{
     KEY,
     cache::launch_cache,
     folder::{Request, Response},
-    game_check::{install, legacy_exe, placed_exe, reached_by, set_key, steam_refusal, steam_roots},
+    game_check::{
+        install, legacy_exe, placed_exe, reached_by, set_key, steam_refusal, steam_roots,
+    },
     install::{fail_job, start_job, update_job},
     process::run_folder,
 };

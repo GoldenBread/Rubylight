@@ -40,8 +40,12 @@ pub fn status_waiting(h: &Shared, uuid: &str, wait: Duration) -> Value {
     let idle = !running(&h.neural.lock(), uuid);
     let streaming = crate::updater::streaming(h);
     let looked = app.as_ref().map_or_else(Looked::default, |app| {
-        let ask =
-            neural::should_run_game_check(idle, streaming, gpu.is_ok(), app.extra.contains_key(KEY));
+        let ask = neural::should_run_game_check(
+            idle,
+            streaming,
+            gpu.is_ok(),
+            app.extra.contains_key(KEY),
+        );
         game_check(h, uuid, app, &system, wait, ask, streaming)
     });
     // Until the game's folder is looked into, the runtime is not known to

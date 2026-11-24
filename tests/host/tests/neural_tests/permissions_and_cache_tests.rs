@@ -2,7 +2,7 @@
 use super::common::*;
 use super::common::{install, remove};
 use butterpollo_session::neural::{self, Download, Mode, Release};
-use butterpollo_stream::neural::folder::{Package, Request, Response, Writer, handle};
+use butterpollo_stream::neural::folder::{Request, Response, Writer, handle};
 use butterpollo_stream::neural::*;
 use butterpollo_win_io::process::Hold;
 use std::{
@@ -526,7 +526,7 @@ fn a_cache_is_used_only_as_this_host_keeps_it() {
     assert!(message.contains("does not match its release"), "{message}");
     assert_eq!(names(exe.parent().unwrap()), before);
     // A fetch's cache hit hashes it once per host start.
-    let package = Package::read(&folder).unwrap();
+    let package = butterpollo_stream::neural::folder::read_package(&folder).unwrap();
     let error = format!("{:#}", verify_cache(h, &folder, &package).unwrap_err());
     assert!(error.contains("pack.nrx in"), "{error}");
     std::fs::write(&pak, "model").unwrap();
@@ -536,7 +536,7 @@ fn a_cache_is_used_only_as_this_host_keeps_it() {
 
     // The same tag with other archives is another release; the checksum
     // list is not cached and doesn't count.
-    let mut package = Package::read(&folder).unwrap();
+    let mut package = butterpollo_stream::neural::folder::read_package(&folder).unwrap();
     let (full, addon) = (
         "anr-fg-Alpha0.3.5.8-full.zip".to_owned(),
         "anr-fg-Alpha0.3.5.8-addon.zip".to_owned(),

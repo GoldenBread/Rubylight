@@ -189,7 +189,7 @@ pub type GameChecked = (Instant, GameKey, Option<GameCheck>);
 /// the files sit beside now and sat beside in Rubylight 3.0.
 pub type GameKey = [Option<PathBuf>; 4];
 
-pub(self) fn game_key(app: &App) -> GameKey {
+fn game_key(app: &App) -> GameKey {
     [
         game_check::command_exe(app),
         install(app),
@@ -208,7 +208,7 @@ pub struct Lookup {
 
 /// What a status read holds of an app's game folder ([`game_check::game_check`]).
 #[derive(Default)]
-pub(self) struct Looked {
+struct Looked {
     /// The runtime files beside the game's program, once looked for.
     pub beside: Option<Vec<&'static str>>,
     pub check: Option<GameCheck>,
