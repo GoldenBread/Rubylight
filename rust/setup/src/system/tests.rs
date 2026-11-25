@@ -539,6 +539,77 @@ fn system_tasks_use_random_ids_create_new_files_and_refuse_untrusted_roots() -> 
         .unwrap_err();
         assert!(err.downcast_ref::<Untrusted>().is_some(), "{err:#}");
         assert_eq!(std::fs::read_dir(&writable)?.count(), 0);
+        assert!(!install_task_root_usable(&writable));
+    }
+    Ok(())
+}
+
+#[test]
+fn ephemeral_task_root_handles_missing_install_and_parent_sibling_junctions() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    // A missing install directory must fail closed (avoiding install\.staging).
+    assert!(!install_task_root_usable(
+        &root.path().join("missing-install")
+    ));
+
+    // A junction as install or fallback root is refused.
+    let target = root.path().join("target");
+    std::fs::create_dir(&target)?;
+    let junction = root.path().join("junction");
+    let (code, output) = run(
+        &system32("cmd.exe"),
+        &[
+            "/c",
+            "mklink",
+            "/J",
+            &junction.display().to_string(),
+            &target.display().to_string(),
+        ],
+        Duration::from_secs(10),
+    )?;
+    assert_eq!(code, 0, "{output}");
+    assert!(!install_task_root_usable(&junction));
+    let err = create_ephemeral_task_root(&junction).unwrap_err();
+    assert!(err.to_string().contains("reparse point"), "{err:#}");
+
+    // Checking %ProgramData% as a parent non-recursively must succeed despite
+    // Windows's built-in OS junctions inside %ProgramData%.
+    let pd = program_data();
+    trusted_parents(&pd.join("ButterpolloSetup-probe"))?;
+
+    if elevated() {
+        let parent = pd.join(random_task_id()?);
+        create_restricted(&parent, false)?;
+        let result = (|| -> Result<()> {
+            let sibling_target = parent.join("sibling-target");
+            create_restricted(&sibling_target, false)?;
+            let sibling_link = parent.join("sibling-junction");
+            let (code, output) = run(
+                &system32("cmd.exe"),
+                &[
+                    "/c",
+                    "mklink",
+                    "/J",
+                    &sibling_link.display().to_string(),
+                    &sibling_target.display().to_string(),
+                ],
+                Duration::from_secs(10),
+            )?;
+            assert_eq!(code, 0, "{output}");
+            // Confirm recursive trusted_ancestors would fail on the sibling junction,
+            // while non-recursive create_ephemeral_task_root succeeds cleanly.
+            assert!(trusted_ancestors(&parent).is_err());
+            let ephemeral = create_ephemeral_task_root(&parent)?;
+            assert!(ephemeral.is_dir());
+            trusted_dir_only(&ephemeral)?;
+            prepare_task_root(&ephemeral)?;
+            assert!(install_task_root_usable(&ephemeral));
+            let _ = std::fs::remove_dir_all(&ephemeral);
+            let _ = std::fs::remove_dir(&sibling_link);
+            Ok(())
+        })();
+        let _ = std::fs::remove_dir_all(&parent);
+        result?;
     }
     Ok(())
 }

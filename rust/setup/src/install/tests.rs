@@ -273,9 +273,23 @@ fn the_base_port_needs_its_whole_range_free_with_a_fallback_then_an_error() {
 #[test]
 fn a_port_a_program_holds_is_not_free() -> Result<()> {
     let tcp = std::net::TcpListener::bind(("127.0.0.1", 0))?;
-    assert!(!port_free(tcp.local_addr()?.port()));
+    let tcp_port = tcp.local_addr()?.port();
+    assert!(side_by_side::table_holds_port(tcp_port));
+    assert!(!port_free(tcp_port));
     let udp = std::net::UdpSocket::bind(("127.0.0.1", 0))?;
-    assert!(!port_free(udp.local_addr()?.port()));
+    let udp_port = udp.local_addr()?.port();
+    assert!(side_by_side::table_holds_port(udp_port));
+    assert!(!port_free(udp_port));
+    if let Ok(tcp6) = std::net::TcpListener::bind(("::1", 0)) {
+        let port = tcp6.local_addr()?.port();
+        assert!(side_by_side::table_holds_port(port));
+        assert!(!port_free(port));
+    }
+    if let Ok(udp6) = std::net::UdpSocket::bind(("::1", 0)) {
+        let port = udp6.local_addr()?.port();
+        assert!(side_by_side::table_holds_port(port));
+        assert!(!port_free(port));
+    }
     // A port just let go can be taken at once by another test or program (CI flaked on it),
     // so a free one is looked for among a few released ones.
     let mut free = false;
@@ -291,6 +305,96 @@ fn a_port_a_program_holds_is_not_free() -> Result<()> {
     }
     assert!(free, "no released port was free");
     Ok(())
+}
+#[test]
+fn mib_table_port_matcher_handles_network_order_upper_bits_and_ipv4_ipv6() {
+    use windows::Win32::NetworkManagement::IpHelper::{
+        MIB_TCP6ROW_OWNER_PID, MIB_TCP6TABLE_OWNER_PID, MIB_UDPROW, MIB_UDPTABLE,
+    };
+    let raw_48589 = u32::from(48589u16.to_be()) | 0xDEAD_0000;
+    assert_eq!(side_by_side::mib_port(raw_48589), 48589);
+    assert_eq!(side_by_side::mib_port(u32::from(80u16.to_be())), 80);
+
+    // IPv4 UDP table: 2 entries, second holds 48589 with dirty upper bits.
+    let v4_rows = [
+        MIB_UDPROW {
+            dwLocalAddr: 0,
+            dwLocalPort: u32::from(47989u16.to_be()),
+        },
+        MIB_UDPROW {
+            dwLocalAddr: 0x0100_007F,
+            dwLocalPort: raw_48589,
+        },
+    ];
+    let mut v4_buf = vec![2u32];
+    for row in v4_rows {
+        v4_buf.push(row.dwLocalAddr);
+        v4_buf.push(row.dwLocalPort);
+    }
+    assert!(side_by_side::table_bytes_hold_port::<
+        MIB_UDPTABLE,
+        MIB_UDPROW,
+    >(
+        &v4_buf,
+        std::mem::offset_of!(MIB_UDPTABLE, table),
+        |r| r.dwLocalPort,
+        48589,
+    ));
+    assert!(!side_by_side::table_bytes_hold_port::<
+        MIB_UDPTABLE,
+        MIB_UDPROW,
+    >(
+        &v4_buf,
+        std::mem::offset_of!(MIB_UDPTABLE, table),
+        |r| r.dwLocalPort,
+        48590,
+    ));
+    // Truncated buffer claiming more rows than bytes must fail closed.
+    let truncated = vec![5u32, 0, raw_48589];
+    assert!(!side_by_side::table_bytes_hold_port::<
+        MIB_UDPTABLE,
+        MIB_UDPROW,
+    >(
+        &truncated,
+        std::mem::offset_of!(MIB_UDPTABLE, table),
+        |r| r.dwLocalPort,
+        48589,
+    ));
+
+    // IPv6 TCP table: 1 entry holding 48619 with dirty upper bits.
+    let v6_row = MIB_TCP6ROW_OWNER_PID {
+        dwLocalPort: u32::from(48619u16.to_be()) | 0xBEEF_0000,
+        ..Default::default()
+    };
+    let row_words = std::mem::size_of::<MIB_TCP6ROW_OWNER_PID>() / 4;
+    let mut v6_buf = vec![0u32; 1 + row_words];
+    v6_buf[0] = 1;
+    // SAFETY: `v6_row` is `Copy` and `v6_buf[1..]` has exact size `size_of::<MIB_TCP6ROW_OWNER_PID>()`.
+    unsafe {
+        std::ptr::copy_nonoverlapping(
+            (&raw const v6_row).cast::<u8>(),
+            v6_buf.as_mut_ptr().add(1).cast::<u8>(),
+            std::mem::size_of::<MIB_TCP6ROW_OWNER_PID>(),
+        );
+    }
+    assert!(side_by_side::table_bytes_hold_port::<
+        MIB_TCP6TABLE_OWNER_PID,
+        MIB_TCP6ROW_OWNER_PID,
+    >(
+        &v6_buf,
+        std::mem::offset_of!(MIB_TCP6TABLE_OWNER_PID, table),
+        |r| r.dwLocalPort,
+        48619,
+    ));
+    assert!(!side_by_side::table_bytes_hold_port::<
+        MIB_TCP6TABLE_OWNER_PID,
+        MIB_TCP6ROW_OWNER_PID,
+    >(
+        &v6_buf,
+        std::mem::offset_of!(MIB_TCP6TABLE_OWNER_PID, table),
+        |r| r.dwLocalPort,
+        48620,
+    ));
 }
 /// Two hosts with one PC's name would collide on mDNS and look the same
 /// in a client's list.

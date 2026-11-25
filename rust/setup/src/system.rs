@@ -157,15 +157,27 @@ impl std::error::Error for StillRunning {}
 /// with no non-admin writer or reparse points), otherwise an ephemeral random
 /// restricted directory created directly under `%ProgramData%` (never under an
 /// unverified `ProgramData\Butterpollo`).
+/// Whether `install` is an existing, administrators-only directory whose
+/// ancestors are also trusted (fails closed on missing folders or ACL errors).
+fn install_task_root_usable(install: &Path) -> bool {
+    trusted_parents(install).is_ok() && trusted_dir_only(install).is_ok()
+}
+/// Create a fresh, administrators-only ephemeral task folder under
+/// `fallback_root` after checking `fallback_root` and its ancestors
+/// non-recursively (sibling junctions in `%ProgramData%` must not fail it).
+fn create_ephemeral_task_root(fallback_root: &Path) -> Result<PathBuf> {
+    let ephemeral = fallback_root.join(random_task_id()?);
+    trusted_parents(&ephemeral)?;
+    create_restricted(&ephemeral, false)?;
+    Ok(ephemeral)
+}
 pub fn run_as_system(
     install: &Path,
     program: &str,
     args: &[&str],
     timeout: Duration,
 ) -> Result<(i32, String)> {
-    if trusted_ancestors(install).is_ok()
-        && security::other_writer(install).ok().flatten().is_none()
-    {
+    if install_task_root_usable(install) {
         let staging = crate::install::staging_root(install);
         match std::fs::symlink_metadata(&staging) {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -181,8 +193,7 @@ pub fn run_as_system(
         return result;
     }
     let root = program_data();
-    trusted_ancestors(&root)?;
-    let ephemeral = root.join(random_task_id()?);
+    let ephemeral = create_ephemeral_task_root(&root)?;
     let result = run_as_system_in(&ephemeral, program, args, timeout);
     let _ = std::fs::remove_dir_all(&ephemeral);
     result

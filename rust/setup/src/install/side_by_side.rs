@@ -19,18 +19,234 @@ pub(super) const WEBRTC_OFFSET: u16 = 30;
 pub(super) fn ports_of(base: u16) -> std::ops::RangeInclusive<u16> {
     base.saturating_sub(5)..=base.saturating_add(WEBRTC_OFFSET + 5)
 }
-/// Whether no program holds `port`, on TCP or UDP. The host binds the same
-/// way, so what is free here is free for it: another program's bind, a Windows
-/// excluded range or another host stopped for the moment but holding the port.
+/// Decodes an IP Helper MIB `dwLocalPort` value (network byte order in the low
+/// 16 bits; upper 16 bits may hold uninitialized data).
+pub(super) fn mib_port(raw: u32) -> u16 {
+    u16::from_be(raw as u16)
+}
+
+/// Checks whether a packed Windows MIB table buffer (`dwNumEntries` followed by
+/// `table: [R; ...]`) contains a row whose local port equals `port`.
+pub(super) fn table_bytes_hold_port<T, R>(
+    buf: &[u32],
+    rows_offset: usize,
+    row_port: impl Fn(&R) -> u32,
+    port: u16,
+) -> bool {
+    const {
+        assert!(std::mem::align_of::<T>() <= std::mem::align_of::<u32>());
+        assert!(std::mem::align_of::<R>() <= std::mem::align_of::<u32>());
+    }
+    let Some(&count) = buf.first() else {
+        return false;
+    };
+    let count = count as usize;
+    let bytes = std::mem::size_of_val(buf);
+    let Some(needed) = count
+        .checked_mul(std::mem::size_of::<R>())
+        .and_then(|n| rows_offset.checked_add(n))
+    else {
+        return false;
+    };
+    if needed > bytes {
+        return false;
+    }
+    // SAFETY: `buf` is 4-byte aligned, `align_of::<R>() <= 4`, and `rows_offset + count * size_of::<R>() <= bytes`.
+    let rows = unsafe {
+        let base = (buf.as_ptr().cast::<u8>()).add(rows_offset).cast::<R>();
+        std::slice::from_raw_parts(base, count)
+    };
+    rows.iter().any(|row| mib_port(row_port(row)) == port)
+}
+
+fn query_mib_table(
+    mut fetch: impl FnMut(Option<*mut std::ffi::c_void>, *mut u32) -> u32,
+) -> Option<Vec<u32>> {
+    use windows::Win32::Foundation::{ERROR_INSUFFICIENT_BUFFER, NO_ERROR};
+    let mut size = 0u32;
+    let first = fetch(None, &mut size);
+    if first == NO_ERROR.0 {
+        return Some(Vec::new());
+    }
+    if first != ERROR_INSUFFICIENT_BUFFER.0 || size == 0 {
+        return None;
+    }
+    for _ in 0..4 {
+        let words = (size as usize).div_ceil(4).saturating_add(16);
+        let mut buf = vec![0u32; words];
+        let mut capacity = u32::try_from(words.saturating_mul(4)).ok()?;
+        let status = fetch(Some(buf.as_mut_ptr().cast()), &mut capacity);
+        if status == NO_ERROR.0 {
+            return Some(buf);
+        }
+        if status != ERROR_INSUFFICIENT_BUFFER.0 {
+            return None;
+        }
+        size = capacity;
+    }
+    None
+}
+
+/// Whether Windows's active IPv4/IPv6 TCP or UDP tables list `port` on any local
+/// address (wildcard, LAN IP, or loopback) without opening a wildcard listener.
+///
+/// `iphlpapi.dll` is loaded from System32 at run time: as a static import,
+/// Windows would look for it beside setup.exe first (in Downloads) because it
+/// is not a KnownDLL.
+pub(super) fn table_holds_port(port: u16) -> bool {
+    use windows::{
+        Win32::{
+            Foundation::FreeLibrary,
+            NetworkManagement::IpHelper::{
+                MIB_TCP6ROW_OWNER_PID, MIB_TCP6TABLE_OWNER_PID, MIB_TCPROW_LH, MIB_TCPTABLE,
+                MIB_UDP6ROW_OWNER_PID, MIB_UDP6TABLE_OWNER_PID, MIB_UDPROW, MIB_UDPTABLE,
+                TCP_TABLE_BASIC_ALL, TCP_TABLE_OWNER_PID_ALL, UDP_TABLE_BASIC, UDP_TABLE_OWNER_PID,
+            },
+            Networking::WinSock::{AF_INET, AF_INET6},
+            System::LibraryLoader::{GetProcAddress, LOAD_LIBRARY_SEARCH_SYSTEM32, LoadLibraryExW},
+        },
+        core::{BOOL, HSTRING, s},
+    };
+    type GetExtendedTable =
+        unsafe extern "system" fn(*mut std::ffi::c_void, *mut u32, BOOL, u32, i32, u32) -> u32;
+    // SAFETY: `iphlpapi.dll` is loaded from System32 only and freed once below
+    // after all table queries return; signatures match iphlpapi.h.
+    let Ok(library) = (unsafe {
+        LoadLibraryExW(
+            &HSTRING::from("iphlpapi.dll"),
+            None,
+            LOAD_LIBRARY_SEARCH_SYSTEM32,
+        )
+    }) else {
+        return false;
+    };
+    let held = (|| -> bool {
+        // SAFETY: `library` is a live handle to System32\iphlpapi.dll until `FreeLibrary` below.
+        let (Some(tcp_proc), Some(udp_proc)) = (unsafe {
+            (
+                GetProcAddress(library, s!("GetExtendedTcpTable")),
+                GetProcAddress(library, s!("GetExtendedUdpTable")),
+            )
+        }) else {
+            return false;
+        };
+        // SAFETY: both symbols are from System32\iphlpapi.dll and match `GetExtendedTable`.
+        let get_tcp: GetExtendedTable = unsafe { std::mem::transmute(tcp_proc) };
+        // SAFETY: as above.
+        let get_udp: GetExtendedTable = unsafe { std::mem::transmute(udp_proc) };
+        let v4_tcp = query_mib_table(|ptr, len| {
+            // SAFETY: `query_mib_table` passes null for sizing or a writable buffer of `*len` bytes.
+            unsafe {
+                get_tcp(
+                    ptr.unwrap_or(std::ptr::null_mut()),
+                    len,
+                    BOOL(0),
+                    u32::from(AF_INET.0),
+                    TCP_TABLE_BASIC_ALL.0,
+                    0,
+                )
+            }
+        })
+        .is_some_and(|buf| {
+            table_bytes_hold_port::<MIB_TCPTABLE, MIB_TCPROW_LH>(
+                &buf,
+                std::mem::offset_of!(MIB_TCPTABLE, table),
+                |row| row.dwLocalPort,
+                port,
+            )
+        });
+        if v4_tcp {
+            return true;
+        }
+        let v6_tcp = query_mib_table(|ptr, len| {
+            // SAFETY: `query_mib_table` passes null for sizing or a writable buffer of `*len` bytes.
+            unsafe {
+                get_tcp(
+                    ptr.unwrap_or(std::ptr::null_mut()),
+                    len,
+                    BOOL(0),
+                    u32::from(AF_INET6.0),
+                    TCP_TABLE_OWNER_PID_ALL.0,
+                    0,
+                )
+            }
+        })
+        .is_some_and(|buf| {
+            table_bytes_hold_port::<MIB_TCP6TABLE_OWNER_PID, MIB_TCP6ROW_OWNER_PID>(
+                &buf,
+                std::mem::offset_of!(MIB_TCP6TABLE_OWNER_PID, table),
+                |row| row.dwLocalPort,
+                port,
+            )
+        });
+        if v6_tcp {
+            return true;
+        }
+        let v4_udp = query_mib_table(|ptr, len| {
+            // SAFETY: `query_mib_table` passes null for sizing or a writable buffer of `*len` bytes.
+            unsafe {
+                get_udp(
+                    ptr.unwrap_or(std::ptr::null_mut()),
+                    len,
+                    BOOL(0),
+                    u32::from(AF_INET.0),
+                    UDP_TABLE_BASIC.0,
+                    0,
+                )
+            }
+        })
+        .is_some_and(|buf| {
+            table_bytes_hold_port::<MIB_UDPTABLE, MIB_UDPROW>(
+                &buf,
+                std::mem::offset_of!(MIB_UDPTABLE, table),
+                |row| row.dwLocalPort,
+                port,
+            )
+        });
+        if v4_udp {
+            return true;
+        }
+        query_mib_table(|ptr, len| {
+            // SAFETY: `query_mib_table` passes null for sizing or a writable buffer of `*len` bytes.
+            unsafe {
+                get_udp(
+                    ptr.unwrap_or(std::ptr::null_mut()),
+                    len,
+                    BOOL(0),
+                    u32::from(AF_INET6.0),
+                    UDP_TABLE_OWNER_PID.0,
+                    0,
+                )
+            }
+        })
+        .is_some_and(|buf| {
+            table_bytes_hold_port::<MIB_UDP6TABLE_OWNER_PID, MIB_UDP6ROW_OWNER_PID>(
+                &buf,
+                std::mem::offset_of!(MIB_UDP6TABLE_OWNER_PID, table),
+                |row| row.dwLocalPort,
+                port,
+            )
+        })
+    })();
+    // SAFETY: `library` was returned by `LoadLibraryExW` above and is no longer referenced.
+    let _ = unsafe { FreeLibrary(library) };
+    held
+}
+
+/// Whether no program holds `port`, on TCP or UDP. Queries Windows's TCP/UDP
+/// tables across all local addresses first, then probes loopback only (avoiding
+/// wildcard `0.0.0.0`/`[::]` listens that trigger Windows Firewall prompts) to
+/// also catch Windows excluded port ranges and concurrent binds.
 pub(super) fn port_free(port: u16) -> bool {
     use std::io::ErrorKind::{AddrInUse, PermissionDenied};
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, TcpListener, UdpSocket};
-    let v4 = [Ipv4Addr::UNSPECIFIED, Ipv4Addr::LOCALHOST];
-    let free = v4.into_iter().map(IpAddr::V4).all(|address| {
-        TcpListener::bind((address, port)).is_ok() && UdpSocket::bind((address, port)).is_ok()
-    });
+    if table_holds_port(port) {
+        return false;
+    }
+    let v4 = IpAddr::V4(Ipv4Addr::LOCALHOST);
+    let free = TcpListener::bind((v4, port)).is_ok() && UdpSocket::bind((v4, port)).is_ok();
     // A PC without IPv6 has nothing there to collide with.
-    let v6 = IpAddr::V6(Ipv6Addr::UNSPECIFIED);
+    let v6 = IpAddr::V6(Ipv6Addr::LOCALHOST);
     let held = |error: std::io::Error| matches!(error.kind(), AddrInUse | PermissionDenied);
     free && !TcpListener::bind((v6, port)).err().is_some_and(held)
         && !UdpSocket::bind((v6, port)).err().is_some_and(held)
