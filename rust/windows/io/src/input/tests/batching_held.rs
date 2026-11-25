@@ -336,6 +336,7 @@ fn mixed_mode_and_virtual_mouse_button_ownership_stay_isolated() {
     let _button1 = BUTTON1_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let held_count = |code| HELD.lock().unwrap().get(&(false, code)).copied();
     let mut send_input_client = recording();
     let mut virtual_client = recording();
     // Simulate a button held via the virtual mouse route alongside a SendInput client
@@ -348,23 +349,18 @@ fn mixed_mode_and_virtual_mouse_button_ownership_stay_isolated() {
 
     send_input_client.apply(&click(1, true)).unwrap();
     assert_eq!(calls(), [described(&[Injector::button(1, true)])]);
-    assert_eq!(HELD.lock().unwrap().get(&(false, 1)), Some(&1));
+    assert_eq!(held_count(1), Some(1));
 
     // Releasing the virtual button does not drop SendInput's held button 1.
     virtual_client.apply(&click(1, false)).unwrap();
     assert!(calls().is_empty());
-    assert!(
-        !HELD
-            .lock()
-            .unwrap()
-            .contains_key(&(false, 1 | VIRTUAL_BUTTON_FLAG))
-    );
-    assert_eq!(HELD.lock().unwrap().get(&(false, 1)), Some(&1));
+    assert_eq!(held_count(1 | VIRTUAL_BUTTON_FLAG), None);
+    assert_eq!(held_count(1), Some(1));
 
     // Releasing SendInput's button sends the SendInput UP.
     send_input_client.apply(&click(1, false)).unwrap();
     assert_eq!(calls(), [described(&[Injector::button(1, false)])]);
-    assert!(!HELD.lock().unwrap().contains_key(&(false, 1)));
+    assert_eq!(held_count(1), None);
 }
 
 #[test]
@@ -372,6 +368,7 @@ fn due_flushes_deferred_virtual_and_injected_left_releases_on_their_own_routes()
     let _button1 = BUTTON1_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let held_count = |code| HELD.lock().unwrap().get(&(false, code)).copied();
     // WebRTC path: deferred virtual-mouse left release flushed ONLY via `due()` must
     // clear `(false, 1 | VIRTUAL_BUTTON_FLAG)` without calling `flush_virtual_left_release()`,
     // must not emit SendInput UP, and must allow subsequent virtual left-clicks.
@@ -389,10 +386,7 @@ fn due_flushes_deferred_virtual_and_injected_left_releases_on_their_own_routes()
     assert!(injector.left_release.is_some());
     assert!(injector.left_release_virtual);
     assert!(calls().is_empty());
-    assert_eq!(
-        HELD.lock().unwrap().get(&(false, 1 | VIRTUAL_BUTTON_FLAG)),
-        Some(&1)
-    );
+    assert_eq!(held_count(1 | VIRTUAL_BUTTON_FLAG), Some(1));
 
     // A key repeat firing before `left_release` expires must not clobber `left_release_virtual`.
     injector.apply(&key(0x52, true)).unwrap();
@@ -414,11 +408,9 @@ fn due_flushes_deferred_virtual_and_injected_left_releases_on_their_own_routes()
         calls().is_empty(),
         "virtual deferred release must not fall through to SendInput"
     );
-    assert!(
-        !HELD
-            .lock()
-            .unwrap()
-            .contains_key(&(false, 1 | VIRTUAL_BUTTON_FLAG)),
+    assert_eq!(
+        held_count(1 | VIRTUAL_BUTTON_FLAG),
+        None,
         "deferred virtual button must not leak in global HELD"
     );
 
@@ -446,12 +438,7 @@ fn due_flushes_deferred_virtual_and_injected_left_releases_on_their_own_routes()
         |_| Ok(()),
     )
     .unwrap();
-    assert!(
-        !HELD
-            .lock()
-            .unwrap()
-            .contains_key(&(false, 1 | VIRTUAL_BUTTON_FLAG))
-    );
+    assert_eq!(held_count(1 | VIRTUAL_BUTTON_FLAG), None);
 
     // Non-virtual (SendInput) deferred left release flushed via `due()` still releases `(false, 1)`.
     let mut injected = recording();
@@ -462,11 +449,11 @@ fn due_flushes_deferred_virtual_and_injected_left_releases_on_their_own_routes()
     injected.apply(&click(1, false)).unwrap();
     assert!(injected.left_release.is_some());
     assert!(!injected.left_release_virtual);
-    assert_eq!(HELD.lock().unwrap().get(&(false, 1)), Some(&1));
+    assert_eq!(held_count(1), Some(1));
 
     *injected.left_release.as_mut().unwrap() = Instant::now();
     injected.due().unwrap();
     assert!(injected.left_release.is_none());
     assert_eq!(calls(), [described(&[Injector::button(1, false)])]);
-    assert!(!HELD.lock().unwrap().contains_key(&(false, 1)));
+    assert_eq!(held_count(1), None);
 }

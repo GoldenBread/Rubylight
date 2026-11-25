@@ -75,6 +75,9 @@ fn recording() -> Injector {
 }
 #[test]
 fn control_wait_tracks_release_and_repeat_deadlines() {
+    let _button1 = BUTTON1_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut injector = recording();
     assert_eq!(injector.next_due(), None);
     injector.apply(&key(0x51, true)).unwrap();
