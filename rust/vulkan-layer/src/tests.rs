@@ -10,6 +10,11 @@ struct FakeDispatchable {
 
 static NEXT_DISPATCH: AtomicUsize = AtomicUsize::new(0x10_000);
 static PHYSICAL_DISPATCH: AtomicUsize = AtomicUsize::new(0x20_000);
+static STATE_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn state_test_lock() -> std::sync::MutexGuard<'static, ()> {
+    STATE_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
 
 fn fn_ptr(f: *const ()) -> Function {
     // SAFETY: test helpers expose valid `unsafe extern "system" fn()` pointers.
@@ -275,6 +280,7 @@ fn negotiation_validates_inputs_and_sets_distinct_physical_proc_addr() {
 
 #[test]
 fn gipa_gdpa_and_physical_gipa_route_commands_correctly() {
+    let _state_lock = state_test_lock();
     // SAFETY: testing proc-addr exports with null instance/device handles and valid C literals.
     unsafe {
         assert!(vkGetInstanceProcAddr(ptr::null_mut(), ptr::null()).is_none());
@@ -435,6 +441,7 @@ fn gipa_gdpa_and_physical_gipa_route_commands_correctly() {
 
 #[test]
 fn formats2_preserves_caller_pnext_and_fills_known_injected_structs() {
+    let _state_lock = state_test_lock();
     unsafe extern "system" fn fake_sdr_formats2(
         _dev: Handle,
         _info: *const SurfaceInfo,
@@ -583,6 +590,7 @@ fn formats2_preserves_caller_pnext_and_fills_known_injected_structs() {
 
 #[test]
 fn inject_cache_reuses_window_and_stream_probes_within_ttl_and_expires() {
+    let _state_lock = state_test_lock();
     let stream_probes = AtomicUsize::new(0);
     let hdr_probes = AtomicUsize::new(0);
     let surface_a = 0xAA01u64;

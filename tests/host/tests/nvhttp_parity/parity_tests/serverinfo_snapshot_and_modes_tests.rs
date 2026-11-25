@@ -14,7 +14,9 @@ async fn serverinfo_for_a_default_config_is_byte_identical() {
     let unpaired = text(serverinfo_response(
         &f.host,
         &f.connection(false),
+        &axum::http::HeaderMap::new(),
         &config,
+        None,
         None,
         true,
         "00:00:00:00:00:00".into(),
@@ -25,7 +27,9 @@ async fn serverinfo_for_a_default_config_is_byte_identical() {
     let paired = text(serverinfo_response(
         &f.host,
         &f.connection(true),
+        &axum::http::HeaderMap::new(),
         &config,
+        None,
         Some(&client),
         true,
         "01:02:03:04:05:06".into(),
@@ -187,7 +191,9 @@ async fn serverinfo_carries_the_packed_444_modes_only_when_packed_is_on() {
             let root = document(serverinfo_response(
                 &host,
                 &connection,
+                &axum::http::HeaderMap::new(),
                 &config,
+                None,
                 Some(&client),
                 true,
                 String::new(),
@@ -249,7 +255,9 @@ async fn saving_packed_444_changes_the_offered_modes_without_a_restart() {
             let root = document(serverinfo_response(
                 &host,
                 &connection,
+                &axum::http::HeaderMap::new(),
                 &config,
+                None,
                 Some(&client),
                 true,
                 String::new(),

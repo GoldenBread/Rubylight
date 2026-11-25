@@ -229,6 +229,7 @@ async fn a_journal_from_a_crashed_run_is_restored_when_the_host_starts() {
             session: "parity-device".into(),
             original: Raw::Int(140),
             written: Raw::Int(200),
+            raw: None,
             side_effect: false,
             user: butterpollo_win_io::process::user_sid().unwrap(),
         }],

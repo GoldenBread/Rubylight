@@ -236,7 +236,9 @@ async fn serverinfo_xml(f: &Fixture, tls: bool) -> String {
     let response = serverinfo_response(
         &f.host,
         &connection,
+        &axum::http::HeaderMap::new(),
         &config,
+        None,
         client.as_ref(),
         true,
         "01:02:03:04:05:06".into(),

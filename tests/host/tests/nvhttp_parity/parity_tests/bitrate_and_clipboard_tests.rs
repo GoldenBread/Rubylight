@@ -34,7 +34,9 @@ async fn serverinfo_encoder_bitrate_tracks_only_own_video_sessions() {
         serverinfo_response(
             &f.host,
             &connection,
+            &axum::http::HeaderMap::new(),
             &config,
+            None,
             Some(&client),
             true,
             String::new(),
@@ -99,7 +101,9 @@ async fn serverinfo_encoder_bitrate_requires_authenticated_view_or_launch_permis
         let root = document(serverinfo_response(
             &f.host,
             &connection,
+            &axum::http::HeaderMap::new(),
             &config,
+            None,
             client.as_ref(),
             true,
             String::new(),

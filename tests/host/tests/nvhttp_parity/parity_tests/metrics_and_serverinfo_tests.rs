@@ -221,7 +221,9 @@ async fn hardware_metrics_capability_requires_opt_in_and_viewer_permission() {
         let root = document(serverinfo_response(
             &f.host,
             &connection,
+            &axum::http::HeaderMap::new(),
             &config,
+            None,
             client.as_ref(),
             true,
             String::new(),
@@ -265,7 +267,9 @@ async fn network_path_requires_paired_tls_viewer_and_returns_only_route_category
         let root = document(serverinfo_response(
             &f.host,
             &connection,
+            &axum::http::HeaderMap::new(),
             &butterpollo_config::config::Config::default(),
+            None,
             client.as_ref(),
             true,
             String::new(),
@@ -310,7 +314,9 @@ async fn serverinfo_shows_a_devices_game_on_both_its_screens_and_no_other_device
         let root = document(serverinfo_response(
             &f.host,
             &f.connection(true),
+            &axum::http::HeaderMap::new(),
             &config,
+            None,
             Some(&asking),
             true,
             String::new(),
@@ -339,7 +345,9 @@ async fn serverinfo_extras_preserve_permissions_codecs_commands_and_limiter_unit
         let root = document(serverinfo_response(
             &f.host,
             &f.connection(true),
+            &axum::http::HeaderMap::new(),
             &config,
+            None,
             Some(&client),
             true,
             "01:02:03:04:05:06".into(),
@@ -388,7 +396,9 @@ async fn serverinfo_extras_preserve_permissions_codecs_commands_and_limiter_unit
     let root = document(serverinfo_response(
         &f.host,
         &c,
+        &axum::http::HeaderMap::new(),
         &config,
+        None,
         None,
         true,
         "00:00:00:00:00:00".into(),
@@ -410,7 +420,9 @@ async fn serverinfo_extras_preserve_permissions_codecs_commands_and_limiter_unit
     let root = document(serverinfo_response(
         &f.host,
         &f.connection(true),
+        &axum::http::HeaderMap::new(),
         &config,
+        None,
         Some(&restricted),
         true,
         String::new(),
@@ -436,7 +448,9 @@ async fn serverinfo_shows_a_tunnelled_device_nothing_only_this_pc_sees() {
     let local = document(serverinfo_response(
         &f.host,
         &f.connection(true),
+        &axum::http::HeaderMap::new(),
         &config,
+        None,
         Some(&client),
         true,
         String::new(),
@@ -454,7 +468,9 @@ async fn serverinfo_shows_a_tunnelled_device_nothing_only_this_pc_sees() {
         let root = document(serverinfo_response(
             &f.host,
             &connection,
+            &axum::http::HeaderMap::new(),
             &config,
+            None,
             Some(&client),
             true,
             String::new(),

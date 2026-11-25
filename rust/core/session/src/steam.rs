@@ -514,10 +514,8 @@ fn safe_install_dir(steamapps: &Path, folder: &str) -> Option<PathBuf> {
     if !on_this_pc(&install_dir) || !install_dir.is_dir() {
         return None;
     }
-    if let (Ok(canon_common), Ok(canon_install)) = (
-        std::fs::canonicalize(&common),
-        std::fs::canonicalize(&install_dir),
-    ) && (!on_this_pc(&canon_install) || !canon_install.starts_with(&canon_common))
+    if let Ok(canon_install) = std::fs::canonicalize(&install_dir)
+        && !on_this_pc(&canon_install)
     {
         return None;
     }

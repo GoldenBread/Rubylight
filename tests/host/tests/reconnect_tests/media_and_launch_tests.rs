@@ -448,7 +448,9 @@ async fn a_reconnect_racing_a_new_launch_streams_only_the_new_one() -> Result<()
         .unwrap_err()
         .to_string();
     assert!(refused.starts_with("RTSP/1.0 400"), "{refused}");
-    assert!(refused.contains("replaced"), "{refused}");
+    assert!(!refused.contains("replaced"), "{refused}");
+    let failure = h.h.last_failure(&first.client.uuid).unwrap_or_default();
+    assert!(failure.contains("replaced"), "{failure}");
     let refused = h.rtsp(&first, 3, "PLAY", "").await.unwrap_err().to_string();
     assert!(refused.contains("closed without a response"), "{refused}");
     // The replaced launch holds its display until the last copy goes.

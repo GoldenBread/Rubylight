@@ -257,16 +257,18 @@ fn same_library(a: &Path, b: &Path) -> bool {
 
 /// For an .exe below `<library>\steamapps\common\<folder>`, on this PC's
 /// drives: that `steamapps` folder, `<folder>`, and the .exe's path below
-/// it. Lexically resolves `.` and `..` segments so traversal inside a Steam
-/// library (such as `win64\..\win64\cs2.exe`) still resolves to its app.
+/// it. Tries the path lexically first so a game folder moved elsewhere and
+/// linked back into `steamapps\common` (`mklink /J`) still resolves to its
+/// Steam app, then falls back to `canonicalize` for an alias pointing into a
+/// Steam library.
 pub(super) fn library_folder(exe: &Path) -> Option<(PathBuf, String, String)> {
-    let resolved;
-    let source = if let Ok(canonical) = std::fs::canonicalize(exe) {
-        resolved = canonical;
-        resolved.as_path()
-    } else {
-        exe
-    };
+    library_folder_lexical(exe).or_else(|| {
+        let canonical = std::fs::canonicalize(exe).ok()?;
+        library_folder_lexical(&canonical)
+    })
+}
+
+fn library_folder_lexical(source: &Path) -> Option<(PathBuf, String, String)> {
     let local = crate::nucleus::generic::on_this_pc(&source.to_string_lossy())?;
     let mut raw = local.split('\\');
     let root = raw.next()?;
@@ -275,31 +277,15 @@ pub(super) fn library_folder(exe: &Path) -> Option<(PathBuf, String, String)> {
         return None;
     }
     let mut parts: Vec<&str> = vec![root];
-    let mut min_depth_after_common: Option<usize> = None;
     for part in raw {
         match part {
             "" | "." => {}
             ".." => {
                 if parts.len() > 1 {
                     parts.pop();
-                    if let Some(min_depth) = min_depth_after_common
-                        && parts.len() <= min_depth
-                    {
-                        min_depth_after_common = None;
-                    }
                 }
             }
-            other => {
-                parts.push(other);
-                let len = parts.len();
-                if len >= 4
-                    && parts[len - 3].eq_ignore_ascii_case("steamapps")
-                    && parts[len - 2].eq_ignore_ascii_case("common")
-                    && min_depth_after_common.is_none()
-                {
-                    min_depth_after_common = Some(len - 1);
-                }
-            }
+            other => parts.push(other),
         }
     }
     let is = |at: usize, name: &str| parts.get(at).is_some_and(|p| p.eq_ignore_ascii_case(name));
@@ -311,6 +297,11 @@ pub(super) fn library_folder(exe: &Path) -> Option<(PathBuf, String, String)> {
     let game_folder = &parts[at + 2];
     if let Ok(common_real) = std::fs::canonicalize(library.join("common").join(game_folder))
         && crate::nucleus::generic::on_this_pc(&common_real.to_string_lossy()).is_none()
+    {
+        return None;
+    }
+    if let Ok(exe_real) = std::fs::canonicalize(source)
+        && crate::nucleus::generic::on_this_pc(&exe_real.to_string_lossy()).is_none()
     {
         return None;
     }
