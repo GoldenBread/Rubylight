@@ -32,17 +32,28 @@ pub fn route_missing(error: &io::Error) -> bool {
 /// resolve), or `None` to go on with the attempt: an answer, refused included, and also a check
 /// that timed out or failed otherwise.
 pub fn route_problem(address: &str, port: u16) -> Option<String> {
-    let remote = match (address, port)
-        .to_socket_addrs()
-        .map(|mut found| found.next())
-    {
-        Ok(Some(remote)) => remote,
-        Ok(None) => return Some(format!("{address} did not resolve")),
+    let trimmed = address.trim();
+    let host = trimmed
+        .strip_prefix('[')
+        .and_then(|s| s.strip_suffix(']'))
+        .unwrap_or(trimmed);
+    let addrs = match (host, port).to_socket_addrs() {
+        Ok(found) => found,
         Err(error) => return Some(error.to_string()),
     };
-    match TcpStream::connect_timeout(&remote, Duration::from_millis(ROUTE_PROBE_TIMEOUT_MS)) {
-        Err(error) if route_missing(&error) => Some(error.to_string()),
-        _ => None,
+    let mut any = false;
+    let mut last_missing = None;
+    for remote in addrs {
+        any = true;
+        match TcpStream::connect_timeout(&remote, Duration::from_millis(ROUTE_PROBE_TIMEOUT_MS)) {
+            Err(error) if route_missing(&error) => last_missing = Some(error.to_string()),
+            _ => return None,
+        }
+    }
+    if !any {
+        Some(format!("{address} did not resolve"))
+    } else {
+        last_missing
     }
 }
 
@@ -140,6 +151,11 @@ mod tests {
         let port = listener.local_addr().unwrap().port();
         assert_eq!(route_problem("127.0.0.1", port), None);
         assert!(route_problem("invalid.invalid.", port).is_some());
+        // Bracketed IPv6 literal must not fail DNS/parse due to brackets.
+        if let Ok(v6) = std::net::TcpListener::bind("[::1]:0") {
+            let v6_port = v6.local_addr().unwrap().port();
+            assert_eq!(route_problem("[::1]", v6_port), None);
+        }
     }
 
     #[test]

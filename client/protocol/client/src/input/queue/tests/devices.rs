@@ -298,3 +298,67 @@ fn a_pen_button_change_stays_reliable_when_a_newer_move_replaces_it() {
         .collect();
     assert_eq!(xs, [(0.1, Delivery::Reliable), (0.3, Delivery::Reliable)]);
 }
+
+#[test]
+fn touchpad_silence_cancels_buttons_and_queue_full_preserves_button_state() {
+    let caps = HostCapabilities {
+        feature_flags: feature::TOUCHPAD_EVENTS | feature::TOUCHPAD_FRAME_EVENTS,
+        ..sunshine()
+    };
+    let contact = TouchpadContact {
+        event: touch_event::MOVE,
+        pointer_id: 1,
+        x: 0.5,
+        y: 0.5,
+        pressure: 0.5,
+    };
+
+    // Holding touchpad frames while the host is silent emits a reliable CANCEL_ALL with buttons=0
+    // on reconnect and resets tracked touchpad_buttons so a fresh click stays reliable.
+    let mut q = queue(&caps);
+    let t0 = Instant::now();
+    q.send_touchpad_frame(&[contact], touchpad::BUTTON_PRIMARY, 100, 70)
+        .unwrap();
+    let mut out = Vec::new();
+    q.poll(t0, true, &mut out);
+    assert!(out.is_empty());
+    q.poll(t0, false, &mut out);
+    assert_eq!(out.len(), 1);
+    assert_eq!(out[0].delivery, Delivery::Reliable);
+    assert_eq!(
+        u32::from_le_bytes(out[0].data[4..8].try_into().unwrap()),
+        magic::TOUCHPAD
+    );
+    assert_eq!(out[0].data[8], touch_event::CANCEL_ALL);
+    assert_eq!(out[0].data[9], 0, "buttons cleared on cancel");
+
+    // Next frame pressing BUTTON_PRIMARY must be treated as a change (Reliable), not Unreliable.
+    out.clear();
+    q.send_touchpad_frame(&[contact], touchpad::BUTTON_PRIMARY, 100, 70)
+        .unwrap();
+    q.poll(t0, false, &mut out);
+    assert_eq!(out.len(), 1);
+    assert_eq!(out[0].delivery, Delivery::Reliable);
+
+    // QueueFull on a button-press touchpad frame must not clobber touchpad_buttons, while an
+    // empty release frame uses the release reserve above MAX_QUEUED.
+    let mut q2 = queue(&caps);
+    for i in 0..MAX_QUEUED {
+        q2.send_mouse_button(1, i % 2 == 0).unwrap();
+    }
+    assert_eq!(
+        q2.send_touchpad_frame(&[contact], touchpad::BUTTON_PRIMARY, 100, 70),
+        Err(InputError::QueueFull)
+    );
+    q2.send_touchpad_frame(&[], 0, 100, 70)
+        .expect("empty touchpad release fits the release reserve");
+    let mut drained = Vec::new();
+    q2.drain(t0, false, &mut drained);
+    drained.clear();
+    // Because the failed press did not advance touchpad_buttons, retrying it stays Reliable.
+    q2.send_touchpad_frame(&[contact], touchpad::BUTTON_PRIMARY, 100, 70)
+        .unwrap();
+    q2.poll(t0, false, &mut drained);
+    assert_eq!(drained.len(), 1);
+    assert_eq!(drained[0].delivery, Delivery::Reliable);
+}

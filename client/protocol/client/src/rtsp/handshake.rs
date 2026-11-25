@@ -422,16 +422,34 @@ impl Handshake {
                 self.stage.name()
             )));
         }
-        let plain = match &self.cipher {
+        let plain = match &mut self.cipher {
             Some(cipher) => cipher.open(raw)?,
             None => raw.to_vec(),
         };
-        self.handle_plain_response(&parse_response(&plain)?)
+        let response = parse_response(&plain)?;
+        if self.cipher.is_some()
+            && response.sequence() != Some(self.sequence.saturating_sub(1) as i32)
+        {
+            return Err(RtspError::Malformed(format!(
+                "{}: RTSP CSeq mismatch",
+                self.stage.name()
+            )));
+        }
+        self.handle_plain_response(&response)
     }
 
     /// Handles a parsed response to the last request.
     pub fn handle_plain_response(&mut self, response: &RtspResponse) -> Result<(), RtspError> {
         self.awaiting = false;
+        let expected_seq = self.sequence.saturating_sub(1) as i32;
+        if let Some(cseq) = response.sequence()
+            && cseq != expected_seq
+        {
+            return Err(RtspError::Malformed(format!(
+                "{}: unexpected RTSP CSeq {cseq} (expected {expected_seq})",
+                self.stage.name()
+            )));
+        }
         let stage = self.stage;
         let ok = response.status_code == 200;
         let failed = || RtspError::Status {

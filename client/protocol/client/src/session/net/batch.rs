@@ -572,9 +572,10 @@ pub(super) fn push_segments(
         let (base, count) = segments.take(&mut lengths);
         let mut start = slot_start + base;
         for &wire in &lengths[..count] {
-            let kept = wire.min(cut).min(slot_end.saturating_sub(start));
-            spans.push(Span { start, wire, kept });
-            start += wire;
+            let clamped = start.min(slot_end);
+            let kept = wire.min(cut).min(slot_end.saturating_sub(clamped));
+            spans.push(Span { start: clamped, wire, kept });
+            start = start.saturating_add(wire);
         }
     }
 }

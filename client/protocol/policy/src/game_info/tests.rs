@@ -594,3 +594,31 @@ fn a_steam_store_entry_names_the_app_id_too() {
     assert_eq!(steam_of(Some("epic:x"), Some(("epic", "x"))), None);
     assert_eq!(steam_of(None, Some(("steam", "0"))), None);
 }
+
+#[test]
+fn short_lived_twitch_tokens_do_not_spin_forever() {
+    for expires_in in [0u64, 30, 60] {
+        let job = Job::new(
+            Game { name: "Hades".into(), steam: Some(1145360) },
+            keys(false, true),
+            Wants { cover: false, hero: false, logo: false, facts: true },
+            None,
+            1_000,
+        );
+        let mut steps = 0usize;
+        let (done, _) = run(job, |req| {
+            steps += 1;
+            assert!(steps < 20, "infinite OAuth loop for expires_in={expires_in}");
+            match req.service {
+                Service::Twitch => Some(Reply {
+                    status: 200,
+                    body: format!(r#"{{"access_token":"tok","expires_in":{expires_in}}}"#),
+                    retry_after: None,
+                }),
+                Service::Igdb => Some(Reply { status: 401, body: String::new(), retry_after: None }),
+                _ => status(404),
+            }
+        });
+        assert_eq!(done.record.info, Outcome::Failed);
+    }
+}

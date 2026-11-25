@@ -163,6 +163,10 @@ pub fn is_private(address: IpAddr) -> bool {
         }
         IpAddr::V6(v6) => {
             let o = v6.octets();
+            // Exclude Tailscale's fd7a:115c:a1e0::/48 overlay range from LAN classification.
+            if in_prefix(&o, &[0xfd, 0x7a, 0x11, 0x5c, 0xa1, 0xe0], 48) {
+                return false;
+            }
             in_prefix(&o, &[0xfe, 0x80], 10)
                 || in_prefix(&o, &[0xfe, 0xc0], 10)
                 || in_prefix(&o, &[0xfc, 0x00], 7)

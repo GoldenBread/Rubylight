@@ -110,6 +110,9 @@ impl Shared {
                         &|line| listener.log(line),
                     )
                 });
+                if stopping.load(Ordering::SeqCst) {
+                    return;
+                }
                 let gone = verdict == Some(crate::host_loss::Goodbye::Gone);
                 listener.connection_terminated(if gone { error::HOST_GONE } else { code });
             });

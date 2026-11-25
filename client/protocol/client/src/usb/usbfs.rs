@@ -122,6 +122,8 @@ struct State {
     claimed: Vec<u8>,
     /// Interfaces whose kernel driver was unbound to claim them; bound again on close.
     disconnected: Vec<u8>,
+    /// Active alternate setting per interface (`SET_INTERFACE`, default 0).
+    active_alts: HashMap<u8, u8>,
     closed: bool,
     /// Unplugged: nothing submits any more.
     gone: bool,
@@ -164,6 +166,7 @@ impl<K: Kernel> UsbfsDevice<K> {
                         device,
                         claimed: Vec::new(),
                         disconnected: Vec::new(),
+                        active_alts: HashMap::new(),
                         closed: false,
                         gone: false,
                     }),
@@ -172,6 +175,7 @@ impl<K: Kernel> UsbfsDevice<K> {
                 let configuration = inner.state().device.configuration;
                 if let Err(e) = claim_all(&inner, configuration) {
                     release_all(&inner);
+                    reconnect_all(&inner);
                     inner.kernel.close();
                     return Err(e);
                 }
@@ -185,6 +189,7 @@ impl<K: Kernel> UsbfsDevice<K> {
                     }
                     Err(e) => {
                         release_all(&inner);
+                        reconnect_all(&inner);
                         inner.kernel.close();
                         return Err(format!("no reaper thread: {e}"));
                     }
@@ -242,17 +247,26 @@ impl<K: Kernel> UsbfsDevice<K> {
         Ok((descriptors, device))
     }
 
-    /// The endpoint's transfer type from the descriptors; bulk when they don't say.
+    /// The endpoint's transfer type from the active configuration and active interface alternate
+    /// settings; bulk when the descriptors don't say.
     fn kind_of(&self, address: u8) -> u8 {
-        let mut types = self
+        let state = self.inner.state();
+        let active_cfg = self
             .inner
             .descriptors
-            .configurations
-            .iter()
-            .flat_map(|c| c.endpoints.iter());
-        match types.find(|(a, _)| *a == address) {
-            Some((_, 1)) => URB_ISO,
-            Some((_, 3)) => URB_INTERRUPT,
+            .configuration(state.device.configuration);
+        let found = active_cfg
+            .and_then(|c| c.endpoint_type(address, &state.active_alts))
+            .or_else(|| {
+                self.inner
+                    .descriptors
+                    .configurations
+                    .iter()
+                    .find_map(|c| c.endpoint_type(address, &state.active_alts))
+            });
+        match found {
+            Some(1) => URB_ISO,
+            Some(3) => URB_INTERRUPT,
             _ => URB_BULK,
         }
     }
@@ -268,7 +282,7 @@ impl<K: Kernel> UsbfsDevice<K> {
             // SET_CONFIGURATION.
             (0x00, 9) => self.set_configuration(value as u8),
             // SET_INTERFACE.
-            (0x01, 11) => kernel.set_interface(index as u8, value as u8),
+            (0x01, 11) => self.set_interface(index as u8, value as u8),
             // CLEAR_FEATURE(ENDPOINT_HALT).
             (0x02, 1) if value == 0 => kernel.clear_halt(index as u8),
             // SET_FEATURE(PORT_RESET) to the port the device sits on.
@@ -279,6 +293,12 @@ impl<K: Kernel> UsbfsDevice<K> {
             Ok(()) => Reply::default(),
             Err(e) => Reply::failed(e.status()),
         })
+    }
+
+    fn set_interface(&self, interface: u8, alternate: u8) -> Result<(), Errno> {
+        self.inner.kernel.set_interface(interface, alternate)?;
+        self.inner.state().active_alts.insert(interface, alternate);
+        Ok(())
     }
 
     fn set_configuration(&self, value: u8) -> Result<(), Errno> {
@@ -298,15 +318,20 @@ impl<K: Kernel> UsbfsDevice<K> {
             let mut state = self.inner.state();
             state.device.configuration = value;
             state.device.interfaces = interface_count(&self.inner.descriptors, value);
+            state.active_alts.clear();
         }
         claim_all(&self.inner, value).map_err(|_| EBUSY)
     }
 
     fn reset(&self) -> Result<(), Errno> {
         self.inner.kernel.reset()?;
-        // A reset unbinds usbfs from the interfaces; take them back.
-        let configuration = self.inner.state().device.configuration;
-        self.inner.state().claimed.clear();
+        // A reset unbinds usbfs from the interfaces and resets alternate settings to 0.
+        let configuration = {
+            let mut state = self.inner.state();
+            state.claimed.clear();
+            state.active_alts.clear();
+            state.device.configuration
+        };
         claim_all(&self.inner, configuration).map_err(|_| EBUSY)
     }
 
@@ -420,6 +445,13 @@ fn release_all<K: Kernel>(inner: &Inner<K>) {
     let claimed = std::mem::take(&mut inner.state().claimed);
     for interface in claimed {
         let _ = inner.kernel.release(interface);
+    }
+}
+
+fn reconnect_all<K: Kernel>(inner: &Inner<K>) {
+    let disconnected = std::mem::take(&mut inner.state().disconnected);
+    for interface in disconnected {
+        let _ = inner.kernel.connect_driver(interface);
     }
 }
 
@@ -623,10 +655,7 @@ impl<K: Kernel> UsbDevice for UsbfsDevice<K> {
             let _ = reaper.join();
         }
         release_all(&self.inner);
-        let disconnected = std::mem::take(&mut self.inner.state().disconnected);
-        for interface in disconnected {
-            let _ = self.inner.kernel.connect_driver(interface);
-        }
+        reconnect_all(&self.inner);
         self.inner.kernel.close();
         // Whatever the kernel never gave back goes now that it can't write to it.
         let (left, orphaned): (Vec<Flight>, Vec<(UrbBox, Vec<u8>)>) = {
@@ -638,6 +667,12 @@ impl<K: Kernel> UsbDevice for UsbfsDevice<K> {
             )
         };
         drop((left, orphaned));
+    }
+}
+
+impl<K: Kernel> Drop for UsbfsDevice<K> {
+    fn drop(&mut self) {
+        UsbDevice::close(self);
     }
 }
 

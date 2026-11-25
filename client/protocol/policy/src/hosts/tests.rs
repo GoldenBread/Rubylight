@@ -409,3 +409,59 @@ fn sync_slots_from_shared_never_promotes_other_addresses_ipv6_with_default_port(
     assert_eq!(shared.address, "", "primary address must stay empty");
     assert_eq!(shared.other_addresses, vec!["2001:db8::42".to_string()]);
 }
+
+#[test]
+fn cgnat_tailscale_classification_and_extra_endpoint_probing() {
+    use super::{
+        is_cgnat_ipv4, is_overlay_ip, is_site_local_ip, probe_plan_with_extras, public_ipv4,
+        CandidateSlot, EndpointSlot, HostSlots,
+    };
+    use std::net::{IpAddr, Ipv4Addr};
+
+    // RFC 6598 100.64.0.0/10 (Tailscale / CGNAT) is overlay, neither LAN nor public WAN.
+    assert!(is_cgnat_ipv4(Ipv4Addr::new(100, 64, 0, 1)));
+    assert!(is_cgnat_ipv4(Ipv4Addr::new(100, 127, 255, 254)));
+    assert!(!is_cgnat_ipv4(Ipv4Addr::new(100, 63, 255, 255)));
+    assert!(!is_cgnat_ipv4(Ipv4Addr::new(100, 128, 0, 1)));
+    assert_eq!(public_ipv4("100.64.1.2"), None);
+    assert_eq!(public_ipv4("100.127.255.254"), None);
+    assert_eq!(public_ipv4("100.128.0.1"), Some("100.128.0.1".into()));
+    assert!(is_overlay_ip("100.100.1.2".parse::<IpAddr>().unwrap()));
+    assert!(is_overlay_ip("fd7a:115c:a1e0::42".parse::<IpAddr>().unwrap()));
+    assert!(!is_site_local_ip("100.100.1.2".parse::<IpAddr>().unwrap()));
+    assert!(!is_site_local_ip("fd7a:115c:a1e0::42".parse::<IpAddr>().unwrap()));
+    assert!(is_site_local_ip("fd12:3456::1".parse::<IpAddr>().unwrap()));
+
+    // 3+ host endpoints: LAN + Tailscale + WAN + extra saved addresses are all probed.
+    let slots = HostSlots {
+        local: Some(EndpointSlot { address: "192.168.1.10".into(), port: 47989 }),
+        manual: Some(EndpointSlot { address: "100.64.1.2".into(), port: 47989 }),
+        ipv6: None,
+        remote: Some(EndpointSlot { address: "8.8.4.4".into(), port: 47989 }),
+        pinned: None,
+    };
+    let extras = vec![
+        "192.168.1.10".into(),      // duplicate of local
+        "10.0.0.50".into(),         // extra LAN
+        "100.100.5.6".into(),       // extra Tailscale
+        "1.1.1.1".into(),           // extra WAN
+        "2001:db8::9".into(),       // extra IPv6
+    ];
+    let plan = probe_plan_with_extras(&slots, &extras, 47989, false, None, 0);
+    let addrs: Vec<&str> = plan.iter().map(|c| c.address.as_str()).collect();
+    assert_eq!(
+        addrs,
+        vec!["192.168.1.10", "100.64.1.2", "8.8.4.4", "10.0.0.50", "100.100.5.6", "1.1.1.1", "2001:db8::9"]
+    );
+    assert_eq!(plan[3].slot, CandidateSlot::Manual);
+    assert_eq!(plan[4].slot, CandidateSlot::Manual);
+    assert_eq!(plan[5].slot, CandidateSlot::Remote);
+    assert_eq!(plan[6].slot, CandidateSlot::Ipv6);
+
+    // Pinned address still suppresses all extra candidates.
+    let mut pinned = slots;
+    pinned.pinned = Some(EndpointSlot { address: "100.64.1.2".into(), port: 47989 });
+    let pinned_plan = probe_plan_with_extras(&pinned, &extras, 47989, false, None, 0);
+    assert_eq!(pinned_plan.len(), 1);
+    assert_eq!(pinned_plan[0].slot, CandidateSlot::Pinned);
+}

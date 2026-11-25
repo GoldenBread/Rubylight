@@ -154,3 +154,70 @@ fn a_device_that_cannot_be_opened_fails_loudly_and_closes() {
     assert!(error.contains("interface 1"), "{error}");
     assert_eq!(kernel.log(), ["claim 0", "claim 1", "release 0", "close"]);
 }
+
+#[test]
+fn failed_open_reconnects_disconnected_drivers_and_drop_closes_usbfs_device() {
+    // Interface 0 had a kernel driver disconnected before interface 1 refused claim:
+    // open() must release interface 0 AND reconnect its kernel driver before closing.
+    let kernel = FakeKernel::new();
+    {
+        let mut m = kernel.machine();
+        m.drivers = vec![0];
+        m.refuse = Some(1);
+    }
+    assert!(UsbfsDevice::open(kernel.clone(), PATH).is_err());
+    assert_eq!(
+        kernel.log(),
+        [
+            "claim 0",
+            "disconnect 0",
+            "claim 0",
+            "claim 1",
+            "release 0",
+            "connect 0",
+            "close"
+        ]
+    );
+
+    // Dropping UsbfsDevice without an explicit close() still releases, reconnects, and closes.
+    let kernel = FakeKernel::new();
+    let device = UsbfsDevice::open(kernel.clone(), PATH).unwrap();
+    drop(device);
+    assert_eq!(
+        kernel.log()[4..],
+        ["release 0", "release 1", "connect 1", "close"]
+    );
+}
+
+#[test]
+fn composite_descriptors_with_non_contiguous_interface_numbers_claim_all() {
+    let mut raw = vec![
+        18, 1, 0x00, 0x02, 0, 0, 0, 64, 0x04, 0x5e, 0x02, 0xfe, 0x00, 0x01, 1, 2, 0, 1,
+    ];
+    let mut cfg = Vec::new();
+    cfg.extend_from_slice(&interface(0, 0, 1, 0xff));
+    cfg.extend_from_slice(&endpoint(0x81, 3));
+    cfg.extend_from_slice(&interface(2, 0, 1, 0x03));
+    cfg.extend_from_slice(&endpoint(0x82, 3));
+    cfg.extend_from_slice(&interface(3, 0, 1, 0x01));
+    cfg.extend_from_slice(&endpoint(0x83, 1));
+    raw.extend(configuration(1, 3, &cfg));
+
+    let kernel = FakeKernel::new();
+    {
+        let mut m = kernel.machine();
+        m.raw = Some(raw);
+        m.drivers = vec![2];
+    }
+    let device = UsbfsDevice::open(kernel.clone(), PATH).unwrap();
+    assert_eq!(device.describe().interfaces, 3);
+    assert_eq!(
+        kernel.log(),
+        ["claim 0", "claim 2", "disconnect 2", "claim 2", "claim 3"]
+    );
+    drop(device);
+    assert_eq!(
+        kernel.log()[5..],
+        ["release 0", "release 2", "release 3", "connect 2", "close"]
+    );
+}

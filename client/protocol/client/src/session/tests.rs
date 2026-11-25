@@ -197,3 +197,75 @@ fn stage_names_match_the_c() {
     assert_eq!(Stage::RtspHandshake.name(), "RTSP handshake");
     assert_eq!(Stage::InputStreamStart as i32, 11);
 }
+
+#[test]
+fn stopping_suppresses_held_and_late_termination_callbacks() {
+    let (heard, terminated) = heard();
+    let shared = Shared::new(heard, false, true);
+    shared.terminate(42);
+    shared.stopping.store(true, Ordering::SeqCst);
+    shared.started();
+    assert!(
+        terminated.recv_timeout(Duration::from_millis(150)).is_err(),
+        "teardown must suppress held termination callbacks"
+    );
+    shared.terminate(99);
+    assert!(
+        terminated.recv_timeout(Duration::from_millis(150)).is_err(),
+        "teardown must suppress subsequent terminations"
+    );
+}
+
+struct TrackedAudio {
+    stopped: Arc<AtomicBool>,
+    cleaned: Arc<AtomicBool>,
+}
+
+impl AudioRenderer for TrackedAudio {
+    fn init(&mut self, _setup: &AudioSetup) -> Result<(), i32> {
+        Ok(())
+    }
+    fn play(&mut self, _packet: Option<&[u8]>) {}
+    fn stop(&mut self) {
+        self.stopped.store(true, Ordering::SeqCst);
+    }
+    fn cleanup(&mut self) {
+        self.cleaned.store(true, Ordering::SeqCst);
+    }
+}
+
+#[test]
+fn dropping_audio_stream_stops_and_cleans_up_renderer() {
+    use crate::audio::{AudioConfig, AudioReceiver};
+    for direct_submit in [false, true] {
+        let stopped = Arc::new(AtomicBool::new(false));
+        let cleaned = Arc::new(AtomicBool::new(false));
+        let renderer = Box::new(TrackedAudio {
+            stopped: stopped.clone(),
+            cleaned: cleaned.clone(),
+        });
+        let socket = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        let next_socket = Arc::new(super::net::NextSocket::default());
+        let receiver = AudioReceiver::new(AudioConfig {
+            packet_duration_ms: 5,
+            app_version: [7, 1, 431, -1],
+            encryption: None,
+        });
+        let audio_shared = Arc::new(super::audio::AudioShared::default());
+        let (heard, _) = heard();
+        let shared = Arc::new(Shared::new(heard, false, false));
+        let stream = super::audio::AudioStream::start(
+            &socket,
+            next_socket,
+            receiver,
+            renderer,
+            direct_submit,
+            audio_shared,
+            shared,
+        )
+        .unwrap();
+        drop(stream);
+        assert!(stopped.load(Ordering::SeqCst), "direct_submit={direct_submit}");
+        assert!(cleaned.load(Ordering::SeqCst), "direct_submit={direct_submit}");
+    }
+}

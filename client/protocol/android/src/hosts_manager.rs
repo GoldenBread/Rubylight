@@ -29,8 +29,11 @@ pub(crate) struct ManagedHostBridge {
 
 impl ManagedHostBridge {
     fn shutdown_nonblocking(&self) {
-        self.closed.store(true, Ordering::Release);
-        self.events.1.notify_all();
+        {
+            let _q = lock(&self.events.0);
+            self.closed.store(true, Ordering::Release);
+            self.events.1.notify_all();
+        }
         self.manager.shutdown();
     }
 }
@@ -235,6 +238,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarHostsJni_hostMana
 ) {
     if let Some(bridge) = HOST_MANAGERS.get(handle) {
         bridge.manager.stop_polling();
+        let _q = lock(&bridge.events.0);
         bridge.events.1.notify_all();
     }
 }

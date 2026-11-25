@@ -343,3 +343,57 @@ fn dropping_the_forwarder_detaches_too() {
     assert!(driver.closed());
     wait_closed(&device);
 }
+
+#[test]
+fn attach_errors_and_blocking_drop_always_close_the_device() {
+    // Send failure closes the device.
+    let refuse_rig = rig(Some(SendError::Unsupported), false);
+    let dev_send = FakeDevice::new("1-1");
+    assert_eq!(
+        refuse_rig
+            .forwarder
+            .attach(Arc::new(Blocking::new(dev_send.clone())), "Fake"),
+        Err(AttachError::Send(SendError::Unsupported))
+    );
+    assert_eq!(dev_send.closes(), 1);
+
+    // Invalid busid closes the device.
+    let ok_rig = rig(None, false);
+    let dev_invalid = FakeDevice::new("not a valid busid!");
+    assert_eq!(
+        ok_rig
+            .forwarder
+            .attach(Arc::new(Blocking::new(dev_invalid.clone())), "Bad"),
+        Err(AttachError::Invalid)
+    );
+    assert_eq!(dev_invalid.closes(), 1);
+
+    // Duplicate (Busy) closes the rejected device.
+    let active = FakeDevice::new("1-2");
+    let (_id, _driver) = ok_rig.attach(&active);
+    let dup = FakeDevice::new("1-2");
+    assert_eq!(
+        ok_rig
+            .forwarder
+            .attach(Arc::new(Blocking::new(dup.clone())), "Dup"),
+        Err(AttachError::Busy)
+    );
+    assert_eq!(dup.closes(), 1);
+
+    // Ended forwarder closes the rejected device.
+    ok_rig.forwarder.end();
+    let late = FakeDevice::new("1-3");
+    assert_eq!(
+        ok_rig
+            .forwarder
+            .attach(Arc::new(Blocking::new(late.clone())), "Late"),
+        Err(AttachError::Ended)
+    );
+    assert_eq!(late.closes(), 1);
+
+    // Dropping Blocking without explicit close() closes the inner device exactly once.
+    let dropped = FakeDevice::new("1-9");
+    let blocking = Blocking::new(dropped.clone());
+    drop(blocking);
+    assert_eq!(dropped.closes(), 1);
+}

@@ -90,3 +90,45 @@ fn the_gate_decides_as_androids_table_does() {
     assert!(!within_grace(true, 1000, 1001, 0));
     assert!(!within_grace(true, 1000, 999, 10), "a clock that went back");
 }
+
+#[test]
+fn throttle_and_grace_saturate_on_extreme_clock_values() {
+    let extreme_lock = throttle::State {
+        fails: 5,
+        lock_until: i64::MAX,
+        lock_boot: 1,
+    };
+    assert_eq!(throttle::remaining_ms(extreme_lock, i64::MIN), throttle::MAX_MS);
+    assert_eq!(
+        throttle::remaining_ms(
+            throttle::State {
+                lock_until: i64::MIN,
+                ..extreme_lock
+            },
+            i64::MAX
+        ),
+        0
+    );
+    let renewed = throttle::on_boot(extreme_lock, i64::MAX - 10, 2, false);
+    assert_eq!(renewed.lock_until, i64::MAX);
+    let failed = throttle::failed(
+        throttle::State {
+            fails: u32::MAX,
+            lock_until: 0,
+            lock_boot: 1,
+        },
+        i64::MAX - 10,
+        1,
+    );
+    assert_eq!(failed.fails, u32::MAX);
+    assert_eq!(failed.lock_until, i64::MAX);
+
+    assert!(!within_grace(true, i64::MIN, i64::MAX, 10));
+    assert!(!within_grace(true, i64::MAX, i64::MIN, 10));
+    let mut gate = PinGate::empty();
+    gate.grant_at("pc", i64::MIN);
+    assert!(!gate.granted(i64::MAX, "pc"));
+    gate.grant_at("pc", i64::MAX);
+    assert!(!gate.granted(i64::MIN, "pc"));
+    assert!(gate.granted(i64::MAX, "pc"));
+}

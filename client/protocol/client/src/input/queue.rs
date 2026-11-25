@@ -112,6 +112,24 @@ fn is_release(entry: &Entry) -> bool {
             | InputEvent::Touchpad { event, .. } => {
                 matches!(*event, touch_event::UP | touch_event::CANCEL | touch_event::CANCEL_ALL | touch_event::HOVER_LEAVE)
             }
+            InputEvent::TouchpadFrame {
+                count,
+                buttons,
+                contacts,
+                ..
+            } => {
+                *buttons == 0
+                    && (*count == 0
+                        || contacts[..usize::from(*count).min(contacts.len())].iter().any(|c| {
+                            matches!(
+                                c.event,
+                                touch_event::UP
+                                    | touch_event::CANCEL
+                                    | touch_event::CANCEL_ALL
+                                    | touch_event::HOVER_LEAVE
+                            )
+                        }))
+            }
             _ => false,
         },
         Entry::Controller { state, .. } => matches!(

@@ -48,7 +48,18 @@ fn run(handshake: &mut Handshake, respond: impl Fn(&str, &str) -> Vec<u8>) -> Ve
     let mut sent = Vec::new();
     while let Some(request) = handshake.next_plain_request().unwrap() {
         let text = String::from_utf8(request.serialize()).unwrap();
-        let response = parse_response(&respond(&request.method, &request.target)).unwrap();
+        let raw = respond(&request.method, &request.target);
+        // Echo the request's CSeq when the stub emitted placeholder `CSeq: 1`, matching RFC 2326.
+        let cseq = request
+            .options
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case("CSeq"))
+            .map(|(_, v)| v.as_str())
+            .unwrap_or("1");
+        let patched = String::from_utf8(raw)
+            .map(|s| s.replacen("CSeq: 1\r\n", &format!("CSeq: {cseq}\r\n"), 1).into_bytes())
+            .unwrap_or_else(|e| e.into_bytes());
+        let response = parse_response(&patched).unwrap();
         handshake.handle_plain_response(&response).unwrap();
         sent.push(text);
     }
@@ -400,6 +411,17 @@ fn encrypted_rtsp_round_trip_and_framing() {
     handshake.next_request().unwrap();
     handshake.handle_response(&response).unwrap();
     assert!(handshake.next_request().unwrap().unwrap()[4..8] == 2u32.to_be_bytes());
+    // Replaying the OPTIONS encrypted response (sequence 0) for DESCRIBE must fail.
+    assert!(matches!(
+        handshake.handle_response(&response),
+        Err(RtspError::Encryption(_))
+    ));
+    // A fresh sequence with a mismatched CSeq must also fail.
+    let bad_cseq = seal(1, b"RTSP/1.0 200 OK\r\nCSeq: 1\r\n\r\n");
+    assert!(matches!(
+        handshake.handle_response(&bad_cseq),
+        Err(RtspError::Malformed(_))
+    ));
     let mut handshake = Handshake::new(params(Some("rtspenc://192.168.1.20:48011"))).unwrap();
     handshake.next_request().unwrap();
     assert!(

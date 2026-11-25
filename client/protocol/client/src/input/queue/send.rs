@@ -533,7 +533,9 @@ impl InputQueue {
             height_mm,
             contacts: frame,
         };
-        self.offer(Entry::Event(Pending { channel: event.channel(), delivery, event }))
+        self.offer(Entry::Event(Pending { channel: event.channel(), delivery, event }))?;
+        self.touchpad_buttons = buttons;
+        Ok(())
     }
 
     /// `LiSendTouchpadEvent`: one laptop touchpad contact. A host without `TOUCHPAD_EVENTS`
@@ -563,17 +565,17 @@ impl InputQueue {
             contact_major: 0.0,
             contact_minor: 0.0,
         };
-        self.offer(Entry::Event(Pending { channel: event.channel(), delivery, event }))
+        self.offer(Entry::Event(Pending { channel: event.channel(), delivery, event }))?;
+        self.touchpad_buttons = buttons;
+        Ok(())
     }
 
     /// Moves without a button change may be dropped; a click or release never is.
-    fn touchpad_delivery(&mut self, batchable: bool, buttons: u8) -> Delivery {
-        let delivery = if batchable && buttons == self.touchpad_buttons {
+    fn touchpad_delivery(&self, batchable: bool, buttons: u8) -> Delivery {
+        if batchable && buttons == self.touchpad_buttons {
             Delivery::Unreliable
         } else {
             Delivery::Reliable
-        };
-        self.touchpad_buttons = buttons;
-        delivery
+        }
     }
 }

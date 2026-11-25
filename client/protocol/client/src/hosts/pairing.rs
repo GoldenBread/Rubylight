@@ -10,8 +10,8 @@ use ring::rand::{SecureRandom, SystemRandom};
 use rubylight_protocol::pairing_uri::PairingUri;
 
 use crate::http::{
-    Error, HostClient, PairFailure, PairResult, certificate_sha256_der, certificate_sha256_pem,
-    pem_decode_certificate,
+    Error, HostClient, InfoPath, PairFailure, PairResult, certificate_sha256_der,
+    certificate_sha256_pem, pem_decode_certificate,
 };
 
 /// Cryptographically random 4-digit pairing PIN (`"0000"`..`"9999"`).
@@ -142,8 +142,9 @@ pub fn execute_pair_checked(
         _ => PairFailureKind::Network,
     };
 
-    let (info, _) = client.server_info_with_cert_check(true).map_err(map_err)?;
-    if already_paired(info.paired, from_link, has_pinned_cert)
+    let (info, path) = client.server_info_with_cert_check(true).map_err(map_err)?;
+    if path == InfoPath::Pinned
+        && already_paired(info.paired, from_link, has_pinned_cert)
         && let Some(cert_der) = client.server_certificate_der()
     {
         if let PairSecret::Link(link) = secret

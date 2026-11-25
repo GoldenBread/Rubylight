@@ -61,39 +61,40 @@ impl JniNativeTransport {
             .vm
             .attach_current_thread()
             .map_err(|e| format!("attach JNI thread: {e}"))?;
-        let j_host = env
-            .new_string(host_uuid)
-            .map_err(|e| format!("new_string host: {e}"))?;
-        let j_op = env
-            .new_string(op)
-            .map_err(|e| format!("new_string op: {e}"))?;
-        let j_arg = env
-            .new_string(arg)
-            .map_err(|e| format!("new_string arg: {e}"))?;
-        let ret = env
-            .call_method(
-                self.callback.as_obj(),
-                "call",
-                "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;",
-                &[
-                    JValue::Object(&j_host),
-                    JValue::Object(&j_op),
-                    JValue::Object(&j_arg),
-                ],
-            )
-            .map_err(|e| format!("callback call failed: {e}"))?;
-        let obj = ret
-            .l()
-            .map_err(|e| format!("callback return object: {e}"))?;
-        if obj.is_null() {
-            return Err("callback returned null".into());
-        }
-        let j_out = JString::from(obj);
-        let text = env
-            .get_string(&j_out)
-            .map_err(|e| format!("callback string: {e}"))?
-            .to_string_lossy()
-            .into_owned();
+        let text = {
+            let res: Result<Result<String, String>, jni::errors::Error> =
+                env.with_local_frame(8, |env| {
+                    let j_host = env.new_string(host_uuid)?;
+                    let j_op = env.new_string(op)?;
+                    let j_arg = env.new_string(arg)?;
+                    let ret = env.call_method(
+                        self.callback.as_obj(),
+                        "call",
+                        "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;",
+                        &[
+                            JValue::Object(&j_host),
+                            JValue::Object(&j_op),
+                            JValue::Object(&j_arg),
+                        ],
+                    )?;
+                    let obj = ret.l()?;
+                    if obj.is_null() {
+                        return Ok(Err("callback returned null".into()));
+                    }
+                    let j_out = JString::from(obj);
+                    let text = env.get_string(&j_out)?.to_string_lossy().into_owned();
+                    Ok(Ok(text))
+                });
+            match res {
+                Ok(inner) => inner?,
+                Err(e) => {
+                    if env.exception_check().unwrap_or(false) {
+                        let _ = env.exception_clear();
+                    }
+                    return Err(format!("callback call failed: {e}"));
+                }
+            }
+        };
         let envelope: Value =
             serde_json::from_str(&text).map_err(|e| format!("malformed callback JSON: {e}"))?;
         if let Some(err) = envelope.get("error") {

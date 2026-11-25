@@ -55,6 +55,7 @@ struct Engine {
     /// Each session has its own id, from 1: USB forwarding tells this stream from the last.
     session: Mutex<Option<(u64, Session)>>,
     sessions: AtomicU64,
+    active_session_id: AtomicU64,
     interrupt: Mutex<Interrupt>,
     phase_lock: Mutex<PhaseLockReports>,
     phase_lock_lead_us: AtomicI32,
@@ -87,6 +88,7 @@ struct Engine {
 static ENGINE: LazyLock<Engine> = LazyLock::new(|| Engine {
     session: Mutex::new(None),
     sessions: AtomicU64::new(0),
+    active_session_id: AtomicU64::new(0),
     interrupt: Mutex::new(Interrupt::default()),
     phase_lock: Mutex::new(PhaseLockReports::default()),
     phase_lock_lead_us: AtomicI32::new(i32::MIN),
@@ -213,7 +215,8 @@ pub fn start(bridge: Arc<Bridge>, params: StartParams) -> i32 {
     let microphone_requested = params.config.stream.microphone;
     let controller_identity = params.controller_identity;
     let audio_passthrough = params.config.stream.audio_passthrough;
-    let events = Arc::new(Events::new(Arc::clone(&bridge)));
+    let id = ENGINE.sessions.fetch_add(1, Ordering::SeqCst) + 1;
+    let events = Arc::new(Events::new(Arc::clone(&bridge), id));
     platform::info(&format!(
         "Starting a stream with the Rust engine: {}x{}@{} formats=0x{:x} input_only={}",
         params.config.stream.width,
@@ -290,19 +293,26 @@ pub fn start(bridge: Arc<Bridge>, params: StartParams) -> i32 {
     ENGINE.microphone_state.store(microphone_state, Ordering::SeqCst);
     // Before the session is published: no controller arrives before the queue knows.
     session.input(|q| q.set_controller_identity(controller_identity));
-    let id = ENGINE.sessions.fetch_add(1, Ordering::SeqCst) + 1;
     *lock(&ENGINE.video_gauges) = session.video_gauges();
     *lock(&ENGINE.audio_gauges) = Some(session.audio_gauges());
+    ENGINE.active_session_id.store(id, Ordering::SeqCst);
     *lock(&ENGINE.session) = Some((id, session));
     crate::frame_warp::after_start();
     if events.started.load(Ordering::SeqCst) {
         bridge.post(bridge.m.connection_started, &[]);
     }
+    events.publish_and_flush_termination();
     0
+}
+
+/// Whether `session_id` is still the active stream stored in `ENGINE.session`.
+pub(crate) fn is_current_session(session_id: u64) -> bool {
+    session_id != 0 && ENGINE.active_session_id.load(Ordering::SeqCst) == session_id
 }
 
 /// `LiStopConnection`.
 pub fn stop() {
+    ENGINE.active_session_id.store(0, Ordering::SeqCst);
     let session = lock(&ENGINE.session).take();
     *lock(&ENGINE.video_gauges) = None;
     *lock(&ENGINE.audio_gauges) = None;

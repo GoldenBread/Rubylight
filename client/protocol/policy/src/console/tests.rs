@@ -214,3 +214,81 @@ fn detail_identifies_other_device_and_classic_app_matching() {
     cols.insert("u1".into(), vec!["Co-op".into()]);
     assert_eq!(cols["u1"][0], "Co-op");
 }
+
+#[test]
+fn library_memo_invalidates_when_source_metadata_or_session_changes() {
+    let lib = Library {
+        revision: "r1".into(),
+        games: vec![game(
+            "u1",
+            10,
+            "Portal",
+            Some("steam:400"),
+            Some(("steam", "Steam")),
+            Some(true),
+            false,
+        )],
+    };
+    let memo = LibraryMemo::default();
+    let src = source(1, "pc-1", "Desk", true, &lib);
+    let first = memo.get(&[src], &[]);
+    assert_eq!(memo.merges(), 1);
+    assert_eq!(first.shown()[0].best().host_name, "Desk");
+    assert!(!first.shown()[0].running());
+
+    // Identical inputs hit the cache without re-merging.
+    let _ = memo.get(&[src], &[]);
+    assert_eq!(memo.merges(), 1);
+
+    // Renaming the PC must invalidate the memo.
+    let mut renamed = src;
+    renamed.name = "Living Room";
+    let merged_renamed = memo.get(&[renamed], &[]);
+    assert_eq!(memo.merges(), 2);
+    assert_eq!(merged_renamed.shown()[0].best().host_name, "Living Room");
+
+    // Updating playtime or collections must invalidate the memo.
+    let mut playtime = BTreeMap::new();
+    playtime.insert("u1".into(), 120);
+    let mut with_playtime = renamed;
+    with_playtime.playtime_minutes = Some(&playtime);
+    let merged_pt = memo.get(&[with_playtime], &[]);
+    assert_eq!(memo.merges(), 3);
+    assert_eq!(merged_pt.shown()[0].playtime_minutes(), Some(120));
+
+    let mut cols = BTreeMap::new();
+    cols.insert("u1".into(), vec!["Favorites".into()]);
+    let mut with_cols = with_playtime;
+    with_cols.collections = Some(&cols);
+    let merged_cols = memo.get(&[with_cols], &[]);
+    assert_eq!(memo.merges(), 4);
+    assert_eq!(merged_cols.shown()[0].collections(), vec!["Favorites"]);
+
+    // Starting a session on the PC must invalidate the memo even when Library is unchanged.
+    let session = Session {
+        revision: 1,
+        state: State::Streaming,
+        owner: Owner::OtherDevice,
+        app: Some(SessionApp {
+            install_id: "u1".into(),
+            app_id: 10,
+            title: "Portal".into(),
+        }),
+        game_running: true,
+        since_unix_ms: None,
+        suspended_until_unix_ms: None,
+        launcher: None,
+        radeon_profile: None,
+        microphone_busy: false,
+        playing_on: None,
+        moved_to: None,
+        owns_game: true,
+        press_failed: false,
+        actions: Vec::new(),
+    };
+    let mut with_session = with_cols;
+    with_session.session = Some(&session);
+    let merged_running = memo.get(&[with_session], &[]);
+    assert_eq!(memo.merges(), 5);
+    assert!(merged_running.shown()[0].running());
+}

@@ -197,6 +197,7 @@ pub(super) enum TlsReply {
 
 pub(super) struct TlsFixture {
     pub(super) port: u16,
+    pub(super) ca_cert: CertificateDer<'static>,
     pub(super) roots: RootCertStore,
     pub(super) seen_requests: Arc<Mutex<Vec<String>>>,
 }
@@ -206,6 +207,7 @@ impl TlsFixture {
         let (ca_cert, leaf_cert, key) = make_san_cert_and_key();
         let mut roots = RootCertStore::empty();
         roots.add(ca_cert.clone()).unwrap();
+        let ca_cert_saved = ca_cert.clone();
         let provider = Arc::new(rustls::crypto::ring::default_provider());
         let server_cfg = Arc::new(
             ServerConfig::builder_with_provider(provider)
@@ -287,6 +289,7 @@ impl TlsFixture {
         });
         Self {
             port,
+            ca_cert: ca_cert_saved,
             roots,
             seen_requests,
         }
@@ -690,4 +693,48 @@ fn exchange_and_download_to_path_enforce_tls_headers_and_retry_after() {
     assert_eq!(trusted.download_to_path(&bin_url, &target, false).unwrap(), 200);
     assert_eq!(std::fs::read(&target).unwrap(), vec![0, 1, 2, 3, 4]);
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn exchange_strips_auth_headers_on_cross_origin_redirect() {
+    let second = TlsFixture::start(|path, _| match path {
+        "/dest" => TlsReply::Raw(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok".to_vec()),
+        _ => TlsReply::Raw(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n".to_vec()),
+    });
+    let dest_url = second.url("/dest");
+    let dest_for_first = dest_url.clone();
+    let first = TlsFixture::start(move |path, _| match path {
+        "/start" => TlsReply::Raw(
+            format!("HTTP/1.1 302 Found\r\nLocation: {dest_for_first}\r\nContent-Length: 0\r\n\r\n")
+                .into_bytes(),
+        ),
+        _ => TlsReply::Raw(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n".to_vec()),
+    });
+    let mut roots = rustls::RootCertStore::empty();
+    roots.add(first.ca_cert.clone()).unwrap();
+    roots.add(second.ca_cert.clone()).unwrap();
+    let trusted = WebPkiTransport::with_roots_for_test("Nightjar/test".into(), roots);
+    let url = Url::parse(&first.url("/start")).unwrap();
+    let res = trusted
+        .exchange(
+            "GET",
+            &url,
+            &[
+                ("Authorization".into(), "Bearer secret-key".into()),
+                ("Client-ID".into(), "secret-client".into()),
+                ("Accept".into(), "application/json".into()),
+            ],
+            None,
+            true,
+        )
+        .unwrap();
+    assert_eq!(res.status, 200);
+    assert_eq!(res.body, b"ok");
+    let first_req = &first.seen_requests.lock().unwrap()[0];
+    assert!(first_req.contains("Authorization: Bearer secret-key\r\n"));
+    assert!(first_req.contains("Client-ID: secret-client\r\n"));
+    let second_req = &second.seen_requests.lock().unwrap()[0];
+    assert!(!second_req.contains("secret-key"), "Authorization leaked across origins: {second_req}");
+    assert!(!second_req.contains("secret-client"), "Client-ID leaked across origins: {second_req}");
+    assert!(second_req.contains("Accept: application/json\r\n"));
 }

@@ -253,6 +253,9 @@ pub struct Job {
     hold_until_ms: u64,
     /// IGDB refused the token once and a new one was asked for.
     renewed: bool,
+    /// Number of Twitch OAuth tokens fetched during this job (bounds short-lived token loops).
+    #[serde(default)]
+    twitch_fetches: u8,
     #[serde(default)]
     log: Vec<String>,
 }
@@ -267,7 +270,7 @@ impl Job {
             session = Session { pace: session.pace, keys: fingerprint, ..Session::default() };
         }
         let record = Record { key: names::key(&game.name, game.steam), fetched_at: wall_secs, art_keys: Some(keys.art_fingerprint()), info_keys: Some(keys.info_fingerprint()), ..Record::default() };
-        let mut job = Job { game, keys, wants, session, record, stage: Stage::Done, pending: None, sent: false, tries: 0, hold_until_ms: 0, renewed: false, log: Vec::new() };
+        let mut job = Job { game, keys, wants, session, record, stage: Stage::Done, pending: None, sent: false, tries: 0, hold_until_ms: 0, renewed: false, twitch_fetches: 0, log: Vec::new() };
         job.stage = job.art_start();
         job
     }
@@ -450,8 +453,26 @@ impl Job {
         if service == Service::Twitch {
             match (reply.status, services::twitch_token_answer(&reply.body)) {
                 (200, Some((value, expires_in))) => {
-                    // A minute early, so a token never runs out mid-lookup.
-                    let until_ms = now_ms.saturating_add(expires_in.saturating_sub(60).saturating_mul(1_000));
+                    // Reject already-expired tokens and bound repeated short-lived token fetches
+                    // so a misconfigured OAuth endpoint cannot spin the lookup loop forever.
+                    let usable_secs = if expires_in > 60 {
+                        expires_in - 60
+                    } else if expires_in > 0 {
+                        (expires_in / 2).max(1)
+                    } else {
+                        0
+                    };
+                    let until_ms = now_ms.saturating_add(usable_secs.saturating_mul(1_000));
+                    if usable_secs == 0
+                        || until_ms <= now_ms
+                        || u32::from(self.twitch_fetches) >= pace::TRIES
+                    {
+                        self.note(format!("{name}: token expired immediately ({expires_in}s)"));
+                        self.pending = None;
+                        self.fail_part();
+                        return;
+                    }
+                    self.twitch_fetches = self.twitch_fetches.saturating_add(1);
                     self.session.token = Some(Token { value, until_ms });
                     self.pending = None;
                     self.tries = 0;

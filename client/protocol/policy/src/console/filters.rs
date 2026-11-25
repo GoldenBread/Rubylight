@@ -492,7 +492,23 @@ pub fn fit_row(total: usize, columns: usize) -> (usize, bool) {
     }
 }
 
-type LibraryMemoEntry = (Vec<String>, Vec<Favourite>, Merged);
+#[derive(PartialEq, Eq)]
+struct MemoSourceSig {
+    id: u64,
+    unique_id: String,
+    name: String,
+    online: bool,
+    paired: bool,
+    classic: bool,
+    host_control: bool,
+    library: Option<crate::http::native_api::library::Library>,
+    last_played: Option<BTreeMap<String, u64>>,
+    playtime_minutes: Option<BTreeMap<String, u64>>,
+    collections: Option<BTreeMap<String, Vec<String>>>,
+    session: Option<crate::http::native_api::session::Session>,
+}
+
+type LibraryMemoEntry = (Vec<MemoSourceSig>, Vec<Favourite>, Merged);
 
 /// Simple frame-level memo cache for merged + hidden-split library on Desktop UI.
 #[derive(Default)]
@@ -503,12 +519,21 @@ pub struct LibraryMemo {
 
 impl LibraryMemo {
     pub fn get(&self, sources: &[Source<'_>], hidden: &[Favourite]) -> Merged {
-        let sig: Vec<String> = sources
+        let sig: Vec<MemoSourceSig> = sources
             .iter()
-            .map(|s| {
-                let rev = s.library.map_or("", |l| l.revision.as_str());
-                let len = s.library.map_or(0, |l| l.games.len());
-                format!("{}:{}:{}:{}:{}", s.id, s.unique_id, s.online, rev, len)
+            .map(|s| MemoSourceSig {
+                id: s.id,
+                unique_id: s.unique_id.to_owned(),
+                name: s.name.to_owned(),
+                online: s.online,
+                paired: s.paired,
+                classic: s.classic,
+                host_control: s.host_control,
+                library: s.library.cloned(),
+                last_played: s.last_played.cloned(),
+                playtime_minutes: s.playtime_minutes.cloned(),
+                collections: s.collections.cloned(),
+                session: s.session.cloned(),
             })
             .collect();
         if let Some((prev_sig, prev_hidden, prev_merged)) = self.cached.borrow().as_ref()

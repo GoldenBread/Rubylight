@@ -191,7 +191,22 @@ impl VideoStream {
             receive: None,
             decode: None,
         };
-        let socket = start.socket.try_clone()?;
+        let cleanup_decoder = |mut d: Box<dyn VideoDecoder>| {
+            d.stop();
+            d.cleanup();
+        };
+        let socket = match start.socket.try_clone() {
+            Ok(s) => s,
+            Err(e) => {
+                if let Some(d) = direct {
+                    cleanup_decoder(d.decoder);
+                }
+                if let Some(d) = queued {
+                    cleanup_decoder(d);
+                }
+                return Err(e);
+            }
+        };
         let next_socket = start.next_socket.clone();
         let receive_control = control.clone();
         let receive_shared = shared.clone();
@@ -202,7 +217,9 @@ impl VideoStream {
         if !session.decode_priority {
             session.log("Decode priority is off for this stream (setting or switch)");
         }
-        stream.receive = Some(std::thread::Builder::new().name("VideoRecv".into()).spawn(
+        let mut direct_slot = Some(direct);
+        let receive_thread = std::thread::Builder::new().name("VideoRecv".into()).spawn({
+            let direct = direct_slot.take().unwrap();
             move || {
                 receive_session.prioritize_receive_thread(direct_submit);
                 receive_thread(
@@ -215,17 +232,28 @@ impl VideoStream {
                     direct,
                     coalescing,
                 )
-            },
-        )?);
+            }
+        });
+        match receive_thread {
+            Ok(t) => stream.receive = Some(t),
+            Err(e) => {
+                if let Some(d) = queued {
+                    cleanup_decoder(d);
+                }
+                return Err(e);
+            }
+        }
         if let Some(decoder) = queued {
             let refresh = KeyFrameRequests::new(start.fps);
             let decode_session = session.clone();
-            stream.decode = Some(std::thread::Builder::new().name("VideoDec".into()).spawn(
-                move || {
-                    decode_session.prioritize_decode_thread();
-                    decoder_thread(decoder, shared, control, refresh)
-                },
-            )?);
+            stream.decode = Some(
+                std::thread::Builder::new()
+                    .name("VideoDec".into())
+                    .spawn(move || {
+                        decode_session.prioritize_decode_thread();
+                        decoder_thread(decoder, shared, control, refresh)
+                    })?,
+            );
         }
         stream.pinger = Some(Pinger::start(
             "VideoPing",
@@ -241,8 +269,7 @@ impl VideoStream {
         self.pinger.as_ref().map(Pinger::handle)
     }
 
-    /// Stops and joins the threads and returns the decoder for `stop` and `cleanup`.
-    pub fn stop(mut self) -> Option<Box<dyn VideoDecoder>> {
+    fn shutdown_inner(&mut self) -> Option<Box<dyn VideoDecoder>> {
         self.stop.store(true, Ordering::Release);
         self.shared.queue.shutdown();
         if let Some(mut pinger) = self.pinger.take() {
@@ -253,6 +280,20 @@ impl VideoStream {
             decoder = thread.join().ok().or(decoder);
         }
         decoder
+    }
+
+    /// Stops and joins the threads and returns the decoder for `stop` and `cleanup`.
+    pub fn stop(mut self) -> Option<Box<dyn VideoDecoder>> {
+        self.shutdown_inner()
+    }
+}
+
+impl Drop for VideoStream {
+    fn drop(&mut self) {
+        if let Some(mut decoder) = self.shutdown_inner() {
+            decoder.stop();
+            decoder.cleanup();
+        }
     }
 }
 

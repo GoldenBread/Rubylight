@@ -46,12 +46,14 @@ pub fn apply_stick_deadzone(x: f32, y: f32, radius: f32) -> (f32, f32) {
     )
 }
 
-/// Scales normalized stick coordinates into wire `i16` values (negating Y).
+/// Scales normalized stick coordinates into wire `i16` values (negating Y), clamping
+/// out-of-range axes instead of wrapping modulo 65536.
 pub fn scale_stick(x: f32, y: f32) -> (i16, i16) {
-    (
-        (x * STICK_SCALE) as i32 as i16,
-        (-y * STICK_SCALE) as i32 as i16,
-    )
+    let clamp_axis = |v: f32| {
+        ((v.clamp(-1.0, 1.0) * STICK_SCALE) as i32)
+            .clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16
+    };
+    (clamp_axis(x), clamp_axis(-y))
 }
 
 /// Drops trigger travel at or below `deadzone` and passes higher values raw.
@@ -87,7 +89,8 @@ pub fn normalize_triggers(
     }
     let lt = apply_trigger_deadzone(lt, deadzone);
     let rt = apply_trigger_deadzone(rt, deadzone);
-    (((lt * 255.0) as i32) as u8, ((rt * 255.0) as i32) as u8)
+    let quantize = |v: f32| ((v.clamp(0.0, 1.0) * 255.0) as i32).clamp(0, 255) as u8;
+    (quantize(lt), quantize(rt))
 }
 
 /// Normalizes USB controller stick and trigger axes into `(lx, ly, rx, ry)` and `(lt, rt)`.
@@ -107,8 +110,9 @@ pub fn normalize_usb_axes(
     let (lx, ly) = scale_stick(dlx, dly);
     let (drx, dry) = apply_stick_deadzone(rs_x, rs_y, right_deadzone);
     let (rx, ry) = scale_stick(drx, dry);
-    let lt = ((apply_trigger_deadzone(lt, trigger_deadzone) * 255.0) as i32) as u8;
-    let rt = ((apply_trigger_deadzone(rt, trigger_deadzone) * 255.0) as i32) as u8;
+    let quantize = |v: f32| ((v.clamp(0.0, 1.0) * 255.0) as i32).clamp(0, 255) as u8;
+    let lt = quantize(apply_trigger_deadzone(lt, trigger_deadzone));
+    let rt = quantize(apply_trigger_deadzone(rt, trigger_deadzone));
     ([lx, ly, rx, ry], [lt, rt])
 }
 
@@ -357,5 +361,21 @@ mod tests {
         let (mx, my) = mouse_stick_curve(0x7FFE, 0);
         assert!((mx - 64.0).abs() < 1e-4);
         assert_eq!(my, 0.0);
+    }
+
+    #[test]
+    fn out_of_range_axes_clamp_without_wraparound() {
+        assert_eq!(scale_stick(1.05, -1.05), (32766, 32766));
+        assert_eq!(scale_stick(-1.5, 1.5), (-32766, -32766));
+
+        let (mut lt_used, mut rt_used) = (false, false);
+        assert_eq!(
+            normalize_triggers(1.05, -0.5, 0.0, false, &mut lt_used, &mut rt_used),
+            (255, 0)
+        );
+        let (sticks, triggers) =
+            normalize_usb_axes(1.05, -1.05, -2.0, 2.0, 1.05, -0.5, 0.0, 0.0, 0.0);
+        assert_eq!(sticks, [32766, 32766, -32766, -32766]);
+        assert_eq!(triggers, [255, 0]);
     }
 }

@@ -220,36 +220,40 @@ impl<'a, 'local> FlowBridge<'a, 'local> {
         if self.aborted.get() {
             return Err(Error::Cancelled);
         }
-        let mut env = self.env.borrow_mut();
-        let j_op = env
-            .new_string(op)
-            .map_err(|e| Error::Malformed(e.to_string()))?;
-        let j_arg = env
-            .new_string(arg)
-            .map_err(|e| Error::Malformed(e.to_string()))?;
-        let ret = env.call_method(
-            self.transport,
-            "call",
-            "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;",
-            &[JValue::Object(&j_op), JValue::Object(&j_arg)],
-        );
-        let Ok(val) = ret else {
-            let _ = env.exception_clear();
-            return Err(Error::Io(std::io::Error::other("FlowTransport error")));
+        let text = {
+            let mut env = self.env.borrow_mut();
+            let res: Result<Result<String, Error>, jni::errors::Error> =
+                env.with_local_frame(8, |env| {
+                    let j_op = env.new_string(op)?;
+                    let j_arg = env.new_string(arg)?;
+                    let val = env.call_method(
+                        self.transport,
+                        "call",
+                        "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;",
+                        &[JValue::Object(&j_op), JValue::Object(&j_arg)],
+                    )?;
+                    let obj = val.l()?;
+                    if obj.is_null() {
+                        return Ok(Err(Error::Malformed("null envelope".into())));
+                    }
+                    let j_text = JString::from(obj);
+                    let text = env.get_string(&j_text)?.to_string_lossy().into_owned();
+                    Ok(Ok(text))
+                });
+            match res {
+                Ok(inner) => inner?,
+                Err(jni::errors::Error::JavaException) => {
+                    let _ = env.exception_clear();
+                    return Err(Error::Io(std::io::Error::other("FlowTransport error")));
+                }
+                Err(err) => {
+                    if env.exception_check().unwrap_or(false) {
+                        let _ = env.exception_clear();
+                    }
+                    return Err(Error::Malformed(err.to_string()));
+                }
+            }
         };
-        let Ok(obj) = val.l() else {
-            return Err(Error::Malformed("null transport result".into()));
-        };
-        if obj.is_null() {
-            return Err(Error::Malformed("null envelope".into()));
-        }
-        let j_text = JString::from(obj);
-        let text = env
-            .get_string(&j_text)
-            .map_err(|e| Error::Malformed(e.to_string()))?
-            .to_string_lossy()
-            .into_owned();
-        drop(env);
 
         let parsed: Value =
             serde_json::from_str(&text).map_err(|e| Error::Malformed(e.to_string()))?;
@@ -273,7 +277,9 @@ impl<'a, 'local> FlowBridge<'a, 'local> {
         let keep_going = match res {
             Ok(v) => v.z().unwrap_or(false),
             Err(_) => {
-                let _ = env.exception_clear();
+                if env.exception_check().unwrap_or(false) {
+                    let _ = env.exception_clear();
+                }
                 false
             }
         };
@@ -288,13 +294,17 @@ impl<'a, 'local> FlowBridge<'a, 'local> {
             return;
         };
         let mut env = self.env.borrow_mut();
-        let Ok(j_str) = env.new_string(payload.to_string()) else {
-            return;
-        };
-        if env
-            .call_method(listener, "onStep", "(Ljava/lang/String;)V", &[JValue::Object(&j_str)])
-            .is_err()
-        {
+        let res = env.with_local_frame(4, |env| {
+            let j_str = env.new_string(payload.to_string())?;
+            env.call_method(
+                listener,
+                "onStep",
+                "(Ljava/lang/String;)V",
+                &[JValue::Object(&j_str)],
+            )?;
+            Ok::<(), jni::errors::Error>(())
+        });
+        if res.is_err() && env.exception_check().unwrap_or(false) {
             let _ = env.exception_clear();
         }
     }

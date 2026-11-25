@@ -343,3 +343,72 @@ fn concurrent_submit_and_close_never_submits_after_close() {
         assert!(state.orphaned.is_empty());
     }
 }
+
+#[test]
+fn composite_controller_resolves_endpoint_type_by_active_config_and_alt_setting() {
+    // Config 1: non-contiguous interfaces 0 and 2; on interface 2, endpoint 0x82 is Interrupt
+    // in alt 0 and Bulk in alt 1. Config 2: interface 0 alt 0 has endpoint 0x81 as Interrupt.
+    let mut raw = vec![
+        18, 1, 0x00, 0x02, 0, 0, 0, 64, 0x09, 0x12, 0x01, 0x00, 0x00, 0x01, 1, 2, 0, 2,
+    ];
+    let mut cfg1 = Vec::new();
+    cfg1.extend_from_slice(&interface(0, 0, 1, 0xff));
+    cfg1.extend_from_slice(&endpoint(0x81, 2)); // Bulk
+    cfg1.extend_from_slice(&interface(2, 0, 1, 0xff));
+    cfg1.extend_from_slice(&endpoint(0x82, 3)); // Interrupt in alt 0
+    cfg1.extend_from_slice(&interface(2, 1, 1, 0xff));
+    cfg1.extend_from_slice(&endpoint(0x82, 2)); // Bulk in alt 1
+    raw.extend(configuration(1, 2, &cfg1));
+
+    let mut cfg2 = Vec::new();
+    cfg2.extend_from_slice(&interface(0, 0, 1, 0x03));
+    cfg2.extend_from_slice(&endpoint(0x81, 3)); // Interrupt in config 2
+    raw.extend(configuration(2, 1, &cfg2));
+
+    let kernel = FakeKernel::new();
+    {
+        let mut m = kernel.machine();
+        m.raw = Some(raw);
+        m.drivers.clear();
+    }
+    let device = Arc::new(UsbfsDevice::open(kernel.clone(), PATH).unwrap());
+    assert_eq!(device.kind_of(0x81), URB_BULK);
+    assert_eq!(device.kind_of(0x82), URB_INTERRUPT);
+
+    let (tunnel, mut driver) = pipe();
+    let serving = device.clone();
+    let served = std::thread::spawn(move || serve(tunnel, serving));
+    driver.import("1-5").unwrap();
+
+    // Switch interface 2 to alt 1 -> endpoint 0x82 switches from Interrupt to Bulk.
+    let set_alt = driver.submit(
+        0,
+        wire::DIR_OUT,
+        0,
+        with_index(setup(0x01, 11, 1, 0), 2),
+        &[],
+        &[],
+    );
+    assert_eq!(status_of(&driver.reply(false).0), (set_alt, 0));
+    assert_eq!(device.kind_of(0x82), URB_BULK);
+
+    // Port reset clears active alternate settings back to alt 0.
+    let reset = driver.submit(
+        0,
+        wire::DIR_OUT,
+        0,
+        with_index(setup(0x23, 3, 4, 0), 1),
+        &[],
+        &[],
+    );
+    assert_eq!(status_of(&driver.reply(false).0), (reset, 0));
+    assert_eq!(device.kind_of(0x82), URB_INTERRUPT);
+
+    // Switching to config 2 updates active configuration so 0x81 resolves as Interrupt.
+    let set_cfg = driver.submit(0, wire::DIR_OUT, 0, setup(0x00, 9, 2, 0), &[], &[]);
+    assert_eq!(status_of(&driver.reply(false).0), (set_cfg, 0));
+    assert_eq!(device.kind_of(0x81), URB_INTERRUPT);
+
+    drop(driver);
+    served.join().unwrap().unwrap();
+}

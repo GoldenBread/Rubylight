@@ -26,8 +26,11 @@ struct PollerBridge {
 
 impl PollerBridge {
     fn shutdown(&self) {
-        self.closed.store(true, Ordering::Release);
-        self.updates.1.notify_all();
+        {
+            let _q = lock(&self.updates.0);
+            self.closed.store(true, Ordering::Release);
+            self.updates.1.notify_all();
+        }
         self.handle.stop();
     }
 }

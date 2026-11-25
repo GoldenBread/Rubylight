@@ -206,21 +206,17 @@ impl PinStore {
         }
         let hash = self.crypto.create(pin, iterations)?;
         let _file = file_lock();
-        let saved = {
-            let mut memory = self.memory();
-            if memory.problem.is_some() {
-                return Err("the PIN lock's file cannot be used".into());
-            }
-            memory.saved.hash = Some(hash);
-            memory.saved.length = pin.len();
-            (
-                memory.saved.fails,
-                memory.saved.lock_until,
-                memory.saved.lock_boot,
-            ) = (0, 0, 0);
-            memory.saved.clone()
-        };
-        write_file(&self.path, &saved).map_err(|e| format!("saving the PIN failed: {e}"))
+        let mut memory = self.memory();
+        if memory.problem.is_some() {
+            return Err("the PIN lock's file cannot be used".into());
+        }
+        let mut candidate = memory.saved.clone();
+        candidate.hash = Some(hash);
+        candidate.length = pin.len();
+        (candidate.fails, candidate.lock_until, candidate.lock_boot) = (0, 0, 0);
+        write_file(&self.path, &candidate).map_err(|e| format!("saving the PIN failed: {e}"))?;
+        memory.saved = candidate;
+        Ok(())
     }
 
     pub fn remove_pin(&self) {
@@ -356,15 +352,15 @@ impl PinStore {
             boot: self.clock.boot(),
         };
         let _file = file_lock();
-        let saved = {
-            let mut memory = self.memory();
-            if memory.problem.is_some() {
-                return Err("the PIN lock's file cannot be used".into());
-            }
-            memory.saved.hand_over = Some(entry);
-            memory.saved.clone()
-        };
-        write_file(&self.path, &saved).map_err(|e| format!("saving the PIN lock failed: {e}"))?;
+        let mut memory = self.memory();
+        if memory.problem.is_some() {
+            return Err("the PIN lock's file cannot be used".into());
+        }
+        let mut candidate = memory.saved.clone();
+        candidate.hand_over = Some(entry);
+        write_file(&self.path, &candidate)
+            .map_err(|e| format!("saving the PIN lock failed: {e}"))?;
+        memory.saved = candidate;
         Ok(Some(token))
     }
 

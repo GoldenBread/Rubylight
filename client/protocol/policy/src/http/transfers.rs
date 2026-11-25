@@ -519,34 +519,49 @@ pub fn upload_name(local: &str) -> String {
     if name.is_empty() || name == ".." {
         name = "file".into();
     }
-    let stem = name
-        .split('.')
-        .next()
-        .unwrap_or(&name)
-        .trim_end_matches(' ');
-    if RESERVED
-        .iter()
-        .any(|device| stem.eq_ignore_ascii_case(device))
-    {
-        name.insert(0, '_');
+    let prefix_reserved = |n: &mut String| {
+        let stem = n.split('.').next().unwrap_or(n).trim_end_matches(' ');
+        if RESERVED
+            .iter()
+            .any(|device| stem.eq_ignore_ascii_case(device))
+        {
+            n.insert(0, '_');
+        }
+    };
+    prefix_reserved(&mut name);
+    if name.to_ascii_lowercase().ends_with(".part") {
+        name.push('_');
     }
     if name.encode_utf16().count() > MAX_NAME_UNITS {
-        name = shorten(&name);
+        name = shorten(&name, MAX_NAME_UNITS);
     }
-    let lower = name.to_ascii_lowercase();
-    if lower.ends_with(".part") {
+    name.truncate(name.trim_end_matches(['.', ' ']).len());
+    if name.is_empty() || name == ".." {
+        name = "file".into();
+    }
+    prefix_reserved(&mut name);
+    if name.encode_utf16().count() > MAX_NAME_UNITS {
+        name = shorten(&name, MAX_NAME_UNITS);
+    }
+    if name.to_ascii_lowercase().ends_with(".part") {
+        if name.encode_utf16().count() >= MAX_NAME_UNITS {
+            name = shorten(&name, MAX_NAME_UNITS - 1);
+            if name.is_empty() || name == ".." {
+                name = "file".into();
+            }
+        }
         name.push('_');
     }
     name
 }
 
-/// `name` cut to [`MAX_NAME_UNITS`], keeping a short extension.
-fn shorten(name: &str) -> String {
+/// `name` cut to `max_units` UTF-16 code units, keeping a short extension.
+fn shorten(name: &str, max_units: usize) -> String {
     let (stem, extension) = match name.rfind('.') {
         Some(dot) if dot > 0 && name[dot..].encode_utf16().count() <= 16 => name.split_at(dot),
         _ => (name, ""),
     };
-    let room = MAX_NAME_UNITS - extension.encode_utf16().count();
+    let room = max_units.saturating_sub(extension.encode_utf16().count());
     let mut kept = String::new();
     let mut units = 0;
     for c in stem.chars() {

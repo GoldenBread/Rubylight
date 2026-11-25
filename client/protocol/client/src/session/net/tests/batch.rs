@@ -276,6 +276,13 @@ fn a_gro_message_splits_into_its_segments() {
     spans.clear();
     push_segments(&mut spans, 0, 1000, 1500, 3000, Some(1400));
     assert_eq!(spans.iter().map(|s| s.kept).collect::<Vec<_>>(), [1000, 0, 0]);
+    // Dropped tail spans clamp `start` to `slot_end` so slicing the final batch slot never panics.
+    assert!(spans.iter().all(|s| s.start <= 1000 && s.start + s.kept <= 1000));
+    let buf = vec![0u8; 1000];
+    for s in &spans {
+        let slice = &buf[s.start..s.start + s.kept];
+        assert_eq!(slice.len(), s.kept);
+    }
     // More segments than one take: all 71 of them, in order, the last one short.
     spans.clear();
     push_segments(&mut spans, 0, 65536, 100, 70 * 100 + 30, Some(100));

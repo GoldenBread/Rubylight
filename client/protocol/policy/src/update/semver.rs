@@ -175,11 +175,11 @@ fn cmp_prerelease(a: &str, b: &str) -> Ordering {
 fn parse_desktop(text: &str) -> Option<([u64; 3], Option<&str>)> {
     let trimmed = text.trim();
     let trimmed = trimmed.strip_prefix('v').unwrap_or(trimmed);
-    let (core, pre) = match trimmed.split_once('-') {
+    let without_build = trimmed.split('+').next()?;
+    let (core, pre) = match without_build.split_once('-') {
         Some((core, pre)) => (core, Some(pre)),
-        None => (trimmed, None),
+        None => (without_build, None),
     };
-    let core = core.split('+').next()?;
     let mut parts = core.split('.').map(|p| p.parse::<u64>().ok());
     let numbers = [
         parts.next()??,
@@ -266,5 +266,9 @@ mod tests {
             assert!(!newer_stable_tag(odd, "4.0.0"), "{odd}");
         }
         assert!(newer_stable_tag("v4.1.0", "4.0.0+local"));
+        // SemVer build metadata containing hyphens is not a prerelease.
+        assert!(!newer_stable_tag("v6.4.0", "6.4.0+2026-11-25"));
+        assert!(!newer_stable_tag("v6.4.0", "6.4.0+git-abc123"));
+        assert!(newer_stable_tag("v6.4.1", "6.4.0+2026-11-25"));
     }
 }

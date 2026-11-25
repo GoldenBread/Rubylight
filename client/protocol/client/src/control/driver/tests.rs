@@ -641,3 +641,34 @@ fn the_earliest_of_every_deadline_wins() {
         Duration::from_millis(6)
     );
 }
+
+#[test]
+fn datagram_lost_recognizes_network_unreachable_kinds_and_platform_errnos() {
+    for kind in [
+        io::ErrorKind::NetworkDown,
+        io::ErrorKind::NetworkUnreachable,
+        io::ErrorKind::HostUnreachable,
+        io::ErrorKind::AddrNotAvailable,
+        io::ErrorKind::ConnectionAborted,
+        io::ErrorKind::ConnectionRefused,
+        io::ErrorKind::ConnectionReset,
+    ] {
+        assert!(datagram_lost(&io::Error::from(kind)), "expected loss for {kind:?}");
+    }
+    assert!(!datagram_lost(&io::Error::from(io::ErrorKind::PermissionDenied)));
+    assert!(!datagram_lost(&io::Error::from(io::ErrorKind::TimedOut)));
+    assert!(!datagram_lost(&io::Error::other("other")));
+
+    #[cfg(windows)]
+    for code in [10050, 10051, 10064, 10065] {
+        assert!(datagram_lost(&io::Error::from_raw_os_error(code)), "WSA {code}");
+    }
+    #[cfg(any(target_os = "macos", target_os = "ios", target_os = "freebsd"))]
+    for code in [50, 51, 52, 64, 65] {
+        assert!(datagram_lost(&io::Error::from_raw_os_error(code)), "BSD {code}");
+    }
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    for code in [100, 101, 112, 113] {
+        assert!(datagram_lost(&io::Error::from_raw_os_error(code)), "Linux {code}");
+    }
+}

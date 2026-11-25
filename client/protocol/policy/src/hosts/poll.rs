@@ -4,7 +4,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::address::{EndpointSlot, HostSlots};
+use super::address::{DEFAULT_HTTP_PORT, EndpointSlot, HostSlots, public_ipv4};
 
 /// Interval between consecutive serverinfo polls on Android (`ComputerManagerService`).
 pub const SERVERINFO_POLL_PERIOD_MS: u64 = 1_500;
@@ -177,6 +177,56 @@ pub fn probe_plan(
                 ep.port,
                 known_https_port,
             ),
+        });
+    }
+    plan
+}
+
+/// Builds a direct probe plan like [`probe_plan`] and also includes extra saved endpoints from
+/// `other_addresses` (supporting 3+ endpoints such as LAN + Tailscale + WAN without clobbering).
+///
+/// When `slots.pinned` is set, only `[Pinned]` is probed (extra addresses are skipped).
+pub fn probe_plan_with_extras(
+    slots: &HostSlots,
+    other_addresses: &[String],
+    default_port: u16,
+    active_online: bool,
+    active_http_port: Option<u16>,
+    known_https_port: u16,
+) -> Vec<ProbeCandidate> {
+    let mut plan = probe_plan(slots, active_online, active_http_port, known_https_port);
+    if slots.pinned.is_some() || other_addresses.is_empty() {
+        return plan;
+    }
+    let port = if default_port != 0 {
+        default_port
+    } else {
+        DEFAULT_HTTP_PORT
+    };
+    let https_port =
+        port_matches_active_address(active_online, active_http_port, port, known_https_port);
+    for raw in other_addresses {
+        let Some(ep) = EndpointSlot::new(raw, port) else {
+            continue;
+        };
+        if plan
+            .iter()
+            .any(|p| p.address == ep.address && p.port == ep.port)
+        {
+            continue;
+        }
+        let slot = if ep.address.contains(':') {
+            CandidateSlot::Ipv6
+        } else if public_ipv4(&ep.address).is_some() {
+            CandidateSlot::Remote
+        } else {
+            CandidateSlot::Manual
+        };
+        plan.push(ProbeCandidate {
+            slot,
+            address: ep.address,
+            port: ep.port,
+            https_port,
         });
     }
     plan

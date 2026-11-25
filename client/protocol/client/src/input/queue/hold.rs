@@ -4,7 +4,7 @@
 use super::poll::note_sent;
 use super::{InputPacket, InputQueue, Pending, MAX_MOTION_TYPES};
 use crate::control::wire::Delivery;
-use crate::input::packets::{touch_event, InputEvent, MAX_CONTROLLERS};
+use crate::input::packets::{touch_event, touchpad, InputEvent, MAX_CONTROLLERS};
 
 const HELD_KEYS: usize = 256;
 const HELD_MOUSE_BUTTONS: usize = 8;
@@ -20,6 +20,7 @@ pub(super) struct Held {
     batteries: [Option<Pending>; MAX_CONTROLLERS as usize],
     touch: Option<Pending>,
     pen: Option<Pending>,
+    touchpad: Option<Pending>,
     dropped: u32,
 }
 
@@ -35,6 +36,7 @@ impl Default for Held {
             batteries: Default::default(),
             touch: None,
             pen: None,
+            touchpad: None,
             dropped: 0,
         }
     }
@@ -105,6 +107,40 @@ impl InputQueue {
                 pending.delivery = Delivery::Reliable;
                 held.pen = Some(pending);
             }
+            InputEvent::Touchpad {
+                ref mut event,
+                ref mut buttons,
+                ..
+            } => {
+                *event = touch_event::CANCEL_ALL;
+                *buttons = 0;
+                pending.delivery = Delivery::Reliable;
+                held.touchpad = Some(pending);
+            }
+            InputEvent::TouchpadFrame {
+                width_mm,
+                height_mm,
+                ..
+            } => {
+                let cancel = InputEvent::Touchpad {
+                    event: touch_event::CANCEL_ALL,
+                    buttons: 0,
+                    rotation: touchpad::ROTATION_UNKNOWN,
+                    pointer_id: 0,
+                    width_mm,
+                    height_mm,
+                    x: 0.0,
+                    y: 0.0,
+                    pressure: 0.0,
+                    contact_major: 0.0,
+                    contact_minor: 0.0,
+                };
+                held.touchpad = Some(Pending {
+                    channel: cancel.channel(),
+                    delivery: Delivery::Reliable,
+                    event: cancel,
+                });
+            }
             // Motion, scrolling, text and the rest from the silence are dropped.
             _ => {}
         }
@@ -164,5 +200,9 @@ impl InputQueue {
         }
         send(&held.touch, out);
         send(&held.pen, out);
+        if held.touchpad.is_some() {
+            self.touchpad_buttons = 0;
+        }
+        send(&held.touchpad, out);
     }
 }

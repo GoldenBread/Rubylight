@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 
 use nightjar_policy::hosts::{
     EndpointSlot, HostReachState, PollTupleState, SERVERINFO_POLL_PERIOD_MS,
-    is_internet_play_read_due, probe_plan, punches_now,
+    is_internet_play_read_due, probe_plan_with_extras, punches_now,
 };
 use serde::{Deserialize, Serialize};
 
@@ -617,8 +617,10 @@ impl HostManager {
         let cert_der = snap_before.entry.server_certificate_der();
         let slots = snap_before.entry.slots();
         let active_port = snap_before.active_endpoint.as_ref().map(|e| e.port);
-        let candidates = probe_plan(
+        let candidates = probe_plan_with_extras(
             &slots,
+            &snap_before.entry.shared.other_addresses,
+            snap_before.entry.shared.http_port,
             initial_state == HostReachState::Online,
             active_port,
             snap_before.entry.shared.https_port,

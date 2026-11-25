@@ -75,14 +75,18 @@ pub mod throttle {
         let delay = delay_after(s.fails);
         State {
             fails: s.fails,
-            lock_until: if delay > 0 { now + delay } else { 0 },
+            lock_until: if delay > 0 {
+                now.saturating_add(delay)
+            } else {
+                0
+            },
             lock_boot: boot,
         }
     }
 
     /// How long input stays refused; never more than the longest step, whatever was stored.
     pub fn remaining_ms(s: State, now: i64) -> i64 {
-        (s.lock_until - now).clamp(0, MAX_MS)
+        s.lock_until.saturating_sub(now).clamp(0, MAX_MS)
     }
 
     /// The state after one more wrong (or not yet verified) try.
@@ -91,7 +95,11 @@ pub mod throttle {
         let delay = delay_after(fails);
         State {
             fails,
-            lock_until: if delay > 0 { now + delay } else { 0 },
+            lock_until: if delay > 0 {
+                now.saturating_add(delay)
+            } else {
+                0
+            },
             lock_boot: boot,
         }
     }
@@ -298,7 +306,7 @@ pub fn contains(pcs: &[String], uuid: &str) -> bool {
 
 /// Whether the app was left unlocked recently enough on this boot.
 pub fn within_grace(same_boot: bool, left_at: i64, now: i64, grace_minutes: u32) -> bool {
-    let away = now - left_at;
+    let away = now.saturating_sub(left_at);
     same_boot && grace_minutes > 0 && away >= 0 && away < i64::from(grace_minutes) * 60_000
 }
 
@@ -377,7 +385,9 @@ impl PinGate {
 
     fn granted(&self, now: i64, key: &str) -> bool {
         self.grant.as_ref().is_some_and(|(pc, at)| {
-            !key.is_empty() && pc.eq_ignore_ascii_case(key) && (0..GRANT_MS).contains(&(now - at))
+            !key.is_empty()
+                && pc.eq_ignore_ascii_case(key)
+                && (0..GRANT_MS).contains(&now.saturating_sub(*at))
         })
     }
 

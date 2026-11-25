@@ -2,7 +2,7 @@
 //! to MoonBridge's `bridgeCl*` callbacks with the arguments `callbacks.c` passes.
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use nightjar_core::control::clipboard_sync::{ClipboardItem, Received, Refused};
 use nightjar_core::control::{haptics, ConnectionStatus, ControlEvent};
@@ -17,18 +17,68 @@ use crate::bridge::{self, Bridge};
 use crate::extras::{cursor_shape_message, hdr_metadata_bytes};
 use crate::{engine, platform};
 
+struct TerminationGate {
+    published: bool,
+    held: Option<i32>,
+}
+
+impl TerminationGate {
+    const fn new() -> Self {
+        Self {
+            published: false,
+            held: None,
+        }
+    }
+
+    fn on_terminated(&mut self, error: i32) -> Option<i32> {
+        if !self.published {
+            self.held.get_or_insert(error);
+            None
+        } else {
+            Some(error)
+        }
+    }
+
+    fn publish(&mut self) -> Option<i32> {
+        self.published = true;
+        self.held.take()
+    }
+}
+
 pub struct Events {
     bridge: Arc<Bridge>,
+    session_id: u64,
     /// `connection_started` arrived; forwarded once the session is stored, so Java can use
     /// it from the callback as the former C engine did.
     pub started: AtomicBool,
+    /// Holds any `connection_terminated` that fires before `ENGINE.session` is published and
+    /// `connection_started` has posted, and gates late callbacks against `session_id`.
+    termination: Mutex<TerminationGate>,
 }
 
 impl Events {
-    pub fn new(bridge: Arc<Bridge>) -> Self {
+    pub fn new(bridge: Arc<Bridge>, session_id: u64) -> Self {
         Self {
             bridge,
+            session_id,
             started: AtomicBool::new(false),
+            termination: Mutex::new(TerminationGate::new()),
+        }
+    }
+
+    /// Marks the session published in `ENGINE` and flushes any termination held during start.
+    pub fn publish_and_flush_termination(&self) {
+        let held = self
+            .termination
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .publish();
+        if let Some(error) = held
+            && engine::is_current_session(self.session_id)
+        {
+            platform::info(&format!("Connection terminated: {error}"));
+            self.bridge
+                .post(self.bridge.m.connection_terminated, &[bridge::int(error)]);
         }
     }
 
@@ -186,6 +236,17 @@ impl Listener for Events {
     }
 
     fn connection_terminated(&self, error: i32) {
+        let Some(error) = self
+            .termination
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .on_terminated(error)
+        else {
+            return;
+        };
+        if !engine::is_current_session(self.session_id) {
+            return;
+        }
         platform::info(&format!("Connection terminated: {error}"));
         self.bridge
             .post(self.bridge.m.connection_terminated, &[bridge::int(error)]);
@@ -635,5 +696,20 @@ mod tests {
             mixed,
             "the middle record is read without an extension, as Java reads it"
         );
+    }
+
+    #[test]
+    fn termination_gate_holds_early_error_until_publish_and_rejects_inactive_sessions() {
+        let mut gate = TerminationGate::new();
+        assert_eq!(gate.on_terminated(-100), None);
+        // Subsequent errors before publish do not overwrite the first held error.
+        assert_eq!(gate.on_terminated(-200), None);
+        assert_eq!(gate.publish(), Some(-100));
+        // Publishing a second time returns nothing; errors after publish pass through directly.
+        assert_eq!(gate.publish(), None);
+        assert_eq!(gate.on_terminated(-300), Some(-300));
+        // Without a published session in ENGINE, no session id is current (id 0 is never current).
+        assert!(!engine::is_current_session(0));
+        assert!(!engine::is_current_session(42));
     }
 }

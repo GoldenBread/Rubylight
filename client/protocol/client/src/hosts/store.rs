@@ -325,6 +325,36 @@ impl HostStore {
         Ok(true)
     }
 
+    /// Authoritatively replaces a host by `shared.unique_id` (or inserts if new), honoring explicit
+    /// `None` clears on `pinned_endpoint`, `shared.pinned_address`, `shared.alias`,
+    /// `shared.server_certificate`, and `shared.internet_play` while preserving unknown `extra`
+    /// JSON keys from an existing entry.
+    pub fn replace_entry(&self, mut entry: HostEntry) -> io::Result<bool> {
+        let _guard = self.lock.lock().unwrap_or_else(|e| e.into_inner());
+        let mut entries: Vec<HostEntry> = self.read_kept_unlocked(|_| {});
+        if !entry.shared.unique_id.is_empty()
+            && let Some(existing) = entries
+                .iter_mut()
+                .find(|e| e.shared.unique_id == entry.shared.unique_id)
+        {
+            for (key, value) in &existing.extra {
+                entry
+                    .extra
+                    .entry(key.clone())
+                    .or_insert_with(|| value.clone());
+            }
+            if *existing == entry {
+                return Ok(false);
+            }
+            *existing = entry;
+            self.write_unlocked(&entries)?;
+            return Ok(true);
+        }
+        entries.push(entry);
+        self.write_unlocked(&entries)?;
+        Ok(true)
+    }
+
     pub fn delete_by_uuid(&self, uuid: &str) -> io::Result<bool> {
         if uuid.is_empty() {
             return Ok(false);

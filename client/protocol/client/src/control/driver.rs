@@ -536,6 +536,14 @@ impl ControlClient {
         }
     }
 
+    fn install_next_socket(&mut self) {
+        if self.roaming.is_some()
+            && let Some(socket) = lock(&self.shared.next_socket).take()
+        {
+            self.host.socket_mut().replace(socket);
+        }
+    }
+
     /// Runs the stream until [`ControlHandle::stop`] or the host ends it. `on_event` is called
     /// on this thread, outside every lock.
     pub fn run(mut self, mut on_event: impl FnMut(ControlEvent)) -> Outcome {
@@ -546,6 +554,9 @@ impl ControlClient {
                 return Outcome::Stopped;
             }
             self.shared.wake_pending.store(false, Ordering::Release);
+            // Swap to any newly bound roam socket before transmit/service so sends and receives
+            // do not run on a dead interface's socket.
+            self.install_next_socket();
             let timer = self.transmit(now, false);
             let received = match self.service() {
                 Ok(received) => received,

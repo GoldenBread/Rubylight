@@ -22,6 +22,7 @@ pub(super) const ENCRYPTED_HEADER: usize = 24;
 pub(super) struct RtspCipher {
     key: aead::LessSafeKey,
     sequence: u32,
+    last_received: Option<u32>,
 }
 
 pub(super) fn rtsp_iv(sequence: u32, origin: u8) -> aead::Nonce {
@@ -38,6 +39,7 @@ impl RtspCipher {
         Self {
             key: aead::LessSafeKey::new(key),
             sequence: 0,
+            last_received: None,
         }
     }
 
@@ -56,7 +58,7 @@ impl RtspCipher {
         Ok(out)
     }
 
-    pub(super) fn open(&self, raw: &[u8]) -> Result<Vec<u8>, RtspError> {
+    pub(super) fn open(&mut self, raw: &[u8]) -> Result<Vec<u8>, RtspError> {
         let fail = |what: &str| RtspError::Encryption(what.into());
         if raw.len() <= ENCRYPTED_HEADER {
             return Err(fail("RTSP encrypted header too small"));
@@ -70,12 +72,18 @@ impl RtspCipher {
             return Err(fail("encrypted RTSP message length mismatch"));
         }
         let sequence = u32::from_be_bytes(raw[4..8].try_into().unwrap());
+        if let Some(prev) = self.last_received
+            && sequence <= prev
+        {
+            return Err(fail("replayed or out-of-order RTSP response"));
+        }
         let mut body = raw[ENCRYPTED_HEADER..].to_vec();
         body.extend_from_slice(&raw[8..24]);
         let plain = self
             .key
             .open_in_place(rtsp_iv(sequence, b'H'), aead::Aad::empty(), &mut body)
             .map_err(|_| fail("failed to decrypt RTSP response"))?;
+        self.last_received = Some(sequence);
         Ok(plain.to_vec())
     }
 }

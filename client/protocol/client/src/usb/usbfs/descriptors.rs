@@ -1,5 +1,7 @@
 //! USB descriptor parsing, speed fallback detection, and usbfs device-node path parsing.
 
+use std::collections::HashMap;
+
 use super::kernel::Kernel;
 
 /// One interface of a configuration, at alternate setting 0.
@@ -15,6 +17,25 @@ pub struct Configuration {
     pub interfaces: Vec<Interface>,
     /// Every endpoint address of every alternate setting, with its transfer type.
     pub endpoints: Vec<(u8, u8)>,
+    /// Per-`(interface, alt_setting, endpoint_address, transfer_type)` descriptors so
+    /// `SET_INTERFACE` resolves the active alternate setting's endpoint transfer type.
+    pub alt_endpoints: Vec<(u8, u8, u8, u8)>,
+}
+
+impl Configuration {
+    /// Resolves `address`'s transfer type (`0..=3`) using each interface's active alternate
+    /// setting (defaulting to alt 0), falling back to the flat endpoint list if absent.
+    pub fn endpoint_type(&self, address: u8, active_alts: &HashMap<u8, u8>) -> Option<u8> {
+        if let Some(&(_, _, _, ty)) = self.alt_endpoints.iter().find(|&&(iface, alt, addr, _)| {
+            addr == address && active_alts.get(&iface).copied().unwrap_or(0) == alt
+        }) {
+            return Some(ty);
+        }
+        self.endpoints
+            .iter()
+            .find(|(a, _)| *a == address)
+            .map(|(_, ty)| *ty)
+    }
 }
 
 /// What the descriptors say about the device.
@@ -77,6 +98,7 @@ fn configuration(body: &[u8]) -> Result<Configuration, String> {
         ..Configuration::default()
     };
     let mut at = usize::from(body[0]);
+    let mut current_iface: Option<(u8, u8)> = None;
     while at + 2 <= body.len() {
         let length = usize::from(body[at]);
         if length < 2 || at + length > body.len() {
@@ -88,20 +110,25 @@ fn configuration(body: &[u8]) -> Result<Configuration, String> {
         let descriptor = &body[at..at + length];
         match descriptor[1] {
             4 if length >= 9 => {
-                if !parsed.interfaces.iter().any(|i| i.number == descriptor[2]) {
+                let iface = descriptor[2];
+                let alt = descriptor[3];
+                current_iface = Some((iface, alt));
+                if !parsed.interfaces.iter().any(|i| i.number == iface) {
                     parsed.interfaces.push(Interface {
-                        number: descriptor[2],
+                        number: iface,
                         class: descriptor[5],
                     });
                 }
             }
-            5 if length >= 7
-                && !parsed
-                    .endpoints
-                    .iter()
-                    .any(|(address, _)| *address == descriptor[2]) =>
-            {
-                parsed.endpoints.push((descriptor[2], descriptor[3] & 3));
+            5 if length >= 7 => {
+                let addr = descriptor[2];
+                let ty = descriptor[3] & 3;
+                if let Some((iface, alt)) = current_iface {
+                    parsed.alt_endpoints.push((iface, alt, addr, ty));
+                }
+                if !parsed.endpoints.iter().any(|(a, _)| *a == addr) {
+                    parsed.endpoints.push((addr, ty));
+                }
             }
             _ => {}
         }

@@ -228,13 +228,10 @@ impl ChecksumFile {
         }
         for raw_line in sums.lines() {
             let line = raw_line.trim();
-            if line.len() < 66 {
+            if line.len() < 66 || !line.as_bytes()[..64].iter().all(u8::is_ascii_hexdigit) {
                 continue;
             }
             let (hex_part, rest) = line.split_at(64);
-            if !hex_part.bytes().all(|b| b.is_ascii_hexdigit()) {
-                continue;
-            }
             let sep_len = rest
                 .bytes()
                 .take_while(|&b| b == b' ' || b == b'\t')
@@ -361,6 +358,18 @@ mod tests {
             ChecksumFile::find("# comment\n", "nightjar-0.7.0.apk"),
             None
         );
+        // Non-ASCII line >= 66 bytes where byte 64 splits a multi-byte UTF-8 char must not panic.
+        let multibyte_at_64 = format!(
+            "{}é  ignored.apk\n{}  nightjar-0.7.0.apk\n",
+            "a".repeat(63),
+            apk
+        );
+        assert_eq!(
+            ChecksumFile::find(&multibyte_at_64, "nightjar-0.7.0.apk").as_deref(),
+            Some(apk)
+        );
+        let comment_at_64 = format!("# {}  ignored\n", "é".repeat(40));
+        assert_eq!(ChecksumFile::find(&comment_at_64, "nightjar-0.7.0.apk"), None);
         assert_eq!(ChecksumFile::hex(&[0, 0xff, 0x10]), "00ff10");
     }
 

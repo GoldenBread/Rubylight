@@ -60,23 +60,36 @@ impl ClockOffset {
     /// away from the current one means the host restarted its video clock: the older
     /// samples are dropped.
     pub fn add(&mut self, reply: &ClockSyncReply, client_receive_us: u64) -> Option<i64> {
-        let t1 = reply.client_us as i64;
-        let t2 = reply.host_receive_us as i64;
-        let t3 = reply.host_send_us as i64;
-        let t4 = client_receive_us as i64;
-        let rtt = (t4 - t1) - (t3 - t2);
-        if t4 < t1 || !(0..=1_000_000).contains(&rtt) {
+        let (t1, t2, t3, t4) = (
+            reply.client_us as i64,
+            reply.host_receive_us as i64,
+            reply.host_send_us as i64,
+            client_receive_us as i64,
+        );
+        if t4 < t1 {
             return None;
         }
-        let offset = ((t1 - t2) + (t4 - t3)) / 2;
+        // Compute in i128 without 128-bit division (32-bit Android runtime has no __divti3).
+        let rtt128 = (i128::from(t4) - i128::from(t1)) - (i128::from(t3) - i128::from(t2));
+        if !(0..=1_000_000).contains(&rtt128) {
+            return None;
+        }
+        let rtt = rtt128 as i64;
+        let sum = (i128::from(t1) - i128::from(t2)) + (i128::from(t4) - i128::from(t3));
+        let offset128 = (sum + if sum < 0 { sum & 1 } else { 0 }) >> 1;
+        let Ok(offset) = i64::try_from(offset128) else {
+            return None;
+        };
         if self
             .offset_at(t4)
-            .is_some_and(|current| (offset - current).abs() > 1_000_000)
+            .is_some_and(|current| offset.abs_diff(current) > 1_000_000)
         {
             self.clear();
         }
+        let local_sum = i128::from(t1) + i128::from(t4);
+        let local_us = ((local_sum + if local_sum < 0 { local_sum & 1 } else { 0 }) >> 1) as i64;
         self.samples[self.next] = SyncSample {
-            local_us: t1 + (t4 - t1) / 2,
+            local_us,
             offset_us: offset,
             rtt_us: rtt,
         };
@@ -112,23 +125,27 @@ impl ClockOffset {
         let (oldest, newest) = live.iter().fold((i64::MAX, i64::MIN), |(lo, hi), s| {
             (lo.min(s.local_us), hi.max(s.local_us))
         });
-        let middle = oldest + (newest - oldest) / 2;
+        let middle = oldest.saturating_add(newest.saturating_sub(oldest) / 2);
         let older = Self::best(live.iter().copied().filter(|s| s.local_us < middle));
         let newer = Self::best(live.iter().copied().filter(|s| s.local_us >= middle));
         // Parts per billion, at most 1000 ppm; quartz is within 100 ppm. No i128: 32-bit
         // Android has no 128-bit division in its runtime. The offsets differ by under a
         // second (a larger jump clears the samples), so the products fit in an i64.
         let drift_ppb = match (older, newer) {
-            (Some(a), Some(b)) if b.local_us - a.local_us >= 2_000_000 => {
-                ((b.offset_us - a.offset_us).clamp(-1_000_000, 1_000_000) * 1_000_000_000
-                    / (b.local_us - a.local_us))
+            (Some(a), Some(b)) if b.local_us.saturating_sub(a.local_us) >= 2_000_000 => {
+                let dt = b.local_us.saturating_sub(a.local_us);
+                (b.offset_us.saturating_sub(a.offset_us).clamp(-1_000_000, 1_000_000)
+                    * 1_000_000_000
+                    / dt)
                     .clamp(-1_000_000, 1_000_000)
             }
             _ => 0,
         };
         // A day either way keeps the product within an i64.
-        let elapsed = (local_us - best.local_us).clamp(-86_400_000_000, 86_400_000_000);
-        Some(best.offset_us + elapsed * drift_ppb / 1_000_000_000)
+        let elapsed = local_us
+            .saturating_sub(best.local_us)
+            .clamp(-86_400_000_000, 86_400_000_000);
+        Some(best.offset_us.saturating_add(elapsed * drift_ppb / 1_000_000_000))
     }
 }
 

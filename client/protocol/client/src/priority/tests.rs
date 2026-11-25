@@ -408,25 +408,27 @@ fn a_windows_thread_takes_its_level() {
 // Windows ignores IP_TOS: the control socket is marked by joining a qWAVE control flow, once
 // per socket, at its first send. qWAVE needs a route through an interface (loopback has none,
 // ERROR_NOT_FOUND), so the flow points at TEST-NET-1 over the default route; nothing is sent.
+// Unbound UDP sockets avoid triggering Windows Defender Firewall popups for hashed test binaries.
 #[cfg(windows)]
 #[test]
 fn the_windows_control_socket_joins_a_qwave_flow_once_per_socket() {
+    use socket2::{Domain, Protocol, SockAddr, Socket, Type};
     let to: std::net::SocketAddr = "192.0.2.1:47999".parse().unwrap();
-    let routed = |socket: &std::net::UdpSocket| socket.connect(to).is_ok();
-    let probe = std::net::UdpSocket::bind("0.0.0.0:0").unwrap();
-    if !routed(&probe) {
+    let unbound = || Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP)).unwrap();
+    let probe = unbound();
+    if probe.connect(&SockAddr::from(to)).is_err() {
         eprintln!("skipped: no default route");
         return;
     }
     let mut flow = open_control_flow(|m| panic!("{m}")).expect("qWAVE on Windows");
-    let socket = std::net::UdpSocket::bind("0.0.0.0:0").unwrap();
+    let socket = unbound();
     assert!(flow.add(&socket, to).expect("joins the flow"));
     assert!(flow.flow_id().is_some());
     assert!(!flow.add(&socket, to).unwrap(), "once per socket");
     // A moved control socket leaves the flow, and the new one joins at its first send.
     flow.remove();
     assert_eq!(flow.flow_id(), None);
-    let moved = std::net::UdpSocket::bind("0.0.0.0:0").unwrap();
+    let moved = unbound();
     assert!(flow.add(&moved, to).expect("the moved socket joins"));
     assert!(flow.flow_id().is_some());
     // A refusal is said once, and not retried for the same socket.

@@ -273,6 +273,8 @@ impl Forwarder {
         let (request_id, message) = {
             let mut table = self.inner.table();
             if table.ended {
+                drop(table);
+                device.close();
                 return Err(AttachError::Ended);
             }
             if table
@@ -280,6 +282,8 @@ impl Forwarder {
                 .iter()
                 .any(|e| e.attachment.is_active() && e.attachment.busid == described.busid)
             {
+                drop(table);
+                device.close();
                 return Err(AttachError::Busy);
             }
             let mut request_id = table.last_id.wrapping_add(1);
@@ -306,6 +310,8 @@ impl Forwarder {
                 name: attachment.name.clone(),
             });
             if !message.is_valid() || !rubylight_protocol::usbip::valid_busid(&attachment.busid) {
+                drop(table);
+                device.close();
                 return Err(AttachError::Invalid);
             }
             table.last_id = request_id;
@@ -319,10 +325,17 @@ impl Forwarder {
             (request_id, message)
         };
         if let Err(e) = (self.inner.send)(message) {
-            self.inner
-                .table()
-                .entries
-                .retain(|entry| entry.attachment.request_id != request_id);
+            let removed = {
+                let mut table = self.inner.table();
+                table
+                    .entries
+                    .iter()
+                    .position(|entry| entry.attachment.request_id == request_id)
+                    .map(|idx| table.entries.remove(idx))
+            };
+            if let Some(entry) = removed {
+                entry.device.close();
+            }
             return Err(AttachError::Send(e));
         }
         (self.inner.changed)();

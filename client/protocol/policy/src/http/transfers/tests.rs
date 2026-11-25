@@ -302,6 +302,33 @@ fn long_names_keep_their_extension() {
     // A long "extension" is part of the name.
     let dotted = format!("a.{}", "y".repeat(300));
     assert_eq!(upload_name(&dotted).encode_utf16().count(), MAX_NAME_UNITS);
+
+    // 200-unit .part names stay <= MAX_NAME_UNITS after suffixing '_'.
+    for raw in [
+        format!("{}.part", "a".repeat(195)),
+        format!("{}.part", "a".repeat(200)),
+        format!("{}.part{}", "a".repeat(195), "x".repeat(20)),
+    ] {
+        let name = upload_name(&raw);
+        assert!(name.encode_utf16().count() <= MAX_NAME_UNITS, "{name:?}");
+        assert!(!name.to_ascii_lowercase().ends_with(".part"), "{name:?}");
+    }
+
+    // All-space/dot prefixes that shorten to empty fall back to "file".
+    for raw in [
+        format!("{}a", " ".repeat(200)),
+        format!("{}{}", ".".repeat(200), "a".repeat(16)),
+    ] {
+        let name = upload_name(&raw);
+        assert!(!name.is_empty(), "{raw:?}");
+        assert_eq!(name, "file");
+    }
+
+    // Shortening must not recreate a Windows reserved device name.
+    let reserved = format!("CON{}a.txt", " ".repeat(197));
+    let name = upload_name(&reserved);
+    assert!(name.starts_with("_CON"), "expected _CON prefix, got {name:?}");
+    assert!(name.encode_utf16().count() <= MAX_NAME_UNITS);
 }
 
 

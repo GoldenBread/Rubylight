@@ -14,6 +14,8 @@ pub mod power;
 pub mod store;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_regressions;
 
 pub use identity::{IdentityStore, LoadedIdentity};
 pub use meta::{HostMetaEntry, HostMetaStore};

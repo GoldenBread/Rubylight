@@ -189,12 +189,17 @@ fn address_like(host: &str) -> bool {
     if !literal.contains(':') {
         return bare.is_none() && literal.bytes().all(name_char);
     }
-    let (address, zone) = literal.split_once('%').unwrap_or((literal, "a"));
-    address
-        .bytes()
-        .all(|b| b.is_ascii_hexdigit() || matches!(b, b':' | b'.'))
-        && !zone.is_empty()
-        && zone.bytes().all(name_char)
+    let (address, zone) = match literal.split_once('%') {
+        Some((addr, z)) => (addr, Some(z)),
+        None => (literal, None),
+    };
+    if address.parse::<core::net::Ipv6Addr>().is_err() {
+        return false;
+    }
+    match zone {
+        None => true,
+        Some(z) => !z.is_empty() && z.bytes().all(name_char),
+    }
 }
 
 /// Controls, Unicode's format characters (Cf), and what else draws nothing: combining and variation
@@ -530,5 +535,38 @@ mod tests {
             !text.contains("4821") && !text.contains("a&b=c d"),
             "{text}"
         );
+    }
+
+    #[test]
+    fn address_like_rejects_non_ipv6_colon_and_percent_spoofing() {
+        for bad in [
+            "192.168.4.2:80%2Eevil.example",
+            ":%2Eevil.example",
+            "192.168.4.2:47989",
+            "cafe.babe:443",
+            "[192.168.4.2:47989]",
+            "fe80::1%",
+        ] {
+            let uri = PairingUri {
+                host: bad.into(),
+                ..invitation()
+            }
+            .to_uri();
+            assert!(
+                PairingUri::parse(&uri).is_none(),
+                "must reject malformed host {bad:?}"
+            );
+        }
+        for good in ["192.168.4.2", "pc.local", "::1", "fe80::1%eth0", "[fe80::1%eth0]"] {
+            let uri = PairingUri {
+                host: good.into(),
+                ..invitation()
+            }
+            .to_uri();
+            assert!(
+                PairingUri::parse(&uri).is_some(),
+                "must accept valid host {good:?}"
+            );
+        }
     }
 }

@@ -514,9 +514,10 @@ impl WebPkiTransport {
         let mut current = url.clone();
         let mut current_method = method.to_owned();
         let mut current_body = body;
+        let mut current_headers: Vec<(String, String)> = headers.to_vec();
         for _ in 0..=MAX_REDIRECTS {
             let (status, location, retry_after, mut resp_body) =
-                self.send_request(&current_method, &current, headers, current_body)?;
+                self.send_request(&current_method, &current, &current_headers, current_body)?;
             if follow_redirects && matches!(status, 301 | 302 | 303 | 307 | 308) {
                 let Some(loc) = location else {
                     return Err(format!("redirect {status} without Location"));
@@ -526,6 +527,16 @@ impl WebPkiTransport {
                     .ok_or_else(|| format!("invalid redirect URL: {loc}"))?;
                 if !next.secure {
                     return Err("redirect downgraded off HTTPS".into());
+                }
+                if next.host != current.host || next.port != current.port {
+                    // Never leak credentials or API keys across origins on a redirect.
+                    current_headers.retain(|(k, _)| {
+                        !k.eq_ignore_ascii_case("authorization")
+                            && !k.eq_ignore_ascii_case("proxy-authorization")
+                            && !k.eq_ignore_ascii_case("cookie")
+                            && !k.eq_ignore_ascii_case("client-id")
+                            && !k.eq_ignore_ascii_case("x-api-key")
+                    });
                 }
                 if matches!(status, 301..=303) && current_method.eq_ignore_ascii_case("POST") {
                     current_method = "GET".to_owned();

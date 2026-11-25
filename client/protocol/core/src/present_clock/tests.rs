@@ -572,3 +572,46 @@ fn a_spacing_floor_that_is_not_an_interval_spaces_nothing() {
     let second = clock.schedule(rtp(1_111), 1_000_500);
     assert!(second.present_us >= first.present_us, "a negative floor spaces nothing and never goes back in time");
 }
+
+#[test]
+fn clock_offset_rejects_overflowing_wire_timestamps_without_panicking() {
+    let mut off = ClockOffset::default();
+    // Large valid u64 <= i64::MAX that would overflow (t1 - t2) + (t4 - t3) in i64.
+    let huge = 0x7fff_ffff_ffff_f000u64;
+    let reply = ClockSyncReply {
+        sequence: 1,
+        client_us: 1_000,
+        host_receive_us: huge,
+        host_send_us: huge,
+    };
+    let rtt = off.add(&reply, 2_000);
+    assert_eq!(rtt, Some(1_000));
+    let expected = 1_500i64 - huge as i64;
+    assert_eq!(off.offset_at(2_000), Some(expected));
+
+    // Extreme timestamps whose RTT or offset overflows i64 are rejected cleanly without panicking.
+    let bad_rtt = ClockSyncReply {
+        sequence: 2,
+        client_us: 1_000,
+        host_receive_us: 0,
+        host_send_us: 0x8000_0000_0000_0000,
+    };
+    assert_eq!(off.add(&bad_rtt, 2_000), None);
+    let bad_offset = ClockSyncReply {
+        sequence: 3,
+        client_us: i64::MAX as u64,
+        host_receive_us: i64::MIN as u64,
+        host_send_us: i64::MIN as u64,
+    };
+    assert_eq!(off.add(&bad_offset, i64::MAX as u64), None);
+
+    // Jump from huge negative offset to huge positive offset does not overflow abs().
+    let jump = ClockSyncReply {
+        sequence: 4,
+        client_us: huge,
+        host_receive_us: 1_000,
+        host_send_us: 1_000,
+    };
+    assert_eq!(off.add(&jump, huge + 500), Some(500));
+    assert_eq!(off.offset_at(huge as i64 + 500), Some(huge as i64 + 250 - 1_000));
+}

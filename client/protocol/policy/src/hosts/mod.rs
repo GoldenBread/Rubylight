@@ -12,8 +12,9 @@ pub mod record;
 pub mod sanitize;
 
 pub use address::{
-    DEFAULT_HTTP_PORT, EndpointSlot, HostSlots, PinnedAddress, is_site_local_ip,
-    is_site_local_ipv4, public_ipv4, sync_shared_from_slots, sync_slots_from_shared,
+    DEFAULT_HTTP_PORT, EndpointSlot, HostSlots, PinnedAddress, is_cgnat_ipv4, is_overlay_ip,
+    is_site_local_ip, is_site_local_ipv4, public_ipv4, sync_shared_from_slots,
+    sync_slots_from_shared,
 };
 pub use invite::{
     EXPIRED, INTERNET_OFF, InviteErrorKind, KNOWN_PC, NOT_AN_INVITE, REFUSED,
@@ -35,8 +36,8 @@ pub use poll::{
     HostReachState, INITIAL_POLL_TRIES, INTERNET_PLAY_READ_INTERVAL_MS, OFFLINE_POLL_TRIES,
     POLL_DATA_TTL_MS, PollErrorKind, PollOutcome, PollTupleState, ProbeCandidate,
     SERVERINFO_POLL_PERIOD_MS, accept_applist_response, is_internet_play_read_due,
-    next_applist_interval_ms, port_matches_active_address, probe_plan, punches_now,
-    should_clear_cert_on_unpair,
+    next_applist_interval_ms, port_matches_active_address, probe_plan, probe_plan_with_extras,
+    punches_now, should_clear_cert_on_unpair,
 };
 pub use power::{
     PC_POWER_REFUSAL_POLL_MS, PC_POWER_REFUSAL_READS, PcPowerStepAction, PowerFailureKind,

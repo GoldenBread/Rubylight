@@ -175,9 +175,9 @@ impl<D: BlockingDevice> UsbDevice for Blocking<D> {
     }
 
     fn close(&self) {
-        let (threads, queued) = {
+        let (was_closed, threads, queued) = {
             let mut lanes = self.inner.lanes();
-            lanes.closed = true;
+            let was_closed = std::mem::replace(&mut lanes.closed, true);
             for cancelled in lanes.running.values() {
                 cancelled.store(true, Ordering::SeqCst);
             }
@@ -186,7 +186,7 @@ impl<D: BlockingDevice> UsbDevice for Blocking<D> {
                 .values_mut()
                 .flat_map(|q| q.drain(..))
                 .collect();
-            (std::mem::take(&mut lanes.threads), queued)
+            (was_closed, std::mem::take(&mut lanes.threads), queued)
         };
         self.inner.wake.notify_all();
         drop(queued);
@@ -197,6 +197,14 @@ impl<D: BlockingDevice> UsbDevice for Blocking<D> {
                 let _ = thread.join();
             }
         }
-        self.inner.device.close();
+        if !was_closed {
+            self.inner.device.close();
+        }
+    }
+}
+
+impl<D: BlockingDevice> Drop for Blocking<D> {
+    fn drop(&mut self) {
+        UsbDevice::close(self);
     }
 }

@@ -24,14 +24,24 @@ const MAX_ROAM_INBOX: usize = 8;
 pub(super) fn datagram_lost(error: &io::Error) -> bool {
     #[cfg(windows)]
     const LOST: &[i32] = &[10050, 10051, 10052, 10064, 10065];
-    #[cfg(not(windows))]
-    const LOST: &[i32] = &[100, 101, 112, 113];
+    #[cfg(any(target_os = "macos", target_os = "ios", target_os = "freebsd"))]
+    const LOST: &[i32] = &[50, 51, 52, 64, 65];
+    #[cfg(not(any(
+        windows,
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "freebsd"
+    )))]
+    const LOST: &[i32] = &[100, 101, 102, 112, 113];
     matches!(
         error.kind(),
         io::ErrorKind::ConnectionReset
             | io::ErrorKind::ConnectionRefused
             | io::ErrorKind::ConnectionAborted
             | io::ErrorKind::AddrNotAvailable
+            | io::ErrorKind::NetworkDown
+            | io::ErrorKind::NetworkUnreachable
+            | io::ErrorKind::HostUnreachable
     ) || error
         .raw_os_error()
         .is_some_and(|code| LOST.contains(&code))
@@ -65,6 +75,9 @@ pub(super) fn enet_disconnect(datagram: &[u8]) -> Option<bool> {
 /// was last heard, and holds back a host disconnect so receives queued before it are not
 /// lost (Nightjar's disconnect intercept), handing it to ENet once they are processed.
 pub(super) struct ControlSocket {
+    /// Windows' marking: the qWAVE flow each socket joins at its first send. Declared BEFORE
+    /// `socket` so `ControlFlow::drop` removes the flow while the Winsock handle is still open.
+    pub(super) flow: Option<priority::ControlFlow>,
     pub(super) socket: UdpSocket,
     /// Roaming datagrams for [`crate::roaming::Roaming::handle_datagram`]; ENet would drop them.
     pub(super) roam_inbox: VecDeque<Vec<u8>>,
@@ -83,11 +96,16 @@ pub(super) struct ControlSocket {
     pub(super) marking: Option<Marking>,
     /// The QoS marking is on, for a socket the control thread moves to.
     pub(super) marked: bool,
-    /// Windows' marking: the qWAVE flow each socket joins at its first send. None elsewhere,
-    /// once the marking is off, or when qWAVE refused (said once).
-    pub(super) flow: Option<priority::ControlFlow>,
     pub(super) send_failures: SendFailures,
     pub(super) warn: Warn,
+}
+
+impl Drop for ControlSocket {
+    fn drop(&mut self) {
+        if let Some(flow) = &mut self.flow {
+            flow.remove();
+        }
+    }
 }
 
 /// Sends that failed with a code ENet treats as packet loss ([`datagram_lost`]): a streak is

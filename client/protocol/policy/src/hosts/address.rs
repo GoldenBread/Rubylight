@@ -179,6 +179,25 @@ pub fn sync_slots_from_shared(shared: &SharedHostFields, slots: &mut HostSlots) 
     }
 }
 
+/// Whether an IPv4 address is in RFC 6598 Shared Address Space (`100.64.0.0/10`),
+/// used by ISP CGNAT and overlay VPNs such as Tailscale.
+pub fn is_cgnat_ipv4(ip: Ipv4Addr) -> bool {
+    let [a, b, ..] = ip.octets();
+    a == 100 && (64..=127).contains(&b)
+}
+
+/// Whether an IP address belongs to a private overlay/VPN space (`100.64.0.0/10` CGNAT/Tailscale
+/// IPv4 or Tailscale's `fd7a:115c:a1e0::/48` IPv6 range).
+pub fn is_overlay_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => is_cgnat_ipv4(v4),
+        IpAddr::V6(v6) => {
+            let s = v6.segments();
+            s[0] == 0xfd7a && s[1] == 0x115c && s[2] == 0xa1e0
+        }
+    }
+}
+
 /// Whether an IPv4 address is site-local (RFC 1918 private: `10/8`, `172.16/12`, `192.168/16`),
 /// matching Java `Inet4Address.isSiteLocalAddress()`.
 pub fn is_site_local_ipv4(ip: Ipv4Addr) -> bool {
@@ -186,11 +205,14 @@ pub fn is_site_local_ipv4(ip: Ipv4Addr) -> bool {
 }
 
 /// Whether an IP address is site-local (RFC 1918 IPv4 or IPv6 ULA `fc00::/7` / site-local
-/// `fec0::/10`).
+/// `fec0::/10`, excluding Tailscale's `fd7a:115c:a1e0::/48` overlay range).
 pub fn is_site_local_ip(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(v4) => is_site_local_ipv4(v4),
         IpAddr::V6(v6) => {
+            if is_overlay_ip(IpAddr::V6(v6)) {
+                return false;
+            }
             let first = v6.segments()[0];
             (first & 0xfe00) == 0xfc00 || (first & 0xffc0) == 0xfec0
         }
@@ -198,10 +220,12 @@ pub fn is_site_local_ip(ip: IpAddr) -> bool {
 }
 
 /// Parses `text` as a publicly routable IPv4 address for remote reachability, returning `None`
-/// for private, loopback, link-local, unspecified, broadcast, multicast, or documentation IPs.
+/// for private, CGNAT/Tailscale (`100.64.0.0/10`), loopback, link-local, unspecified, broadcast,
+/// multicast, or documentation IPs.
 pub fn public_ipv4(text: &str) -> Option<String> {
     let address: Ipv4Addr = text.trim().parse().ok()?;
     let local = address.is_private()
+        || is_cgnat_ipv4(address)
         || address.is_loopback()
         || address.is_link_local()
         || address.is_unspecified()

@@ -642,19 +642,24 @@ fn parallel_poll_direct_prefers_higher_precedence_winner_and_cancels_loser() {
     let manual_listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let manual_port = manual_listener.local_addr().unwrap().port();
 
+    let (accepted_tx, accepted_rx) = mpsc::channel();
+    let (manual_ready_tx, manual_ready_rx) = mpsc::channel();
     let local_srv = std::thread::spawn(move || {
         let (mut sock, _) = local_listener.accept().unwrap();
+        // Wait until the slower manual candidate is demonstrably mid-request so CPU scheduling
+        // cannot cancel `nj-poll-1` before it connects.
+        let _ = manual_ready_rx.recv_timeout(Duration::from_secs(2));
         reply_http_xml(
             &mut sock,
             r#"<root status_code="200"><hostname>LocalPC</hostname><uniqueid>pc-1</uniqueid><state>MJ_SERVER_FREE</state><PairStatus>0</PairStatus><HttpsPort>47984</HttpsPort><ExternalPort>47989</ExternalPort></root>"#,
         );
     });
 
-    let (accepted_tx, accepted_rx) = mpsc::channel();
     let manual_srv = std::thread::spawn(move || {
         let (mut sock, _) = manual_listener.accept().unwrap();
         let _ = accepted_tx.send(());
         let _ = read_http_head(&mut sock);
+        let _ = manual_ready_tx.send(());
         let mut buf = [0u8; 64];
         while matches!(sock.read(&mut buf), Ok(n) if n > 0) {}
     });

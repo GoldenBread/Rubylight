@@ -107,13 +107,13 @@ impl PollCancel {
     }
 
     /// Marks this scope cancelled and aborts every currently registered [`HostClientCanceller`].
+    ///
+    /// Holds the registration mutex across `canceller.cancel()` so a finishing worker's
+    /// [`PollCancelGuard::drop`] cannot return its client to the pool until cancellation finishes.
     pub fn cancel(&self) {
-        let cancellers = {
-            let mut state = self.0.state.lock().unwrap_or_else(|e| e.into_inner());
-            self.0.cancelled.store(true, Ordering::Release);
-            std::mem::take(&mut state.cancellers)
-        };
-        for (_, canceller) in cancellers {
+        let mut state = self.0.state.lock().unwrap_or_else(|e| e.into_inner());
+        self.0.cancelled.store(true, Ordering::Release);
+        for (_, canceller) in state.cancellers.drain(..) {
             canceller.cancel();
         }
     }
@@ -331,11 +331,13 @@ pub fn parallel_poll_direct_cancellable(
     let (tx, rx) = mpsc::channel::<(usize, Result<PollIpSuccess, PollIpError>)>();
     let n = candidates.len();
     let mut results: Vec<Option<Result<PollIpSuccess, PollIpError>>> = vec![None; n];
-    let mut cancellers: Vec<Option<HostClientCanceller>> = Vec::with_capacity(n);
+    // Per-worker cancel scope synchronized with `pool.give_back` so a winner's cancellation
+    // never fires after a loser's client has already been returned to and reused from the pool.
+    let mut slot_cancels: Vec<Option<PollCancel>> = Vec::with_capacity(n);
 
     for (idx, cand) in candidates.iter().enumerate() {
         if cancel.is_some_and(PollCancel::is_cancelled) {
-            cancellers.push(None);
+            slot_cancels.push(None);
             results[idx] = Some(Err(PollIpError {
                 candidate: cand.clone(),
                 kind: PollErrorKind::Cancelled,
@@ -351,7 +353,7 @@ pub fn parallel_poll_direct_cancellable(
                         Some(g) => Some(g),
                         None => {
                             pool.give_back(&cand.address, cand.port, cert_der, pool_gen, client);
-                            cancellers.push(None);
+                            slot_cancels.push(None);
                             results[idx] = Some(Err(PollIpError {
                                 candidate: cand.clone(),
                                 kind: PollErrorKind::Cancelled,
@@ -363,7 +365,9 @@ pub fn parallel_poll_direct_cancellable(
                 } else {
                     None
                 };
-                cancellers.push(Some(client.canceller()));
+                let slot_cancel = PollCancel::new();
+                let slot_guard = slot_cancel.register(client.canceller());
+                slot_cancels.push(Some(slot_cancel));
                 let pool = Arc::clone(pool);
                 let cand_bg = cand.clone();
                 let expected = expected_uuid.map(ToOwned::to_owned);
@@ -373,6 +377,7 @@ pub fn parallel_poll_direct_cancellable(
                     .name(format!("nj-poll-{idx}"))
                     .spawn(move || {
                         let _cancel_guard = guard;
+                        let _slot_guard = slot_guard;
                         let res = try_poll_ip_with_client(
                             &client,
                             &cand_bg,
@@ -380,6 +385,7 @@ pub fn parallel_poll_direct_cancellable(
                             cert.is_some(),
                             likely_online,
                         );
+                        drop(_slot_guard);
                         drop(_cancel_guard);
                         pool.give_back(&cand_bg.address, cand_bg.port, cert.as_deref(), pool_gen, client);
                         let _ = tx.send((idx, res));
@@ -393,7 +399,7 @@ pub fn parallel_poll_direct_cancellable(
                 }
             }
             Err(err) => {
-                cancellers.push(None);
+                slot_cancels.push(None);
                 results[idx] = Some(Err(PollIpError {
                     candidate: cand.clone(),
                     kind: classify_http_error(&err),
@@ -422,7 +428,7 @@ pub fn parallel_poll_direct_cancellable(
             }
         }
         if let Some(win_i) = winner_idx {
-            for (j, cancel) in cancellers.iter().enumerate() {
+            for (j, cancel) in slot_cancels.iter().enumerate() {
                 if j > win_i
                     && results[j].is_none()
                     && let Some(c) = cancel

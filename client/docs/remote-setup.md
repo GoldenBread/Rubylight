@@ -22,6 +22,16 @@ Long-press a saved PC, choose **PC settings…**, then **Play away from home**. 
 
 A VPN still works where this cannot: two routers that both change ports per destination can't be punched through. Turn the setting off to never look up or punch a path.
 
+## Home network, Tailscale/VPN and Internet
+
+Nightjar distinguishes three kinds of address when polling a PC and choosing stream settings:
+
+- **Home network (LAN):** private RFC 1918 IPv4 addresses (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`) and standard local IPv6 ranges (`fc00::/7`, `fe80::/10`, excluding Tailscale's overlay prefix).
+- **Private overlay VPN (Tailscale / CGNAT):** `100.64.0.0/10` (RFC 6598 Shared Address Space) and Tailscale's `fd7a:115c:a1e0::/48` IPv6 prefix. These are **not** treated as public WAN addresses and **not** treated as LAN; Nightjar keeps conservative VPN packet sizing (`1024` bytes) and skips LAN-only probes.
+- **Public Internet (WAN):** publicly routable IPv4/IPv6 addresses (port forwarding) and punched **Play over the internet** paths.
+
+When a PC has multiple addresses (for example a home LAN IP, a Tailscale `100.x.y.z` IP, and an IPv6 or forwarded WAN address), Nightjar keeps the extra addresses alongside the primary slots and probes them in precedence order (**local LAN → manual/VPN → IPv6 → remote WAN → extra saved addresses**, then **Play over the internet** punch only when direct paths fail). Adding a third address preserves earlier endpoints instead of overwriting them, and pinning an address restricts polling to that single endpoint.
+
 ## Test from Windows and Linux
 
 In the PC's details, **Play away from home → Remote access → Test this PC** runs the same five-request check of the paired PC. The Tailscale setup steps are the same as above.

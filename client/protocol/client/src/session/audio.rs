@@ -338,7 +338,22 @@ impl AudioStream {
         } else {
             (None, Some(renderer))
         };
-        let socket = socket.try_clone()?;
+        let cleanup_renderer = |mut r: Box<dyn AudioRenderer>| {
+            r.stop();
+            r.cleanup();
+        };
+        let socket = match socket.try_clone() {
+            Ok(s) => s,
+            Err(e) => {
+                if let Some(r) = direct {
+                    cleanup_renderer(r);
+                }
+                if let Some(r) = queued {
+                    cleanup_renderer(r);
+                }
+                return Err(e);
+            }
+        };
         let mut stream = Self {
             shared: shared.clone(),
             stop: stop.clone(),
@@ -347,7 +362,7 @@ impl AudioStream {
         };
         let receive_shared = shared.clone();
         let decode_session = session.clone();
-        stream.receive = Some(std::thread::Builder::new().name("AudioRecv".into()).spawn(
+        match std::thread::Builder::new().name("AudioRecv".into()).spawn(
             move || {
                 session.prioritize_thread();
                 receive_thread(
@@ -360,7 +375,15 @@ impl AudioStream {
                     stop,
                 )
             },
-        )?);
+        ) {
+            Ok(t) => stream.receive = Some(t),
+            Err(e) => {
+                if let Some(r) = queued {
+                    cleanup_renderer(r);
+                }
+                return Err(e);
+            }
+        }
         if let Some(mut renderer) = queued {
             stream.decode = Some(std::thread::Builder::new().name("AudioDec".into()).spawn(
                 move || {
@@ -377,8 +400,7 @@ impl AudioStream {
         Ok(stream)
     }
 
-    /// Stops and joins the threads and returns the renderer for `stop` and `cleanup`.
-    pub fn stop(mut self) -> Option<Box<dyn AudioRenderer>> {
+    fn shutdown_inner(&mut self) -> Option<Box<dyn AudioRenderer>> {
         self.stop.store(true, Ordering::Release);
         self.shared.queue.shutdown();
         let mut renderer = self.receive.take().and_then(|t| t.join().ok()).flatten();
@@ -386,6 +408,20 @@ impl AudioStream {
             renderer = thread.join().ok().or(renderer);
         }
         renderer
+    }
+
+    /// Stops and joins the threads and returns the renderer for `stop` and `cleanup`.
+    pub fn stop(mut self) -> Option<Box<dyn AudioRenderer>> {
+        self.shutdown_inner()
+    }
+}
+
+impl Drop for AudioStream {
+    fn drop(&mut self) {
+        if let Some(mut renderer) = self.shutdown_inner() {
+            renderer.stop();
+            renderer.cleanup();
+        }
     }
 }
 

@@ -2,10 +2,10 @@
 //! renaming, network-change reset, and unit tests for [`super::manager::HostManager`].
 
 use std::io;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::sync::atomic::Ordering;
 
-use nightjar_policy::hosts::{EndpointSlot, HostReachState, probe_plan, punches_now};
+use nightjar_policy::hosts::{EndpointSlot, HostReachState, probe_plan_with_extras, punches_now};
 
 use crate::http::{ServerInfo, certificate_sha256_der, pem_decode_certificate};
 use crate::internet;
@@ -35,13 +35,29 @@ pub(super) struct PollCommitOutcome {
 }
 
 impl HostManager {
+    fn get_tuple(&self, uuid: &str) -> Option<Arc<Mutex<ManagedTuple>>> {
+        self.inner
+            .tuples
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(uuid)
+            .cloned()
+    }
+
     /// Probes a user-entered/discovered candidate entry, verifies it, persists it, and begins polling.
     pub fn add_computer_blocking(&self, mut candidate: HostEntry) -> Option<HostSnapshot> {
         if !candidate.has_android_slots() {
             candidate.sync_slots_from_shared();
         }
         let slots = candidate.slots();
-        let probes = probe_plan(&slots, true, None, 0);
+        let probes = probe_plan_with_extras(
+            &slots,
+            &candidate.shared.other_addresses,
+            candidate.shared.http_port,
+            true,
+            None,
+            0,
+        );
         let direct = parallel_poll_direct_cancellable(
             &self.inner.pool,
             &probes,
@@ -85,7 +101,14 @@ impl HostManager {
             candidate.sync_slots_from_shared();
         }
         let slots = candidate.slots();
-        let probes = probe_plan(&slots, true, None, 0);
+        let probes = probe_plan_with_extras(
+            &slots,
+            &candidate.shared.other_addresses,
+            candidate.shared.http_port,
+            true,
+            None,
+            0,
+        );
         let direct = parallel_poll_direct_cancellable(
             &self.inner.pool,
             &probes,
@@ -157,17 +180,14 @@ impl HostManager {
             }
         }
         candidate.sync_shared_from_slots();
+        let _rem_guard = self.inner.removal_lock.lock().unwrap_or_else(|e| e.into_inner());
         let mut snap = self.upsert_tuple(candidate);
         let uuid = win.info.unique_id.clone();
-        if let Some(arc) = self
-            .inner
-            .tuples
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .get(&uuid)
-            .cloned()
-        {
+        if let Some(arc) = self.get_tuple(&uuid) {
             let mut t = arc.lock().unwrap_or_else(|e| e.into_inner());
+            if t.removal_tombstone {
+                return snap;
+            }
             t.poll_state.record_poll_success(self.now_ms());
             apply_server_info(&mut t.snapshot, &win.info, win.candidate.port, &win.candidate);
             t.snapshot.state = HostReachState::Online;
@@ -195,9 +215,10 @@ impl HostManager {
                 reply.as_ref(),
             );
             t.snapshot.entry.sync_shared_from_slots();
-            let _ = self.inner.store.upsert(t.snapshot.entry.clone());
+            let _ = self.inner.store.replace_entry(t.snapshot.entry.clone());
             snap = t.snapshot.clone();
         }
+        drop(_rem_guard);
         self.emit(&snap);
         snap
     }
@@ -236,12 +257,7 @@ impl HostManager {
         let cert_der = self
             .get_snapshot(uuid)
             .and_then(|s| s.entry.server_certificate_der())
-            .or_else(|| {
-                self.inner
-                    .store
-                    .get_by_uuid(uuid)
-                    .and_then(|e| e.server_certificate_der())
-            });
+            .or_else(|| self.inner.store.get_by_uuid(uuid).and_then(|e| e.server_certificate_der()));
         let existing_sha = cert_der.map(|der| certificate_sha256_der(&der));
         nightjar_policy::hosts::invite_claims_known_pc(existing_sha, link_fp_sha256)
     }
@@ -267,11 +283,7 @@ impl HostManager {
             }
             self.inner.pool.clear();
             if let Some(h) = handle {
-                let mut stopping = self
-                    .inner
-                    .stopping_threads
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner());
+                let mut stopping = self.inner.stopping_threads.lock().unwrap_or_else(|e| e.into_inner());
                 stopping.retain(|existing| !existing.is_finished());
                 stopping.push(h);
             }
@@ -283,58 +295,69 @@ impl HostManager {
         Ok(())
     }
 
-    pub fn pin_address(&self, uuid: &str, endpoint: Option<EndpointSlot>) -> io::Result<()> {
-        let _ = self.inner.meta.set_pinned(uuid, endpoint.clone())?;
-        if let Some(arc) = self
-            .inner
-            .tuples
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .get(uuid)
-            .cloned()
-        {
-            let snap = {
+    fn mutate_live_tuple(
+        &self,
+        uuid: &str,
+        f: impl FnOnce(&mut ManagedTuple) -> io::Result<()>,
+    ) -> io::Result<()> {
+        let snap = {
+            let _rem_guard = self.inner.removal_lock.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(arc) = self.get_tuple(uuid) {
                 let mut t = arc.lock().unwrap_or_else(|e| e.into_inner());
-                t.snapshot.pinned_endpoint = endpoint.clone();
-                t.snapshot.entry.pinned_endpoint = endpoint.clone();
-                t.snapshot.entry.shared.pinned_address =
-                    endpoint.as_ref().map(|e| e.address.clone());
-                if let Some(ref ep) = endpoint {
-                    t.snapshot.active_endpoint = Some(ep.clone());
+                if t.removal_tombstone {
+                    return Ok(());
                 }
-                let _ = self.inner.store.upsert(t.snapshot.entry.clone());
-                t.snapshot.clone()
-            };
+                f(&mut t)?;
+                Some(t.snapshot.clone())
+            } else {
+                None
+            }
+        };
+        if let Some(snap) = snap {
             self.emit(&snap);
         }
         Ok(())
     }
 
+    pub fn pin_address(&self, uuid: &str, endpoint: Option<EndpointSlot>) -> io::Result<()> {
+        self.mutate_live_tuple(uuid, |t| {
+            let _ = self.inner.meta.set_pinned(uuid, endpoint.clone())?;
+            t.snapshot.pinned_endpoint = endpoint.clone();
+            t.snapshot.entry.pinned_endpoint = endpoint.clone();
+            t.snapshot.entry.shared.pinned_address = endpoint.as_ref().map(|e| e.address.clone());
+            if let Some(ref ep) = endpoint {
+                t.snapshot.active_endpoint = Some(ep.clone());
+            }
+            let _ = self.inner.store.replace_entry(t.snapshot.entry.clone());
+            Ok(())
+        })
+    }
+
     pub fn forget_certificate(&self, uuid: &str) -> io::Result<()> {
-        if let Some(arc) = self
-            .inner
-            .tuples
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .get(uuid)
-            .cloned()
-        {
-            let snap = {
+        let snap = {
+            let _rem_guard = self.inner.removal_lock.lock().unwrap_or_else(|e| e.into_inner());
+            let snap = if let Some(arc) = self.get_tuple(uuid) {
                 let mut t = arc.lock().unwrap_or_else(|e| e.into_inner());
+                if t.removal_tombstone {
+                    return Ok(());
+                }
                 t.snapshot.entry.shared.server_certificate = None;
                 t.snapshot.entry.shared.internet_play = None;
                 t.snapshot.paired = false;
-                t.snapshot.clone()
+                Some(t.snapshot.clone())
+            } else {
+                None
             };
-            self.emit(&snap);
-        }
-        let _rem_guard = self.inner.removal_lock.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(mut saved) = self.inner.store.get_by_uuid(uuid) {
-            let changed = saved.shared.server_certificate.take().is_some()
-                | saved.shared.internet_play.take().is_some();
-            if changed {
-                let _ = self.inner.store.upsert(saved)?;
+            if let Some(mut saved) = self.inner.store.get_by_uuid(uuid)
+                && (saved.shared.server_certificate.take().is_some()
+                    | saved.shared.internet_play.take().is_some())
+            {
+                let _ = self.inner.store.replace_entry(saved)?;
             }
+            snap
+        };
+        if let Some(snap) = snap {
+            self.emit(&snap);
         }
         internet::stop(uuid);
         self.inner.pool.clear();
@@ -343,43 +366,27 @@ impl HostManager {
 
     /// Updates a host's STUN-resolved remote endpoint and clears `needs_vpn_stun`.
     pub fn set_remote_endpoint(&self, uuid: &str, remote: Option<EndpointSlot>) -> io::Result<()> {
-        if let Some(arc) = self
-            .inner
-            .tuples
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .get(uuid)
-            .cloned()
-        {
-            let snap = {
-                let mut t = arc.lock().unwrap_or_else(|e| e.into_inner());
-                t.snapshot.entry.remote_endpoint = remote.clone();
-                t.snapshot.needs_vpn_stun = false;
-                t.snapshot.entry.sync_shared_from_slots();
-                let _ = self.inner.store.upsert(t.snapshot.entry.clone())?;
-                t.snapshot.clone()
-            };
-            self.emit(&snap);
-        }
-        Ok(())
+        self.mutate_live_tuple(uuid, |t| {
+            t.snapshot.entry.remote_endpoint = remote;
+            t.snapshot.needs_vpn_stun = false;
+            t.snapshot.entry.sync_shared_from_slots();
+            let _ = self.inner.store.replace_entry(t.snapshot.entry.clone())?;
+            Ok(())
+        })
     }
 
     /// Resets a single host's reachability state to [`HostReachState::Unknown`].
     pub fn invalidate_state(&self, uuid: &str) {
-        let Some(arc) = self
-            .inner
-            .tuples
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .get(uuid)
-            .cloned()
-        else {
+        let Some(arc) = self.get_tuple(uuid) else {
             return;
         };
-        let net_lock = {
-            let t = arc.lock().unwrap_or_else(|e| e.into_inner());
-            Arc::clone(&t.network_lock)
+        let (net_lock, cancel) = {
+            let mut t = arc.lock().unwrap_or_else(|e| e.into_inner());
+            (Arc::clone(&t.network_lock), t.active_cancel.take())
         };
+        if let Some(c) = cancel {
+            c.cancel();
+        }
         let _net_guard = net_lock.lock().unwrap_or_else(|e| e.into_inner());
         let snap = {
             let mut t = arc.lock().unwrap_or_else(|e| e.into_inner());
@@ -396,26 +403,22 @@ impl HostManager {
 
     /// Imports or clears stored `internet_play` JSON for `uuid` (e.g. legacy Android migration).
     pub fn import_internet_play(&self, uuid: &str, reply_json: Option<&str>) -> io::Result<()> {
-        if let Some(arc) = self
-            .inner
-            .tuples
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .get(uuid)
-            .cloned()
-        {
+        let _rem_guard = self.inner.removal_lock.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(arc) = self.get_tuple(uuid) {
             let mut t = arc.lock().unwrap_or_else(|e| e.into_inner());
+            if t.removal_tombstone {
+                return Ok(());
+            }
             if t.snapshot.entry.shared.internet_play.as_deref() != reply_json {
                 t.snapshot.entry.shared.internet_play = reply_json.map(ToOwned::to_owned);
-                let _ = self.inner.store.upsert(t.snapshot.entry.clone())?;
+                let _ = self.inner.store.replace_entry(t.snapshot.entry.clone())?;
             }
         }
-        let _rem_guard = self.inner.removal_lock.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(mut saved) = self.inner.store.get_by_uuid(uuid)
             && saved.shared.internet_play.as_deref() != reply_json
         {
             saved.shared.internet_play = reply_json.map(ToOwned::to_owned);
-            self.inner.store.upsert(saved)?;
+            self.inner.store.replace_entry(saved)?;
         }
         Ok(())
     }
@@ -426,49 +429,26 @@ impl HostManager {
             .map(pem_decode_certificate)
             .transpose()
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e.to_string()))?;
-        if let Some(arc) = self
-            .inner
-            .tuples
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .get(uuid)
-            .cloned()
-        {
-            let snap = {
-                let mut t = arc.lock().unwrap_or_else(|e| e.into_inner());
-                t.poll_state.has_polled_successfully = false;
-                t.snapshot.entry.set_server_certificate_der(der.as_deref());
-                t.snapshot.paired = der.is_some();
-                let _ = self.inner.store.upsert(t.snapshot.entry.clone());
-                t.snapshot.clone()
-            };
-            self.emit(&snap);
-        }
+        self.mutate_live_tuple(uuid, |t| {
+            t.poll_state.has_polled_successfully = false;
+            t.snapshot.entry.set_server_certificate_der(der.as_deref());
+            t.snapshot.paired = der.is_some();
+            let _ = self.inner.store.replace_entry(t.snapshot.entry.clone());
+            Ok(())
+        })?;
         self.inner.pool.clear();
         Ok(())
     }
 
     pub fn rename_computer(&self, uuid: &str, alias: Option<&str>) -> io::Result<()> {
-        let _ = self.inner.meta.set_alias(uuid, alias)?;
         let normalized = nightjar_policy::hosts::HostNames::normalize_alias(alias, None);
-        if let Some(arc) = self
-            .inner
-            .tuples
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .get(uuid)
-            .cloned()
-        {
-            let snap = {
-                let mut t = arc.lock().unwrap_or_else(|e| e.into_inner());
-                t.snapshot.alias = normalized.clone();
-                t.snapshot.entry.shared.alias = normalized;
-                let _ = self.inner.store.upsert(t.snapshot.entry.clone());
-                t.snapshot.clone()
-            };
-            self.emit(&snap);
-        }
-        Ok(())
+        self.mutate_live_tuple(uuid, |t| {
+            let _ = self.inner.meta.set_alias(uuid, alias)?;
+            t.snapshot.alias = normalized.clone();
+            t.snapshot.entry.shared.alias = normalized;
+            let _ = self.inner.store.replace_entry(t.snapshot.entry.clone());
+            Ok(())
+        })
     }
 
     /// Clears pooled clients and internet tunnels after an OS network transition, skipping any
@@ -483,11 +463,14 @@ impl HostManager {
             .values()
             .cloned()
             .collect();
+        // Cancel all in-flight polls upfront so per-host `network_lock` waits do not stall.
+        for arc in &arcs {
+            if let Some(c) = arc.lock().unwrap_or_else(|e| e.into_inner()).active_cancel.take() {
+                c.cancel();
+            }
+        }
         for arc in arcs {
-            let net_lock = {
-                let t = arc.lock().unwrap_or_else(|e| e.into_inner());
-                std::sync::Arc::clone(&t.network_lock)
-            };
+            let net_lock = Arc::clone(&arc.lock().unwrap_or_else(|e| e.into_inner()).network_lock);
             let _net_guard = net_lock.lock().unwrap_or_else(|e| e.into_inner());
             let (uuid, snap) = {
                 let mut t = arc.lock().unwrap_or_else(|e| e.into_inner());
@@ -537,8 +520,10 @@ impl HostManager {
         let cert_der = candidate.server_certificate_der();
         let slots = candidate.slots();
         let active_port = active_endpoint.as_ref().map(|e| e.port);
-        let probes = probe_plan(
+        let probes = probe_plan_with_extras(
             &slots,
+            &candidate.shared.other_addresses,
+            candidate.shared.http_port,
             initial_state == HostReachState::Online,
             active_port,
             candidate.shared.https_port,
@@ -682,6 +667,20 @@ pub(super) fn apply_server_info(
     snap.server_info = Some(info.clone());
 }
 
+fn replace_slot_keeping_other(
+    dst: &mut Option<EndpointSlot>,
+    src: Option<EndpointSlot>,
+    others: &mut Vec<String>,
+) {
+    if let Some(next) = src
+        && let Some(prev) = dst.replace(next)
+        && dst.as_ref().is_some_and(|n| n.address != prev.address)
+        && !others.contains(&prev.address)
+    {
+        others.push(prev.address);
+    }
+}
+
 pub(super) fn merge_entry_in_memory(dst: &mut HostEntry, src: HostEntry) {
     if !src.shared.name.is_empty() {
         dst.shared.name = src.shared.name;
@@ -689,17 +688,16 @@ pub(super) fn merge_entry_in_memory(dst: &mut HostEntry, src: HostEntry) {
     if src.shared.mac.is_some() {
         dst.shared.mac = src.shared.mac;
     }
-    if src.local_endpoint.is_some() {
-        dst.local_endpoint = src.local_endpoint;
-    }
-    if src.manual_endpoint.is_some() {
-        dst.manual_endpoint = src.manual_endpoint;
-    }
+    replace_slot_keeping_other(&mut dst.local_endpoint, src.local_endpoint, &mut dst.shared.other_addresses);
+    replace_slot_keeping_other(&mut dst.manual_endpoint, src.manual_endpoint, &mut dst.shared.other_addresses);
     if src.ipv6_endpoint.is_some() {
         dst.ipv6_endpoint = src.ipv6_endpoint;
     }
-    if src.remote_endpoint.is_some() {
-        dst.remote_endpoint = src.remote_endpoint;
+    replace_slot_keeping_other(&mut dst.remote_endpoint, src.remote_endpoint, &mut dst.shared.other_addresses);
+    for addr in src.shared.other_addresses {
+        if !addr.is_empty() && !dst.shared.other_addresses.contains(&addr) {
+            dst.shared.other_addresses.push(addr);
+        }
     }
     if src.pinned_endpoint.is_some() {
         dst.pinned_endpoint = src.pinned_endpoint;
@@ -759,7 +757,7 @@ impl HostManager {
                     reply.as_ref(),
                 );
                 t.snapshot.entry.sync_shared_from_slots();
-                let _ = self.inner.store.upsert(t.snapshot.entry.clone());
+                let _ = self.inner.store.replace_entry(t.snapshot.entry.clone());
                 t.snapshot != prev
             }
             None => {

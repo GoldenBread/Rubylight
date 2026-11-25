@@ -659,3 +659,37 @@ fn legacy_android_prefs_import_once_and_never_overwrite() {
     );
     std::fs::remove_dir_all(dir).ok();
 }
+
+#[test]
+fn failed_set_pin_and_hand_over_keep_prior_memory_and_lockout_intact() {
+    let (store, _, dir) = store("write-fail-rollback");
+    store.set_pin_with(b"1234", 1_000).unwrap();
+    store.set_mode(Mode::App);
+    store.flush();
+    for _ in 0..5 {
+        let _ = store.try_pin(b"0000");
+    }
+    assert_eq!(store.locked_for_ms(), 30_000);
+
+    // Replace `pin_lock.json` with a non-empty directory so `write_file` (rename) fails on all OSes.
+    std::fs::remove_file(dir.join(FILE)).unwrap();
+    std::fs::create_dir(dir.join(FILE)).unwrap();
+    std::fs::write(dir.join(FILE).join("blocker"), b"x").unwrap();
+
+    assert!(store.set_pin_with(b"98765", 1_000).is_err());
+    assert!(store.hand_over().is_err());
+
+    // Neither the PIN length nor the active lockout counter was clobbered in memory.
+    assert_eq!(store.pin_length(), 4);
+    assert_eq!(store.locked_for_ms(), 30_000);
+    assert!(!store.handed_over("0000"));
+    assert_eq!(
+        store.try_pin(b"98765"),
+        Outcome::Locked {
+            locked_for_ms: 30_000
+        }
+    );
+
+    drop(store);
+    std::fs::remove_dir_all(dir).ok();
+}
