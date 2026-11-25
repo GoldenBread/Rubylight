@@ -322,6 +322,7 @@ pub(crate) fn choose_renderer_gpu(
 ) -> (bool, bool) {
     #[cfg(any(target_os = "macos", windows))]
     let _ = (settings, hosts, profiles);
+    #[cfg(any(target_os = "macos", windows))]
     let gpu = false; // Start the launcher in SDR (8-bit BGRA on Windows, Metal SDR on macOS); streams switch as needed.
     #[cfg(not(any(target_os = "macos", windows)))]
     let gpu = settings.needs_gpu() || hosts.iter()
@@ -330,7 +331,7 @@ pub(crate) fn choose_renderer_gpu(
     #[cfg(target_os = "linux")]
     let vulkan_choice = vulkan_video::Choice::from_environment();
     #[cfg(target_os = "linux")]
-    let vulkan_video = vulkan_video_possible(any_hardware_decoding(&settings, hosts.iter()
+    let vulkan_video = vulkan_video_possible(any_hardware_decoding(settings, hosts.iter()
         .flat_map(|host| host.settings.iter().chain(host.app_settings.values()))
         .chain(profiles.entries.iter().map(|profile| &profile.settings))), vulkan_choice, vaapi_map_switched_on());
     // The Renderer setting decides, and at Auto what needs the GPU renderer.
