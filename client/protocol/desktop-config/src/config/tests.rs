@@ -57,6 +57,44 @@ fn the_automatic_start_defaults_to_the_pcs_and_keeps_its_state_over_a_restart() 
 }
 
 #[test]
+fn forget_host_empty_or_punctuation_keys_never_wipe_other_hosts_art() {
+    let dir = std::env::temp_dir().join(format!("nightjar-forget-empty-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let store = Store::at(dir.clone()).unwrap();
+    let real_art = store.art_path("pc-real", 7, "v1");
+    std::fs::create_dir_all(real_art.parent().unwrap()).unwrap();
+    std::fs::write(&real_art, b"cover").unwrap();
+    let real_lib = store.library_path("pc-real");
+    std::fs::create_dir_all(real_lib.parent().unwrap()).unwrap();
+    std::fs::write(&real_lib, "{}").unwrap();
+    let dots_art = store.art_path("...", 1, "");
+    std::fs::create_dir_all(dots_art.parent().unwrap()).unwrap();
+    std::fs::write(&dots_art, b"dots").unwrap();
+    let under_art = store.art_path("___", 1, "");
+    std::fs::create_dir_all(under_art.parent().unwrap()).unwrap();
+    std::fs::write(&under_art, b"under").unwrap();
+
+    // Distinct non-empty safe keys for punctuation-only IDs; empty never collapses to `.json`.
+    assert_ne!(store.library_path("..."), store.library_path("___"));
+    assert_ne!(store.library_path("").file_name().unwrap(), ".json");
+    assert_ne!(store.classic_apps_path("...").file_name().unwrap(), ".json");
+    assert_ne!(store.art_path("", 1, "").parent().unwrap(), dir.join("art"));
+
+    // Forgetting empty or punctuation-only IDs must never wipe `art/` or other hosts.
+    store.forget_host("", &[], &[]);
+    assert!(real_art.exists(), "forget_host(\"\") must not wipe art/");
+    assert!(real_lib.exists());
+    assert!(dots_art.exists());
+    assert!(under_art.exists());
+
+    store.forget_host("...", &[], &[]);
+    assert!(!dots_art.exists(), "forgetting \"...\" removes only its own art folder");
+    assert!(under_art.exists(), "forgetting \"...\" preserves \"___\"");
+    assert!(real_art.exists(), "forgetting \"...\" preserves normal hosts");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn recents_survive_a_restart() {
     let dir = std::env::temp_dir().join(format!("nightjar-recent-{}", std::process::id()));
     let store = Store::at(dir.clone()).unwrap();

@@ -177,7 +177,7 @@ pub(crate) fn simple_current(s: &Settings, display: &Display, _caps: &simple::Ca
     // never set leaves the stream SDR, so the row reads Off through the mapping (simple_hdr's
     // Auto is only a choice once HDR is actually asked for).
     simple::Current {
-        native_resolution: s.width == 0 && s.height == 0,
+        native_resolution: s.width == 0 && s.height == 0 && crate::stream_types::normalize_native_scale(s.native_scale) == 100,
         fps,
         pacing,
         vrr: s.vrr && vrr_offered,
@@ -207,7 +207,7 @@ pub(crate) fn simple_apply(s: &mut Settings, display: &Display, caps: &simple::C
     let values = simple::values(choices, caps);
     (s.simple_smoothness, s.simple_picture, s.simple_hdr) = (choices.smoothness, choices.picture, choices.hdr);
     // The simple layer streams at this screen's own size and refresh rate.
-    (s.width, s.height) = (0, 0);
+    (s.width, s.height, s.native_scale) = (0, 0, 100);
     s.fps = values.fps.unwrap_or(0);
     s.frame_pacing = match values.pacing {
         simple::Pacing::Latency => FramePacing::Latency,

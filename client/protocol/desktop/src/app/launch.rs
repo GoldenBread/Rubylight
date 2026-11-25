@@ -306,7 +306,10 @@ impl App {
                 match result {
                     ProbeResult::ColorAndBase { color, base } => {
                         if let Some((key, found)) = color { self.color_probed = Some((key, found)); }
-                        if let Some((key, found)) = base { self.base_probed = Some((key, found)); }
+                        if let Some((key, found)) = base {
+                            let sticky = base_probe_sticky(key, &found);
+                            self.base_probed = Some(CachedBaseProbe { key, result: found, sticky });
+                        }
                     }
                     ProbeResult::Packed(decoded) => {
                         // The draw and readback belong to the renderer's own thread: its targets do.
@@ -530,9 +533,9 @@ impl App {
         let base_wanted = stream::base_probe_formats(&native);
         let base_key = probe_key(hardware, base_wanted, &native);
         let cached_color = self.color_probed.as_ref().filter(|(key, _)| *key == color_key).map(|(_, found)| found.clone());
-        let cached_base = self.base_probed.as_ref().filter(|(key, _)| *key == base_key).map(|(_, found)| found.clone());
+        let base_present = self.base_probed.as_ref().is_some_and(|entry| entry.key == base_key);
         let color_missing = color_asked && cached_color.is_none();
-        let base_missing = hardware != Hardware::None && cached_base.is_none();
+        let base_missing = hardware != Hardware::None && !base_present;
         if color_missing || base_missing {
             self.decoder_probe(
                 ProbeWork::ColorAndBase {
@@ -549,7 +552,8 @@ impl App {
         let color_decodable = if color_asked { cached_color.unwrap_or_default() } else { (0, String::new()) };
         let plain_decodable = match hardware {
             Hardware::None => stream::color_probe::Base::software(),
-            _ => cached_base.unwrap_or_else(stream::color_probe::Base::software),
+            _ => take_or_get_base_probe(&mut self.base_probed, base_key)
+                .unwrap_or_else(stream::color_probe::Base::software),
         };
         // An update on either side since the PC refused full chroma: it is asked again. Written
         // before the packed check, whose answer the renewed record changes.

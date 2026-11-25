@@ -437,6 +437,9 @@ pub(super) fn draw_controls_sections(
                 response
             });
         }
+        setting_row(ui, s, rows, &["windowed_launcher"], "Windowed launcher", "Opens Nightjar’s menus in an ordinary window even when Window is Fullscreen or Borderless. Streams still use your Window setting. Turn it on if you move Nightjar between monitors before starting a stream.", |ui, s| {
+            toggle(ui, &mut s.windowed_launcher)
+        });
         // Home's card size, which a PC's library and All games follow too: Small or Medium.
         setting_row(ui, s, rows, &["home_card_size"], "Use small box art", "Fits more games on screen in a PC’s library.", |ui, s| {
             let mut small = s.home_card_size == crate::config::CardSize::Small;

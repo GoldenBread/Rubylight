@@ -217,7 +217,7 @@ pub(in crate::ui) fn setting_row(
     control: impl FnOnce(&mut Ui, &mut Settings) -> Response,
 ) -> Option<Response> {
     let (action, mut note, room) = (rows.action.take(), rows.note.take(), std::mem::take(&mut rows.room));
-    let (reason, held) = (rows.idle.take(), std::mem::take(&mut rows.held));
+    let (reason, held, defer_reset) = (rows.idle.take(), std::mem::take(&mut rows.held), std::mem::take(&mut rows.defer_reset));
     // A row that does nothing now still shows while it holds another value than its default, or
     // the PC's, game's or profile's layer sets it, so the value can be seen and set back.
     // Worked out only for a row that does nothing now: it formats both values.
@@ -309,9 +309,13 @@ pub(in crate::ui) fn setting_row(
                 value
             });
             if reset {
-                let mut defaults = Overrides::default();
-                defaults.capture(&rows.defaults, keys);
-                *settings = defaults.apply(settings);
+                if defer_reset {
+                    rows.reset_clicked = true;
+                } else {
+                    let mut defaults = Overrides::default();
+                    defaults.capture(&rows.defaults, keys);
+                    *settings = defaults.apply(settings);
+                }
             }
             response
         }

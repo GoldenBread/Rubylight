@@ -39,6 +39,9 @@ pub struct Settings {
     /// 0x0 is the display's native resolution.
     pub width: u32,
     pub height: u32,
+    /// Relative-to-Native resolution scale in percent (100 is full native; 0 reads as 100).
+    /// Applies while `width == 0 || height == 0`, preserving the active monitor's aspect ratio.
+    pub native_scale: u32,
     /// 0 is the display's refresh rate.
     pub fps: u32,
     /// 0 picks a bitrate for the resolution and rate.
@@ -86,6 +89,9 @@ pub struct Settings {
     /// Ask the PC for PCM audio instead of Opus (`pipeline::passthrough_codecs`).
     pub audio_passthrough: bool,
     pub window_mode: WindowMode,
+    /// Keep the desktop launcher in an ordinary window even when `window_mode` is Fullscreen or
+    /// Borderless; streams still use `window_mode`. Ignored under gamescope and KMS.
+    pub windowed_launcher: bool,
     pub video_scaling: VideoScaling,
     pub align_video_top: bool,
     /// The display has variable refresh (G-Sync, FreeSync, HDMI VRR).

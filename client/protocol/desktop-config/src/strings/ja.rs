@@ -1,9 +1,4 @@
-// Japanese text for the launcher and the stream menu, keyed by the English literal. Worded like
-// the Android app's Japanese strings, which give many of these sentences word for word.
-// An entry with one {} keeps it. An entry with several uses {0}, {1}, ... for the arguments in
-// the order of the English text, wherever they fall in the sentence (a test checks it).
-// Leading spaces and line breaks match the English.
-
+// ja text for the launcher and stream menu, keyed by English literal ({}, {0}, {1}...).
 pub const TABLE: &[(&str, &str)] = &[
     ("When Nightjar opens", "Nightjarの起動時"),
     ("The desktop portal did not answer.", "デスクトップポータルから応答がありませんでした。"),
@@ -1747,4 +1742,7 @@ sudo sysctl -w net.core.rmem_max={}", "受信バッファー：システムは�
     ("Controllers is Off in the profile {}, so no controller reaches the PC.", "プロファイル{}で「コントローラ」がオフのため、コントローラーは PC に届きません。"),
     ("Controllers is set to Off for this PC, so no controller reaches it.", "この PC では「コントローラ」がオフに設定されているため、コントローラーは届きません。"),
     ("Controllers is set to Off for this game, so no controller reaches the PC.", "このゲームでは「コントローラ」がオフに設定されているため、コントローラーは PC に届きません。"),
+    ("Native {}% ({}x{})", "ネイティブ {0}%（{1}x{2}）"),
+    ("Windowed launcher", "ランチャーをウィンドウ表示"),
+    ("Opens Nightjar’s menus in an ordinary window even when Window is Fullscreen or Borderless. Streams still use your Window setting. Turn it on if you move Nightjar between monitors before starting a stream.", "ウィンドウがフルスクリーンまたはボーダーレスでも、Nightjar のメニューを通常のウィンドウで開きます。ストリームでは引き続きウィンドウの設定が使われます。ストリーム開始前に Nightjar を別のモニターへ移動する場合はオンにしてください。"),
 ];

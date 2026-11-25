@@ -532,19 +532,20 @@ impl Store {
         } else {
             format!("{app_id}-{version}.img")
         };
-        self.dir.join("art").join(sanitize(host)).join(name)
+        self.dir.join("art").join(host_path_segment(host)).join(name)
     }
 
     /// The last native library a PC sent, for Home while the PC is away or not polled yet.
     pub fn library(&self, host: &str) -> Option<NativeLibrary> {
+        let _ = host_key(host)?;
         read_json(&self.library_path(host))
     }
 
     pub fn save_library(&self, host: &str, library: &NativeLibrary) -> std::io::Result<()> {
-        let path = self.library_path(host);
-        if self.read_only {
+        if self.read_only || host_key(host).is_none() {
             return Ok(());
         }
+        let path = self.library_path(host);
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir)?;
         }
@@ -554,14 +555,15 @@ impl Store {
     /// The last app list a PC without the native library sent, for Home while the PC is away or
     /// not polled yet (Android keeps the same per PC). None when nothing usable is saved.
     pub fn classic_apps(&self, host: &str) -> Option<ClassicApps> {
+        let _ = host_key(host)?;
         read_json::<ClassicApps>(&self.classic_apps_path(host))
     }
 
     pub fn save_classic_apps(&self, host: &str, apps: &ClassicApps) -> std::io::Result<()> {
-        let path = self.classic_apps_path(host);
-        if self.read_only {
+        if self.read_only || host_key(host).is_none() {
             return Ok(());
         }
+        let path = self.classic_apps_path(host);
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir)?;
         }
@@ -569,14 +571,14 @@ impl Store {
     }
 
     pub fn forget_classic_apps(&self, host: &str) {
-        if !self.read_only {
+        if !self.read_only && host_key(host).is_some() {
             let _ = std::fs::remove_file(self.classic_apps_path(host));
         }
     }
 
     /// The saved native library and app list of a PC.
     pub fn forget_library(&self, host: &str) {
-        if !self.read_only {
+        if !self.read_only && host_key(host).is_some() {
             let _ = std::fs::remove_file(self.library_path(host));
         }
         self.forget_classic_apps(host);
@@ -591,8 +593,11 @@ impl Store {
         favourites: &[Favourite],
     ) -> (Vec<Recent>, Vec<Favourite>) {
         self.forget_library(host);
-        if !self.read_only {
-            let _ = std::fs::remove_dir_all(self.dir.join("art").join(sanitize(host)));
+        if !self.read_only
+            && let Some(key) = host_key(host)
+            && !key.is_empty()
+        {
+            let _ = std::fs::remove_dir_all(self.dir.join("art").join(key));
         }
         let mut open_play = self.open_play();
         if open_play.game.as_ref().is_some_and(|g| g.host == host) {
@@ -617,14 +622,37 @@ impl Store {
     }
 
     pub(super) fn library_path(&self, host: &str) -> PathBuf {
-        self.dir.join("library").join(format!("{}.json", sanitize(host)))
+        self.dir.join("library").join(format!("{}.json", host_path_segment(host)))
     }
 
     pub(super) fn classic_apps_path(&self, host: &str) -> PathBuf {
-        self.dir.join("apps").join(format!("{}.json", sanitize(host)))
+        self.dir.join("apps").join(format!("{}.json", host_path_segment(host)))
     }
 }
 
 fn sanitize(name: &str) -> String {
     name.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-').collect()
+}
+
+/// Non-empty, filesystem-safe cache key for `host`, or `None` when `host` is empty.
+/// Keeps the existing ASCII alphanumeric/hyphen name for standard UUIDs, and hashes non-empty IDs
+/// that contain only stripped characters so they never collapse to an empty path (`art/` or `.json`).
+fn host_key(host: &str) -> Option<String> {
+    if host.is_empty() {
+        return None;
+    }
+    let clean = sanitize(host);
+    if !clean.is_empty() {
+        return Some(clean);
+    }
+    let mut hash: u64 = 0xcbf29ce484222325;
+    for &b in host.as_bytes() {
+        hash ^= u64::from(b);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    Some(format!("h-{hash:016x}"))
+}
+
+fn host_path_segment(host: &str) -> String {
+    host_key(host).unwrap_or_else(|| "h-empty".to_owned())
 }

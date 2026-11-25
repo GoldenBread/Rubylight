@@ -21,7 +21,7 @@ pub(super) fn draw_video_sections(
     let (gpu_mode, ten_bit) = (ctx.gpu_mode, ctx.ten_bit);
     let gpu_probe = move |ui: &Ui| run_gpu_probe(ui, probe_device, gpu_mode, ten_bit);
     let screen = ctx.screen;
-    if open == en("Recommended") {
+    if !ctx.layered && (open == en("Recommended") || rows.searching()) {
         rows.section(ui, en("Recommended"));
         if !ctx.hdr_probed {
             if let Some(probe) = ctx.hdr_display_probe {
@@ -34,6 +34,7 @@ pub(super) fn draw_video_sections(
         let (mut choices, custom) = simple_state(s, &display, &caps, vrr_offered);
         let mut smoothness = choices.smoothness;
         let smoothness_text = if custom { tr("Custom") } else { tr(simple_smoothness_name(smoothness)) };
+        rows.defer_reset();
         setting_row(ui, s, rows, &["simple_smoothness"], "Stream smoothness",
             "Auto follows the screen and decoder: the newest picture at each refresh, with variable refresh rate where the screen offers it. Smoothest holds every frame for a steady cadence with a little more delay; Lowest delay never waits. Leave it on Auto unless a game judders or feels slow.",
             |ui, s| {
@@ -51,10 +52,15 @@ pub(super) fn draw_video_sections(
                 }
                 response
             });
+        if rows.take_reset() {
+            choices.smoothness = simple::Smoothness::Auto;
+            simple_apply(s, &display, &caps, choices);
+        }
         // Picture quality
         let (mut choices, custom) = simple_state(s, &display, &caps, vrr_offered);
         let mut picture = choices.picture;
         let picture_text = if custom { tr("Custom") } else { tr(simple_picture_name(picture)) };
+        rows.defer_reset();
         setting_row(ui, s, rows, &["simple_picture"], "Picture quality",
             "Sets the bitrate: Best spends more network for a sharper picture, Save data uses less and lowers quality when the link struggles. Leave it on Auto unless you need the extra sharpness or the lower data use.",
             |ui, s| {
@@ -72,6 +78,10 @@ pub(super) fn draw_video_sections(
                 }
                 response
             });
+        if rows.take_reset() {
+            choices.picture = simple::Picture::Auto;
+            simple_apply(s, &display, &caps, choices);
+        }
         // The screen the simple layer streams at: this one, read-only.
         rows.action("simple_screen");
         setting_row(ui, s, rows, &[], "Screen",
@@ -81,6 +91,7 @@ pub(super) fn draw_video_sections(
         let (mut choices, custom) = simple_state(s, &display, &caps, vrr_offered);
         let mut hdr = choices.hdr;
         let hdr_text = if custom { tr("Custom") } else { tr(simple_hdr_name(hdr)) };
+        rows.defer_reset();
         setting_row(ui, s, rows, &["simple_hdr"], "HDR",
             "Brighter highlights and richer color on an HDR screen. Auto turns it on only where this screen, the decoder and the PC support it; leave it on Auto unless HDR looks washed out.",
             |ui, s| {
@@ -98,6 +109,10 @@ pub(super) fn draw_video_sections(
                 }
                 response
             });
+        if rows.take_reset() {
+            choices.hdr = simple::Hdr::Off;
+            simple_apply(s, &display, &caps, choices);
+        }
         // Console mode: the existing Home start screen, not a second launcher.
         rows.action("simple_console");
         let mut console = start_screen(s) == StartScreen::Home;
@@ -127,34 +142,48 @@ pub(super) fn draw_video_sections(
     }
 
     rows.section(ui, en("Video"));
+    let native_scale = crate::stream_types::normalize_native_scale(s.native_scale);
     let native = trf("Native ({}x{})", &[&display.width, &display.height]);
+    let scaled_label = |pct: u32| {
+        let (w, h) = crate::stream_types::scaled_native_resolution(display, pct);
+        trf("Native {}% ({}x{})", &[&pct, &w, &h])
+    };
     let custom_size = s.width != 0 && (*custom_size_on == Some(screen) || !RESOLUTIONS.contains(&(s.width, s.height)));
     let current = if s.width == 0 {
-        native.clone()
+        if native_scale == 100 { native.clone() } else { scaled_label(native_scale) }
     } else if custom_size {
         trf("Custom ({}x{})", &[&s.width, &s.height])
     } else {
         format!("{}x{}", s.width, s.height)
     };
     let mut chose = None;
-    setting_row(ui, s, rows, &["width", "height"], "Resolution", "The picture size the PC sends. Higher is sharper and needs more network and decoding power; lower it if the stream stutters.", |ui, s| {
+    setting_row(ui, s, rows, &["width", "height", "native_scale"], "Resolution", "The picture size the PC sends. Higher is sharper and needs more network and decoding power; lower it if the stream stutters.", |ui, s| {
         // Taller than egui's default menu; it scrolls where the window is shorter.
         Combo::from_id_salt("resolution")
             .selected_text(current)
             .height(640.0)
             .show_ui(ui, |ui| {
-                let mut v = (s.width, s.height);
-                if ui.selectable_value(&mut v, (0, 0), native).clicked() {
-                    ((s.width, s.height), chose) = (v, Some(false));
+                if ui.selectable_label(s.width == 0 && native_scale == 100, native).clicked() {
+                    ((s.width, s.height, s.native_scale), chose) = ((0, 0, 100), Some(false));
+                }
+                for pct in crate::stream_types::NATIVE_SCALES {
+                    let (sw, sh) = crate::stream_types::scaled_native_resolution(display, pct);
+                    if (sw, sh) != (display.width, display.height)
+                        && ui.selectable_label(s.width == 0 && native_scale == pct, scaled_label(pct)).clicked()
+                    {
+                        ((s.width, s.height, s.native_scale), chose) = ((0, 0, pct), Some(false));
+                    }
                 }
                 for (w, h) in RESOLUTIONS {
-                    let mut v = (s.width, s.height);
-                    if ui.selectable_value(&mut v, (w, h), format!("{w}x{h}")).clicked() {
-                        ((s.width, s.height), chose) = (v, Some(false));
+                    if ui.selectable_label(s.width == w && s.height == h, format!("{w}x{h}")).clicked() {
+                        ((s.width, s.height, s.native_scale), chose) = ((w, h, 100), Some(false));
                     }
                 }
                 if ui.selectable_label(custom_size, tr("Custom…")).clicked() {
-                    if s.width == 0 { (s.width, s.height) = (display.width, display.height); }
+                    if s.width == 0 {
+                        (s.width, s.height) = crate::stream_types::scaled_native_resolution(display, native_scale);
+                        s.native_scale = 100;
+                    }
                     chose = Some(true);
                 }
             })
@@ -165,7 +194,7 @@ pub(super) fn draw_video_sections(
     // Stepping onto a preset keeps the row.
     if s.width != 0 && (*custom_size_on == Some(screen) || !RESOLUTIONS.contains(&(s.width, s.height))) {
         let before = (s.width, s.height);
-        setting_row(ui, s, rows, &["width", "height"], "Custom resolution", "Width and height in pixels.", |ui, s| {
+        setting_row(ui, s, rows, &["width", "height", "native_scale"], "Custom resolution", "Width and height in pixels.", |ui, s| {
             ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
                 step_value(ui, &mut s.width, 320..=7680, 16.0, |d| d);
                 ui.label("×");

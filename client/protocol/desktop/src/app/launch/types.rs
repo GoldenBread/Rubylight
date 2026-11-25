@@ -36,6 +36,45 @@ pub(crate) fn probe_key(hardware: Hardware, wanted: u32, settings: &config::Sett
     (hardware, wanted, settings.vulkan_video_first)
 }
 
+/// Cached result of `color_probe::probe_base`. A transient V4L2 M2M failure (Nightjar #77) is
+/// kept only for the launch that ran the probe (`sticky == false`) and cleared on consumption so
+/// later launches probe again instead of locking out HEVC for the rest of the run.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct CachedBaseProbe {
+    pub(crate) key: ProbeKey,
+    pub(crate) result: stream::color_probe::Base,
+    pub(crate) sticky: bool,
+}
+
+/// Whether `probe_base`'s result should stay cached across future launches.
+pub(crate) fn base_probe_sticky(key: ProbeKey, found: &stream::color_probe::Base) -> bool {
+    let (hardware, wanted, _) = key;
+    if wanted & !found.decodable == 0 {
+        return true;
+    }
+    let v4l2_label = Hardware::V4l2m2m.label();
+    let v4l2_in_play = hardware == Hardware::V4l2m2m
+        || found.backends.iter().any(|&(_, backend)| backend == Hardware::V4l2m2m)
+        || found.reason.contains(v4l2_label);
+    !v4l2_in_play
+}
+
+/// Reads the cached base probe for `key`, consuming a one-shot (`!sticky`) entry so the launch
+/// that ran the probe proceeds immediately while the next launch re-probes.
+pub(crate) fn take_or_get_base_probe(
+    cache: &mut Option<CachedBaseProbe>,
+    key: ProbeKey,
+) -> Option<stream::color_probe::Base> {
+    if !cache.as_ref().is_some_and(|entry| entry.key == key) {
+        return None;
+    }
+    if cache.as_ref().is_some_and(|entry| entry.sticky) {
+        cache.as_ref().map(|entry| entry.result.clone())
+    } else {
+        cache.take().map(|entry| entry.result)
+    }
+}
+
 /// Whether a start goes on waiting for the window's HDR report: while it can still come, until
 /// the deadline its first call sets in `wait`.
 pub(crate) fn hdr_wait_goes_on(wait: &mut Option<Instant>, now: Instant, may_come: bool) -> bool {

@@ -61,12 +61,39 @@ pub fn without_vrr(settings: &Settings) -> PacingMode {
     }
 }
 
+/// Relative-to-Native scale steps offered in the desktop Resolution menu below full Native (100%).
+pub const NATIVE_SCALES: [u32; 2] = [75, 50];
+
+/// Normalizes a saved `native_scale` percentage: `0` and values `>= 100` mean full Native (100%),
+/// smaller values stay within `25..=100`.
+pub fn normalize_native_scale(scale_percent: u32) -> u32 {
+    if scale_percent == 0 || scale_percent >= 100 {
+        100
+    } else {
+        scale_percent.clamp(25, 100)
+    }
+}
+
+/// Even-aligned stream resolution for `scale_percent` of `display`'s native size.
+/// Preserves the active display's aspect ratio while enforcing encoder-safe even dimensions
+/// floored at 320x240.
+pub fn scaled_native_resolution(display: Display, scale_percent: u32) -> (u32, u32) {
+    let pct = normalize_native_scale(scale_percent);
+    let (w, h) = if pct == 100 {
+        (display.width, display.height)
+    } else {
+        let scale = |v: u32| ((u64::from(v) * u64::from(pct) + 50) / 100) as u32;
+        (scale(display.width), scale(display.height))
+    };
+    ((w.max(320) + 1) & !1, (h.max(240) + 1) & !1)
+}
+
 /// The stream's resolution, rate and bitrate from the settings and display. The bitrate is the one
 /// for the chosen codec (`start_bitrate`), PyroWave's own while PyroWave is chosen, as the settings
 /// show it; a launch decides by what it offers the PC (`offers_pyrowave`).
 pub fn stream_mode(settings: &Settings, display: Display) -> (u32, u32, u32, u32) {
     let (mut w, mut h) = if settings.width == 0 || settings.height == 0 {
-        (display.width, display.height)
+        scaled_native_resolution(display, settings.native_scale)
     } else {
         (settings.width, settings.height)
     };

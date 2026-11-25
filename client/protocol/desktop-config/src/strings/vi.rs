@@ -1,9 +1,4 @@
-// Vietnamese text for the launcher and the stream menu, keyed by the English literal. Worded like
-// the Android app's Vietnamese strings, which give many of these sentences word for word.
-// An entry with one {} keeps it. An entry with several uses {0}, {1}, ... for the arguments in
-// the order of the English text, wherever they fall in the sentence (a test checks it).
-// Leading spaces and line breaks match the English.
-
+// vi text for the launcher and stream menu, keyed by English literal ({}, {0}, {1}...).
 pub const TABLE: &[(&str, &str)] = &[
     ("When Nightjar opens", "Khi Nightjar mở"),
     ("The desktop portal did not answer.", "Cổng màn hình nền không phản hồi."),
@@ -1747,4 +1742,7 @@ sudo sysctl -w net.core.rmem_max={}", "Bộ đệm nhận: hệ thống chỉ c�
     ("Controllers is Off in the profile {}, so no controller reaches the PC.", "Tay cầm điều khiển đang Tắt trong hồ sơ {}, nên không tay cầm nào đến được PC."),
     ("Controllers is set to Off for this PC, so no controller reaches it.", "Tay cầm điều khiển được đặt Tắt cho PC này, nên không tay cầm nào đến được nó."),
     ("Controllers is set to Off for this game, so no controller reaches the PC.", "Tay cầm điều khiển được đặt Tắt cho trò chơi này, nên không tay cầm nào đến được PC."),
+    ("Native {}% ({}x{})", "Gốc {0}% ({1}x{2})"),
+    ("Windowed launcher", "Trình khởi chạy dạng cửa sổ"),
+    ("Opens Nightjar’s menus in an ordinary window even when Window is Fullscreen or Borderless. Streams still use your Window setting. Turn it on if you move Nightjar between monitors before starting a stream.", "Mở các menu của Nightjar trong cửa sổ thông thường ngay cả khi Cửa sổ được đặt là Toàn màn hình hoặc Không viền. Luồng phát vẫn dùng cài đặt Cửa sổ của bạn. Bật tùy chọn này nếu bạn hay kéo Nightjar sang màn hình khác trước khi bắt đầu phát."),
 ];

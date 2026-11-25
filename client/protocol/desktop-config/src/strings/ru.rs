@@ -1,9 +1,4 @@
-// Russian text for the launcher and the stream menu, keyed by the English literal. Worded like
-// the Android app's Russian strings, which give many of these sentences word for word.
-// An entry with one {} keeps it. An entry with several uses {0}, {1}, ... for the arguments in
-// the order of the English text, wherever they fall in the sentence (a test checks it).
-// Leading spaces and line breaks match the English.
-
+// ru text for the launcher and stream menu, keyed by English literal ({}, {0}, {1}...).
 pub const TABLE: &[(&str, &str)] = &[
     ("When Nightjar opens", "При запуске Nightjar"),
     ("The desktop portal did not answer.", "Портал рабочего стола не ответил."),
@@ -1747,4 +1742,7 @@ sudo sysctl -w net.core.rmem_max={}", "Буфер приёма: система �
     ("Controllers is Off in the profile {}, so no controller reaches the PC.", "«Контроллеры» выключены в профиле {}, поэтому ни один контроллер не попадает на ПК."),
     ("Controllers is set to Off for this PC, so no controller reaches it.", "«Контроллеры» выключены для этого ПК, поэтому ни один контроллер до него не доходит."),
     ("Controllers is set to Off for this game, so no controller reaches the PC.", "«Контроллеры» выключены для этой игры, поэтому ни один контроллер не попадает на ПК."),
+    ("Native {}% ({}x{})", "Исходное {0}% ({1}x{2})"),
+    ("Windowed launcher", "Меню в окне"),
+    ("Opens Nightjar’s menus in an ordinary window even when Window is Fullscreen or Borderless. Streams still use your Window setting. Turn it on if you move Nightjar between monitors before starting a stream.", "Открывает меню Nightjar в обычном окне, даже если для параметра Окно выбрано Полный экран или Без рамки. Потоки по-прежнему используют выбранный режим Окно. Включите, если переносите Nightjar между мониторами перед запуском потока."),
 ];

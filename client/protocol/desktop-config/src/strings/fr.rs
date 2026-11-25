@@ -1,9 +1,4 @@
-// French text for the launcher and the stream menu, keyed by the English literal. Worded like
-// the Android app's French strings, which give many of these sentences word for word.
-// An entry with one {} keeps it. An entry with several uses {0}, {1}, ... for the arguments in
-// the order of the English text, wherever they fall in the sentence (a test checks it).
-// Leading spaces and line breaks match the English.
-
+// fr text for the launcher and stream menu, keyed by English literal ({}, {0}, {1}...).
 pub const TABLE: &[(&str, &str)] = &[
     ("When Nightjar opens", "À l’ouverture de Nightjar"),
     ("The desktop portal did not answer.", "Le portail du bureau n'a pas répondu."),
@@ -1747,4 +1742,7 @@ sudo sysctl -w net.core.rmem_max={}", "Tampon de réception : le système a acco
     ("Controllers is Off in the profile {}, so no controller reaches the PC.", "Manettes est désactivé dans le profil {}, donc aucune manette n’atteint le PC."),
     ("Controllers is set to Off for this PC, so no controller reaches it.", "Manettes est désactivé pour ce PC, donc aucune manette ne lui parvient."),
     ("Controllers is set to Off for this game, so no controller reaches the PC.", "Manettes est désactivé pour ce jeu, donc aucune manette n’atteint le PC."),
+    ("Native {}% ({}x{})", "Native {0} % ({1}x{2})"),
+    ("Windowed launcher", "Lanceur fenêtré"),
+    ("Opens Nightjar’s menus in an ordinary window even when Window is Fullscreen or Borderless. Streams still use your Window setting. Turn it on if you move Nightjar between monitors before starting a stream.", "Ouvre les menus de Nightjar dans une fenêtre ordinaire même lorsque Fenêtre est réglé sur Plein écran ou Sans bordure. Les flux continuent d’utiliser votre réglage Fenêtre. Activez-le si vous déplacez Nightjar entre vos écrans avant de lancer un flux."),
 ];

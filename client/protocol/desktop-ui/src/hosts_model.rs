@@ -232,7 +232,7 @@ impl Host {
     }
 
     pub fn art_wanted(&self, app: i32, version: &str) -> bool {
-        !self.has_art(app) || self.art_versions.get(&app).is_none_or(|known| !known.is_empty() && known != version && !version.is_empty())
+        !self.has_art(app) || self.art_versions.get(&app).is_none_or(|known| known != version && !version.is_empty())
     }
 
     fn has_art(&self, app: i32) -> bool {
@@ -244,7 +244,7 @@ impl Host {
 
     pub fn begin_art(&mut self, app: i32, version: &str) -> Option<String> {
         let known = self.art_versions.get(&app);
-        if known.is_some_and(|known| !known.is_empty() && !version.is_empty() && known != version) {
+        if known.is_some_and(|known| !version.is_empty() && known != version) {
             self.art.remove(&app);
             self.ambient.remove(&app);
             self.ambient_glow.remove(&app);
@@ -696,5 +696,19 @@ pub mod tests {
         listed.extend(features.iter().map(|f| serde_json::Value::from(*f)));
         value["permissions"]["shared_folders"] = shared_folders.into();
         serde_json::from_value(value).unwrap()
+    }
+
+    #[test]
+    fn empty_version_cover_art_is_replaced_when_versioned_cover_arrives() {
+        let mut host = super::Host::new(1, super::HostRecord::default());
+        assert!(host.art_wanted(7, ""));
+        assert_eq!(host.begin_art(7, ""), Some(String::new()));
+        assert!(!host.art_wanted(7, ""), "same empty version does not re-fetch");
+        assert!(host.art_wanted(7, "v1"), "non-empty version must replace initial empty-version art");
+        assert_eq!(host.begin_art(7, "v1"), Some("v1".to_owned()));
+        assert!(!host.art_wanted(7, "v1"));
+        assert!(!host.art_wanted(7, ""), "empty version never replaces a known versioned cover");
+        assert!(host.art_wanted(7, "v2"), "newer version replaces earlier version");
+        assert_eq!(host.begin_art(7, "v2"), Some("v2".to_owned()));
     }
 }

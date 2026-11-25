@@ -171,8 +171,8 @@ struct App {
     /// switch drops it.
     color_probed: Option<(ProbeKey, (u32, String))>,
     /// The plain HEVC and AV1 decoder check (`color_probe::probe_base`), kept the same way for
-    /// the decoder and the formats it checked.
-    base_probed: Option<(ProbeKey, stream::color_probe::Base)>,
+    /// the decoder and the formats it checked (one-shot when V4L2 M2M missed a wanted format).
+    base_probed: Option<app::CachedBaseProbe>,
     /// Linux's renderer as it was made ([`RendererState`]).
     #[cfg(target_os = "linux")]
     renderer_state: RendererState,
@@ -318,9 +318,15 @@ fn main() {
             std::process::exit(64);
         }
     }
+    // Before `logpipe::start` spawns threads: `std::env::set_var` is only sound while
+    // single-threaded on POSIX.
+    let env_notes = startup::prepare_process_env();
     // After the package check, which must not write to the user's log.
     logpipe::start(graphics_restarted);
     let _log = logpipe::Guard;
+    for line in env_notes {
+        eprintln!("{line}");
+    }
     #[cfg(windows)]
     match logfile::logs_dir() {
         Ok(dir) => crash_dump::install(&dir),

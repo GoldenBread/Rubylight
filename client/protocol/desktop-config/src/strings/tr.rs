@@ -1,9 +1,4 @@
-// Turkish text for the launcher and the stream menu, keyed by the English literal. Worded like
-// the Android app's Turkish strings, which give many of these sentences word for word.
-// An entry with one {} keeps it. An entry with several uses {0}, {1}, ... for the arguments in
-// the order of the English text, wherever they fall in the sentence (a test checks it).
-// Leading spaces and line breaks match the English.
-
+// tr text for the launcher and stream menu, keyed by English literal ({}, {0}, {1}...).
 pub const TABLE: &[(&str, &str)] = &[
     ("When Nightjar opens", "Nightjar açıldığında"),
     ("The desktop portal did not answer.", "Masaüstü portalı yanıt vermedi."),
@@ -1747,4 +1742,7 @@ sudo sysctl -w net.core.rmem_max={}", "Alma arabelleği: sistem istenen {1} KiB'
     ("Controllers is Off in the profile {}, so no controller reaches the PC.", "{} profilinde Kumandalar Kapalı, bu yüzden PC’ye hiçbir kumanda ulaşmıyor."),
     ("Controllers is set to Off for this PC, so no controller reaches it.", "Bu PC için Kumandalar Kapalı olarak ayarlı, bu yüzden ona hiçbir kumanda ulaşmıyor."),
     ("Controllers is set to Off for this game, so no controller reaches the PC.", "Bu oyun için Kumandalar Kapalı olarak ayarlı, bu yüzden PC’ye hiçbir kumanda ulaşmıyor."),
+    ("Native {}% ({}x{})", "Yerel %{0} ({1}x{2})"),
+    ("Windowed launcher", "Pencereli başlatıcı"),
+    ("Opens Nightjar’s menus in an ordinary window even when Window is Fullscreen or Borderless. Streams still use your Window setting. Turn it on if you move Nightjar between monitors before starting a stream.", "Pencere ayarı Tam ekran veya Kenarlıksız olsa bile Nightjar menülerini normal bir pencerede açar. Yayınlar Pencere ayarınızı kullanmaya devam eder. Yayını başlatmadan önce Nightjar’ı monitörler arasında taşıyorsanız bunu açın."),
 ];

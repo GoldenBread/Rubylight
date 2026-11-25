@@ -185,6 +185,31 @@ pub(crate) fn start_flags(start: handheld::StartWindow) -> SDL_WindowFlags {
         | if start.borderless { SDL_WINDOW_BORDERLESS } else { SDL_WindowFlags(0) }
 }
 
+/// Deduplicates repeated PyroWave GPU probe failure log lines while Settings is open.
+pub(crate) fn should_log_pyrowave_probe_error(
+    last: &mut Option<(bool, String)>,
+    ten_bit: bool,
+    reason: &str,
+) -> bool {
+    let unchanged = last.as_ref().is_some_and(|(prev_bit, prev_reason)| *prev_bit == ten_bit && prev_reason == reason);
+    if unchanged {
+        return false;
+    }
+    *last = Some((ten_bit, reason.to_owned()));
+    true
+}
+
+fn log_pyrowave_probe_error(ten_bit: bool, reason: &str) {
+    static LAST: std::sync::Mutex<Option<(bool, String)>> = std::sync::Mutex::new(None);
+    let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
+    if should_log_pyrowave_probe_error(&mut last, ten_bit, reason) {
+        eprintln!(
+            "nightjar: pyrowave: GPU probe failed ({}): {reason}",
+            if ten_bit { "10-bit" } else { "8-bit" }
+        );
+    }
+}
+
 /// Registers crate-level callback hooks before SDL and the UI initialize.
 pub(crate) fn register_hooks() {
     font_loader::register();
@@ -193,7 +218,11 @@ pub(crate) fn register_hooks() {
     shortcuts_runtime::register_hooks();
     platform_hooks::register(platform_hooks::PlatformHooks {
         pyrowave_probe: |device, ten_bit| {
-            stream::pyrowave_mode::settings_probe(device as *mut std::ffi::c_void, ten_bit)
+            let result = stream::pyrowave_mode::settings_probe(device as *mut std::ffi::c_void, ten_bit);
+            if let Some(Err(ref reason)) = result {
+                log_pyrowave_probe_error(ten_bit, reason);
+            }
+            result
         },
         enhance_probe: |device| {
             stream::enhance::settings_probe(device as *mut std::ffi::c_void)
@@ -228,6 +257,32 @@ pub(crate) fn register_hooks() {
     });
 }
 
+/// Sets process environment variables inspected by gamescope's WSI layer and Mesa before
+/// `logpipe::start` spawns threads (`std::env::set_var` is only sound while single-threaded on
+/// POSIX). Returns diagnostic lines to print once the log pipe is open.
+pub(crate) fn prepare_process_env() -> Vec<String> {
+    let mut notes = Vec::new();
+    // Before Vulkan loads: gamescope's layer without its socket would block the swapchain.
+    if handheld::gamescope() {
+        let socket = handheld::gamescope_socket(
+            std::env::var_os("XDG_RUNTIME_DIR").as_deref(),
+            std::env::var_os("GAMESCOPE_WAYLAND_DISPLAY").as_deref(),
+        );
+        if handheld::gamescope_layer_off(socket.as_deref(), std::path::Path::exists) {
+            notes.push(format!(
+                "nightjar: gamescope: its socket {} is not reachable here, so gamescope's Vulkan layer is off (DISABLE_GAMESCOPE_WSI=1) and the output is SDR",
+                socket.unwrap_or_default().display()
+            ));
+            // SAFETY: called in `main` before `logpipe::start` or any other thread spawns.
+            unsafe { std::env::set_var("DISABLE_GAMESCOPE_WSI", "1") };
+        }
+    }
+    // Before SDL, VAAPI or Vulkan load Mesa.
+    #[cfg(target_os = "linux")]
+    amd_decode::request();
+    notes
+}
+
 /// Sets SDL hints, resolves Linux KMS/desktop backend selection, and initializes SDL subsystems.
 pub(crate) fn init_sdl() -> Result<(), String> {
     sdl::set_hint(SDL_HINT_APP_NAME, c"Nightjar");
@@ -247,6 +302,9 @@ pub(crate) fn init_sdl() -> Result<(), String> {
     sdl::set_hint(SDL_HINT_VIDEO_MINIMIZE_ON_FOCUS_LOSS, c"0");
     sdl::set_hint(SDL_HINT_AUDIO_DEVICE_SAMPLE_FRAMES, c"480");
     sdl::set_hint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, c"1");
+    // Keep Bluetooth PlayStation/Switch controllers in enhanced HID report mode (e.g. DS4 0x11)
+    // immediately on open so gyro/accel work when connected mid-stream (Nightjar #177).
+    sdl::set_hint(SDL_HINT_JOYSTICK_ENHANCED_REPORTS, c"1");
     sdl::set_hint(SDL_HINT_AUTO_UPDATE_JOYSTICKS, c"0"); // Adaptive polling via PadPoll.
     sdl::set_hint(SDL_HINT_MOUSE_RELATIVE_MODE_CENTER, c"1");
     // The second screen's window opens beside the first stream without taking its keyboard and mouse.
@@ -254,18 +312,6 @@ pub(crate) fn init_sdl() -> Result<(), String> {
         sdl::set_hint(SDL_HINT_WINDOW_ACTIVATE_WHEN_SHOWN, c"0");
         sdl::set_hint(SDL_HINT_WINDOW_ACTIVATE_WHEN_RAISED, c"0");
     }
-    // Before Vulkan loads: gamescope's layer without its socket would block the swapchain.
-    if handheld::gamescope() {
-        let socket = handheld::gamescope_socket(std::env::var_os("XDG_RUNTIME_DIR").as_deref(), std::env::var_os("GAMESCOPE_WAYLAND_DISPLAY").as_deref());
-        if handheld::gamescope_layer_off(socket.as_deref(), std::path::Path::exists) {
-            eprintln!("nightjar: gamescope: its socket {} is not reachable here, so gamescope's Vulkan layer is off (DISABLE_GAMESCOPE_WSI=1) and the output is SDR", socket.unwrap_or_default().display());
-            // SAFETY: called at startup in `main` before threads or Vulkan initialize.
-            unsafe { std::env::set_var("DISABLE_GAMESCOPE_WSI", "1") };
-        }
-    }
-    // Before SDL, VAAPI or Vulkan load Mesa.
-    #[cfg(target_os = "linux")]
-    amd_decode::request();
 
     // Straight to the display (KMS) or through the desktop, decided before SDL picks its video driver.
     #[cfg(target_os = "linux")]
@@ -359,7 +405,11 @@ pub(crate) fn open_window_and_renderer(
     // (handheld.rs), at the display's current mode in KMS mode. On a desktop the Window setting
     // opens the launcher as it opens its streams' window: Fullscreen and Borderless fill the
     // screen on the desktop's mode, Windowed is an ordinary window.
-    let launcher_mode = if second_screen::this_process() { WindowMode::Windowed } else { settings.window_mode };
+    let launcher_mode = if second_screen::this_process() {
+        WindowMode::Windowed
+    } else {
+        app::effective_launcher_window_mode(settings.window_mode, settings.windowed_launcher)
+    };
     let start = handheld::start_window(launcher_mode, handheld::fills_screen());
     if handheld::gamescope() {
         eprintln!("nightjar: gamescope: starting fullscreen without a border; Start+Back opens the stream menu");

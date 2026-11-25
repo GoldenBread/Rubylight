@@ -507,17 +507,21 @@ fn resolution_and_frame_rate_offer_presets_and_custom_with_its_row() {
     video_settings(&mut f);
     assert!(!shows(&f, "Custom resolution") && !shows(&f, "Custom frame rate"), "Native and Display need no rows");
     // The open menu, under its button, scrolls when it is taller than the space it gets.
-    let wheel_over = |f: &mut Frames, button: &str| {
+    let wheel_over = |f: &mut Frames, button: &str, lines: f32| {
         let at = f.placed.iter().find(|(t, ..)| t == button).expect("the menu's button").1.center() + vec2(0.0, 150.0);
         f.frame(vec![egui::Event::PointerMoved(at)]);
-        f.frame(vec![egui::Event::MouseWheel { unit: egui::MouseWheelUnit::Line, delta: vec2(0.0, -1000.0),
+        f.frame(vec![egui::Event::MouseWheel { unit: egui::MouseWheelUnit::Line, delta: vec2(0.0, lines),
             phase: egui::TouchPhase::Move, source: egui::MouseWheelSource::Unknown, modifiers: egui::Modifiers::NONE }]);
         for _ in 0..10 { f.settle(); }
     };
     click_text(&mut f, "Native (1920x1080)");
     let mut offered: Vec<String> = f.drawn.clone();
-    wheel_over(&mut f, "Native (1920x1080)");
+    wheel_over(&mut f, "Native (1920x1080)", -6.0);
     offered.extend(f.drawn.iter().cloned());
+    wheel_over(&mut f, "Native (1920x1080)", -1000.0);
+    offered.extend(f.drawn.iter().cloned());
+    assert!(offered.contains(&"Native 75% (1440x810)".to_owned()), "75% native is offered: {offered:?}");
+    assert!(offered.contains(&"Native 50% (960x540)".to_owned()), "50% native is offered: {offered:?}");
     for (w, h) in RESOLUTIONS {
         assert!(offered.contains(&format!("{w}x{h}")), "{w}x{h} is offered: {offered:?}");
     }
@@ -526,7 +530,7 @@ fn resolution_and_frame_rate_offer_presets_and_custom_with_its_row() {
     assert!(shows(&f, "Custom (1920x1080)") && shows(&f, "Custom resolution"), "{:?}", f.drawn);
     // A preset hides the row; a saved size off the menu is Custom with its row.
     click_text(&mut f, "Custom (1920x1080)");
-    wheel_over(&mut f, "Custom (1920x1080)");
+    wheel_over(&mut f, "Custom (1920x1080)", -1000.0);
     click_text(&mut f, "5120x1440");
     assert_eq!((f.l.settings.width, f.l.settings.height), (5120, 1440));
     assert!(shows(&f, "5120x1440") && !shows(&f, "Custom resolution"), "{:?}", f.drawn);
@@ -536,7 +540,7 @@ fn resolution_and_frame_rate_offer_presets_and_custom_with_its_row() {
 
     click_text(&mut f, "Display (60 Hz)");
     let mut offered: Vec<String> = f.drawn.clone();
-    wheel_over(&mut f, "Display (60 Hz)");
+    wheel_over(&mut f, "Display (60 Hz)", -1000.0);
     offered.extend(f.drawn.iter().cloned());
     for fps in FRAME_RATES {
         assert!(offered.contains(&format!("{fps} fps")), "{fps} fps is offered: {offered:?}");

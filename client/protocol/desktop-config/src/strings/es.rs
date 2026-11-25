@@ -1,9 +1,4 @@
-// Spanish text for the launcher and the stream menu, keyed by the English literal. Worded like
-// the Android app's Spanish strings, which give many of these sentences word for word.
-// An entry with one {} keeps it. An entry with several uses {0}, {1}, ... for the arguments in
-// the order of the English text, wherever they fall in the sentence (a test checks it).
-// Leading spaces and line breaks match the English.
-
+// es text for the launcher and stream menu, keyed by English literal ({}, {0}, {1}...).
 pub const TABLE: &[(&str, &str)] = &[
     ("When Nightjar opens", "Al abrir Nightjar"),
     ("The desktop portal did not answer.", "El portal del escritorio no respondió."),
@@ -1747,4 +1742,7 @@ sudo sysctl -w net.core.rmem_max={}", "Búfer de recepción: el sistema concedi�
     ("Controllers is Off in the profile {}, so no controller reaches the PC.", "Mandos está desactivado en el perfil {}, así que ningún mando llega al PC."),
     ("Controllers is set to Off for this PC, so no controller reaches it.", "Mandos está desactivado para este PC, así que no le llega ningún mando."),
     ("Controllers is set to Off for this game, so no controller reaches the PC.", "Mandos está desactivado para este juego, así que ningún mando llega al PC."),
+    ("Native {}% ({}x{})", "Nativa {0}% ({1}x{2})"),
+    ("Windowed launcher", "Lanzador en ventana"),
+    ("Opens Nightjar’s menus in an ordinary window even when Window is Fullscreen or Borderless. Streams still use your Window setting. Turn it on if you move Nightjar between monitors before starting a stream.", "Abre los menús de Nightjar en una ventana normal incluso cuando Ventana está en Pantalla completa o Sin bordes. Las transmisiones siguen usando tu ajuste de Ventana. Actívalo si mueves Nightjar entre monitores antes de iniciar una transmisión."),
 ];

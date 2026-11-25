@@ -5,7 +5,9 @@ use super::*;
 use nightjar_desktop_media::shortcuts_runtime::ButtonSdlExt;
 
 mod helpers;
-pub(crate) use helpers::{animations_seen, pointer_input, window_shown, FolderPick};
+pub(crate) use helpers::{
+    animations_seen, effective_launcher_window_mode, pointer_input, window_shown, FolderPick,
+};
 use helpers::decodes_on_device;
 
 impl App {
@@ -91,7 +93,7 @@ impl App {
         }
         // SAFETY: reading the event type.
         let kind = SDL_EventType(unsafe { event.r#type });
-        if is_gamepad_activity(kind) {
+        if is_gamepad_activity(event) {
             self.pad_poll.note_activity(Instant::now());
         }
         self.note_render_device(kind);

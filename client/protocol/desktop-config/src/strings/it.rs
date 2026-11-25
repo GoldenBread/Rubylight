@@ -1,9 +1,4 @@
-// Italian text for the launcher and the stream menu, keyed by the English literal. Worded like
-// the Android app's Italian strings, which give many of these sentences word for word.
-// An entry with one {} keeps it. An entry with several uses {0}, {1}, ... for the arguments in
-// the order of the English text, wherever they fall in the sentence (a test checks it).
-// Leading spaces and line breaks match the English.
-
+// it text for the launcher and stream menu, keyed by English literal ({}, {0}, {1}...).
 pub const TABLE: &[(&str, &str)] = &[
     ("When Nightjar opens", "All’apertura di Nightjar"),
     ("The desktop portal did not answer.", "Il portale del desktop non ha risposto."),
@@ -1747,4 +1742,7 @@ sudo sysctl -w net.core.rmem_max={}", "Buffer di ricezione: il sistema ha conces
     ("Controllers is Off in the profile {}, so no controller reaches the PC.", "Controller è disattivato nel profilo {}, quindi nessun controller raggiunge il PC."),
     ("Controllers is set to Off for this PC, so no controller reaches it.", "Controller è disattivato per questo PC, quindi nessun controller lo raggiunge."),
     ("Controllers is set to Off for this game, so no controller reaches the PC.", "Controller è disattivato per questo gioco, quindi nessun controller raggiunge il PC."),
+    ("Native {}% ({}x{})", "Nativa {0}% ({1}x{2})"),
+    ("Windowed launcher", "Avvio in finestra"),
+    ("Opens Nightjar’s menus in an ordinary window even when Window is Fullscreen or Borderless. Streams still use your Window setting. Turn it on if you move Nightjar between monitors before starting a stream.", "Apre i menu di Nightjar in una normale finestra anche quando Finestra è impostata su Schermo intero o Senza bordi. Gli stream continuano a usare l’impostazione Finestra. Attivala se sposti Nightjar tra più monitor prima di avviare uno stream."),
 ];

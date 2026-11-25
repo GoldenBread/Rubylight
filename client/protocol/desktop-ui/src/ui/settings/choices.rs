@@ -33,7 +33,8 @@ pub(super) fn preset_key(preset: Preset) -> &'static str {
 pub(in crate::ui) fn preset_current(s: &Settings, vrr_offered: bool) -> presets::Current {
     let defaults = Settings::default();
     presets::Current {
-        native_resolution: s.width == 0 || s.height == 0,
+        native_resolution: (s.width == 0 || s.height == 0)
+            && crate::stream_types::normalize_native_scale(s.native_scale) == 100,
         fps_follows_screen: s.fps == 0,
         fps: s.fps,
         default_bitrate: s.bitrate_kbps == 0,
@@ -52,8 +53,8 @@ pub(in crate::ui) fn preset_current(s: &Settings, vrr_offered: bool) -> presets:
 }
 
 /// The keys [`apply_preset`] sets.
-pub(super) const PRESET_KEYS: [&str; 11] =
-    ["width", "height", "fps", "bitrate_kbps", "vrr", "upscaling", "frame_pacing", "host_frame_times", "drop_late_frames", "unbatched_input", "network_priority"];
+pub(super) const PRESET_KEYS: [&str; 12] =
+    ["width", "height", "native_scale", "fps", "bitrate_kbps", "vrr", "upscaling", "frame_pacing", "host_frame_times", "drop_late_frames", "unbatched_input", "network_priority"];
 
 /// Whether `section` holds a row a preset changes: only those show the presets.
 pub(in crate::ui) fn preset_section(section: &str) -> bool {
@@ -64,7 +65,7 @@ pub(in crate::ui) fn preset_section(section: &str) -> bool {
 /// and 4:4:4 choices stay as they are.
 pub(in crate::ui) fn apply_preset(s: &mut Settings, preset: Preset) {
     let defaults = Settings::default();
-    (s.width, s.height) = (0, 0);
+    (s.width, s.height, s.native_scale) = (0, 0, 100);
     s.fps = preset.fps().unwrap_or(0);
     s.bitrate_kbps = 0;
     s.vrr = defaults.vrr;

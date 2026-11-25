@@ -12,6 +12,11 @@ pub(crate) enum FolderPick {
     Upload { host: u64, at: folders_page::Place },
 }
 
+/// The launcher's target window mode from the Window and Windowed launcher settings.
+pub(crate) fn effective_launcher_window_mode(window_mode: WindowMode, windowed_launcher: bool) -> WindowMode {
+    if windowed_launcher { WindowMode::Windowed } else { window_mode }
+}
+
 impl App {
     /// Steps a held D-pad direction or stick again (nav_repeat.rs). A hold whose release went to
     /// the stream, or whose controller left, is checked against the controller and dropped.
@@ -53,14 +58,18 @@ impl App {
         }
     }
 
-    /// Puts the launcher's window in the Window setting's mode: Fullscreen and Borderless fill
-    /// the screen on the desktop's mode, without a stream's own mode; Windowed is an ordinary
-    /// window. Under gamescope, straight to the display, and on the second screen the window stays
-    /// as the start made it.
+    /// Puts the launcher's window in the effective launcher mode: Windowed when Windowed launcher
+    /// is on or Window is Windowed, otherwise fullscreen on the desktop's mode without a stream's
+    /// exclusive mode. Under gamescope, straight to the display, and on the second screen the
+    /// window stays as the start made it.
     pub(crate) fn apply_launcher_window_mode(&mut self) {
-        self.launcher_window_mode = self.launcher.settings.window_mode;
+        let wanted = effective_launcher_window_mode(
+            self.launcher.settings.window_mode,
+            self.launcher.settings.windowed_launcher,
+        );
+        self.launcher_window_mode = wanted;
         if handheld::fills_screen() || second_screen::this_process() { return; }
-        let windowed = self.launcher.settings.window_mode == WindowMode::Windowed;
+        let windowed = wanted == WindowMode::Windowed;
         // SAFETY: window calls on the main thread.
         unsafe {
             let fullscreen = SDL_GetWindowFlags(self.window) & SDL_WINDOW_FULLSCREEN != 0;

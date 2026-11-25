@@ -1,8 +1,4 @@
-// German text for the launcher and the stream menu, keyed by the English literal.
-// An entry with one {} keeps it. An entry with several uses {0}, {1}, ... for the arguments in
-// the order of the English text, wherever they fall in the German sentence (a test checks it).
-// Leading spaces and line breaks match the English.
-
+// de text for the launcher and stream menu, keyed by English literal ({}, {0}, {1}...).
 pub const TABLE: &[(&str, &str)] = &[
     ("When Nightjar opens", "Wenn Nightjar startet"),
     ("The desktop portal did not answer.", "Das Desktop-Portal hat nicht geantwortet."),
@@ -1747,4 +1743,7 @@ sudo sysctl -w net.core.rmem_max={2}"),
     ("Controllers is Off in the profile {}, so no controller reaches the PC.", "„Controller“ ist im Profil {} auf Aus gestellt, daher erreicht kein Controller den PC."),
     ("Controllers is set to Off for this PC, so no controller reaches it.", "„Controller“ ist für diesen PC auf Aus gestellt, daher erreicht ihn kein Controller."),
     ("Controllers is set to Off for this game, so no controller reaches the PC.", "„Controller“ ist für dieses Spiel auf Aus gestellt, daher erreicht kein Controller den PC."),
+    ("Native {}% ({}x{})", "Nativ {0}% ({1}x{2})"),
+    ("Windowed launcher", "Launcher im Fenster"),
+    ("Opens Nightjar’s menus in an ordinary window even when Window is Fullscreen or Borderless. Streams still use your Window setting. Turn it on if you move Nightjar between monitors before starting a stream.", "Öffnet die Menüs von Nightjar in einem normalen Fenster, auch wenn Fenster auf Vollbild oder Randlos steht. Streams nutzen weiterhin die Fenster-Einstellung. Aktiviere dies, wenn du Nightjar vor dem Start eines Streams zwischen Monitoren verschiebst."),
 ];

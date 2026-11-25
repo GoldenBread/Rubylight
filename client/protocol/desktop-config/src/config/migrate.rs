@@ -105,6 +105,7 @@ impl Values for SettingsValues<'_> {
     }
     fn u32(&self, key: &str) -> Option<u32> {
         match key {
+            "native_scale" => Some(self.0.native_scale),
             "network_grace_ms" => Some(self.0.network_grace_ms),
             "quality_min_short_edge" => Some(self.0.quality_min_short_edge),
             "quality_min_fps" => Some(self.0.quality_min_fps),
@@ -124,6 +125,7 @@ impl Values for SettingsValues<'_> {
     fn set_u32(&mut self, key: &str, value: u32) {
         let s = &mut *self.0;
         match key {
+            "native_scale" => s.native_scale = value,
             "network_grace_ms" => s.network_grace_ms = value,
             "quality_min_short_edge" => s.quality_min_short_edge = value,
             "quality_min_fps" => s.quality_min_fps = value,
@@ -169,7 +171,8 @@ pub(super) fn normalize_values(values: &mut impl Values) {
             values.set_bool(key, on);
         }
     }
-    let fixes: [(&str, &dyn Fn(u32) -> u32); 6] = [
+    let fixes: [(&str, &dyn Fn(u32) -> u32); 7] = [
+        ("native_scale", &crate::stream_types::normalize_native_scale),
         ("network_grace_ms", &nightjar_policy::recovery::network_grace_ms),
         ("quality_min_short_edge", &|v: u32| nearest_floor(&MIN_SHORT_EDGE_CHOICES, v)),
         ("quality_min_fps", &|v: u32| nearest_floor(&MIN_FPS_CHOICES, v)),

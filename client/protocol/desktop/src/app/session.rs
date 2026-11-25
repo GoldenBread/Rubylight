@@ -539,7 +539,7 @@ impl App {
         self.track_visibility(event);
         // SAFETY: reading the event type.
         let kind = SDL_EventType(unsafe { event.r#type });
-        if is_gamepad_activity(kind) {
+        if is_gamepad_activity(event) {
             self.pad_poll.note_activity(Instant::now());
         }
         // A stream keeps the night look; the launcher it returns to has the system's theme.

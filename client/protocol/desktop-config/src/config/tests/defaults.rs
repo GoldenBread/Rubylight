@@ -11,6 +11,52 @@ fn home_is_on_unless_the_file_says_otherwise() {
     assert!(!off.console_home);
 }
 
+#[test]
+fn native_scale_defaults_normalizes_and_scales_preserving_aspect() {
+    use crate::stream_types::{Display, normalize_native_scale, scaled_native_resolution, stream_mode};
+    assert_eq!(Settings::default().native_scale, 100);
+    let old: Settings = serde_json::from_str("{}").unwrap();
+    assert_eq!(old.native_scale, 100, "old files default to 100% native");
+    assert_eq!(normalize_native_scale(0), 100);
+    assert_eq!(normalize_native_scale(150), 100);
+    assert_eq!(normalize_native_scale(10), 25);
+    assert_eq!(normalize_native_scale(75), 75);
+    assert_eq!(normalize_native_scale(50), 50);
+
+    let mbp = Display { width: 3024, height: 1964, refresh_hz: 120.0, refresh_reported: true };
+    assert_eq!(scaled_native_resolution(mbp, 100), (3024, 1964));
+    assert_eq!(scaled_native_resolution(mbp, 75), (2268, 1474));
+    assert_eq!(scaled_native_resolution(mbp, 50), (1512, 982));
+    let uw = Display { width: 3440, height: 1440, refresh_hz: 144.0, refresh_reported: true };
+    assert_eq!(scaled_native_resolution(uw, 75), (2580, 1080));
+    assert_eq!(scaled_native_resolution(uw, 50), (1720, 720));
+
+    let scaled = Settings { native_scale: 75, ..Settings::default() };
+    let (w, h, _, _) = stream_mode(&scaled, uw);
+    assert_eq!((w, h), (2580, 1080));
+    let fixed = Settings { width: 1920, height: 1080, native_scale: 50, ..Settings::default() };
+    let (w, h, _, _) = stream_mode(&fixed, uw);
+    assert_eq!((w, h), (1920, 1080), "explicit fixed resolution ignores native_scale");
+
+    let mut migrated: Settings = serde_json::from_str(r#"{"native_scale": 0}"#).unwrap();
+    migrated.migrate();
+    assert_eq!(migrated.native_scale, 100);
+    let mut ov = Overrides::default();
+    ov.capture(&scaled, &["width", "height", "native_scale"]);
+    assert_eq!(ov.apply(&Settings::default()).native_scale, 75);
+}
+
+#[test]
+fn windowed_launcher_defaults_off_and_round_trips() {
+    assert!(!Settings::default().windowed_launcher);
+    let old: Settings = serde_json::from_str("{}").unwrap();
+    assert!(!old.windowed_launcher);
+    let on: Settings = serde_json::from_str(r#"{"windowed_launcher":true}"#).unwrap();
+    assert!(on.windowed_launcher);
+    let back: Settings = serde_json::from_str(&serde_json::to_string(&on).unwrap()).unwrap();
+    assert!(back.windowed_launcher);
+}
+
 /// The simple layer's choices are stored beside the settings they write; a file from before them
 /// reads as the recommendation, and reading or saving it changes none of the values above.
 #[test]

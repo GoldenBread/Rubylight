@@ -54,7 +54,7 @@ pub(super) fn debug_listed(s: &Settings, layer: Option<&Overrides>) -> bool {
 /// page draws.
 pub(super) const SECTION_KEYS: [&[&[&str]]; 9] = [
     &[&["simple_smoothness"], &["simple_picture"], &["simple_hdr"]],
-    &[&["width", "height"], &["fps"], &["bitrate_kbps"], &["lower_bitrate"], &["codec"], &["hdr"],
+    &[&["width", "height", "native_scale"], &["fps"], &["bitrate_kbps"], &["lower_bitrate"], &["codec"], &["hdr"],
         &["prefer_yuv444", "experimental_packed_444"], &["sdr_10bit"], &["frame_warp"], &["adaptive_quality"], &["quality_min_short_edge"], &["quality_min_fps"],
         &["hdr_desktop_brightness"], &["rtx_hdr"], &["rtx_video"]],
     &[&["window_mode"], &["video_scaling"], &["vrr", "present_at_host_times", "vrr_tear_free"], &["vrr_wait"],
@@ -73,7 +73,7 @@ pub(super) const SECTION_KEYS: [&[&[&str]]; 9] = [
     &[&["overlay", "overlay_mode"], &["overlay_position"], &["auto_reconnect"],
         &["client_roaming", "roaming_metered"], &["network_grace_ms"], &["receive_coalescing"], &["jumbo_frames"], &["internet_play"], &["hide_connection_warnings"],
         &["dual_screen"], &["second_screen_width", "second_screen_height"], &["input_only_any_host"]],
-    &[&["theme"], &["language"], &["open_on_start", "console_home"], &["quick_resume"], &["check_updates"], &["home_card_size"],
+    &[&["theme"], &["language"], &["open_on_start", "console_home"], &["quick_resume"], &["check_updates"], &["windowed_launcher"], &["home_card_size"],
         &["show_debug_settings"], &["ui_zoom"], &["high_contrast"], &["reduce_motion"]],
     &[&["graphics_card"], &["renderer"], &["display_output"], &["video_planes"], &["high_performance_gpu_power"], &["sops"], &["decode_queue_frames"]],
     &[&["error_correction"], &["tell_host_wireless", "tell_host_link_speed"],
@@ -528,6 +528,8 @@ impl Launcher {
             room: 0.0,
             idle: None,
             held: false,
+            defer_reset: false,
+            reset_clicked: false,
         };
         let screen = self.screen;
         // Variable refresh rate needs tearing on Windows: where the swap chain can't, the row is not
@@ -646,7 +648,7 @@ impl Launcher {
         // The Window row moves the launcher's own window at once, as Fullscreen moves a stream's;
         // the other rows wait for the page to close. A PC's, game's or profile's Window value is
         // theirs alone and acts when it streams.
-        if !layered && s.window_mode != before.window_mode {
+        if !layered && (s.window_mode != before.window_mode || s.windowed_launcher != before.windowed_launcher) {
             commands.push(Command::SaveSettings);
         }
         // Switching it is how to ask a PC again that refused it before.

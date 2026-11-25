@@ -1,9 +1,4 @@
-// Korean text for the launcher and the stream menu, keyed by the English literal. Worded like
-// the Android app's Korean strings, which give many of these sentences word for word.
-// An entry with one {} keeps it. An entry with several uses {0}, {1}, ... for the arguments in
-// the order of the English text, wherever they fall in the sentence (a test checks it).
-// Leading spaces and line breaks match the English.
-
+// ko text for the launcher and stream menu, keyed by English literal ({}, {0}, {1}...).
 pub const TABLE: &[(&str, &str)] = &[
     ("When Nightjar opens", "Nightjar를 열 때"),
     ("The desktop portal did not answer.", "데스크톱 포털이 응답하지 않았습니다."),
@@ -1747,4 +1742,7 @@ sudo sysctl -w net.core.rmem_max={}", "수신 버퍼: 시스템이 요청한 {1}
     ("Controllers is Off in the profile {}, so no controller reaches the PC.", "프로필 {}에서 '컨트롤러'가 사용 안함이므로 PC에 컨트롤러가 전달되지 않습니다."),
     ("Controllers is set to Off for this PC, so no controller reaches it.", "이 PC에 대해 '컨트롤러'가 사용 안함으로 설정되어 있어 컨트롤러가 전달되지 않습니다."),
     ("Controllers is set to Off for this game, so no controller reaches the PC.", "이 게임에 대해 '컨트롤러'가 사용 안함으로 설정되어 있어 PC에 컨트롤러가 전달되지 않습니다."),
+    ("Native {}% ({}x{})", "기본 {0}%({1}x{2})"),
+    ("Windowed launcher", "런처를 창 모드로 표시"),
+    ("Opens Nightjar’s menus in an ordinary window even when Window is Fullscreen or Borderless. Streams still use your Window setting. Turn it on if you move Nightjar between monitors before starting a stream.", "창 설정이 전체 화면이나 테두리 없음이어도 Nightjar 메뉴를 일반 창으로 엽니다. 스트림은 계속 창 설정을 따릅니다. 스트림을 시작하기 전에 Nightjar를 다른 모니터로 옮겨 쓴다면 켜세요."),
 ];

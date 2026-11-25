@@ -122,8 +122,16 @@ pub(in crate::ui) fn value_text(key: &str, s: &Settings, display: &Display, styl
         "vrr" | "present_at_host_times" | "vrr_tear_free" => vrr_choice_name(vrr_choice(s)).to_owned(),
         "vsync" | "fractional_vsync" => vsync_name(vsync_choice(s)).to_owned(),
         "align_video_top" => video_position_name(s.align_video_top).to_owned(),
-        "width" | "height" if s.width == 0 => trf("Native ({}x{})", &[&display.width, &display.height]),
-        "width" | "height" => format!("{}x{}", s.width, s.height),
+        "width" | "height" | "native_scale" if s.width == 0 || s.height == 0 => {
+            let scale = crate::stream_types::normalize_native_scale(s.native_scale);
+            if scale == 100 {
+                trf("Native ({}x{})", &[&display.width, &display.height])
+            } else {
+                let (w, h) = crate::stream_types::scaled_native_resolution(*display, scale);
+                trf("Native {}% ({}x{})", &[&scale, &w, &h])
+            }
+        }
+        "width" | "height" | "native_scale" => format!("{}x{}", s.width, s.height),
         "fps" if s.fps == 0 => trf("Display ({} Hz)", &[&(display.refresh_hz.round() as u32)]),
         "fps" => trf("{} fps", &[&s.fps]),
         "bitrate_kbps" if s.bitrate_kbps == 0 => tr("Automatic").to_owned(),
@@ -338,6 +346,10 @@ pub(in crate::ui) struct Rows<'a> {
     /// and search finds it with this reason. `held` says an action row holds a value of its own.
     pub(super) idle: Option<String>,
     pub(super) held: bool,
+    /// When set for the next row, a click on Reset sets `reset_clicked` instead of resetting only
+    /// the row's own keys (used by Recommended's `simple_*` rows, which apply through `simple_apply`).
+    pub(super) defer_reset: bool,
+    pub(super) reset_clicked: bool,
 }
 
 /// The fold row of the open section, drawn before its first folded row; its words come once the
@@ -397,6 +409,17 @@ impl Rows<'_> {
     /// A line the next row always shows under its label, such as a warning about its value.
     pub(super) fn note(&mut self, text: String, color: Color32) {
         self.note = Some((text, color));
+    }
+
+    /// The next row's Reset button reports a click through [`take_reset`] instead of directly
+    /// overwriting only its keys.
+    pub(super) fn defer_reset(&mut self) {
+        self.defer_reset = true;
+        self.reset_clicked = false;
+    }
+
+    pub(super) fn take_reset(&mut self) -> bool {
+        std::mem::take(&mut self.reset_clicked)
     }
 
     /// Room the next row's control takes beyond the usual column (a PC's list beside its button).

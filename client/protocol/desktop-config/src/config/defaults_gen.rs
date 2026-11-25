@@ -18,6 +18,7 @@ pub use nightjar_policy::settings_catalog_gen::{
 pub const DESKTOP_SETTING_KEYS: &[&str] = &[
     "width",
     "height",
+    "native_scale",
     "fps",
     "bitrate_kbps",
     "lower_bitrate",
@@ -38,6 +39,7 @@ pub const DESKTOP_SETTING_KEYS: &[&str] = &[
     "mute_audio",
     "audio_passthrough",
     "window_mode",
+    "windowed_launcher",
     "video_scaling",
     "align_video_top",
     "vrr",
@@ -166,6 +168,7 @@ pub const DESKTOP_SETTING_KEYS: &[&str] = &[
 pub const DESKTOP_OVERRIDE_KEYS: &[&str] = &[
     "width",
     "height",
+    "native_scale",
     "fps",
     "bitrate_kbps",
     "lower_bitrate",
@@ -277,6 +280,7 @@ pub(super) fn default_settings() -> Settings {
     Settings {
         width: 0,
         height: 0,
+        native_scale: 100,
         fps: 0,
         bitrate_kbps: 0,
         lower_bitrate: nightjar_policy::choices::LowerBitrate::Off,
@@ -297,6 +301,7 @@ pub(super) fn default_settings() -> Settings {
         mute_audio: false,
         audio_passthrough: false,
         window_mode: WindowMode::Borderless,
+        windowed_launcher: false,
         video_scaling: VideoScaling::Fit,
         align_video_top: false,
         vrr: true,

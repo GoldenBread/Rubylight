@@ -292,6 +292,101 @@ fn the_setup_section_shows_the_simple_layer_and_back_applies_it() {
     assert!(!row_words(&f, "Stream smoothness").contains(&"Custom"), "{:?}", row_words(&f, "Stream smoothness"));
 }
 
+#[test]
+fn recommended_row_reset_reapplies_simple_profile_without_corrupting_to_custom() {
+    let mut f = settings_with(Settings::default());
+    f.l.tearing_supported = true;
+    f.l.hdr_display = true;
+    f.l.settings_view.hdr_probed = true;
+    f.l.settings_view.section = "Recommended";
+    f.settle();
+
+    // Pick Smoothest, then click per-row Reset on Stream smoothness.
+    click_value(&mut f, "Stream smoothness", "Auto (recommended)");
+    click_last(&mut f, "Smoothest");
+    f.settle();
+    assert_eq!(f.l.settings.frame_pacing, FramePacing::Smoothness);
+    assert!(row_words(&f, "Stream smoothness").contains(&"Reset"), "{:?}", row_words(&f, "Stream smoothness"));
+    click_value(&mut f, "Stream smoothness", "Reset");
+    f.settle();
+    assert_eq!(f.l.settings.simple_smoothness, simple::Smoothness::Auto);
+    assert_eq!(f.l.settings.frame_pacing, FramePacing::Latency);
+    assert!(!row_words(&f, "Stream smoothness").contains(&"Custom"), "{:?}", row_words(&f, "Stream smoothness"));
+    assert!(!row_words(&f, "Stream smoothness").contains(&"Reset"), "{:?}", row_words(&f, "Stream smoothness"));
+
+    // Pick Save data, then click per-row Reset on Picture quality.
+    click_value(&mut f, "Picture quality", "Auto (recommended)");
+    click_last(&mut f, "Save data");
+    f.settle();
+    assert_eq!(f.l.settings.adaptive_quality, crate::config::QualityMode::Battery);
+    click_value(&mut f, "Picture quality", "Reset");
+    f.settle();
+    assert_eq!(f.l.settings.simple_picture, simple::Picture::Auto);
+    assert_eq!(f.l.settings.bitrate_kbps, 0);
+    assert_eq!(f.l.settings.adaptive_quality, crate::config::QualityMode::Off);
+    assert!(!row_words(&f, "Picture quality").contains(&"Custom"), "{:?}", row_words(&f, "Picture quality"));
+
+    // Enable HDR via Recommended, then click per-row Reset on HDR.
+    click_value(&mut f, "HDR", "Off");
+    click_last(&mut f, "Auto (recommended)");
+    f.settle();
+    assert!(f.l.settings.hdr);
+    assert!(row_words(&f, "HDR").contains(&"Reset"), "{:?}", row_words(&f, "HDR"));
+    click_value(&mut f, "HDR", "Reset");
+    f.settle();
+    assert!(!f.l.settings.hdr, "HDR per-row Reset must turn HDR off");
+    assert_eq!(f.l.settings.simple_hdr, simple::Hdr::Off);
+    assert!(!row_words(&f, "HDR").contains(&"Reset"), "{:?}", row_words(&f, "HDR"));
+}
+
+#[test]
+fn settings_search_finds_recommended_rows_from_any_section_only_on_main_settings() {
+    let mut f = settings_with(Settings::default());
+    f.l.settings_view.section = "Video";
+    f.l.settings_view.query = "smoothness".into();
+    f.settle();
+    assert!(shows(&f, "Stream smoothness"), "search from Video finds Recommended rows: {:?}", f.drawn);
+    assert!(f.l.settings_view.found[0] > 0, "Recommended section reports search matches: {:?}", f.l.settings_view.found);
+
+    // Layered settings (PC/game/profile) have no Recommended section and must not leak its rows in search.
+    let id = f.hosts.list[0].id;
+    f.l.open_host_settings(id, &f.hosts.list[0]);
+    f.l.settings_view.query = "console mode".into();
+    f.settle();
+    assert!(!shows(&f, "Console mode"), "layered search must not leak Recommended rows: {:?}", f.drawn);
+    assert_eq!(f.l.settings_view.found[0], 0);
+}
+
+#[test]
+fn resolution_offers_native_aspect_scales_and_windowed_launcher_saves_live() {
+    let mut f = settings_read_with(Settings::default());
+    f.l.display = Display { width: 3024, height: 1964, refresh_hz: 120.0, refresh_reported: true };
+    f.l.settings_view.section = "Video";
+    f.settle();
+    click_value(&mut f, "Resolution", "Native (3024x1964)");
+    assert!(shows(&f, "Native 75% (2268x1474)"), "{:?}", f.drawn);
+    assert!(shows(&f, "Native 50% (1512x982)"), "{:?}", f.drawn);
+    click_last(&mut f, "Native 75% (2268x1474)");
+    f.settle();
+    assert_eq!((f.l.settings.width, f.l.settings.height, f.l.settings.native_scale), (0, 0, 75));
+    assert_eq!(value_text("width", &f.l.settings, &f.l.display, crate::glyphs::Style::Xbox), "Native 75% (2268x1474)");
+    assert!(simple_state(&f.l.settings, &f.l.display, &simple_caps(&f.l.display, false, true), true).1);
+
+    // Windowed launcher lives in App (behind More App settings) and saves immediately when toggled.
+    f.l.settings_view.section = "App";
+    open_folds(&mut f);
+    f.settle();
+    assert!(shows(&f, "Windowed launcher"), "{:?}", f.drawn);
+    let bounds = f.access.as_ref().expect("AccessKit is on").nodes.iter()
+        .find(|(_, n)| n.label() == Some("Windowed launcher") && n.toggled().is_some())
+        .map(|(_, n)| n.bounds().expect("laid out"))
+        .expect("the Windowed launcher switch");
+    let at = Pos2::new(((bounds.x0 + bounds.x1) / 2.0) as f32, ((bounds.y0 + bounds.y1) / 2.0) as f32);
+    let commands = f.click_at(at, egui::PointerButton::Primary);
+    assert!(f.l.settings.windowed_launcher);
+    assert!(commands.iter().any(|c| matches!(c, Command::SaveSettings)), "toggling Windowed launcher saves live ({} commands)", commands.len());
+}
+
 /// How many rows the main settings show at their defaults with every fold open, per section listed
 /// ("More settings" chosen): the number the settings-simplification work counts, 108 before rows
 /// that can do nothing were left out. `--nocapture` prints them by section.
@@ -321,11 +416,11 @@ fn row_counts_at_defaults() {
 /// "Group incoming video packets" and none of Linux' renderer, display output, video planes and
 /// GPU power rows; Windows has rows of its own in their place.
 const ROWS_AT_DEFAULTS: usize = if cfg!(windows) {
-    98
+    99
 } else if cfg!(target_os = "macos") {
-    95
+    96
 } else {
-    100
+    101
 };
 
 /// Debug is listed only with "Show debug settings", while one of its settings is changed, while it

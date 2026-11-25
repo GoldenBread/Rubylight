@@ -1,9 +1,4 @@
-// Ukrainian text for the launcher and the stream menu, keyed by the English literal. Worded like
-// the Android app's Ukrainian strings, which give many of these sentences word for word.
-// An entry with one {} keeps it. An entry with several uses {0}, {1}, ... for the arguments in
-// the order of the English text, wherever they fall in the sentence (a test checks it).
-// Leading spaces and line breaks match the English.
-
+// uk text for the launcher and stream menu, keyed by English literal ({}, {0}, {1}...).
 pub const TABLE: &[(&str, &str)] = &[
     ("When Nightjar opens", "Під час запуску Nightjar"),
     ("The desktop portal did not answer.", "Портал робочого столу не відповів."),
@@ -1747,4 +1742,7 @@ sudo sysctl -w net.core.rmem_max={}", "Буфер приймання: систе
     ("Controllers is Off in the profile {}, so no controller reaches the PC.", "«Контролери» вимкнено в профілі {}, тому жоден контролер не потрапляє на ПК."),
     ("Controllers is set to Off for this PC, so no controller reaches it.", "«Контролери» вимкнено для цього ПК, тому жоден контролер до нього не доходить."),
     ("Controllers is set to Off for this game, so no controller reaches the PC.", "«Контролери» вимкнено для цієї гри, тому жоден контролер не потрапляє на ПК."),
+    ("Native {}% ({}x{})", "Власна {0}% ({1}x{2})"),
+    ("Windowed launcher", "Меню у вікні"),
+    ("Opens Nightjar’s menus in an ordinary window even when Window is Fullscreen or Borderless. Streams still use your Window setting. Turn it on if you move Nightjar between monitors before starting a stream.", "Відкриває меню Nightjar у звичайному вікні, навіть якщо для параметра Вікно вибрано Повний екран або Без рамки. Потоки й надалі використовують налаштування Вікно. Увімкніть, якщо переміщуєте Nightjar між моніторами перед запуском потоку."),
 ];

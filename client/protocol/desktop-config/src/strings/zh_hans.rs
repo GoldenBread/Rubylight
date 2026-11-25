@@ -1,9 +1,4 @@
-// Simplified Chinese text for the launcher and the stream menu, keyed by the English literal. Worded like
-// the Android app's Simplified Chinese strings, which give many of these sentences word for word.
-// An entry with one {} keeps it. An entry with several uses {0}, {1}, ... for the arguments in
-// the order of the English text, wherever they fall in the sentence (a test checks it).
-// Leading spaces and line breaks match the English.
-
+// zh_hans text for the launcher and stream menu, keyed by English literal ({}, {0}, {1}...).
 pub const TABLE: &[(&str, &str)] = &[
     ("When Nightjar opens", "Nightjar 打开时"),
     ("The desktop portal did not answer.", "桌面门户没有响应。"),
@@ -1747,4 +1742,7 @@ sudo sysctl -w net.core.rmem_max={}", "接收缓冲区：系统只分配了所�
     ("Controllers is Off in the profile {}, so no controller reaches the PC.", "“手柄”在配置 {} 中已关闭，因此没有手柄能连到 PC。"),
     ("Controllers is set to Off for this PC, so no controller reaches it.", "此 PC 的“手柄”设为关闭，因此没有手柄能连到它。"),
     ("Controllers is set to Off for this game, so no controller reaches the PC.", "此游戏的“手柄”设为关闭，因此没有手柄能连到 PC。"),
+    ("Native {}% ({}x{})", "原生 {0}%（{1}x{2}）"),
+    ("Windowed launcher", "窗口化启动器"),
+    ("Opens Nightjar’s menus in an ordinary window even when Window is Fullscreen or Borderless. Streams still use your Window setting. Turn it on if you move Nightjar between monitors before starting a stream.", "即使窗口设为全屏或无边框，仍在普通窗口中打开 Nightjar 菜单。串流仍使用你的窗口设置。如果你常在开始串流前将 Nightjar 拖到其他显示器，请开启此项。"),
 ];

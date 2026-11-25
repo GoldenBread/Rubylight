@@ -452,9 +452,13 @@ Redacted logs, oldest line first; addresses, PC names, PINs and credentials are 
                     eprintln!("nightjar: saving settings failed: {e}");
                     self.save_failed();
                 }
-                // A changed Window setting is the launcher's window too, once nothing streams: a
-                // stream's own mode applies when it ends (app/session.rs).
-                if self.streaming.is_none() && self.launcher.settings.window_mode != self.launcher_window_mode {
+                // A changed Window or Windowed launcher setting updates the launcher window once
+                // nothing streams; a stream's own mode applies when it ends (app/session.rs).
+                let wanted_launcher = effective_launcher_window_mode(
+                    self.launcher.settings.window_mode,
+                    self.launcher.settings.windowed_launcher,
+                );
+                if self.streaming.is_none() && wanted_launcher != self.launcher_window_mode {
                     self.apply_launcher_window_mode();
                 }
             }
@@ -474,6 +478,9 @@ Redacted logs, oldest line first; addresses, PC names, PINs and credentials are 
                 if let Some(cli) = self.cli.as_mut() { cli.cancel(); }
                 self.network_launch = None;
                 self.hdr_wait = None;
+                if self.base_probed.as_ref().is_some_and(|entry| !entry.sticky) {
+                    self.base_probed = None;
+                }
                 if let Some(probe) = self.probe.take() {
                     eprintln!("nightjar: the start was cancelled while its decoder checks ran; they finish on their own");
                     self.ending_probes.push(probe);
