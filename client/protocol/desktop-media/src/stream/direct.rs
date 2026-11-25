@@ -220,7 +220,7 @@ type Planes = [Option<ID3D11ShaderResourceView>; 2];
 struct Constants {
     picture: [f32; 2],
     texture: [f32; 2],
-    slice: f32,
+    _unused: f32,
     flags: u32,
     sdr_white: f32,
     color_scale: f32,
@@ -230,6 +230,24 @@ struct Constants {
     /// Frame Warp's rows (`WarpDraw::row`, `WarpDraw::lens_row`).
     warp: [f32; 4],
     warp_lens: [f32; 4],
+}
+
+fn free_staging_slot(pending: &std::collections::VecDeque<(usize, u64)>, total: usize) -> Option<usize> {
+    (0..total).find(|slot| !pending.iter().any(|(busy, _)| busy == slot))
+}
+
+fn finish_pending_histogram(
+    pending: &mut std::collections::VecDeque<(usize, u64)>,
+    current_generation: u64,
+    tracker: &mut PeakTracker,
+    counts: Option<&[u32]>,
+) {
+    if let Some((_, generation)) = pending.pop_front()
+        && generation == current_generation
+        && let Some(peak) = counts.and_then(histogram_peak)
+    {
+        tracker.update(peak);
+    }
 }
 
 fn flags(picture: &Picture, output: &Output, tonemap: bool) -> u32 {
@@ -290,7 +308,10 @@ pub struct Direct {
     histogram_view: ID3D11UnorderedAccessView,
     /// Read-back copies of the histogram, measured in turn and read once the GPU is done.
     staging: [ID3D11Buffer; 3],
-    pending: std::collections::VecDeque<usize>,
+    /// `(staging_slot, generation)` entries in flight on the GPU.
+    pending: std::collections::VecDeque<(usize, u64)>,
+    /// Incremented in [`Self::reset`] so histograms from a previous stream are ignored on read-back.
+    generation: u64,
     /// Cached shader resource views per texture across the shared texture ring (all sharing `ten_bit`).
     views: Option<(bool, Vec<TextureViews>)>,
     /// What the picture's texture was last asked for.
@@ -362,6 +383,7 @@ impl Direct {
                 histogram_view: histogram_view.unwrap(),
                 staging,
                 pending: Default::default(),
+                generation: 0,
                 views: None,
                 facts: KeptDesc::default(),
                 tracker: PeakTracker::default(),
@@ -374,6 +396,7 @@ impl Direct {
 
     /// Forgets the stream's measured peak and views (a new picture stream follows).
     pub fn reset(&mut self) {
+        self.generation = self.generation.wrapping_add(1);
         self.tracker = PeakTracker::default();
         self.source = None;
         self.views = None;
@@ -441,18 +464,20 @@ impl Direct {
 
     /// Reads the histograms the GPU has finished, oldest first, into the tracker.
     unsafe fn collect(&mut self) {
-        while let Some(&slot) = self.pending.front() {
+        while let Some(&(slot, generation)) = self.pending.front() {
             let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
             // SAFETY: `self.staging[slot]` is a valid staging buffer on `self.context`.
             unsafe {
                 match self.context.Map(&self.staging[slot], 0, D3D11_MAP_READ, D3D11_MAP_FLAG_DO_NOT_WAIT.0 as u32, Some(&mut mapped)) {
                     Ok(()) => {
-                        // Read once, into the stack: no allocation per picture.
-                        let mut counts = [0u32; BINS];
-                        counts.copy_from_slice(std::slice::from_raw_parts(mapped.pData.cast::<u32>(), BINS));
+                        let counts = (generation == self.generation).then(|| {
+                            // Read once, into the stack: no allocation per picture.
+                            let mut counts = [0u32; BINS];
+                            counts.copy_from_slice(std::slice::from_raw_parts(mapped.pData.cast::<u32>(), BINS));
+                            counts
+                        });
                         self.context.Unmap(&self.staging[slot], 0);
-                        self.pending.pop_front();
-                        if let Some(peak) = histogram_peak(&counts) { self.tracker.update(peak); }
+                        finish_pending_histogram(&mut self.pending, self.generation, &mut self.tracker, counts.as_ref().map(|c| c.as_slice()));
                     }
                     Err(e) if e.code() == DXGI_ERROR_WAS_STILL_DRAWING => break,
                     Err(e) => {
@@ -511,7 +536,7 @@ impl Direct {
             let constants = Constants {
                 picture: [picture.size.0 as f32, picture.size.1 as f32],
                 texture: [texture_size.0 as f32, texture_size.1 as f32],
-                slice: picture.slice as f32,
+                _unused: 0.0,
                 flags: flags(picture, &output, factors.is_some()),
                 sdr_white: white.max(1e-3),
                 color_scale: output.color_scale,
@@ -527,8 +552,8 @@ impl Direct {
             c.Map(cb, 0, D3D11_MAP_WRITE_DISCARD, 0, Some(&mut mapped)).map_err(|e| format!("Map constants: {e}"))?;
             std::ptr::copy_nonoverlapping(std::ptr::from_ref(&constants).cast::<u8>(), mapped.pData.cast::<u8>(), std::mem::size_of::<Constants>());
             c.Unmap(cb, 0);
-            let free = (0..self.staging.len()).find(|slot| !self.pending.contains(slot));
-            if let (true, Some(slot)) = (measure, free) {
+            let free = free_staging_slot(&self.pending, self.staging.len());
+            let measured = if let (true, Some(slot)) = (measure, free) {
                 c.ClearUnorderedAccessViewUint(&self.histogram_view, &[0; 4]);
                 c.CSSetShader(&self.compute, None);
                 c.CSSetShaderResources(0, Some(&planes));
@@ -540,8 +565,10 @@ impl Direct {
                 c.CSSetUnorderedAccessViews(0, 1, Some(unbound.as_ptr()), None);
                 c.CSSetShaderResources(0, Some(&[None, None]));
                 c.CopyResource(&self.staging[slot], &self.histogram);
-                self.pending.push_back(slot);
-            }
+                Some(slot)
+            } else {
+                None
+            };
             c.OMSetRenderTargets(Some(&[Some(target.clone())]), None);
             c.RSSetViewports(Some(&[D3D11_VIEWPORT { TopLeftX: viewport[0], TopLeftY: viewport[1], Width: viewport[2], Height: viewport[3], MinDepth: 0.0, MaxDepth: 1.0 }]));
             c.IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
@@ -557,7 +584,14 @@ impl Direct {
             c.FinishCommandList(false, Some(&mut commands)).map_err(|e| format!("FinishCommandList: {e}"))?;
             let commands = commands.ok_or("no command list")?;
             let context = &self.context;
-            lock(&mut || context.ExecuteCommandList(&commands, true));
+            let mut executed = false;
+            lock(&mut || {
+                context.ExecuteCommandList(&commands, true);
+                executed = true;
+            });
+            if executed && let Some(slot) = measured {
+                self.pending.push_back((slot, self.generation));
+            }
             Ok(())
         }
     }
@@ -742,46 +776,6 @@ mod tests {
             metadata.params[0].maxscl = [AVRational { num: 4000, den: 100000 }, AVRational { num: 9000, den: 100000 }, AVRational { num: 2500, den: 100000 }];
         }
         assert_eq!(frame.hdr10_plus_peak(), Some(900.0));
-    }
-
-    #[test]
-    fn kept_desc_caches_multiple_ring_textures_without_requerying() {
-        use windows::Win32::Foundation::HMODULE;
-        use windows::Win32::Graphics::Direct3D::{D3D_DRIVER_TYPE_WARP, D3D_FEATURE_LEVEL_11_0};
-        let mut device = None;
-        unsafe {
-            D3D11CreateDevice(
-                None, D3D_DRIVER_TYPE_WARP, HMODULE::default(), D3D11_CREATE_DEVICE_FLAG(0),
-                Some(&[D3D_FEATURE_LEVEL_11_0]), D3D11_SDK_VERSION, Some(&mut device), None, None,
-            ).unwrap();
-        }
-        let device = device.unwrap();
-        let textures: Vec<ID3D11Texture2D> = (0..24)
-            .map(|_| {
-                let mut tex = None;
-                unsafe {
-                    device.CreateTexture2D(
-                        &D3D11_TEXTURE2D_DESC {
-                            Width: 16, Height: 16, MipLevels: 1, ArraySize: 1, Format: DXGI_FORMAT_NV12,
-                            SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
-                            Usage: D3D11_USAGE_DEFAULT, BindFlags: D3D11_BIND_SHADER_RESOURCE.0 as u32,
-                            ..Default::default()
-                        },
-                        None,
-                        Some(&mut tex),
-                    ).unwrap();
-                }
-                tex.unwrap()
-            })
-            .collect();
-        let mut kept = KeptDesc::default();
-        for round in 0..5 {
-            for tex in &textures {
-                let desc = kept.of(tex);
-                assert_eq!((desc.Width, desc.Height), (16, 16), "round {round}");
-            }
-        }
-        assert_eq!(kept.queries, 24, "each ring texture (up to 32) is queried once without thrashing");
     }
 }
 

@@ -128,7 +128,7 @@ float4 present(float4 position : SV_Position) : SV_Target {
     float2 at = clamp(q - 0.5, 0, float2(width - 1, height - 1));
     uint2 p = uint2(at);
     float3 rgb;
-    if (destination.z != width || destination.w != height) {
+    if (destination.z != width || destination.w != height || (any(warp != 0) && !frameWarpFlat())) {
         float2 weight = frac(at);
         rgb = lerp(reconstructRow(p, weight.x),
                    reconstructRow(uint2(p.x, min(p.y + 1, height - 1)), weight.x), weight.y);

@@ -11,7 +11,7 @@ RWByteAddressBuffer histogram : register(u0);
 
 cbuffer Draw : register(b0) {
     float2 picture; float2 textureSize;
-    float slice; uint flags; float sdrWhite; float colorScale;
+    float unused; uint flags; float sdrWhite; float colorScale;
     float tonemap1; float tonemap2; float hlgPeak; float hlgGamma;
     // Frame Warp (stream/frame_warp.rs): the shift in fractions of the picture, then the HUD
     // mask's size in cells (0 for none). All zero draws the picture where it is. Then its lens
@@ -84,8 +84,9 @@ float4 draw(float4 position : SV_Position, float2 uv : TEXCOORD0) : SV_Target {
     // where the texture's own coordinates put it: half a luma pixel right of those.
     float2 chromaAt = clamp(uv + float2(flag(8) ? 0 : 0.5 / textureSize.x, 0), 1.0 / textureSize,
                             (picture - 1.0) / textureSize);
-    float3 rgb = rgbOf(luma.Sample(linearClamp, float3(lumaAt, slice)),
-                       chroma.Sample(linearClamp, float3(chromaAt, slice)));
+    // Each view covers one slice (FirstArraySlice = slice, ArraySize = 1), so its index is 0.
+    float3 rgb = rgbOf(luma.Sample(linearClamp, float3(lumaAt, 0)),
+                       chroma.Sample(linearClamp, float3(chromaAt, 0)));
     if (flag(4) || flag(7)) {
         rgb = (flag(7) ? hlgToNits(saturate(rgb)) : pqToNits(saturate(rgb))) / sdrWhite;
         if (flag(6)) {
@@ -116,7 +117,7 @@ void peak(uint3 id : SV_DispatchThreadID, uint flat : SV_GroupIndex) {
     GroupMemoryBarrierWithGroupSync();
     uint2 p = id.xy * 4 + 1;
     if (p.x < (uint)picture.x && p.y < (uint)picture.y) {
-        float3 rgb = saturate(rgbOf(luma.Load(int4(p, slice, 0)), chroma.Load(int4(p / 2, slice, 0))));
+        float3 rgb = saturate(rgbOf(luma.Load(int4(p, 0, 0)), chroma.Load(int4(p / 2, 0, 0))));
         uint bin = min(uint(max(rgb.r, max(rgb.g, rgb.b)) * 256), 255);
         InterlockedAdd(localHist[bin], 1);
     }

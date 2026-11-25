@@ -361,6 +361,14 @@ fn choose(choice: GraphicsCard, wants444: bool, dir: &Path) -> Option<(bool, boo
     Some((changed, elsewhere, gpus, wanted))
 }
 
+fn should_restart_at_start(changed: bool, elsewhere: bool, restarted: bool) -> bool {
+    changed && elsewhere && !restarted
+}
+
+fn should_restart_now(changed: bool, elsewhere: bool, wanted: Option<u32>) -> bool {
+    elsewhere || (changed && wanted.is_none())
+}
+
 /// Before the renderer is made, with the settings of every layer. True when this start should end
 /// and Nightjar start again because the renderer would draw on the other GPU; never for a start
 /// Nightjar made itself ([`split_restarted`]), so it starts again at most once.
@@ -372,7 +380,7 @@ pub fn choose_at_start(choice: GraphicsCard, wants444: bool, dir: &Path) -> bool
     if elsewhere && restarted {
         eprintln!("nightjar: the renderer is not on the GPU preferred after a restart; Nightjar stays on it");
     }
-    let restart = changed && elsewhere && !restarted;
+    let restart = should_restart_at_start(changed, elsewhere, restarted);
     if restart {
         eprintln!("nightjar: starting again so that Windows draws Nightjar on the GPU preferred");
         RESTART.store(1, Ordering::Relaxed);
@@ -381,9 +389,11 @@ pub fn choose_at_start(choice: GraphicsCard, wants444: bool, dir: &Path) -> bool
 }
 
 /// A Graphics card setting changed with nothing streaming: sets the preference. True when Nightjar
-/// should close and start again ([`restart_requested`]) because the renderer is on the other GPU.
+/// should close and start again ([`restart_requested`]) because the renderer is on the other GPU,
+/// or because a previously forced preference was cleared back to Windows' choice (`Automatic`).
 pub fn choose_now(choice: GraphicsCard, wants444: bool, dir: &Path) -> bool {
-    let restart = choose(choice, wants444, dir).is_some_and(|(_, elsewhere, _, _)| elsewhere);
+    let restart = choose(choice, wants444, dir)
+        .is_some_and(|(changed, elsewhere, _, wanted)| should_restart_now(changed, elsewhere, wanted));
     if restart {
         eprintln!("nightjar: the Graphics card setting changed; Nightjar closes and starts again on that GPU");
         RESTART.store(2, Ordering::Relaxed);
@@ -524,5 +534,23 @@ mod tests {
     fn the_hint_names_both_gpus() {
         let hint = super::hint("AMD Radeon 780M Graphics", "NVIDIA GeForce RTX 5060 Laptop GPU");
         assert!(hint.contains("AMD Radeon 780M Graphics") && hint.contains("NVIDIA GeForce RTX 5060 Laptop GPU"), "{hint}");
+    }
+
+    #[test]
+    fn choose_now_restarts_when_reverting_to_automatic_while_choose_at_start_stays_gated() {
+        use super::{should_restart_at_start, should_restart_now};
+        // Switching HighPerformance -> Automatic removes Nightjar's preference: changed=true, wanted=None, elsewhere=false.
+        assert!(should_restart_now(true, false, None), "reverting to Automatic must restart");
+        assert!(!should_restart_now(false, false, None), "already Automatic does not restart");
+        // Switching to a specific GPU restarts whenever the renderer is elsewhere.
+        assert!(should_restart_now(true, true, Some(2)));
+        assert!(should_restart_now(false, true, Some(2)));
+        assert!(!should_restart_now(true, false, Some(2)), "already on the wanted GPU");
+        assert!(!should_restart_now(false, false, Some(1)));
+        // Startup restart remains unchanged: changed && elsewhere && !restarted.
+        assert!(should_restart_at_start(true, true, false));
+        assert!(!should_restart_at_start(true, true, true), "never loops after restart");
+        assert!(!should_restart_at_start(false, true, false));
+        assert!(!should_restart_at_start(true, false, false), "Automatic at start does not restart");
     }
 }

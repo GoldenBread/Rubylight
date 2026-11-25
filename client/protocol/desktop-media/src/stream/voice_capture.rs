@@ -215,6 +215,57 @@ unsafe fn open_dsp(choice: Choice) -> windows::core::Result<IMediaObject> {
     }
 }
 
+/// Bounds `IMediaObject::ProcessOutput` draining per wake so a wedged Voice Capture DMO cannot
+/// spin forever on `DMO_OUTPUT_DATA_BUFFERF_INCOMPLETE` or deadlock `VoiceCapture::drop`.
+const MAX_DRAIN_CALLS: usize = 16;
+const MAX_ZERO_INCOMPLETE: u32 = 2;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DrainAction {
+    /// Call `ProcessOutput` again in this wake.
+    Continue,
+    /// Stop draining for this wake and emit accumulated frames.
+    Done,
+    /// Stop requested; exit the capture thread cleanly.
+    Stop,
+    /// DMO repeatedly returned `INCOMPLETE` with no audio; fail over to plain capture.
+    Stalled,
+}
+
+#[derive(Default)]
+struct DrainTracker {
+    calls_in_wake: usize,
+    zero_incomplete: u32,
+}
+
+impl DrainTracker {
+    fn begin_wake(&mut self) {
+        self.calls_in_wake = 0;
+    }
+
+    fn step(&mut self, more: bool, length: u32, stop: bool) -> DrainAction {
+        if stop {
+            return DrainAction::Stop;
+        }
+        if more && length < 2 {
+            self.zero_incomplete += 1;
+            if self.zero_incomplete >= MAX_ZERO_INCOMPLETE {
+                return DrainAction::Stalled;
+            }
+        } else {
+            self.zero_incomplete = 0;
+        }
+        if !more {
+            return DrainAction::Done;
+        }
+        self.calls_in_wake += 1;
+        if self.calls_in_wake >= MAX_DRAIN_CALLS {
+            return DrainAction::Done;
+        }
+        DrainAction::Continue
+    }
+}
+
 /// The capture thread: started once the DSP is set up, stopped and joined on drop.
 pub struct VoiceCapture {
     stop: Arc<AtomicBool>,
@@ -252,12 +303,17 @@ impl VoiceCapture {
                 let buffer: IMediaBuffer = Buffer { data: UnsafeCell::new(vec![0; RATE as usize / 5]), length: Cell::new(0) }.into();
                 let frame = RATE as usize / 100;
                 let mut samples: Vec<f32> = Vec::with_capacity(frame * 4);
+                let mut drain = DrainTracker::default();
                 let error = 'run: loop {
                     if thread_stop.load(Ordering::Relaxed) {
                         break None;
                     }
                     std::thread::sleep(Duration::from_millis(10));
+                    drain.begin_wake();
                     loop {
+                        if thread_stop.load(Ordering::Relaxed) {
+                            break 'run None;
+                        }
                         let mut output = [DMO_OUTPUT_DATA_BUFFER {
                             pBuffer: std::mem::ManuallyDrop::new(Some(buffer.clone())),
                             dwStatus: 0,
@@ -277,12 +333,19 @@ impl VoiceCapture {
                         // SAFETY: our own buffer, read on this thread.
                         unsafe {
                             let _ = buffer.GetBufferAndLength(Some(&mut data), Some(&mut length));
-                            let pcm = std::slice::from_raw_parts(data.cast::<i16>(), length as usize / 2);
-                            samples.extend(pcm.iter().map(|&s| f32::from(s) / 32768.0));
+                            if length >= 2 && !data.is_null() {
+                                let pcm = std::slice::from_raw_parts(data.cast::<i16>(), length as usize / 2);
+                                samples.extend(pcm.iter().map(|&s| f32::from(s) / 32768.0));
+                            }
                             let _ = buffer.SetLength(0);
                         }
-                        if !more {
-                            break;
+                        match drain.step(more, length, thread_stop.load(Ordering::Relaxed)) {
+                            DrainAction::Continue => {}
+                            DrainAction::Done => break,
+                            DrainAction::Stop => break 'run None,
+                            DrainAction::Stalled => {
+                                break 'run Some("Microphone echo cancellation stalled: empty incomplete output".into());
+                            }
                         }
                     }
                     let mut start = 0;
@@ -345,6 +408,41 @@ mod tests {
         assert_eq!(device_indexes(0, 0), 0);
         assert_eq!(device_indexes(2, 1), 0x0002_0001);
         assert_eq!(device_indexes(1, 3), 0x0001_0003);
+    }
+
+    #[test]
+    fn drain_tracker_handles_multi_chunk_stop_cap_and_zero_length_stall() {
+        // Normal multi-chunk drain finishes cleanly on `!more`.
+        let mut drain = DrainTracker::default();
+        drain.begin_wake();
+        assert_eq!(drain.step(true, 320, false), DrainAction::Continue);
+        assert_eq!(drain.step(true, 320, false), DrainAction::Continue);
+        assert_eq!(drain.step(false, 160, false), DrainAction::Done);
+        // Idle wake (`more == false, length == 0`) is normal, never a stall.
+        drain.begin_wake();
+        assert_eq!(drain.step(false, 0, false), DrainAction::Done);
+        assert_eq!(drain.step(false, 0, false), DrainAction::Done);
+        // Stop flag mid-drain exits immediately.
+        drain.begin_wake();
+        assert_eq!(drain.step(true, 320, false), DrainAction::Continue);
+        assert_eq!(drain.step(true, 320, true), DrainAction::Stop);
+        // Iteration cap bounds calls per wake and resets on `begin_wake`.
+        let mut capped = DrainTracker::default();
+        capped.begin_wake();
+        for _ in 0..MAX_DRAIN_CALLS - 1 {
+            assert_eq!(capped.step(true, 320, false), DrainAction::Continue);
+        }
+        assert_eq!(capped.step(true, 320, false), DrainAction::Done, "yields at cap");
+        capped.begin_wake();
+        assert_eq!(capped.step(true, 320, false), DrainAction::Continue, "next wake gets a fresh budget");
+        // Transient single zero-length INCOMPLETE followed by audio recovers; consecutive ones stall.
+        let mut stalled = DrainTracker::default();
+        stalled.begin_wake();
+        assert_eq!(stalled.step(true, 0, false), DrainAction::Continue);
+        assert_eq!(stalled.step(false, 320, false), DrainAction::Done, "recovered");
+        stalled.begin_wake();
+        assert_eq!(stalled.step(true, 0, false), DrainAction::Continue);
+        assert_eq!(stalled.step(true, 0, false), DrainAction::Stalled, "consecutive empty INCOMPLETE stalls");
     }
 
     /// Opens the DSP on this PC's default devices for half a second: needs a microphone and

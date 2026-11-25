@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 
 use rubylight_protocol::audio_ext::{CHANNELS_714, CHANNEL_MASK_714};
 use windows::core::{GUID, PCWSTR};
-use windows::Win32::Foundation::{CloseHandle, HANDLE, WAIT_OBJECT_0, WAIT_TIMEOUT};
+use windows::Win32::Foundation::{CloseHandle, E_UNEXPECTED, HANDLE, WAIT_OBJECT_0, WAIT_TIMEOUT};
 use windows::Win32::Media::Audio::{
     eConsole, eRender, IAudioClient, IAudioRenderClient, IMMDeviceEnumerator, MMDeviceEnumerator,
     AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM, AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
@@ -168,9 +168,34 @@ impl Drop for Event {
     }
 }
 
+/// Frames written per wake from WASAPI's default period (100 ns units) and buffer size.
+/// Returns `None` when the device reports a zero-frame buffer.
+fn compute_period(default_period_100ns: i64, buffer: u32) -> Option<u32> {
+    if buffer == 0 {
+        return None;
+    }
+    let frames = (default_period_100ns.max(0) as f64 / 10_000.0 * f64::from(RATE) / 1000.0).ceil();
+    let frames = if frames.is_finite() && frames > 0.0 {
+        frames.min(f64::from(buffer)) as u32
+    } else {
+        1
+    };
+    Some(frames.clamp(1, buffer))
+}
+
+/// Frames to write on a render wake: zero when more than a period is already queued or no buffer
+/// space remains, avoiding `GetBuffer(0)` (which may return `S_OK` with a null pointer).
+fn render_frames(period: u32, buffer: u32, padding: u32) -> u32 {
+    if padding > period {
+        return 0;
+    }
+    period.min(buffer.saturating_sub(padding))
+}
+
 struct Device {
-    client: IAudioClient,
+    // Field drop order releases COM clients before closing the event handle set on `client`.
     render: IAudioRenderClient,
+    client: IAudioClient,
     event: Event,
     /// Frames written per wake: the device period, as SDL's WASAPI backend writes.
     period: u32,
@@ -179,6 +204,9 @@ struct Device {
 
 impl Device {
     fn open() -> windows::core::Result<Self> {
+        // Declared before `client` so any `?` after `SetEventHandle` drops `client` first.
+        // SAFETY: creating a plain unnamed auto-reset event owned by `Event`.
+        let event = Event(unsafe { CreateEventW(None, false, false, PCWSTR::null()) }?);
         let client = default_client()?;
         let format = format();
         // SAFETY: COM is initialised on this thread; the format outlives the call.
@@ -195,13 +223,12 @@ impl Device {
                 (&raw const format).cast::<WAVEFORMATEX>(),
                 None,
             )?;
-            let event = Event(CreateEventW(None, false, false, PCWSTR::null())?);
             client.SetEventHandle(event.0)?;
             let buffer = client.GetBufferSize()?;
+            let period = compute_period(default_period, buffer)
+                .ok_or_else(|| windows::core::Error::new(E_UNEXPECTED, "WASAPI audio buffer size is zero"))?;
             let render = client.GetService::<IAudioRenderClient>()?;
-            // The period is in 100 ns units.
-            let period = ((default_period as f64 / 10_000.0 * f64::from(RATE) / 1000.0).ceil() as u32).clamp(1, buffer);
-            Ok(Self { client, render, event, period, buffer })
+            Ok(Self { render, client, event, period, buffer })
         }
     }
 
@@ -221,11 +248,14 @@ impl Device {
                         return Err(windows::core::Error::from_thread());
                     }
                     let padding = self.client.GetCurrentPadding()?;
-                    if padding > self.period {
+                    let frames = render_frames(self.period, self.buffer, padding);
+                    if frames == 0 {
                         continue;
                     }
-                    let frames = self.period.min(self.buffer - padding);
                     let data = self.render.GetBuffer(frames)?;
+                    if data.is_null() {
+                        return Err(windows::core::Error::new(E_UNEXPECTED, "WASAPI GetBuffer returned null"));
+                    }
                     let out = std::slice::from_raw_parts_mut(data.cast::<f32>(), frames as usize * CHANNELS);
                     fill(&mut lock(queue), out);
                     self.render.ReleaseBuffer(frames, 0)?;
@@ -397,6 +427,28 @@ mod tests {
         // PCM conceals with silence, but as whole packets the playout counts.
         assert_eq!(lock(&playout).take_concealed(), 2);
         assert!(out.iter().all(|s| *s == 0.0));
+    }
+
+    #[test]
+    fn compute_period_and_render_frames_reject_zero_buffer_and_prevent_zero_frame_writes() {
+        // Zero buffer is rejected instead of panicking in clamp(1, 0).
+        assert_eq!(compute_period(100_000, 0), None);
+        assert_eq!(compute_period(0, 0), None);
+        // Normal periods (10 ms = 100_000 * 100ns => 480 frames at 48 kHz) and edge clamping.
+        assert_eq!(compute_period(100_000, 960), Some(480));
+        assert_eq!(compute_period(101_587, 960), Some(488));
+        assert_eq!(compute_period(100_000, 240), Some(240), "clamped to buffer size");
+        assert_eq!(compute_period(0, 960), Some(1), "non-positive period clamps to 1");
+        assert_eq!(compute_period(-10_000, 960), Some(1));
+        assert_eq!(compute_period(i64::MAX, 960), Some(960));
+        // Render frame count guards against GetBuffer(0) and padding > buffer underflow.
+        assert_eq!(render_frames(480, 960, 0), 480);
+        assert_eq!(render_frames(480, 960, 480), 480);
+        assert_eq!(render_frames(480, 600, 300), 300);
+        assert_eq!(render_frames(480, 960, 481), 0, "padding above period waits");
+        assert_eq!(render_frames(480, 480, 480), 0, "padding == buffer == period never calls GetBuffer(0)");
+        assert_eq!(render_frames(480, 480, 500), 0, "padding > buffer never underflows");
+        assert_eq!(render_frames(500, 480, 490), 0, "padding > buffer even when padding <= period");
     }
 
     /// Opens this PC's default output with the 7.1.4 format and plays silence for a moment.
