@@ -162,9 +162,18 @@ impl RunningApp {
     /// The processes whose windows a background stream keeps on its display,
     /// identified as for game-only audio.
     pub fn window_processes(&self) -> Result<std::collections::BTreeSet<u32>> {
-        let (owned, processes) = self.game_processes()?;
+        let processes = session_processes()?;
+        self.window_processes_in(&processes)
+    }
+    /// Same as [`window_processes`], using a process list captured outside the
+    /// `current_app` lock.
+    pub fn window_processes_in(
+        &self,
+        processes: &[butterpollo_session::steam::Process],
+    ) -> Result<std::collections::BTreeSet<u32>> {
+        let owned = self.owned_processes(processes)?;
         Ok(butterpollo_session::background::window_owners(
-            &owned, &processes,
+            &owned, processes,
         ))
     }
     /// Its game settings files' swap, for [`crate::game_settings::hand_over`].

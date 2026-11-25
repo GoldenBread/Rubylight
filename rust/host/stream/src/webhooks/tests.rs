@@ -381,3 +381,33 @@ async fn webhooks_ignore_system_proxy_env_and_still_deliver_directly() {
     assert!(status.ok, "{status:?}");
     assert!(received.try_recv().is_ok());
 }
+
+#[tokio::test]
+async fn host_webhook_loads_signing_secret_from_profile_secrets_file() {
+    let (url, mut received) = receiver(vec![204]).await;
+    let f = Fixture::new();
+    let stripped = serde_json::json!([{
+        "url": url,
+        "events": ["app.started"],
+    }])
+    .to_string();
+    f.host
+        .config
+        .write()
+        .unwrap()
+        .values
+        .insert("webhooks".into(), stripped);
+    let secrets = std::collections::BTreeMap::from([(url.clone(), "profile-file-secret".into())]);
+    webhook::save_secrets(&webhook::secrets_path(&f.host.directory), &secrets).unwrap();
+
+    f.host.webhook("app.started", json!({"app": {"id": 9}}));
+    let request = received.recv().await.unwrap();
+    assert_eq!(
+        request.headers["x-rubylight-signature"],
+        format!(
+            "{}{}",
+            webhook::SIGNATURE_PREFIX,
+            webhook::sign("profile-file-secret", &request.body)
+        )
+    );
+}

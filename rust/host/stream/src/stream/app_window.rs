@@ -119,20 +119,38 @@ fn app_processes(
     s: &Session,
     named: bool,
 ) -> (Option<BTreeSet<u32>>, BTreeMap<u32, String>) {
-    let tree = h
+    let matching = |app: &&crate::process::RunningApp| app.id == s.launch.app_id;
+    let running = h
         .current_app
         .lock()
         .unwrap()
         .as_ref()
-        .filter(|app| app.id == s.launch.app_id)
-        .map(crate::process::RunningApp::window_processes);
-    let tree = match tree {
-        Some(Ok(tree)) => Some(tree),
-        Some(Err(error)) => {
-            tracing::debug!(error = %format!("{error:#}"), "the app's processes are unavailable for its window");
-            None
+        .filter(matching)
+        .is_some();
+    let tree = if running {
+        match crate::process::session_processes() {
+            Ok(processes) => match h
+                .current_app
+                .lock()
+                .unwrap()
+                .as_ref()
+                .filter(matching)
+                .map(|app| app.window_processes_in(&processes))
+            {
+                Some(Ok(tree)) => Some(tree),
+                Some(Err(error)) => {
+                    tracing::debug!(error = %format!("{error:#}"), "the app's processes are unavailable for its window");
+                    None
+                }
+                None => None,
+            },
+            Err(error) => {
+                tracing::debug!(error = %format!("{error:#}"), "the app's processes are unavailable for its window");
+                None
+            }
         }
-        None => None,
+    } else {
+        None
     };
     let names = if named {
         butterpollo_win_io::process::processes()

@@ -324,6 +324,31 @@ fn host_load_reuses_the_shared_virtual_display_guid_without_replacing_an_existin
     );
 }
 #[test]
+fn host_load_migrates_inline_webhook_secrets_out_of_sunshine_conf() {
+    use super::super::test_support::Fixture;
+    let f = Fixture::new();
+    let conf_path = f.host.directory.join("sunshine.conf");
+    std::fs::write(
+        &conf_path,
+        "webhooks = [{\"url\":\"https://example.test/hook\",\"events\":[\"app.started\"],\"secret\":\"s3cret\"}]\n",
+    )
+    .unwrap();
+    let host =
+        super::super::Host::load(f.host.directory.clone(), f.host.assets.clone(), None).unwrap();
+    let on_disk = std::fs::read_to_string(&conf_path).unwrap();
+    assert!(
+        !on_disk.contains("s3cret"),
+        "inline secret must be stripped from sunshine.conf: {on_disk}"
+    );
+    let loaded = butterpollo_session::webhook::load_from_profile(
+        &host.config.read().unwrap(),
+        &host.directory,
+    );
+    assert_eq!(loaded.len(), 1);
+    assert_eq!(loaded[0].secret, "s3cret");
+    assert!(butterpollo_session::webhook::secrets_path(&host.directory).is_file());
+}
+#[test]
 #[ignore = "requires SYSTEM in a console session with nobody signed in"]
 fn standard_codec_retries_do_not_wait_for_windows_sign_in() {
     assert!(butterpollo_win_io::process::is_system());

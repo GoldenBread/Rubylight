@@ -669,4 +669,38 @@ mod tests {
             build_self_signed_der(&short_key, "ShortKey", Some(2), &OID_SHA256_WITH_RSA);
         assert!(crypto::verify_pairing_certificate(&to_cert_pem(&short_der)).is_err());
     }
+
+    #[test]
+    fn accepts_nightjar_generated_client_certificate_pem() {
+        // Fixture produced by nightjar_core::http::ClientIdentity::generate().certificate_pem().
+        const NIGHTJAR_GENERATED_CLIENT_CERT_PEM: &str = "\
+-----BEGIN CERTIFICATE-----
+MIICxjCCAa6gAwIBAgIIXWUWckBHoF8wDQYJKoZIhvcNAQELBQAwIzEhMB8GA1UE
+AwwYTlZJRElBIEdhbWVTdHJlYW0gQ2xpZW50MB4XDTI2MTEyNTE5NDYzMFoXDTQ2
+MTEyNTE5NDYzMFowIzEhMB8GA1UEAwwYTlZJRElBIEdhbWVTdHJlYW0gQ2xpZW50
+MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAmOitdmfIts6b0Irrfta3
+xfnzd0wFUw93QQ5bxK++X+joy51UhFnNipEIb6fgv9cpkkVnFK+E+hB5JEyFIP/V
+WqvGsb3SJlTS5E0Bi97sj7cNlVpPFlLRMiwtYT4OXGO3pqgtntlofh72IwTc5AgI
+YzT3XLPKjZ4EvSFhDWjnQIcAdHab0dSo7QyQgZVpBnyK0lx3mq+goFjf+cDumzty
+xulwOTmctdo05sd6HsnLHFOp9xMIKRBE2R3wDH8oP6hCo3Zp9Ng10zSBpKf5pk6N
+xr78+cUzc4DP3qQWRVBij0yvMfQ9/5iIr0VmO9CgqSgO/Q535M2A0CP70javssMM
+9wIDAQABMA0GCSqGSIb3DQEBCwUAA4IBAQBX2JYVAp3cguORSvGnsNJzFWm5hFRJ
+MogdJs3r9RYAxfN82e0a3KWXPPXbTwh6dE4BG6swHBbyqKGvQWLyNYdzcpbOPEH5
+kDEDz4T75ZR4zScA0HfE/Fo7XocMMh74w2+CgZJ0QbYxMIRkQ/AGHiTlXCXkXIlI
+SPMGVa0y07l6SpC3JSkTXmSTNZajZrBWKgIohKVkx2R8HDHP3zbeLbITwPLNJxSO
+yierkq3N/uVjluXyOvXoivAHyvxeod1zKLYm5M/952lRQv51cPJIdvsps5UUl5Q/
+tlIPpiA6PX26O01CikeHOUL+G7n6+xKlk01mdzBj6ymrsoeOuaioOhlo
+-----END CERTIFICATE-----
+";
+        crypto::verify_pairing_certificate(NIGHTJAR_GENERATED_CLIENT_CERT_PEM).unwrap();
+        let pairing = Pairing::new(
+            "nightjar-client".into(),
+            "Nightjar test".into(),
+            NIGHTJAR_GENERATED_CLIENT_CERT_PEM.into(),
+            &[7; 16],
+            "1234",
+        )
+        .unwrap();
+        assert!(!pairing.server_challenge.is_empty());
+    }
 }

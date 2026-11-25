@@ -295,6 +295,19 @@ impl Host {
             }
             crate::host_warnings::notice(&directory, &warnings, "settings_retired", &warning);
         }
+        match butterpollo_session::webhook::migrate_from_config(&mut config, &directory) {
+            Ok(true) => {
+                if let Err(error) =
+                    butterpollo_session::state::atomic_write(&config_path, config.text().as_bytes())
+                {
+                    tracing::warn!(error = %format!("{error:#}"), "migrated webhook secrets could not be saved back to config");
+                }
+            }
+            Ok(false) => {}
+            Err(error) => {
+                tracing::warn!(error = %format!("{error:#}"), "webhook secrets could not be migrated");
+            }
+        }
         if let Some(warning) = butterpollo_win_io::limiter::take_stale_nvidia(&directory) {
             crate::host_warnings::notice(&directory, &warnings, "nvidia_limiter_retired", &warning);
         }

@@ -584,7 +584,7 @@ impl Host {
                 return;
             }
             (
-                webhook::from_config(&config),
+                webhook::load_from_profile(&config, &self.directory),
                 crate::network::host_name(&config),
             )
         };
