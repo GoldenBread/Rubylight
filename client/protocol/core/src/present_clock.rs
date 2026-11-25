@@ -60,12 +60,14 @@ impl ClockOffset {
     /// away from the current one means the host restarted its video clock: the older
     /// samples are dropped.
     pub fn add(&mut self, reply: &ClockSyncReply, client_receive_us: u64) -> Option<i64> {
-        let (t1, t2, t3, t4) = (
-            reply.client_us as i64,
-            reply.host_receive_us as i64,
-            reply.host_send_us as i64,
-            client_receive_us as i64,
-        );
+        let (Ok(t1), Ok(t2), Ok(t3), Ok(t4)) = (
+            i64::try_from(reply.client_us),
+            i64::try_from(reply.host_receive_us),
+            i64::try_from(reply.host_send_us),
+            i64::try_from(client_receive_us),
+        ) else {
+            return None;
+        };
         if t4 < t1 {
             return None;
         }

@@ -165,6 +165,37 @@ pub struct VideoStream {
     decode: Option<JoinHandle<Box<dyn VideoDecoder>>>,
 }
 
+/// RAII guard ensuring an unstarted [`VideoDecoder`] still runs `stop()` + `cleanup()` if
+/// `try_clone` or `thread::Builder::spawn` fails before the worker thread takes ownership.
+pub(super) struct DecoderCleanupGuard(Option<Box<dyn VideoDecoder>>);
+
+impl DecoderCleanupGuard {
+    pub(super) fn new(decoder: Box<dyn VideoDecoder>) -> Self {
+        Self(Some(decoder))
+    }
+
+    pub(super) const fn empty() -> Self {
+        Self(None)
+    }
+
+    pub(super) fn is_armed(&self) -> bool {
+        self.0.is_some()
+    }
+
+    pub(super) fn take(&mut self) -> Option<Box<dyn VideoDecoder>> {
+        self.0.take()
+    }
+}
+
+impl Drop for DecoderCleanupGuard {
+    fn drop(&mut self) {
+        if let Some(mut decoder) = self.0.take() {
+            decoder.stop();
+            decoder.cleanup();
+        }
+    }
+}
+
 impl VideoStream {
     /// Starts the receive thread (and the decoder thread without direct submission), then
     /// the pings. The decoder is set up and started.
@@ -176,13 +207,16 @@ impl VideoStream {
         control: ControlHandle,
     ) -> std::io::Result<Self> {
         let stop = Arc::new(AtomicBool::new(false));
-        let (direct, queued) = if start.direct_submit {
+        let (mut direct_guard, mut queued_guard) = if start.direct_submit {
             (
-                Some(Direct::new(decoder, KeyFrameRequests::new(start.fps))),
-                None,
+                DecoderCleanupGuard::new(decoder),
+                DecoderCleanupGuard::empty(),
             )
         } else {
-            (None, Some(decoder))
+            (
+                DecoderCleanupGuard::empty(),
+                DecoderCleanupGuard::new(decoder),
+            )
         };
         let mut stream = Self {
             shared: shared.clone(),
@@ -191,22 +225,7 @@ impl VideoStream {
             receive: None,
             decode: None,
         };
-        let cleanup_decoder = |mut d: Box<dyn VideoDecoder>| {
-            d.stop();
-            d.cleanup();
-        };
-        let socket = match start.socket.try_clone() {
-            Ok(s) => s,
-            Err(e) => {
-                if let Some(d) = direct {
-                    cleanup_decoder(d.decoder);
-                }
-                if let Some(d) = queued {
-                    cleanup_decoder(d);
-                }
-                return Err(e);
-            }
-        };
+        let socket = start.socket.try_clone()?;
         let next_socket = start.next_socket.clone();
         let receive_control = control.clone();
         let receive_shared = shared.clone();
@@ -214,42 +233,38 @@ impl VideoStream {
         let receive_session = session.clone();
         let direct_submit = start.direct_submit;
         let coalescing = start.receive_coalescing;
+        let fps = start.fps;
         if !session.decode_priority {
             session.log("Decode priority is off for this stream (setting or switch)");
         }
-        let mut direct_slot = Some(direct);
-        let receive_thread = std::thread::Builder::new().name("VideoRecv".into()).spawn({
-            let direct = direct_slot.take().unwrap();
-            move || {
-                receive_session.prioritize_receive_thread(direct_submit);
-                receive_thread(
-                    socket,
-                    next_socket,
-                    receive_shared,
-                    receive_session,
-                    receive_control,
-                    receive_stop,
-                    direct,
-                    coalescing,
-                )
-            }
-        });
-        match receive_thread {
-            Ok(t) => stream.receive = Some(t),
-            Err(e) => {
-                if let Some(d) = queued {
-                    cleanup_decoder(d);
-                }
-                return Err(e);
-            }
-        }
-        if let Some(decoder) = queued {
-            let refresh = KeyFrameRequests::new(start.fps);
+        stream.receive = Some(
+            std::thread::Builder::new()
+                .name("VideoRecv".into())
+                .spawn(move || {
+                    let direct = direct_guard
+                        .take()
+                        .map(|d| Direct::new(d, KeyFrameRequests::new(fps)));
+                    receive_session.prioritize_receive_thread(direct_submit);
+                    receive_thread(
+                        socket,
+                        next_socket,
+                        receive_shared,
+                        receive_session,
+                        receive_control,
+                        receive_stop,
+                        direct,
+                        coalescing,
+                    )
+                })?,
+        );
+        if queued_guard.is_armed() {
+            let refresh = KeyFrameRequests::new(fps);
             let decode_session = session.clone();
             stream.decode = Some(
                 std::thread::Builder::new()
                     .name("VideoDec".into())
                     .spawn(move || {
+                        let decoder = queued_guard.take().expect("queued decoder armed");
                         decode_session.prioritize_decode_thread();
                         decoder_thread(decoder, shared, control, refresh)
                     })?,

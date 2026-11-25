@@ -269,3 +269,76 @@ fn dropping_audio_stream_stops_and_cleans_up_renderer() {
         assert!(cleaned.load(Ordering::SeqCst), "direct_submit={direct_submit}");
     }
 }
+
+struct TrackedVideo {
+    stops: Arc<std::sync::atomic::AtomicUsize>,
+    cleanups: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl VideoDecoder for TrackedVideo {
+    fn setup(&mut self, _setup: &VideoSetup) -> Result<(), i32> {
+        Ok(())
+    }
+    fn submit(&mut self, _frame: &Frame) -> DecodeStatus {
+        DecodeStatus::Ok
+    }
+    fn stop(&mut self) {
+        self.stops.fetch_add(1, Ordering::SeqCst);
+    }
+    fn cleanup(&mut self) {
+        self.cleanups.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+#[test]
+fn spawn_cleanup_guards_clean_up_only_when_not_taken() {
+    use std::sync::atomic::AtomicUsize;
+
+    // Unstarted video decoder guard dropped (e.g. thread spawn failure) runs stop + cleanup once.
+    let v_stops = Arc::new(AtomicUsize::new(0));
+    let v_cleanups = Arc::new(AtomicUsize::new(0));
+    let guard = super::video::DecoderCleanupGuard::new(Box::new(TrackedVideo {
+        stops: v_stops.clone(),
+        cleanups: v_cleanups.clone(),
+    }));
+    drop(guard);
+    assert_eq!(
+        (v_stops.load(Ordering::SeqCst), v_cleanups.load(Ordering::SeqCst)),
+        (1, 1)
+    );
+
+    // Once taken by the spawned thread, dropping the guard does NOT double-clean.
+    let v_stops2 = Arc::new(AtomicUsize::new(0));
+    let v_cleanups2 = Arc::new(AtomicUsize::new(0));
+    let mut taken_guard = super::video::DecoderCleanupGuard::new(Box::new(TrackedVideo {
+        stops: v_stops2.clone(),
+        cleanups: v_cleanups2.clone(),
+    }));
+    let decoder = taken_guard.take();
+    assert!(decoder.is_some());
+    drop(taken_guard);
+    assert_eq!(
+        (v_stops2.load(Ordering::SeqCst), v_cleanups2.load(Ordering::SeqCst)),
+        (0, 0)
+    );
+
+    // Same contract for AudioRenderer spawn guard.
+    let a_stopped = Arc::new(AtomicBool::new(false));
+    let a_cleaned = Arc::new(AtomicBool::new(false));
+    let a_guard = super::audio::RendererCleanupGuard::new(Box::new(TrackedAudio {
+        stopped: a_stopped.clone(),
+        cleaned: a_cleaned.clone(),
+    }));
+    drop(a_guard);
+    assert!(a_stopped.load(Ordering::SeqCst) && a_cleaned.load(Ordering::SeqCst));
+
+    let a_stopped2 = Arc::new(AtomicBool::new(false));
+    let a_cleaned2 = Arc::new(AtomicBool::new(false));
+    let mut a_taken = super::audio::RendererCleanupGuard::new(Box::new(TrackedAudio {
+        stopped: a_stopped2.clone(),
+        cleaned: a_cleaned2.clone(),
+    }));
+    let _renderer = a_taken.take().unwrap();
+    drop(a_taken);
+    assert!(!a_stopped2.load(Ordering::SeqCst) && !a_cleaned2.load(Ordering::SeqCst));
+}

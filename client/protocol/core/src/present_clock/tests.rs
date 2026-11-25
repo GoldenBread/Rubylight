@@ -339,7 +339,7 @@ fn clock_offset_from_jittery_exchanges() {
     let mut noise = Lcg(6);
     let true_offset = 5_000_000_000i64;
     for i in 0..40 {
-        let client_send = 1_000_000 + i * 250_000;
+        let client_send = 10_000_000_000 + i * 250_000;
         let up = 300 + noise.next(4_000);
         let down = 300 + noise.next(4_000);
         let host_receive = client_send + up - true_offset;
@@ -352,7 +352,7 @@ fn clock_offset_from_jittery_exchanges() {
         };
         offset.add(&reply, (host_send + true_offset + down) as u64).unwrap();
     }
-    let estimate = offset.offset_at(11_000_000).unwrap();
+    let estimate = offset.offset_at(10_010_000_000).unwrap();
     assert!((estimate - true_offset).abs() <= offset.rtt_us().unwrap() / 2 + 1);
     assert!((estimate - true_offset).abs() < 1_000, "{}", estimate - true_offset);
     // A reply received before it was sent is nonsense.
@@ -605,9 +605,25 @@ fn clock_offset_rejects_overflowing_wire_timestamps_without_panicking() {
     };
     assert_eq!(off.add(&bad_offset, i64::MAX as u64), None);
 
+    // Wire timestamps > i64::MAX must be rejected rather than wrapping negative via `as i64`.
+    let wrapped_negative = ClockSyncReply {
+        sequence: 4,
+        client_us: 1_000,
+        host_receive_us: u64::MAX - 10,
+        host_send_us: u64::MAX - 10,
+    };
+    assert_eq!(off.add(&wrapped_negative, 2_000), None);
+    let huge_client_recv = ClockSyncReply {
+        sequence: 5,
+        client_us: 1_000,
+        host_receive_us: 1_000,
+        host_send_us: 1_000,
+    };
+    assert_eq!(off.add(&huge_client_recv, u64::MAX - 10), None);
+
     // Jump from huge negative offset to huge positive offset does not overflow abs().
     let jump = ClockSyncReply {
-        sequence: 4,
+        sequence: 6,
         client_us: huge,
         host_receive_us: 1_000,
         host_send_us: 1_000,

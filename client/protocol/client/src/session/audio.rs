@@ -315,6 +315,37 @@ impl ArrivalJitter {
     }
 }
 
+/// RAII guard ensuring an unstarted [`AudioRenderer`] still runs `stop()` + `cleanup()` if
+/// `try_clone` or `thread::Builder::spawn` fails before the worker thread takes ownership.
+pub(super) struct RendererCleanupGuard(Option<Box<dyn AudioRenderer>>);
+
+impl RendererCleanupGuard {
+    pub(super) fn new(renderer: Box<dyn AudioRenderer>) -> Self {
+        Self(Some(renderer))
+    }
+
+    pub(super) const fn empty() -> Self {
+        Self(None)
+    }
+
+    pub(super) fn is_armed(&self) -> bool {
+        self.0.is_some()
+    }
+
+    pub(super) fn take(&mut self) -> Option<Box<dyn AudioRenderer>> {
+        self.0.take()
+    }
+}
+
+impl Drop for RendererCleanupGuard {
+    fn drop(&mut self) {
+        if let Some(mut renderer) = self.0.take() {
+            renderer.stop();
+            renderer.cleanup();
+        }
+    }
+}
+
 pub struct AudioStream {
     shared: Arc<AudioShared>,
     stop: Arc<AtomicBool>,
@@ -333,27 +364,18 @@ impl AudioStream {
         session: Arc<Shared>,
     ) -> std::io::Result<Self> {
         let stop = Arc::new(AtomicBool::new(false));
-        let (direct, queued) = if direct_submit {
-            (Some(renderer), None)
+        let (mut direct_guard, mut queued_guard) = if direct_submit {
+            (
+                RendererCleanupGuard::new(renderer),
+                RendererCleanupGuard::empty(),
+            )
         } else {
-            (None, Some(renderer))
+            (
+                RendererCleanupGuard::empty(),
+                RendererCleanupGuard::new(renderer),
+            )
         };
-        let cleanup_renderer = |mut r: Box<dyn AudioRenderer>| {
-            r.stop();
-            r.cleanup();
-        };
-        let socket = match socket.try_clone() {
-            Ok(s) => s,
-            Err(e) => {
-                if let Some(r) = direct {
-                    cleanup_renderer(r);
-                }
-                if let Some(r) = queued {
-                    cleanup_renderer(r);
-                }
-                return Err(e);
-            }
-        };
+        let socket = socket.try_clone()?;
         let mut stream = Self {
             shared: shared.clone(),
             stop: stop.clone(),
@@ -362,40 +384,38 @@ impl AudioStream {
         };
         let receive_shared = shared.clone();
         let decode_session = session.clone();
-        match std::thread::Builder::new().name("AudioRecv".into()).spawn(
-            move || {
-                session.prioritize_thread();
-                receive_thread(
-                    socket,
-                    next_socket,
-                    receiver,
-                    direct,
-                    receive_shared,
-                    session,
-                    stop,
-                )
-            },
-        ) {
-            Ok(t) => stream.receive = Some(t),
-            Err(e) => {
-                if let Some(r) = queued {
-                    cleanup_renderer(r);
-                }
-                return Err(e);
-            }
-        }
-        if let Some(mut renderer) = queued {
-            stream.decode = Some(std::thread::Builder::new().name("AudioDec".into()).spawn(
-                move || {
-                    decode_session.prioritize_thread();
-                    let mut played = None;
-                    while let Some(item) = shared.queue.wait_returning(played.take()) {
-                        renderer.play(item.as_deref());
-                        played = item;
-                    }
-                    renderer
-                },
-            )?);
+        stream.receive = Some(
+            std::thread::Builder::new()
+                .name("AudioRecv".into())
+                .spawn(move || {
+                    let direct = direct_guard.take();
+                    session.prioritize_thread();
+                    receive_thread(
+                        socket,
+                        next_socket,
+                        receiver,
+                        direct,
+                        receive_shared,
+                        session,
+                        stop,
+                    )
+                })?,
+        );
+        if queued_guard.is_armed() {
+            stream.decode = Some(
+                std::thread::Builder::new()
+                    .name("AudioDec".into())
+                    .spawn(move || {
+                        let mut renderer = queued_guard.take().expect("queued renderer armed");
+                        decode_session.prioritize_thread();
+                        let mut played = None;
+                        while let Some(item) = shared.queue.wait_returning(played.take()) {
+                            renderer.play(item.as_deref());
+                            played = item;
+                        }
+                        renderer
+                    })?,
+            );
         }
         Ok(stream)
     }
