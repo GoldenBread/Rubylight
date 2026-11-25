@@ -170,7 +170,6 @@ impl VideoFrameWarp {
     /// Releases GPU passes and remembered device-failure state on capture
     /// generation reset so no dead `ID3D11Device` or capture texture survives
     /// `release_generation`, while keeping the off-thread learning worker.
-    #[allow(dead_code)]
     pub(crate) fn reset(&mut self) {
         self.passes = None;
         self.failed_on = None;

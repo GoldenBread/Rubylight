@@ -415,6 +415,7 @@ impl SessionThread<'_> {
                 last_image = None;
                 staging = None;
                 enhancer.reset();
+                frame_warp.reset();
                 pacer.reset_source_phase();
                 latest.release_generation(&capture_wake);
                 // The reopened capture may run on another backend: read
