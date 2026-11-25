@@ -409,10 +409,12 @@ pub(crate) struct ControlSeqState {
     pub(crate) received: butterpollo_media_policy::packet::ReplayWindow,
 }
 
+type ControlSeqMap = HashMap<[u8; 16], Arc<Mutex<ControlSeqState>>>;
+
 /// Control encryption sequences and replay windows per launch key, kept across control worker
 /// restarts so a live launch never repeats an AES-GCM nonce or clears its replay window.
 #[derive(Clone, Default)]
-pub(crate) struct ControlSeqMemory(Arc<Mutex<HashMap<[u8; 16], Arc<Mutex<ControlSeqState>>>>>);
+pub(crate) struct ControlSeqMemory(Arc<Mutex<ControlSeqMap>>);
 
 impl ControlSeqMemory {
     pub(crate) fn for_launch(&self, key: [u8; 16]) -> Arc<Mutex<ControlSeqState>> {

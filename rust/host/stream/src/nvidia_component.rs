@@ -680,10 +680,12 @@ async fn download(h: &Shared, asset: &Asset, path: &Path, before: u64, total: u6
     Ok(())
 }
 
+#[cfg(test)]
+use archive::folder_name;
 /// Takes the files the archive `archive` (the release asset `asset`) may
 /// contribute ([`pins::wanted`]) into `into`: only entries at its top level,
 /// none larger than [`MAX_ASSET`], none twice.
-use archive::{extract, folder_name, place};
+use archive::{extract, place};
 
 /// Downloads, checks and installs this version's component; returns its
 /// record, already written.

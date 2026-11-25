@@ -70,10 +70,9 @@ fn load_cached(directory: &Path) -> Result<Saved> {
         Some(Err(error)) => return Err(error).with_context(|| format!("{}", path.display())),
         None => None,
     };
-    if let Some(ref stamp) = Some(&stamp)
-        && let Some(cached) = SAVED_CACHE.lock().unwrap().as_ref()
+    if let Some(cached) = SAVED_CACHE.lock().unwrap().as_ref()
         && cached.path == path
-        && cached.stamp == **stamp
+        && cached.stamp == stamp
     {
         return Ok(cached.saved.clone());
     }
