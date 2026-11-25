@@ -33,9 +33,22 @@ pub fn restore_hdr(stream: &mut crate::rtsp::Negotiated, negotiated: &crate::rts
 #[derive(Default, Debug)]
 pub struct HdrFallback {
     sdr_since: Option<Instant>,
+    seen_hdr: bool,
 }
 
 impl HdrFallback {
+    /// Whether this stream has already carried active HDR (used to tell a
+    /// mid-stream capture recovery fallback apart from a startup HDR failure).
+    pub fn ever_hdr(&self) -> bool {
+        self.seen_hdr
+    }
+
+    /// Record that the stream started in HDR (e.g. initial encoder creation
+    /// succeeded in HDR before entering the main frame loop).
+    pub fn note_hdr_active(&mut self) {
+        self.seen_hdr = true;
+    }
+
     /// Whether a stream must fall back to ten-bit SDR immediately at startup
     /// (first frame before encoder creation) because capture shows the display
     /// stayed in SDR with a BGRA8 surface and RTX HDR is not generating HDR.
@@ -113,11 +126,15 @@ impl HdrFallback {
                 }
             } else {
                 self.sdr_since = None;
+                if !source_is_bgra8 || display_in_hdr == Some(true) || rtx_hdr_active {
+                    self.seen_hdr = true;
+                }
             }
             HdrTransition::None
         } else {
             self.sdr_since = None;
             if !source_is_bgra8 && display_in_hdr == Some(true) {
+                self.seen_hdr = true;
                 HdrTransition::RestoreHdr
             } else {
                 HdrTransition::None
@@ -455,19 +472,49 @@ mod tests {
     #[test]
     fn hdr_fallback_is_immediate_when_encoder_is_missing_after_recovery() {
         let now = Instant::now();
-        let mut tracker = HdrFallback::default();
+        // Startup failure before any HDR frame: immediate fallback, ever_hdr stays false.
+        let mut startup = HdrFallback::default();
+        assert!(!startup.ever_hdr());
         assert_eq!(
-            tracker.observe_for_encoder(false, true, true, true, Some(false), false, true, now),
+            startup.observe_for_encoder(false, true, true, true, Some(false), false, true, now),
             HdrTransition::FallbackToSdr
         );
+        assert!(!startup.ever_hdr());
+
+        // Mid-stream capture recovery after active HDR: immediate fallback, ever_hdr is true.
+        let mut mid_stream = HdrFallback::default();
+        assert_eq!(
+            mid_stream.observe_for_encoder(false, true, true, false, Some(true), false, false, now),
+            HdrTransition::None
+        );
+        assert!(mid_stream.ever_hdr());
+        assert_eq!(
+            mid_stream.observe_for_encoder(
+                false,
+                true,
+                true,
+                true,
+                Some(false),
+                false,
+                true,
+                now + Duration::from_millis(16),
+            ),
+            HdrTransition::FallbackToSdr
+        );
+        assert!(mid_stream.ever_hdr());
+
         // Active RTX HDR or unreadable colour space still does not drop HDR.
+        let mut tracker = HdrFallback::default();
         assert_eq!(
             tracker.observe_for_encoder(false, true, true, true, Some(false), true, true, now),
             HdrTransition::None
         );
+        assert!(tracker.ever_hdr());
+        let mut unknown = HdrFallback::default();
         assert_eq!(
-            tracker.observe_for_encoder(false, true, true, true, None, false, true, now),
+            unknown.observe_for_encoder(false, true, true, true, None, false, true, now),
             HdrTransition::None
         );
+        assert!(!unknown.ever_hdr());
     }
 }

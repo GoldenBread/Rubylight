@@ -124,7 +124,12 @@ impl Media {
         ) {
             HdrTransition::None => false,
             HdrTransition::FallbackToSdr => {
-                self.apply_hdr_fallback(s, stream, image, !encoder_missing);
+                self.apply_hdr_fallback(
+                    s,
+                    stream,
+                    image,
+                    fallback_is_mid_stream(tracker, encoder_missing),
+                );
                 prepared.note_hdr_fallback();
                 true
             }
@@ -177,6 +182,10 @@ impl Media {
         }
         s.launch.warnings.set("display_hdr", warning);
     }
+}
+
+fn fallback_is_mid_stream(tracker: &HdrFallback, encoder_missing: bool) -> bool {
+    tracker.ever_hdr() || !encoder_missing
 }
 
 fn hdr_fallback_warning(mid_stream: bool) -> &'static str {
@@ -245,11 +254,30 @@ mod tests {
 
     #[test]
     fn startup_and_mid_stream_hdr_fallback_warnings_are_distinct() {
+        let now = Instant::now();
         let startup = hdr_fallback_warning(false);
         let mid_stream = hdr_fallback_warning(true);
         assert_ne!(startup, mid_stream);
         assert!(startup.contains("not applied"));
         assert!(mid_stream.contains("during the stream"));
         assert!(mid_stream.contains("return to HDR automatically"));
+
+        // Startup fallback (`ever_hdr == false`, `encoder_missing == true`) uses startup wording.
+        let mut fresh = HdrFallback::default();
+        assert_eq!(
+            fresh.observe_for_encoder(false, true, true, true, Some(false), false, true, now),
+            HdrTransition::FallbackToSdr
+        );
+        assert!(!fallback_is_mid_stream(&fresh, true));
+
+        // Mid-stream capture recovery (`ever_hdr == true`, `encoder_missing == true`) bypasses
+        // grace AND keeps the mid-stream wording.
+        let mut recovered = HdrFallback::default();
+        recovered.note_hdr_active();
+        assert_eq!(
+            recovered.observe_for_encoder(false, true, true, true, Some(false), false, true, now),
+            HdrTransition::FallbackToSdr
+        );
+        assert!(fallback_is_mid_stream(&recovered, true));
     }
 }

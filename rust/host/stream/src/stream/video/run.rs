@@ -134,6 +134,9 @@ impl SessionThread<'_> {
         let mut rebuild_encoder = false;
         let mut applied_luminance: Option<(f32, f32)> = None;
         let mut hdr_fallback = butterpollo_media_policy::hdr::HdrFallback::default();
+        if stream.hdr && encoder.is_some() {
+            hdr_fallback.note_hdr_active();
+        }
         // Where this thread is, should it stop making progress.
         let progress = crate::stall_watch::register(
             "session",
