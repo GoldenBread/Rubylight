@@ -333,7 +333,9 @@ fn presses_windows_refuses_are_not_held_and_refused_releases_are_forgotten() {
 
 #[test]
 fn mixed_mode_and_virtual_mouse_button_ownership_stay_isolated() {
-    let _button1 = BUTTON1_LOCK.lock().unwrap();
+    let _button1 = BUTTON1_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut send_input_client = recording();
     let mut virtual_client = recording();
     // Simulate a button held via the virtual mouse route alongside a SendInput client
@@ -367,13 +369,15 @@ fn mixed_mode_and_virtual_mouse_button_ownership_stay_isolated() {
 
 #[test]
 fn due_flushes_deferred_virtual_and_injected_left_releases_on_their_own_routes() {
-    let _button1 = BUTTON1_LOCK.lock().unwrap();
+    let _button1 = BUTTON1_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     // WebRTC path: deferred virtual-mouse left release flushed ONLY via `due()` must
     // clear `(false, 1 | VIRTUAL_BUTTON_FLAG)` without calling `flush_virtual_left_release()`,
     // must not emit SendInput UP, and must allow subsequent virtual left-clicks.
     let mut injector = recording();
     injector.absolute = true;
-    injector.policy.left_release_delay = Duration::from_millis(50);
+    injector.policy.left_release_delay = Duration::from_secs(60);
     injector.buttons.insert(1);
     injector.virtual_buttons.insert(1);
     HELD.lock()
@@ -452,7 +456,7 @@ fn due_flushes_deferred_virtual_and_injected_left_releases_on_their_own_routes()
     // Non-virtual (SendInput) deferred left release flushed via `due()` still releases `(false, 1)`.
     let mut injected = recording();
     injected.absolute = true;
-    injected.policy.left_release_delay = Duration::from_millis(50);
+    injected.policy.left_release_delay = Duration::from_secs(60);
     injected.apply(&click(1, true)).unwrap();
     assert_eq!(calls(), [described(&[Injector::button(1, true)])]);
     injected.apply(&click(1, false)).unwrap();

@@ -148,10 +148,42 @@ fn verify_final_path(file: &File, expected: &Path, shown: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Whether `path` explicitly starts with a non-local-disk Windows prefix (UNC share,
+/// verbatim UNC, device namespace `\\.\...`, or verbatim non-disk prefix). Checked
+/// before any filesystem syscall so UNC/device paths never trigger outbound SMB or device opens.
+fn has_non_disk_prefix(path: &Path) -> bool {
+    use std::path::{Component, Prefix};
+    matches!(
+        path.components().next(),
+        Some(Component::Prefix(prefix))
+            if !matches!(prefix.kind(), Prefix::Disk(_) | Prefix::VerbatimDisk(_))
+    )
+}
+
+/// Whether `path` uses a local drive prefix (`C:\...` or `\\?\C:\...`).
+fn is_local_disk_path(path: &Path) -> bool {
+    use std::path::{Component, Prefix};
+    matches!(
+        path.components().next(),
+        Some(Component::Prefix(prefix))
+            if matches!(prefix.kind(), Prefix::Disk(_) | Prefix::VerbatimDisk(_))
+    )
+}
+
 /// Validate and pin `root` and every ancestor directory up to the drive root.
 pub(super) fn pin_root(root: &Path, mode: TrustMode) -> Result<PinnedRoot> {
+    ensure!(
+        !has_non_disk_prefix(root),
+        "RTSS folder {} must be on a local drive",
+        root.display()
+    );
     let absolute = std::path::absolute(root)
         .with_context(|| format!("resolving RTSS folder {}", root.display()))?;
+    ensure!(
+        is_local_disk_path(&absolute),
+        "RTSS folder {} must be on a local drive",
+        root.display()
+    );
     let mut ancestors: Vec<&Path> = absolute
         .ancestors()
         .filter(|p| !p.as_os_str().is_empty())
@@ -522,8 +554,15 @@ pub(super) fn is_plain_file(path: &Path) -> bool {
     })
 }
 
-/// Check that `path` matches one of `names` without following links.
+/// Check that `path` matches one of `names` without following links or touching non-local paths.
 pub(super) fn find_plain(root: &Path, names: &[&str]) -> Option<PathBuf> {
+    if has_non_disk_prefix(root) {
+        return None;
+    }
+    let absolute = std::path::absolute(root).ok()?;
+    if !is_local_disk_path(&absolute) {
+        return None;
+    }
     if std::fs::symlink_metadata(root)
         .is_ok_and(|m| m.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT.0 != 0 || !m.is_dir())
     {

@@ -604,3 +604,26 @@ fn trusted_windows_program_files_and_system_dll_pass_pinned_validation() -> Resu
     }
     Ok(())
 }
+
+#[test]
+fn unc_and_device_paths_are_rejected_before_opening_handles() {
+    for remote in [
+        Path::new(r"\\127.0.0.1\share\rtss"),
+        Path::new(r"\\?\UNC\127.0.0.1\share\rtss"),
+        Path::new(r"\\.\pipe\rtss"),
+    ] {
+        for mode in [TrustMode::AdministratorsOnly, TrustMode::ReparseOnly] {
+            let err = trust::pin_root(remote, mode).err().unwrap();
+            assert!(
+                err.to_string().contains("must be on a local drive"),
+                "{remote:?} ({mode:?}): {err:#}"
+            );
+        }
+        assert!(
+            find_plain(remote, &EXECUTABLES).is_none(),
+            "{remote:?} must not probe non-local paths"
+        );
+        assert!(executable(remote).is_none(), "{remote:?}");
+        assert!(!available(remote), "{remote:?}");
+    }
+}

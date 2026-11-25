@@ -143,6 +143,9 @@ fn click(button: u8, down: bool) -> Event {
 }
 #[test]
 fn a_trackpad_touch_profile_sends_touches_as_mouse_input() {
+    let _button1 = BUTTON1_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     use butterpollo_config::config::TouchMode;
     use butterpollo_input_policy::touch_profile::Settings;
     let touch = |event, x| Event::Touch {
@@ -186,7 +189,9 @@ fn a_trackpad_touch_profile_sends_touches_as_mouse_input() {
 }
 #[test]
 fn relative_mouse_releases_a_deferred_absolute_click_before_moving() {
-    let _button1 = BUTTON1_LOCK.lock().unwrap();
+    let _button1 = BUTTON1_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     for batched in [false, true] {
         let mut injector = recording();
         injector.lookup = None;
