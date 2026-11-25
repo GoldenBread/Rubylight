@@ -55,8 +55,8 @@ impl Lease {
     /// joined another's display is laid out beside it, and only the first owner's display is
     /// primary: such a stream has no primary of its own to put back.
     pub fn makes_primary(&self) -> bool {
-        let state = state().lock().unwrap();
-        let target = self.target.lock().unwrap();
+        let state = crate::lock_unpoisoned(state());
+        let target = crate::lock_unpoisoned(&self.target);
         applied_primary_for(&state.applied, target.as_str())
     }
     /// Why what Windows recalled when this stream's display arrived could not be put back.
@@ -77,7 +77,7 @@ impl Lease {
         original: Option<Snapshot>,
         device: &str,
     ) -> Result<Self> {
-        let mut state = state().lock().unwrap();
+        let mut state = crate::lock_unpoisoned(state());
         let monitors = crate::display::monitors()?;
         let target = monitors
             .iter()
@@ -273,13 +273,13 @@ impl Lease {
     /// which outlasts the lease only as long as the watch over a woken display needs it.
     /// That takes no one's time: this returns once the layout went back.
     pub fn end(self, remains: impl Send + 'static) {
-        *self.remains.lock().unwrap() = Some(Box::new(remains));
+        *crate::lock_unpoisoned(&self.remains) = Some(Box::new(remains));
     }
     /// One look on the heartbeat at a display a stopped watch was waiting for, on a layout
     /// that took that up ([`WakeFollow`]). True when its return took a layout pass that can
     /// have recalled the stream's display's mode. An error is the last try's.
     pub fn follow_wake(&self) -> Result<bool> {
-        let mut guard = state().lock().unwrap();
+        let mut guard = crate::lock_unpoisoned(state());
         let state = &mut *guard;
         let Some(follow) = state.following.as_mut().filter(|f| !f.done) else {
             return Ok(false);
@@ -340,7 +340,7 @@ impl Lease {
     pub fn switched_back_on(&self) -> Result<Vec<String>> {
         // Four times a second for each stream: the lean read, not `monitors`.
         let active = crate::display::active_device_ids()?;
-        let state = state().lock().unwrap();
+        let state = crate::lock_unpoisoned(state());
         let Some(before) = &state.before else {
             return Ok(Vec::new());
         };
@@ -353,9 +353,9 @@ impl Lease {
     /// Reapply the stream layout after an owned VDD is recreated, retaining the
     /// original restoration snapshot and recovery journal.
     pub fn reapply(&self, output: &str, retained: &[String]) -> Result<()> {
-        let mut state = state().lock().unwrap();
+        let mut state = crate::lock_unpoisoned(state());
         let monitors = crate::display::monitors()?;
-        let mut owned = self.target.lock().unwrap();
+        let mut owned = crate::lock_unpoisoned(&self.target);
         let target = reapplied_target(&monitors, output, &owned)
             .ok_or_else(|| anyhow::anyhow!("recovered arrangement target unavailable"))?;
         if *owned != target.device_id {
@@ -393,7 +393,7 @@ impl Lease {
     ) -> Result<Option<String>> {
         repair_then_lay_out(
             || {
-                let state = state().lock().unwrap();
+                let state = crate::lock_unpoisoned(state());
                 let arrangement = state.arrangement.unwrap_or(self.arrangement);
                 undo_recall_after_departure(&state, arrangement)
             },
@@ -472,9 +472,9 @@ fn end_layout(state: &State, target: &str, saved: bool) -> Result<Option<WakeEnd
 impl Drop for Lease {
     fn drop(&mut self) {
         // Declared before the lock, so dropped after it: removing a display takes a while.
-        let mut remains = self.remains.get_mut().unwrap().take();
-        let mut state = state().lock().unwrap();
-        let target = self.target.lock().unwrap().clone();
+        let mut remains = crate::lock_unpoisoned(&self.remains).take();
+        let mut state = crate::lock_unpoisoned(state());
+        let target = crate::lock_unpoisoned(&self.target).clone();
         state.users -= 1;
         // One of a device's two screens leaves: keep how they are arranged now. Read
         // under the lock like the rest of this layout work (`unchanged` and `apply` below), so

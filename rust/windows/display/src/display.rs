@@ -7,7 +7,7 @@ use std::{
     time::{Duration, Instant},
 };
 use windows::{
-    Win32::{Devices::Display::*, Foundation::*, Graphics::Gdi::*, System::IO::DeviceIoControl},
+    Win32::{Devices::Display::*, Foundation::*, Graphics::Gdi::*},
     core::{GUID, PCWSTR},
 };
 

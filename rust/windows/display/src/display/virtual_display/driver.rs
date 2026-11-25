@@ -184,7 +184,9 @@ impl DisplayProvider for Control {
         )) {
             tracing::warn!(error=%e,"virtual display removal failed; the driver departs it when this host stops");
         }
-        rubylight_vdd::unregister(id);
+        // Do not unregister by bare session id here: a concurrent reconnect for the same
+        // session registers its own `registration` token (`HW-L28`), which `VirtualDisplay`
+        // releases via `unregister_registration` instead.
         self.drain_log();
     }
     fn pushes_frames(&self) -> bool {

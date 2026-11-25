@@ -235,7 +235,9 @@ impl Snapshot {
         let primary = self
             .nodes
             .iter()
-            .find(|n| n.active && n.primary && !preserve(&n.device_id))
+            .find(|n| {
+                n.active && n.primary && !preserve(&n.device_id) && ids.contains(&n.device_id)
+            })
             .map(|n| n.device_id.as_str());
         Topology::set_active_preferred(&ids, &self.sources, primary)
             .context("cannot activate the saved displays")?;
@@ -327,10 +329,19 @@ impl Snapshot {
                     .collect::<Vec<_>>(),
             )
             .context("cannot restore the cloned displays")?;
+        // Shift surviving node coordinates to `(0, 0)` when a saved origin monitor
+        // is disconnected so Windows accepts the layout (`Item 35`).
+        let mut present: Vec<String> = ids.clone();
+        for m in current.monitors() {
+            if preserve(&m.device_id) && !present.contains(&m.device_id) {
+                present.push(m.device_id);
+            }
+        }
+        let adjusted = crate::display_arrangement::present_layout(self, &present);
         topology = Topology::query()?;
         topology
             .set_positions(
-                &self
+                &adjusted
                     .nodes
                     .iter()
                     .filter(|n| !preserve(&n.device_id))

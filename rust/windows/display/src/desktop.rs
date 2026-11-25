@@ -170,7 +170,7 @@ pub(crate) fn open_interface(guid: GUID) -> Result<HANDLE> {
                 FILE_SHARE_READ | FILE_SHARE_WRITE,
                 None,
                 OPEN_EXISTING,
-                FILE_ATTRIBUTE_NORMAL,
+                FILE_FLAG_OVERLAPPED,
                 None,
             )?)
         })();
@@ -254,24 +254,25 @@ pub(crate) fn primary_display_name() -> Option<String> {
 }
 
 pub(crate) fn minimized_windows() -> std::collections::BTreeSet<isize> {
-    follow_input_desktop();
-    unsafe extern "system" fn visit(window: HWND, data: LPARAM) -> windows::core::BOOL {
-        // SAFETY: `EnumWindows` passes `&mut found` as `data`, which outlives the synchronous call.
-        unsafe {
-            let found = &mut *(data.0 as *mut std::collections::BTreeSet<isize>);
-            if IsIconic(window).as_bool() {
-                found.insert(window.0 as isize);
+    on_input_desktop(|| {
+        unsafe extern "system" fn visit(window: HWND, data: LPARAM) -> windows::core::BOOL {
+            // SAFETY: `EnumWindows` passes `&mut found` as `data`, which outlives the synchronous call.
+            unsafe {
+                let found = &mut *(data.0 as *mut std::collections::BTreeSet<isize>);
+                if IsIconic(window).as_bool() {
+                    found.insert(window.0 as isize);
+                }
+                windows::core::BOOL(1)
             }
-            windows::core::BOOL(1)
         }
-    }
-    let mut found = std::collections::BTreeSet::new();
-    // SAFETY: `found` outlives the synchronous `EnumWindows` enumeration.
-    unsafe {
-        let _ = EnumWindows(
-            Some(visit),
-            LPARAM((&mut found as *mut std::collections::BTreeSet<isize>) as isize),
-        );
-    }
-    found
+        let mut found = std::collections::BTreeSet::new();
+        // SAFETY: `found` outlives the synchronous `EnumWindows` enumeration.
+        unsafe {
+            let _ = EnumWindows(
+                Some(visit),
+                LPARAM((&mut found as *mut std::collections::BTreeSet<isize>) as isize),
+            );
+        }
+        found
+    })
 }

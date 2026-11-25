@@ -29,7 +29,7 @@ pub(super) fn finish_watch(path: &Path) -> Result<()> {
     if !journal.entries.is_empty() {
         return Ok(());
     }
-    let mut watch = WATCH.lock().unwrap();
+    let mut watch = crate::lock_unpoisoned(&WATCH);
     let Some((process, event)) = watch.as_mut() else {
         return Ok(());
     };
@@ -150,7 +150,7 @@ pub(super) fn identity(pid: u32) -> Result<Option<u64>> {
 
 pub(super) fn watch(path: &Path) -> Result<()> {
     use std::os::windows::process::CommandExt;
-    let mut child = WATCH.lock().unwrap();
+    let mut child = crate::lock_unpoisoned(&WATCH);
     if let Some((process, event)) = child.as_mut()
         && process.try_wait()?.is_none()
     {

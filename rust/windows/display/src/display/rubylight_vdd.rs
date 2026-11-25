@@ -14,7 +14,22 @@ pub use rubylight_vdisplay_proto::control::{
 };
 use rubylight_vdisplay_proto::modes;
 use std::sync::Mutex;
-use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcess, PROCESS_DUP_HANDLE};
+use windows::Win32::System::IO::{CancelIoEx, DeviceIoControl, GetOverlappedResult, OVERLAPPED};
+use windows::Win32::System::Threading::{
+    CreateEventW, GetCurrentProcess, OpenProcess, PROCESS_DUP_HANDLE, WaitForSingleObject,
+};
+
+const IOCTL_TIMEOUT_MS: u32 = 10_000;
+
+struct EventHandle(HANDLE);
+impl Drop for EventHandle {
+    fn drop(&mut self) {
+        // SAFETY: `self.0` was created by `CreateEventW` and is closed once here.
+        unsafe {
+            let _ = CloseHandle(self.0);
+        }
+    }
+}
 
 /// An open handle to the driver's control interface, checked for a matching protocol.
 pub struct Control {
@@ -91,9 +106,16 @@ impl Control {
     fn ioctl(&self, code: u32, input: &[u8], size: usize) -> Result<Vec<u8>> {
         let mut output = vec![0; size];
         let mut bytes = 0;
-        // SAFETY: the owned device handle and both buffers stay valid for this synchronous
-        // IOCTL, with their exact lengths.
-        unsafe {
+        // SAFETY: manual-reset unnamed event owned by `event` for this overlapped I/O.
+        let event = unsafe { CreateEventW(None, true, false, None)? };
+        let _event_guard = EventHandle(event);
+        let mut overlapped = OVERLAPPED {
+            hEvent: event,
+            ..Default::default()
+        };
+        // SAFETY: `self.handle` was opened with `FILE_FLAG_OVERLAPPED`; `input`, `output`,
+        // and `overlapped` remain live until either synchronous completion or `GetOverlappedResult`.
+        let status = unsafe {
             DeviceIoControl(
                 self.handle,
                 code,
@@ -102,8 +124,28 @@ impl Control {
                 (size != 0).then(|| output.as_mut_ptr().cast()),
                 size as u32,
                 Some(&mut bytes),
-                None,
-            )?;
+                Some(&mut overlapped),
+            )
+        };
+        if let Err(error) = status {
+            if error.code() != ERROR_IO_PENDING.to_hresult() {
+                return Err(error.into());
+            }
+            // SAFETY: `event` is a valid event handle and `overlapped` stays live until awaited.
+            let wait = unsafe { WaitForSingleObject(event, IOCTL_TIMEOUT_MS) };
+            if wait != WAIT_OBJECT_0 {
+                // SAFETY: Cancel pending I/O and block for driver rundown before dropping buffers.
+                unsafe {
+                    let _ = CancelIoEx(self.handle, Some(&overlapped));
+                    let _ = GetOverlappedResult(self.handle, &overlapped, &mut bytes, true);
+                }
+                if wait == WAIT_TIMEOUT {
+                    return Err(windows::core::Error::from(ERROR_SEM_TIMEOUT).into());
+                }
+                return Err(windows::core::Error::from_thread().into());
+            }
+            // SAFETY: Event signaled completion; retrieve the finalized transfer length.
+            unsafe { GetOverlappedResult(self.handle, &overlapped, &mut bytes, false)? };
         }
         if bytes as usize > size {
             bail!("invalid Rubylight display driver response length");
@@ -176,6 +218,16 @@ impl Control {
             0,
         )
         .map(drop)
+        .map_err(|error| {
+            if error
+                .downcast_ref::<windows::core::Error>()
+                .is_some_and(|e| e.code() == ERROR_SEM_TIMEOUT.to_hresult())
+            {
+                error.context("display driver timed out clearing the frame ring")
+            } else {
+                error
+            }
+        })
     }
 
     /// Clear the monitor's ring only while it is the ring of `generation`
@@ -191,6 +243,16 @@ impl Control {
             0,
         )
         .map(drop)
+        .map_err(|error| {
+            if error
+                .downcast_ref::<windows::core::Error>()
+                .is_some_and(|e| e.code() == ERROR_SEM_TIMEOUT.to_hresult())
+            {
+                error.context("display driver timed out clearing the frame ring generation")
+            } else {
+                error
+            }
+        })
     }
 
     pub fn query(&self, session_id: u64) -> Result<MonitorStatus> {
@@ -323,23 +385,23 @@ pub struct Owned {
 
 static OWNED: Mutex<Vec<Owned>> = Mutex::new(Vec::new());
 
-pub(super) fn register(mut owned: Owned) {
+pub(super) fn register(mut owned: Owned) -> u64 {
     // Called only after a successful ADD, including recreation after a missing lease.
     // The stable client/session id and OS target can both repeat across registrations.
     static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
-    owned.registration = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let mut all = OWNED.lock().unwrap();
+    let token = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    owned.registration = token;
+    let mut all = crate::lock_unpoisoned(&OWNED);
     all.retain(|o| o.session_id != owned.session_id);
     all.push(owned);
+    token
 }
 
 /// Windows can list a display under another adapter and target than the
 /// driver reported, and under the driver's again after a layout change; a
 /// capture finds the display by either.
 pub(super) fn rehome(session_id: u64, adapter: (u32, i32), target: u32) {
-    if let Some(owned) = OWNED
-        .lock()
-        .unwrap()
+    if let Some(owned) = crate::lock_unpoisoned(&OWNED)
         .iter_mut()
         .find(|o| o.session_id == session_id)
     {
@@ -350,17 +412,17 @@ pub(super) fn rehome(session_id: u64, adapter: (u32, i32), target: u32) {
 
 /// The adapters and targets other sessions' displays go by.
 pub(super) fn others(session_id: u64) -> Vec<((u32, i32), u32)> {
-    OWNED
-        .lock()
-        .unwrap()
+    crate::lock_unpoisoned(&OWNED)
         .iter()
         .filter(|o| o.session_id != session_id)
         .flat_map(|o| [(o.adapter, o.target)].into_iter().chain(o.listed))
         .collect()
 }
 
-pub(super) fn unregister(session_id: u64) {
-    OWNED.lock().unwrap().retain(|o| o.session_id != session_id);
+pub(super) fn unregister_registration(registration: u64) {
+    if registration != 0 {
+        crate::lock_unpoisoned(&OWNED).retain(|o| o.registration != registration);
+    }
 }
 
 fn find(all: &[Owned], adapter: (u32, i32), target: u32) -> Option<Owned> {
@@ -382,7 +444,11 @@ fn owned_among(all: &[Owned], monitors: &[Monitor], name: &str) -> Option<Owned>
 
 /// The Rubylight monitor behind the GDI display `name`, if this process created it.
 pub fn owned_display(name: &str) -> Result<Option<Owned>> {
-    Ok(owned_among(&OWNED.lock().unwrap(), &monitors()?, name))
+    Ok(owned_among(
+        &crate::lock_unpoisoned(&OWNED),
+        &monitors()?,
+        name,
+    ))
 }
 
 #[cfg(test)]
@@ -454,19 +520,23 @@ mod tests {
                 .find(|o| o.session_id == monitor.session_id)
                 .unwrap()
         };
-        register(monitor);
+        let first_reg = register(monitor);
         let first = current();
         let reopened = current();
         assert_ne!(first.registration, 0);
+        assert_eq!(first.registration, first_reg);
         assert_eq!(
             first, reopened,
             "capture reopen reads the same registration"
         );
         // ADD can recreate the same persistent client id, target and driver process.
-        register(monitor);
+        // Removing the stale first registration must leave the reconnect's new registration alive (`HW-L28`).
+        let second_reg = register(monitor);
+        unregister_registration(first_reg);
         let recreated = current();
-        unregister(monitor.session_id);
         assert_ne!(first.registration, recreated.registration);
+        assert_eq!(recreated.registration, second_reg);
+        unregister_registration(second_reg);
     }
 
     #[test]
@@ -479,12 +549,12 @@ mod tests {
             listed: None,
             registration: 0,
         };
-        register(monitor);
+        let registration = register(monitor);
         rehome(monitor.session_id, (0x10687, 0), 117_440_770);
         // Another session's registration is left alone.
         rehome(u64::MAX - 20, (1, 0), 1);
         let all = OWNED.lock().unwrap().clone();
-        unregister(monitor.session_id);
+        unregister_registration(registration);
         let found = find(&all, (0x10687, 0), 117_440_770).unwrap();
         assert_eq!(found.session_id, monitor.session_id);
         assert_ne!(found.registration, 0);
@@ -508,7 +578,7 @@ mod tests {
             listed: None,
             registration: 0,
         };
-        register(monitor);
+        let registration = register(monitor);
         rehome(monitor.session_id, (0x10687, 0), 117_440_770);
         let elsewhere = others(u64::MAX - 22);
         rehome(monitor.session_id, (0x3822_0001, 0), 258);
@@ -519,7 +589,7 @@ mod tests {
             .find(|o| o.session_id == monitor.session_id)
             .copied()
             .unwrap();
-        unregister(monitor.session_id);
+        unregister_registration(registration);
         assert!(elsewhere.contains(&((0x3822_0001, 0), 258)));
         assert!(elsewhere.contains(&((0x10687, 0), 117_440_770)));
         assert_eq!(back.listed, None);

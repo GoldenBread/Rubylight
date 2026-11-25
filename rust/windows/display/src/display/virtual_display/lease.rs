@@ -19,7 +19,7 @@ pub(in crate::display) fn display_lease(
     options: &VirtualOptions,
 ) -> Result<(DisplayLease, Option<u32>)> {
     lease_or_join(
-        &mut DISPLAYS.lock().unwrap(),
+        &mut crate::lock_unpoisoned(&DISPLAYS),
         id,
         options.joins,
         (width, height, fps),
@@ -43,7 +43,7 @@ pub(super) fn lease_or_join<D: SharedDisplay>(
 /// The mode the live display `id` runs at, for a stream that joins it; None
 /// when no stream holds it any more and the stream has to make its own.
 pub fn joinable_mode(id: &str) -> Option<Timing> {
-    joined_lease(&DISPLAYS.lock().unwrap(), id).map(|(_, mode)| mode)
+    joined_lease(&crate::lock_unpoisoned(&DISPLAYS), id).map(|(_, mode)| mode)
 }
 /// A stream beside a running game takes that game's display as it is: at the
 /// mode it runs at now, whatever size the stream has (the encoder scales) and
@@ -53,7 +53,7 @@ pub(super) fn joined_lease<D: SharedDisplay>(
     id: &str,
 ) -> Option<(std::sync::Arc<std::sync::Mutex<D>>, Timing)> {
     let display = displays.get(id)?.upgrade()?;
-    let (_, current) = display.lock().unwrap().modes();
+    let (_, current) = crate::lock_unpoisoned(&display).modes();
     Some((display, current))
 }
 /// What leasing, joining and raising a virtual display need of it, so that
@@ -129,7 +129,7 @@ pub(super) fn lease<D: SharedDisplay>(
 ) -> Result<(std::sync::Arc<std::sync::Mutex<D>>, Option<u32>)> {
     displays.retain(|_, lease| lease.strong_count() != 0);
     if let Some(display) = displays.get(id).and_then(std::sync::Weak::upgrade) {
-        let (created, current) = display.lock().unwrap().modes();
+        let (created, current) = crate::lock_unpoisoned(&display).modes();
         let needed = join(created, current, requested)?;
         return Ok((display, needed));
     }
@@ -170,7 +170,7 @@ pub(in crate::display) fn raise_lease(
     display: &std::sync::Mutex<impl SharedDisplay>,
     rate: u32,
 ) -> Option<u32> {
-    raise(&mut *display.lock().unwrap(), rate)
+    raise(&mut *crate::lock_unpoisoned(display), rate)
 }
 /// Raise the refresh in place to at least `rate`: the refresh (millihertz)
 /// the display has now, or None when Windows refused it. A refusal puts the

@@ -18,7 +18,7 @@ impl Activation {
         if output.is_empty() {
             return Ok(None);
         }
-        let mut state = activation_state().lock().unwrap();
+        let mut state = crate::lock_unpoisoned(activation_state());
         let available = Topology::query_all()?.monitors();
         let target = available
             .iter()
@@ -76,19 +76,26 @@ impl Activation {
 }
 impl Drop for Activation {
     fn drop(&mut self) {
-        let mut state = activation_state().lock().unwrap();
+        let mut state = crate::lock_unpoisoned(activation_state());
         state.users -= 1;
         if state.users != 0 {
             return;
         }
-        let restored = (|| -> Result<()> {
-            if unchanged(&state.applied)?
-                && let Some(before) = &state.before
-            {
-                before.restore()?;
+        let mut restored = Ok(());
+        for attempt in 0..3 {
+            restored = (|| -> Result<()> {
+                if unchanged(&state.applied)?
+                    && let Some(before) = &state.before
+                {
+                    before.restore()?;
+                }
+                crate::display_recovery::activation(None)
+            })();
+            if restored.is_ok() || attempt == 2 {
+                break;
             }
-            crate::display_recovery::activation(None)
-        })();
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
         if let Err(error) = restored {
             tracing::warn!(%error, "display activation restoration remains pending");
         }

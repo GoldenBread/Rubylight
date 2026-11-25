@@ -31,19 +31,19 @@ pub(super) struct WatchStop {
 }
 impl WatchStop {
     pub(super) fn stop(&self) {
-        *self.stopped.lock().unwrap() = true;
+        *crate::lock_unpoisoned(&self.stopped) = true;
         self.changed.notify_all();
     }
     pub(super) fn is_stopped(&self) -> bool {
-        *self.stopped.lock().unwrap()
+        *crate::lock_unpoisoned(&self.stopped)
     }
     /// Wait out `time`. True when stopped, as soon as that happens.
     pub(super) fn wait(&self, time: std::time::Duration) -> bool {
-        let stopped = self.stopped.lock().unwrap();
+        let stopped = crate::lock_unpoisoned(&self.stopped);
         *self
             .changed
             .wait_timeout_while(stopped, time, |stopped| !*stopped)
-            .unwrap()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .0
     }
 }
@@ -125,7 +125,7 @@ impl WakeWatcher {
         job: impl FnOnce(&WatchStop) -> bool + Send + 'static,
         spawn: impl FnOnce(WatchThread) -> std::io::Result<std::thread::JoinHandle<bool>>,
     ) -> WatchStart {
-        let mut watches = self.0.lock().unwrap();
+        let mut watches = crate::lock_unpoisoned(&self.0);
         if watches.closed {
             return WatchStart::Refused;
         }
@@ -152,14 +152,14 @@ impl WakeWatcher {
     }
     /// No watch runs or starts until as many [`Self::release`]s.
     pub(super) fn hold_off(&self) {
-        let mut watches = self.0.lock().unwrap();
+        let mut watches = crate::lock_unpoisoned(&self.0);
         watches.held_off += 1;
         watches.stop_running();
     }
     /// For the last hold to end: what a watch held off or stopped left. No journal entry
     /// goes on that alone ([`left_watch`]).
     pub(super) fn release(&self) -> Option<LeftWatch> {
-        let mut watches = self.0.lock().unwrap();
+        let mut watches = crate::lock_unpoisoned(&self.0);
         watches.held_off -= 1;
         if watches.held_off != 0 || watches.closed {
             return None;
@@ -169,13 +169,13 @@ impl WakeWatcher {
     /// For good: the host is stopping. What a stopped watch left stays in the journal,
     /// for the next start to put back.
     pub(super) fn close(&self) {
-        let mut watches = self.0.lock().unwrap();
+        let mut watches = crate::lock_unpoisoned(&self.0);
         watches.closed = true;
         watches.stop_running();
     }
     /// Whether a watch is at work, or left work for the holds' end.
     pub(super) fn settling(&self) -> bool {
-        let watches = self.0.lock().unwrap();
+        let watches = crate::lock_unpoisoned(&self.0);
         watches.left.is_some()
             || watches
                 .running
@@ -377,7 +377,7 @@ fn put_left_layout_back(before: &Snapshot) -> Result<()> {
 /// `before` for what is `connected`, for when a watch is done waiting. With the display at
 /// the origin gone for good, the others would have nothing there, which Windows refuses
 /// (invalid parameter) for as long as it is gone, and the journal entry would sit.
-pub(super) fn present_layout(before: &Snapshot, connected: &[String]) -> Snapshot {
+pub(crate) fn present_layout(before: &Snapshot, connected: &[String]) -> Snapshot {
     let mut layout = before.clone();
     layout.nodes.retain(|n| connected.contains(&n.device_id));
     let on = || layout.nodes.iter().filter(|n| n.active);
@@ -506,7 +506,7 @@ pub(super) fn watch_step<T>(
     stop: &WatchStop,
     work: impl FnOnce() -> Result<T>,
 ) -> Option<Result<T>> {
-    let state = state().lock().unwrap();
+    let state = crate::lock_unpoisoned(state());
     if stop.is_stopped() || state.users != 0 {
         return None;
     }
@@ -657,7 +657,7 @@ pub(super) fn start_wake_watch(
         })
     });
     if entry_goes_unwatched(&start, layout_back) {
-        let state = state().lock().unwrap();
+        let state = crate::lock_unpoisoned(state());
         if state.users == 0
             && let Err(error) = crate::display_recovery::arrangement(None)
         {

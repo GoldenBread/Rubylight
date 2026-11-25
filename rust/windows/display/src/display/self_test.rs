@@ -60,12 +60,13 @@ fn switch_off(target: &Monitor) -> Result<()> {
         .filter(|p| !(p.targetInfo.adapterId == target.adapter && p.targetInfo.id == target.target))
         .copied()
         .collect();
-    // SAFETY: The initialized paths and modes from QueryDisplayConfig remain live
-    // throughout the synchronous call; filtering preserves their mode indices.
+    let (on, modes) = super::hotplug::referenced_modes(&on, &active.modes)?;
+    // SAFETY: `referenced_modes` keeps only the modes referenced by `on` and remaps indices,
+    // remaining valid throughout the synchronous SetDisplayConfig call.
     check(unsafe {
         SetDisplayConfig(
             Some(&on),
-            Some(&active.modes),
+            Some(&modes),
             SDC_APPLY | SDC_USE_SUPPLIED_DISPLAY_CONFIG | SDC_ALLOW_CHANGES,
         )
     })

@@ -164,10 +164,20 @@ pub(crate) async fn run(args: crate::cli::Args, assets: PathBuf) -> Result<()> {
     // reporter process is blocked.
     let crash_reporting = butterpollo_win_io::crash::initialize(&h.directory).err();
     win_bridge::install_hooks();
-    let display_recovery = butterpollo_win_display::display_recovery::initialize_with(
+    let display_recovery = match butterpollo_win_display::display_recovery::initialize_with(
         &h.directory,
         win_bridge::recovery_hooks(),
-    )?;
+    ) {
+        Ok(outcome) => outcome,
+        Err(error) if !error.to_string().contains("another host owns") => {
+            tracing::warn!(
+                error = format!("{error:#}"),
+                "display recovery initialization reported an error; continuing startup"
+            );
+            Some(error)
+        }
+        Err(error) => return Err(error),
+    };
     let log_path = h
         .config
         .read()

@@ -24,6 +24,7 @@ use recall::{
     undo_recall_after_departure,
 };
 pub use remembered::initialize as initialize_remembered;
+pub(crate) use wake::present_layout;
 use wake::{
     LeftWatch, Wake, WakeEnd, WakeLook, WakeLooks, all_listed, displays_to_watch, start_left_watch,
     start_wake_watch, strays, switch_off_strays,
@@ -32,8 +33,8 @@ use wake::{
 use wake::{
     WAKE_POLL, WAKE_RETURN, WAKE_WATCH, WakeWatcher, WatchStart, WatchStop, after_wake,
     displays_it_could_switch_on, displays_to_wake, entry_goes_unwatched, layout_is_back,
-    left_watch, present_layout, run_wake_watch, settled_step, strays_off_saves, watch_step,
-    watch_wake, woken_to_watch,
+    left_watch, run_wake_watch, settled_step, strays_off_saves, watch_step, watch_wake,
+    woken_to_watch,
 };
 pub use wake::{WakeWatchOff, close_wake_watch, hold_off_wake_watch, wake_watch_settling};
 pub use wake_follow::wake_layouts;
@@ -150,8 +151,8 @@ pub fn restore_arrangement(before: &Snapshot, applied: &[Node]) -> Result<()> {
 /// the physical displays off, and a restore would switch the remote monitor
 /// off. `output`: its GDI name or device id.
 pub fn retain(output: &str, on: bool) -> Result<()> {
-    let arranged = state().lock().unwrap().users != 0;
-    let activated = activation_state().lock().unwrap().users != 0;
+    let arranged = crate::lock_unpoisoned(state()).users != 0;
+    let activated = crate::lock_unpoisoned(activation_state()).users != 0;
     if !arranged && !activated {
         return Ok(());
     }
@@ -166,7 +167,7 @@ pub fn retain(output: &str, on: bool) -> Result<()> {
     };
     let mut result = Ok(());
     {
-        let mut state = state().lock().unwrap();
+        let mut state = crate::lock_unpoisoned(state());
         if retain_in(&mut state, &current, &id, on)
             && let Some(before) = &state.before
         {
@@ -174,7 +175,7 @@ pub fn retain(output: &str, on: bool) -> Result<()> {
                 crate::display_recovery::arrangement(Some((before.clone(), state.applied.clone())));
         }
     }
-    let mut state = activation_state().lock().unwrap();
+    let mut state = crate::lock_unpoisoned(activation_state());
     if retain_in(&mut state, &current, &id, on)
         && let Some(before) = &state.before
     {
@@ -348,7 +349,11 @@ fn recent_departure(
 /// The windows that were minimised before a display left, while that departure
 /// is recent: any other minimised window is its doing. None after that.
 pub fn minimized_before_departure() -> Option<std::collections::BTreeSet<isize>> {
-    recent_departure(&LAST_DEPARTURE.lock().unwrap(), std::time::Instant::now()).cloned()
+    recent_departure(
+        &crate::lock_unpoisoned(&LAST_DEPARTURE),
+        std::time::Instant::now(),
+    )
+    .cloned()
 }
 /// The streams' displays that are not on (a snapshot lists only the ones that are).
 fn targets_off(nodes: &[Node], targets: &[String]) -> Vec<String> {
@@ -560,7 +565,7 @@ fn release_owner(state: &mut State, target: &str) -> Released {
 /// stream's display off, or the new one.
 pub fn display_arrived(device_id: &str) -> Result<()> {
     settle_arrival(
-        &state().lock().unwrap(),
+        &crate::lock_unpoisoned(state()),
         device_id,
         Topology::set_active,
         Topology::save_current,
@@ -659,7 +664,7 @@ fn display_left(
         return Ok(());
     }
     note_departure(
-        &mut LAST_DEPARTURE.lock().unwrap(),
+        &mut crate::lock_unpoisoned(&LAST_DEPARTURE),
         std::time::Instant::now(),
         crate::desktop::minimized_windows,
     );

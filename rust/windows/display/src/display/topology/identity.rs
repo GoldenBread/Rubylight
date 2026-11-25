@@ -132,7 +132,7 @@ pub(super) fn monitor_id(path: &str) -> String {
     static IDS: std::sync::LazyLock<
         std::sync::Mutex<std::collections::BTreeMap<String, (Instant, String)>>,
     > = std::sync::LazyLock::new(Default::default);
-    let mut ids = IDS.lock().unwrap();
+    let mut ids = crate::lock_unpoisoned(&IDS);
     ids.retain(|_, (at, _)| at.elapsed() < Duration::from_secs(1));
     if let Some((_, id)) = ids.get(path) {
         return id.clone();

@@ -40,7 +40,7 @@ pub fn initialize(directory: &Path) {
             Vec::new()
         }
     };
-    *SAVED.lock().unwrap() = saved;
+    *crate::lock_unpoisoned(&SAVED) = saved;
     let _ = PATH.set(path);
 }
 /// Whether the displays of the streams now, `targets`, have an arrangement to keep: two, both
@@ -158,7 +158,12 @@ pub(super) fn arranged(
 }
 /// `desired` with the arrangement kept for the two displays in `targets`, if one is kept and fits.
 pub(super) fn apply(desired: &[Node], targets: &[String], streams_main: bool) -> Option<Vec<Node>> {
-    let next = arranged(desired, targets, streams_main, &SAVED.lock().unwrap())?;
+    let next = arranged(
+        desired,
+        targets,
+        streams_main,
+        &crate::lock_unpoisoned(&SAVED),
+    )?;
     tracing::info!(displays = ?targets, "laying out a device's two screens as the user left them");
     Some(next)
 }
@@ -167,7 +172,7 @@ pub(super) fn forget(targets: &[String]) {
     let Some((a, b)) = ordered(targets) else {
         return;
     };
-    let mut saved = SAVED.lock().unwrap();
+    let mut saved = crate::lock_unpoisoned(&SAVED);
     let before = saved.len();
     saved.retain(|s| !(s.a == a && s.b == b));
     if saved.len() != before
@@ -182,7 +187,7 @@ pub(super) fn remember(nodes: &[Node], targets: &[String]) {
     let Some(now) = capture(nodes, targets) else {
         return;
     };
-    let mut saved = SAVED.lock().unwrap();
+    let mut saved = crate::lock_unpoisoned(&SAVED);
     if saved.last() == Some(&now) {
         return;
     }

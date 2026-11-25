@@ -73,6 +73,12 @@ struct Entry {
     /// The Windows scale in percent, (original, applied).
     #[serde(default)]
     scale: Option<(u32, u32)>,
+    /// Inherited from a prior crashed host while this process already started streaming (`HW-L31`).
+    #[serde(default, skip_serializing_if = "is_false")]
+    stale: bool,
+}
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 impl Entry {
     /// What recovery keeps until each restore succeeds. The arrangement is
@@ -138,24 +144,64 @@ struct Journal {
 static PATH: OnceLock<PathBuf> = OnceLock::new();
 static PENDING_STARTUP: AtomicBool = AtomicBool::new(false);
 
+fn quarantine_corrupt(path: &Path) -> PathBuf {
+    let quarantine = path.with_extension("corrupt.json");
+    let _ = std::fs::remove_file(&quarantine);
+    if std::fs::rename(path, &quarantine).is_err() {
+        let _ = std::fs::remove_file(path);
+    }
+    quarantine
+}
+
+fn read_journal(path: &Path) -> Result<Journal> {
+    let bytes = std::fs::read(path)?;
+    Ok(serde_json::from_slice(&bytes)?)
+}
+
 /// Take the journal and undo what an interrupted host left behind. An
-/// incomplete recovery is returned for the log rather than as an error: a
-/// display that cannot take back a setting must not stop the host from
-/// starting, as it did on every start while the journal stayed pending.
+/// incomplete recovery or an unreadable journal (quarantined to
+/// `display-recovery.corrupt.json`) is returned for logging rather than stopping
+/// host startup.
 pub fn initialize(directory: &Path) -> Result<Option<anyhow::Error>> {
     let path = directory.join("display-recovery.json");
-    let _guard = lock(&path)?;
-    let mut incomplete = None;
-    if path.exists() {
-        let journal: Journal = serde_json::from_slice(&std::fs::read(&path)?)?;
-        if identity(journal.pid)? == Some(journal.started) && journal.pid != std::process::id() {
-            bail!("another host owns this display recovery journal");
-        }
-        incomplete = recover(&path).err();
-    }
-    PENDING_STARTUP.store(incomplete.is_some(), Ordering::Release);
+    let incomplete = initialize_in(&path, recover)?;
     PATH.set(path)
         .map_err(|_| anyhow::anyhow!("display recovery already initialized"))?;
+    Ok(incomplete)
+}
+
+fn initialize_in(
+    path: &Path,
+    recover_fn: impl FnOnce(&Path) -> Result<()>,
+) -> Result<Option<anyhow::Error>> {
+    let _guard = lock(path)?;
+    let mut incomplete = None;
+    if path.exists() {
+        match read_journal(path) {
+            Ok(journal) => {
+                if identity(journal.pid)? == Some(journal.started)
+                    && journal.pid != std::process::id()
+                {
+                    bail!("another host owns this display recovery journal");
+                }
+                incomplete = recover_fn(path).err();
+            }
+            Err(error) => {
+                let quarantine = quarantine_corrupt(path);
+                tracing::warn!(
+                    path = %path.display(),
+                    quarantined = %quarantine.display(),
+                    error = %format!("{error:#}"),
+                    "display recovery journal was unreadable; quarantined so the host can start"
+                );
+                incomplete = Some(anyhow::anyhow!(
+                    "quarantined unreadable display recovery journal ({}): {error:#}",
+                    quarantine.display()
+                ));
+            }
+        }
+    }
+    PENDING_STARTUP.store(incomplete.is_some() && path.exists(), Ordering::Release);
     Ok(incomplete)
 }
 
@@ -166,9 +212,8 @@ pub fn has_pending() -> bool {
 }
 
 /// Retry unfinished startup display recovery, if any entries remain from a
-/// previous host and this host has not started a live display lease yet. Returns
-/// `Ok(true)` when leftover entries were restored, `Ok(false)` when nothing
-/// remains or a live lease on this host now owns the journal.
+/// previous host. Returns `Ok(true)` when leftover entries were restored,
+/// `Ok(false)` when nothing remains or only live entries of this host exist.
 pub fn recover_pending() -> Result<bool> {
     if !has_pending() {
         return Ok(false);
@@ -189,13 +234,26 @@ fn recover_pending_at(path: &Path, recover_fn: impl FnOnce(&Path) -> Result<()>)
     if !path.exists() {
         return Ok(false);
     }
-    let journal: Journal = serde_json::from_slice(&std::fs::read(path)?)?;
+    let journal = match read_journal(path) {
+        Ok(journal) => journal,
+        Err(error) => {
+            let quarantine = quarantine_corrupt(path);
+            tracing::warn!(
+                quarantined = %quarantine.display(),
+                error = %format!("{error:#}"),
+                "quarantined unreadable display recovery journal during pending retry"
+            );
+            return Ok(false);
+        }
+    };
     let current = std::process::id();
-    if journal.pid == current {
-        // A stream or monitor lease in this host already wrote to the journal.
+    let has_stale = journal.entries.values().any(|entry| entry.stale);
+    if journal.pid == current && !has_stale {
+        // Every entry belongs to a live stream or monitor lease in this host.
         return Ok(false);
     }
-    if journal.pid != 0 && identity(journal.pid)? == Some(journal.started) {
+    if journal.pid != 0 && journal.pid != current && identity(journal.pid)? == Some(journal.started)
+    {
         anyhow::bail!("another host owns this display recovery journal");
     }
     recover_fn(path)?;
@@ -205,16 +263,38 @@ fn recover_pending_at(path: &Path, recover_fn: impl FnOnce(&Path) -> Result<()>)
 fn change(id: &str, output: &str, update: impl FnOnce(&mut Entry)) -> Result<()> {
     let path = PATH.get().context("display recovery is not initialized")?;
     let guard = lock(path)?;
+    let current_pid = std::process::id();
     let mut journal: Journal = if path.exists() {
-        serde_json::from_slice(&std::fs::read(path)?)?
+        match read_journal(path) {
+            Ok(mut existing) => {
+                // Keep un-recovered entries from a prior host marked stale so `recover_pending`
+                // still restores them after this host writes its own PID (`HW-L31`).
+                if existing.pid != current_pid && !existing.entries.is_empty() {
+                    for leftover in existing.entries.values_mut() {
+                        leftover.stale = true;
+                    }
+                }
+                existing
+            }
+            Err(error) => {
+                let quarantine = quarantine_corrupt(path);
+                tracing::warn!(
+                    quarantined = %quarantine.display(),
+                    error = %format!("{error:#}"),
+                    "quarantined unreadable display recovery journal before recording change"
+                );
+                Journal::default()
+            }
+        }
     } else {
         Journal::default()
     };
     let prior = journal.clone();
-    journal.pid = std::process::id();
+    journal.pid = current_pid;
     journal.started = identity(journal.pid)?.context("host identity unavailable")?;
     let entry = journal.entries.entry(id.into()).or_default();
     entry.output = output.into();
+    entry.stale = false;
     update(entry);
     journal.entries.retain(|_, entry| entry.pending());
     butterpollo_session::state::write_json(path, &journal)?;
