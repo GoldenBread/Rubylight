@@ -297,6 +297,7 @@ if args.record:
     try:
         result['timing'] = case_report(case, args.skip_first)
     except (ValueError, OSError) as error:
+        result['failures'].append(f'timing: {error}')
         result.update(timing=dict(error=str(error)), passed=False)
 (case / 'result.json').write_text(json.dumps(result, indent=2))
 print(json.dumps(result))

@@ -282,7 +282,10 @@ function Enter-StreamLocks {
                 }
             }
             if (Test-LockOurs $script:CheckBuildLock) { return $held }
-            if ($held.build = Lock-Try $script:CheckBuildLock 'check') { return $held }
+            if ($held.build = Lock-Try $script:CheckBuildLock 'check') {
+                Wait-CheckStages ([math]::Max(0, $script:CheckBuildDeadline - $building.Elapsed.TotalSeconds))
+                return $held
+            }
             Assert-BuildLockWait $building
         } catch {
             Exit-CheckLocks $held -NoPause

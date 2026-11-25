@@ -51,10 +51,16 @@ SERVICE_WORKSPACE = 'rust/service'
 SERVICE_INPUTS = ('rust/service/', 'rust/core/src/update_recovery.rs', 'rust/core/src/update_files.rs',
                   'rust/core/src/state/file.rs', 'rust/assets/version_info.rs', 'rust/assets/butterpollo.ico',
                   'rust-toolchain.toml', '.cargo/')
-# The suites CI runs from rust/release.
+# Fallback suites from rust/release when discovering against a synthetic test root.
 RELEASE_SUITES = ('test_release.py', 'test_gpu_hang.py', 'test_timing_report.py', 'test_cadence_matrix.py',
-                  'test_user_idle.py')
+                  'test_user_idle.py', 'test_e2e_result.py')
 RELEASE_INPUTS = ('rust/release/', 'tools/nightjar_notes.py', '.github/workflows/rust-windows.yml') + SERVICE_INPUTS
+
+
+def release_suites(root=ROOT):
+    """Discover all test_*.py suites in rust/release/ (falling back to RELEASE_SUITES)."""
+    found = tuple(sorted(p.name for p in (root / 'rust/release').glob('test_*.py')))
+    return found or RELEASE_SUITES
 GRADLE_WIDE = ('client/build.gradle', 'client/settings.gradle', 'client/gradle.properties', 'client/gradle/',
                'client/app/build.gradle', 'client/app/proguard-rules.pro', 'client/app/src/main/res/',
                'client/app/src/main/AndroidManifest.xml')
@@ -216,7 +222,7 @@ def plan(paths, root=ROOT, fast=False):
             web = True
             hit = True
         if under(path, RELEASE_INPUTS):
-            release.update(RELEASE_SUITES)
+            release.update(release_suites(root))
             # The script's own suite, or the suite itself.
             name = pathlib.PurePosixPath(path).name
             for suite in (name, f'test_{name}'):

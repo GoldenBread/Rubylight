@@ -196,6 +196,22 @@ class ReleaseVersions(unittest.TestCase):
         self.assertEqual((self.root / 'rust/RELEASE_NOTES.md').read_text(encoding='utf-8'), notes)
         self.assertTrue((self.root / 'rust/release/notes.d/x.md').exists())
 
+    def test_broken_release_notes_stops_bump_before_writing_cargo_or_docs(self):
+        notes = self.root / 'rust/RELEASE_NOTES.md'
+        broken_notes = 'Missing header line\n'
+        notes.write_text(broken_notes, encoding='utf-8')
+        cargo = (self.root / 'Cargo.toml').read_text(encoding='utf-8')
+        lock = (self.root / 'Cargo.lock').read_text(encoding='utf-8')
+        pkg = (self.root / 'rust/web/package.json').read_text(encoding='utf-8')
+        readme = (self.root / 'README.md').read_text(encoding='utf-8')
+        result = self.run_tool('bump.py', '9.9.9')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual((self.root / 'Cargo.toml').read_text(encoding='utf-8'), cargo)
+        self.assertEqual((self.root / 'Cargo.lock').read_text(encoding='utf-8'), lock)
+        self.assertEqual((self.root / 'rust/web/package.json').read_text(encoding='utf-8'), pkg)
+        self.assertEqual((self.root / 'README.md').read_text(encoding='utf-8'), readme)
+        self.assertEqual(notes.read_text(encoding='utf-8'), broken_notes)
+
     def test_fragments_collect_into_unreleased_between_releases(self):
         notes = self.root / 'rust/RELEASE_NOTES.md'
         history = re.sub(r'(?ms)^## Unreleased\n.*?(?=^## )', '', notes.read_text(encoding='utf-8'))
@@ -259,6 +275,21 @@ class ReleaseVersions(unittest.TestCase):
                                         cwd=self.root, env=env, capture_output=True, text=True)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(out.read_text(encoding='utf-8'), expected)
+
+    @unittest.skipUnless(BASH and pathlib.Path(BASH).is_file(), 'Bash is not installed')
+    def test_tag_job_refuses_failed_main_ci_run_and_workflow_covers_all_suites_and_v10(self):
+        workflow = (ROOT / '.github/workflows/rust-windows.yml').read_text(encoding='utf-8')
+        self.assertIn("tags: ['v[0-9]*']", workflow)
+        self.assertIn('python -m unittest discover -s rust/release -p "test_*.py" -v', workflow)
+        script = textwrap.dedent(re.search(
+            r'(?ms)^      - name: Check main CI\n.*?^        run: \|\n(.*?)(?=^      - id: built\b)', workflow)[1])
+        stub = 'gh() { printf \'%s\' "$MOCK_BAD"; }\n'
+        for bad, rc in [('', 0), ('123 (failure)', 1), ('456 (timed_out)', 1)]:
+            with self.subTest(bad=bad):
+                env = dict(os.environ, MOCK_BAD=bad, GITHUB_REPOSITORY='owner/repo', GITHUB_SHA='abc')
+                res = subprocess.run([str(BASH), '--noprofile', '--norc', '-ec', stub + script],
+                                     cwd=self.root, env=env, capture_output=True, text=True)
+                self.assertEqual(res.returncode, rc, res.stdout + res.stderr)
 
 
 class NightjarNotes(unittest.TestCase):
@@ -655,6 +686,45 @@ class PreviousService(unittest.TestCase):
         listing.write_text(json.dumps(self.release(old)), encoding='utf-8')
         self.assertEqual(self.run_tool(RuntimeError('fetched'), '--releases', str(listing))[:2], (0, old))
 
+    def test_fetch_releases_paginates_past_100_and_required_fails_without_previous(self):
+        pages = [
+            [{'tag_name': f'v6.4.0-rc.{i}', 'prerelease': True} for i in range(100)],
+            [{'tag_name': 'v6.3.9', 'draft': False}],
+        ]
+        seen_urls = []
+
+        class Resp:
+            def __init__(self, payload):
+                self.payload = payload
+            def __enter__(self):
+                return self
+            def __exit__(self, *_a):
+                pass
+            def read(self):
+                return json.dumps(self.payload).encode()
+
+        def fake_open(req, timeout=60):
+            seen_urls.append(req.full_url)
+            page = int(re.search(r'[?&]page=(\d+)', req.full_url)[1])
+            return Resp(pages[page - 1])
+
+        with mock.patch.object(urllib.request, 'urlopen', fake_open):
+            got = self.tool.fetch_releases('owner/repo')
+        self.assertEqual(len(got), 101)
+        self.assertEqual(len(seen_urls), 2)
+
+        fresh = version_resource('1.0.0', b'fresh')
+        rc_only = [{'tag_name': 'v3.3.0-rc.1', 'draft': False, 'prerelease': True,
+                    'assets': [{'name': 'rubylight-rc-3.3.0-rc.1-x64.zip'}]}]
+        for empty in ([], rc_only):
+            code, shipped, err = self.run_tool(empty, '--required')
+            self.assertEqual((code, shipped), (1, fresh), err)
+            self.assertIn('no earlier release', err)
+        workflow = (ROOT / '.github/workflows/rust-windows.yml').read_text(encoding='utf-8')
+        steps = dict(re.findall(r'(?ms)^      - name: ([^\n]+)\n(.*?)(?=^      - |\Z)', workflow))
+        self.assertIn('--paginate --slurp', steps['List releases'])
+        self.assertIn('-windows-x64', steps['List releases'])
+
 
 class Signing(unittest.TestCase):
     """The workflow, rust/release/sign-artifacts.ps1 and .signpath/ agree."""
@@ -748,6 +818,7 @@ class Signing(unittest.TestCase):
         positions = [script.index(step) for step in order]
         self.assertEqual(positions, sorted(positions))
         self.assertIn('if (!$release.isDraft -and !$NoUpload)', script)
+        self.assertTrue(script.splitlines()[0].startswith('#Requires -Version 7'))
 
     def test_certum_signing_fails_closed_and_keeps_the_secrets_in_one_job(self):
         # CI signs with the Certum certificate in the certum job only; with
@@ -1898,6 +1969,62 @@ try { throw 'synthetic check failure' } finally { Lock-Release $CheckRunLock $wr
         streams = check[check.index('$priority = Enter-CheckPriority'):check.index('Exit-CheckPriority $priority')]
         self.assertIn('$held = Enter-CheckBuildLock', streams)
         self.assertIn('Invoke-StreamCase $case $stream $run', streams)
+        self.assertIn('--exclude-pre-releases', check)
+        streams_ps1 = (ROOT / 'rust/release/check_streams.ps1').read_text(encoding='utf-8')
+        enter_stream = streams_ps1[streams_ps1.index('function Enter-StreamLocks'):streams_ps1.index('function Exit-CheckLocks')]
+        self.assertIn('Wait-CheckStages', enter_stream)
+
+    def test_elevated_rc_installer_and_validation_accept_plain_rc_version_only(self):
+        task = (ROOT / 'rust/release/elevated-task.ps1').read_text(encoding='utf-8')
+        elev = (ROOT / 'rust/release/elevated.ps1').read_text(encoding='utf-8')
+        self.assertIn('rubylight-rc-setup-$version.exe', task)
+        self.assertIn("rubylight-rc-setup-*", elev)
+        work = self.root / 'rc-val'
+        pkg = work / 'pkg'
+        pkg.mkdir(parents=True)
+        (pkg / 'butterpollo.exe').write_bytes(b'host')
+        host_sha = hashlib.sha256(b'host').hexdigest()
+        (work / 'e2e-1').mkdir()
+        (work / 'e2e-2').mkdir()
+        cases = [('h264', False, False, '1920x1080x60', 'h264-1'), ('hevc', False, False, '1920x1080x60', 'hevc-base'),
+                 ('av1', False, False, '1920x1080x60', 'av1-1'), ('hevc', True, False, '1920x1080x60', 'hevc-vrr'),
+                 ('hevc', False, True, '1920x1080x60', 'hevc-recovery'),
+                 ('hevc', False, False, '2560x1440x120', 'hevc-120'),
+                 ('hevc', False, False, '2560x1440x120', 'hevc-warp'),
+                 ('hevc', False, False, '1920x1080x60', 'hevc-behind'),
+                 ('pyrowave', False, False, '1920x1080x60', 'pyro'),
+                 ('pyrowave-hdr-444', False, False, '1920x1080x60', 'pyro-hdr')]
+        for i, (codec, vrr, rec, mode, case) in enumerate(cases):
+            d = work / f'e2e-{i:02d}'
+            d.mkdir(exist_ok=True)
+            (d / 'result.json').write_text(json.dumps({
+                'passed': True, 'codec': codec, 'vrr': vrr, 'recovery_requests': rec,
+                'mode': mode, 'case': case, 'audio_continuous': 1, 'motion_coverage': 1.0,
+            }), encoding='utf-8')
+        (work / 'protocol').mkdir()
+        (work / 'protocol' / 'result.json').write_text(json.dumps({'passed': True, 'checks': []}), encoding='utf-8')
+        (work / 'elevated').mkdir()
+        (work / 'elevated' / 'installed.json').write_text(json.dumps({
+            'setup': 'rubylight-rc-setup-6.4.1-rc.5.exe --quiet over the running host',
+            'setup_exit': 0, 'reported_version': '6.4.1', 'host_sha256': host_sha,
+        }), encoding='utf-8')
+        out = work / 'out.json'
+        ok = subprocess.run([sys.executable, str(ROOT / 'rust/release/validation.py'),
+                             '--version', '6.4.1-rc.5', '--package', str(pkg), '--work', str(work),
+                             '--out', str(out), '--installed'], capture_output=True, text=True)
+        self.assertEqual(ok.returncode, 0, ok.stderr)
+        (work / 'elevated' / 'installed.json').write_text(json.dumps({
+            'setup': 'rubylight-setup-6.4.1-rc.5.exe --quiet over the running host',
+            'setup_exit': 0, 'reported_version': '6.4.1', 'host_sha256': host_sha,
+        }), encoding='utf-8')
+        bad = subprocess.run([sys.executable, str(ROOT / 'rust/release/validation.py'),
+                              '--version', '6.4.1-rc.5', '--package', str(pkg), '--work', str(work),
+                              '--out', str(out), '--installed'], capture_output=True, text=True)
+        self.assertNotEqual(bad.returncode, 0)
+
+    def test_e2e_unjoinable_timing_record_adds_failure_reason(self):
+        source = (ROOT / 'rust/release/e2e.py').read_text(encoding='utf-8')
+        self.assertIn("result['failures'].append(f'timing: {error}')", source)
 
     def test_the_priority_ticket_names_this_run_and_replaces_only_a_dead_one(self):
         (self.root / 'priority.ps1').write_text(PRIORITY_DRIVER)
@@ -1978,6 +2105,23 @@ class SmokeDefaults(unittest.TestCase):
         finally_part = block[block.index('} finally {'):]
         self.assertIn('Remove-Item $laptopLock', finally_part)
         self.assertIn('-eq $laptopLockText', finally_part)
+
+    def test_session0_smoke_wrapper_writes_exit_file_on_throw(self):
+        script = (ROOT / 'rust/release/smoke.ps1').read_text(encoding='utf-8')
+        block = script[script.index('(Get-Process -Id $PID).SessionId -eq 0'):script.index('$tag = $Version')]
+        self.assertIn('try {', block)
+        self.assertIn('catch {', block)
+        with tempfile.TemporaryDirectory() as td:
+            d = pathlib.Path(td)
+            child, out, exit_file = d / 'throw.ps1', d / 'out.log', d / 'code.exit'
+            child.write_text("throw 'smoke boom'\n", encoding='utf-8')
+            cmd = (f"$code = 1; try {{ & '{child}' *> '{out}'; $code = [int]$LASTEXITCODE }} "
+                   f"catch {{ $_ | Out-String | Add-Content -LiteralPath '{out}' }}; "
+                   f"Set-Content -LiteralPath '{exit_file}' $code")
+            res = subprocess.run(['pwsh', '-NoProfile', '-Command', cmd], capture_output=True, text=True, timeout=30)
+            self.assertEqual(res.returncode, 0, res.stderr)
+            self.assertEqual(exit_file.read_text(encoding='utf-8').strip(), '1')
+            self.assertIn('smoke boom', out.read_text(encoding='utf-8'))
 
 if __name__ == '__main__':
     unittest.main()

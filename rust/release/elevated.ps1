@@ -46,13 +46,15 @@ try {
 
     $setup = Start-Process -FilePath $Installer -ArgumentList '--quiet' -Wait -PassThru
     "setup exit $($setup.ExitCode)"
+    # Automated CI RCs (rubylight-rc-setup-*) ship binaries built with plain X.Y.Z.
+    $expectedVersion = if ((Split-Path $Installer -Leaf) -like 'rubylight-rc-setup-*') { $Version -replace '-rc\.\d+$', '' } else { $Version }
     $reported = $null
     $deadline = (Get-Date).AddSeconds(90)
     do {
         Start-Sleep -Seconds 2
         $info = (& curl.exe -s --max-time 5 http://127.0.0.1:47989/serverinfo) -join ' '
         if ($info -match '<RustHostVersion>([^<]+)</RustHostVersion>') { $reported = $Matches[1] }
-    } until ($reported -eq $Version -or (Get-Date) -gt $deadline)
+    } until ($reported -eq $expectedVersion -or (Get-Date) -gt $deadline)
     # The service setup recorded for a side-by-side installation (rust/core/src/host_service.rs).
     $serviceName = (Get-ItemProperty 'HKLM:\SOFTWARE\Rubylight' -Name ServiceName -ErrorAction SilentlyContinue).ServiceName
     if ($serviceName -ne 'RubylightService') { $serviceName = 'ApolloService' }

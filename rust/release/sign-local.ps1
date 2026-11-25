@@ -1,3 +1,4 @@
+#Requires -Version 7
 # Signs a Rubylight release on the maintainer's PC with the maintainer's code
 # signing certificate (Certum "Open Source Developer Ramazan Kara", whose key
 # stays in Certum's cloud and is reached through SimplySign Desktop), then
