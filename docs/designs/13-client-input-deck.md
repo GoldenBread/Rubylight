@@ -2,11 +2,11 @@
 
 [Protocol reservations](00-protocol-reservations.md) · [Code map](../code-map.md) · [Nightjar code map](../../client/docs/code-map.md)
 
-Status: engineering design (Phase 1). Written against `main` `b3d0c26b9b` (`6.2.0`) and `00-protocol-reservations.md`.
+Status: engineering design (Phase 1). Rebased 2026-11-25 onto post-refactoring `origin/main` `955ef39598` (`v6.4.1`) and `00-protocol-reservations.md`.
 
 ## 1. Summary & User Experience
 
-Item 13 replaces dozens of scattered flat controller preference keys with **ONE flagship Visual Console-Grade Controller Editor** (Steam Input Configurator × Xbox Accessories × DualSense Edge Profile Studio caliber) paired with **Client Input Deck** — across Nightjar Android (Phone, Handheld, Android TV / Fire TV) and Desktop (Windows, Linux / Steam Deck, macOS) at full parity — backed exclusively on the host by Rubylight's first-party UMDF 2 VHF virtual gamepad driver (`rust/drivers/rubylight-vgamepad`, hardware ID `Root\RubylightVirtualGamepad`) and existing USB/IP virtual HID mouse/touchpad (`rust/core/src/virtual_hid.rs`) plus `SendInput` keyboard injection. It ships **zero unsigned KMDF drivers** and **zero `mouse_mapper`** — preserving the deliberate exclusion in `rust/drivers/rubylight-vgamepad/README.md`.
+Item 13 replaces dozens of scattered flat controller preference keys with **ONE flagship Visual Console-Grade Controller Editor** (Steam Input Configurator × Xbox Accessories × DualSense Edge Profile Studio caliber) paired with **Client Input Deck** — across Nightjar Android (Phone, Handheld, Android TV / Fire TV) and Desktop (Windows, Linux / Steam Deck, macOS) at full parity — backed exclusively on the host by Rubylight's first-party UMDF 2 VHF virtual gamepad driver (`rust/drivers/rubylight-vgamepad`, hardware ID `Root\RubylightVirtualGamepad`) and existing USB/IP virtual HID mouse/touchpad (`rust/core/input-policy/src/virtual_hid.rs`) plus `SendInput` keyboard injection. It ships **zero unsigned KMDF drivers** and **zero `mouse_mapper`** — preserving the deliberate exclusion in `rust/drivers/rubylight-vgamepad/README.md`.
 
 ### Replacing scattered controller settings with ONE Visual Controller Editor
 
@@ -114,81 +114,81 @@ Offset  Len  Field (after 4B BE length + 4B LE magic 0x5500_0081)
 
 Host validation: packets arriving on a session that did not negotiate `rlInputDeck=1` are dropped silently (counted in debug metrics) so stock or misbehaving clients cannot inject unauthorized deck state.
 
-### Native API v1 routes (`rust/core/native-api/src/input_deck.rs`)
+### Native API v1 routes (`client/protocol/native-api/src/input_deck.rs`)
 
 All routes live under `/api/native/v1`, authenticate the paired TLS client certificate, require `launch` permission (`butterpollo_core::native::LAUNCH`), and scope mutations strictly to the caller's own device UUID (`device_uuid(&client.uuid)`).
 
 | Method & Path | Permission | Purpose |
 | --- | --- | --- |
 | `GET /api/native/v1/input/decks` | `launch` | Lists all deck profiles for this device (and host-synced per-`app_id` defaults from `09-host-hub-sync`), plus host VHF driver capabilities (`available_profiles`, `virtual_mouse_ready`, `active_deck_id`, `revision`). |
-| `PUT /api/native/v1/input/decks/{id}` | `launch` | Creates or atomically updates deck `{id}` (standardized route matching `00-protocol-reservations.md`). Attaches an explicit per-route `.layer(DefaultBodyLimit::disable())` + `axum::body::to_bytes(req.into_body(), 64 * 1024)` override in `rust/host/src/native_api.rs` (overriding the router-wide 16 KiB `DefaultBodyLimit::max(16 * 1024)`), accepting up to 64 KiB JSON and rejecting larger bodies with `ErrorCode::TooLarge` (`"too_large"`, HTTP `413`); schema-validated (max 16 layers, max 12 slices per radial, max 64 chords, max 4 keys per chord). Updates `09-host-hub-sync` profile revision if `sync_across_devices = true`. |
+| `PUT /api/native/v1/input/decks/{id}` | `launch` | Creates or atomically updates deck `{id}` (standardized route matching `00-protocol-reservations.md`). Attaches an explicit per-route `.layer(DefaultBodyLimit::disable())` + `axum::body::to_bytes(req.into_body(), 64 * 1024)` override in `rust/host/web/src/native_api.rs` (overriding the router-wide 16 KiB `DefaultBodyLimit::max(16 * 1024)`), accepting up to 64 KiB JSON and rejecting larger bodies with `ErrorCode::TooLarge` (`"too_large"`, HTTP `413`); schema-validated (max 16 layers, max 12 slices per radial, max 64 chords, max 4 keys per chord). Updates `09-host-hub-sync` profile revision if `sync_across_devices = true`. |
 | `DELETE /api/native/v1/input/decks/{id}` | `launch` | Removes deck `{id}` for this device (and clears it if currently active, triggering `ReleaseAll` on any active stream owned by caller). |
 | `POST /api/native/v1/input/decks/active` | `launch` | Binds `{ "app_id": "...", "deck_id": "..." \| null }` for live switch during an owned stream or default for next launch; returns effective status & revision. |
 
-Error codes reuse existing `ErrorCode` variants in `rust/core/native-api/src/error.rs`: `ErrorCode::NotPaired` (`"not_paired"`, HTTP `403`), `ErrorCode::PermissionRequired` (`"permission_required"`, HTTP `403`), `ErrorCode::InvalidValue` (`"invalid_value"`, HTTP `422`, schema limit exceeded or invalid key/profile), `ErrorCode::NotFound` (`"not_found"`, HTTP `404`), `ErrorCode::NotSessionOwner` (`"not_session_owner"`, HTTP `409`), and `ErrorCode::TooLarge` (`"too_large"`, HTTP `413`, body above 64 KiB).
+Error codes reuse existing `ErrorCode` variants in `client/protocol/native-api/src/error.rs`: `ErrorCode::NotPaired` (`"not_paired"`, HTTP `403`), `ErrorCode::PermissionRequired` (`"permission_required"`, HTTP `403`), `ErrorCode::InvalidValue` (`"invalid_value"`, HTTP `422`, schema limit exceeded or invalid key/profile), `ErrorCode::NotFound` (`"not_found"`, HTTP `404`), `ErrorCode::NotSessionOwner` (`"not_session_owner"`, HTTP `409`), and `ErrorCode::TooLarge` (`"too_large"`, HTTP `413`, body above 64 KiB).
 
 ## 3. Architecture & <=800-LOC Module Plan
 
-All repo paths below carry `[verify post-sprint code-map.md]` so Phase 2 verifies exact post-sprint layout before Phase 3 coding begins. Every new Rust module opens with a `//!` header, every new Java class opens with a `/**` header, and zero raw `Config` reads are added under `rust/host/src/stream/**` outside `stream/config.rs` (`tools/arch_check.py`).
+All repo paths below carry `docs/code-map.md` so Phase 2 verifies exact post-sprint layout before Phase 3 coding begins. Every new Rust module opens with a `//!` header, every new Java class opens with a `/**` header, and zero raw `Config` reads are added under `rust/host/stream/src/stream/**` outside `stream/config.rs` (`tools/arch_check.py`).
 
 ### Grandfathered files in `tools/size_ratchet.json` (DO NOT GROW)
 
 | File | Ratchet ceiling (LOC) | Strategy to stay at or below ceiling |
 | --- | --- | --- |
-| `rust/host/src/stream/control.rs` `[verify post-sprint code-map.md]` | 2675 | Add only a 3-line dispatch arm for `0x554D` and `Input::InputDeckAxis` forwarding to `super::input_deck::handle_*`. Extract any touched helper if net lines would increase. |
-| `rust/windows/src/input.rs` `[verify post-sprint code-map.md]` | 1342 | Add only `mod deck_router;` and a 2-line forward in `Injector::apply` + `release_all`. Zero inline deck logic. |
-| `rust/windows/src/input/gamepad_thread.rs` `[verify post-sprint code-map.md]` | 1359 | Add 1 enum variant (`DeckAxis` / `DeckProfileSwitch`) delegating to `deck_router.rs`. |
-| `rust/windows/src/input/gamepads.rs` `[verify post-sprint code-map.md]` | 1788 | Reuse existing `Backend::Vhf` slot open/reprofile/report path; add a <=8-line helper hook calling `deck_router`. |
-| `rust/core/src/virtual_hid.rs` `[verify post-sprint code-map.md]` | 1123 | Untouched — `deck_router.rs` feeds existing `HidMouse` relative/wheel/button API via `virtual_hid::MOUSE`. |
-| `rust/host/src/native_api.rs` `[verify post-sprint code-map.md]` | 853 | Add only `mod input_deck;` + 4 route registrations in `router()` (with explicit per-route `.layer(DefaultBodyLimit::disable())` + `axum::body::to_bytes(req.into_body(), 64 * 1024)` on `PUT /api/native/v1/input/decks/{id}` overriding the router-wide 16 KiB `DefaultBodyLimit::max(16 * 1024)`) + 1 capability check line (offset by moving existing route grouping helper if needed to stay `<= 853`). |
-| `client/protocol/client/src/control/driver.rs` `[verify post-sprint code-map.md]` | 1288 | Delegate `0x554D` encode/decode to `control/input_deck.rs` (3-line hook). |
-| `client/protocol/client/src/input/queue.rs` `[verify post-sprint code-map.md]` | 1285 | Add 1-line `enqueue_deck_axis` delegating to `input/deck.rs`. |
-| `client/protocol/client/src/http/capabilities.rs` `[verify post-sprint code-map.md]` | 1257 | Keep addition minimal (enum variant + 1 match arm; split evidence table into `capabilities/evidence.rs` if approaching ceiling). |
-| `client/protocol/desktop/src/gamepad.rs` `[verify post-sprint code-map.md]` | 1375 | Add 3-line hook passing raw SDL pad/gyro events into new `stream/input_deck.rs`. |
-| `client/protocol/desktop/src/stream/mod.rs` `[verify post-sprint code-map.md]` | 2914 | Delegate all deck HUD & axis dispatch to new `stream/input_deck_hud.rs`. |
-| `client/protocol/desktop/src/strings/*.rs` `[verify post-sprint code-map.md]` | 1750 | **Zero growth!** Route all new 7.0.0 Input Deck Desktop translations to `client/protocol/desktop/src/strings_70/<code>.rs` (14 non-English locale tables; English literals live at call sites). |
-| `client/app/src/main/java/com/limelight/binding/input/ControllerHandler.java` `[verify post-sprint code-map.md]` | 5735 | **Zero feature logic inside `ControllerHandler.java`.** Add only a 4-line interceptor callback (`InputDeckHook`) forwarding pad/gyro events and live editor telemetry to `binding/input/deck/InputDeckEngine.java`. |
-| `client/app/src/main/java/com/limelight/preferences/StreamSettings.java` `[verify post-sprint code-map.md]` | 3425 | **Shrinks, never grows!** Replace scattered flat controller rows with one flagship **Controller Editor** launcher row under Controls; keep clean key migrations in `ControllerProfileMigrator.java` + `SettingsKeysTest.java`. |
-| `client/app/src/main/java/com/limelight/binding/input/pad/PadEditor.java` `[verify post-sprint code-map.md]` | 1157 | **Do not grow.** Wrap via `binding/input/editor/TouchStudioTabBridge.java` (`<= 300` LOC) so `#151` Touch Studio shares the same Controller Editor shell without bloating `PadEditor.java`. |
-| `client/protocol/desktop/src/ui/settings.rs` `[verify post-sprint code-map.md]` | 4087 | **Shrinks, never grows!** Replace scattered flat controller preference rows with one **Open Controller Editor** card under Controls. |
-| `client/app/src/main/java/com/limelight/Game.java` `[verify post-sprint code-map.md]` | 1883 | Mount `InputDeckRadialView` via 3-line delegate in `GameOverlays.java` / `InputDeckCoordinator.java`. |
-| `client/app/src/main/java/com/limelight/nvstream/http/HostCapabilities.java` `[verify post-sprint code-map.md]` | 1347 | Add only `INPUT_DECK(0)` enum constant + 2-line parse/native merge; trim redundant comment/blank lines if needed so LOC `<= 1347`. |
+| `rust/host/stream/src/stream/control.rs` | 2675 | Add only a 3-line dispatch arm for `0x554D` and `Input::InputDeckAxis` forwarding to `super::input_deck::handle_*`. Extract any touched helper if net lines would increase. |
+| `rust/windows/io/src/input.rs` | 1342 | Add only `mod deck_router;` and a 2-line forward in `Injector::apply` + `release_all`. Zero inline deck logic. |
+| `rust/windows/io/src/input/gamepad_thread.rs` | 1359 | Add 1 enum variant (`DeckAxis` / `DeckProfileSwitch`) delegating to `deck_router.rs`. |
+| `rust/windows/io/src/input/gamepads.rs` | 1788 | Reuse existing `Backend::Vhf` slot open/reprofile/report path; add a <=8-line helper hook calling `deck_router`. |
+| `rust/core/input-policy/src/virtual_hid.rs` | 1123 | Untouched — `deck_router.rs` feeds existing `HidMouse` relative/wheel/button API via `virtual_hid::MOUSE`. |
+| `rust/host/web/src/native_api.rs` | 853 | Add only `mod input_deck;` + 4 route registrations in `router()` (with explicit per-route `.layer(DefaultBodyLimit::disable())` + `axum::body::to_bytes(req.into_body(), 64 * 1024)` on `PUT /api/native/v1/input/decks/{id}` overriding the router-wide 16 KiB `DefaultBodyLimit::max(16 * 1024)`) + 1 capability check line (offset by moving existing route grouping helper if needed to stay `<= 853`). |
+| `client/protocol/client/src/control/driver.rs` | 1288 | Delegate `0x554D` encode/decode to `control/input_deck.rs` (3-line hook). |
+| `client/protocol/client/src/input/queue.rs` | 1285 | Add 1-line `enqueue_deck_axis` delegating to `input/deck.rs`. |
+| `client/protocol/policy/src/http/capabilities.rs` | 1257 | Keep addition minimal (enum variant + 1 match arm; split evidence table into `capabilities/evidence.rs` if approaching ceiling). |
+| `client/protocol/desktop-media/src/gamepad.rs` | 1375 | Add 3-line hook passing raw SDL pad/gyro events into new `stream/input_deck.rs`. |
+| `client/protocol/desktop-media/src/stream/mod.rs` | 2914 | Delegate all deck HUD & axis dispatch to new `stream/input_deck_hud.rs`. |
+| `client/protocol/desktop-config/src/strings/*.rs` | 1750 | **Zero growth!** Route all new 7.0.0 Input Deck Desktop translations to `client/protocol/desktop-config/src/strings_70/<code>.rs` (14 non-English locale tables; English literals live at call sites). |
+| `client/app/src/main/java/com/limelight/binding/input/ControllerHandler.java` | 5735 | **Zero feature logic inside `ControllerHandler.java`.** Add only a 4-line interceptor callback (`InputDeckHook`) forwarding pad/gyro events and live editor telemetry to `binding/input/deck/InputDeckEngine.java`. |
+| `client/app/src/main/java/com/limelight/preferences/StreamSettings.java` | 3425 | **Shrinks, never grows!** Replace scattered flat controller rows with one flagship **Controller Editor** launcher row under Controls; keep clean key migrations in `ControllerProfileMigrator.java` + `SettingsKeysTest.java`. |
+| `client/app/src/main/java/com/limelight/binding/input/pad/PadEditor.java` | 1157 | **Do not grow.** Wrap via `binding/input/editor/TouchStudioTabBridge.java` (`<= 300` LOC) so `#151` Touch Studio shares the same Controller Editor shell without bloating `PadEditor.java`. |
+| `client/protocol/desktop-ui/src/ui/settings.rs` | 4087 | **Shrinks, never grows!** Replace scattered flat controller preference rows with one **Open Controller Editor** card under Controls. |
+| `client/app/src/main/java/com/limelight/Game.java` | 1883 | Mount `InputDeckRadialView` via 3-line delegate in `GameOverlays.java` / `InputDeckCoordinator.java`. |
+| `client/app/src/main/java/com/limelight/nvstream/http/HostCapabilities.java` | 1347 | Add only `INPUT_DECK(0)` enum constant + 2-line parse/native merge; trim redundant comment/blank lines if needed so LOC `<= 1347`. |
 
 ### Planned new <=800-LOC modules
 
 | New module path | Crate / App | Target LOC | Responsibility |
 | --- | --- | --- | --- |
-| `client/protocol/core/src/input_deck.rs` `[verify post-sprint code-map.md]` | `rubylight-protocol` | ~320 | `no_std` wire codecs for `0x554D` (`DeckMessage`) and `0x5500_0081` (`DeckVirtualAxis`), bounds checks, round-trip unit tests. |
-| `rust/core/native-api/src/input_deck.rs` `[verify post-sprint code-map.md]` | `rubylight-native-api` | ~320 | Additive v1 serde types (`DeckList`, `DeckDocument`, `ControllerProfileScope`, `StickCurve`, `TriggerConfig`, `GyroConfig`, `HapticsLightbarConfig`, `DeckLayer`, `RadialMenu`, `ChordBinding`, `ActiveDeckRequest`), fixtures. |
-| `rust/core/src/input_deck.rs` `[verify post-sprint code-map.md]` | `butterpollo-core` | ~380 | Pure host deck validator (max layers/slices/chords), per-session held-button/key state tracker (`DeckHoldTracker`), safe release-all planner, profile compatibility matrix (`VHF` vs `ViGEmBus`). |
-| `rust/windows/src/input/deck_router.rs` `[verify post-sprint code-map.md]` | `butterpollo-windows` | ~360 | Routes validated deck actions to `GamepadThread` (`rubylight-vgamepad` VHF slots), `virtual_hid::MOUSE` (`usbip-win2` raw HID mouse, visible notice if falling back to `SendInput`), and `Injector` keyboard chords sharing `SEND_ORDER` + `HELD`. Zero KMDF / zero `mouse_mapper`. |
-| `rust/host/src/stream/input_deck.rs` `[verify post-sprint code-map.md]` | `butterpollo` | ~340 | Session deck controller: processes `0x554D` + `0x5500_0081`, enforces `rlInputDeck=1` opt-in & guest slot isolation, drives 15 s hold watchdog, emits `HostAck`/`HostError`, guarantees `release_all` on teardown. |
-| `rust/host/src/native_api/input_deck.rs` `[verify post-sprint code-map.md]` | `butterpollo` | ~310 | HTTP handlers for `/api/native/v1/input/decks`, `/api/native/v1/input/decks/{id}` (`.layer(DefaultBodyLimit::disable())` + `to_bytes(..., 64 * 1024)` returning JSON `ErrorCode::TooLarge` HTTP `413`), and `/api/native/v1/input/decks/active`; atomic disk persistence under `config_dir/input-decks/`, `09-host-hub-sync` profile bridge. |
-| `client/protocol/policy/src/controller_profile.rs` `[verify post-sprint code-map.md]` | `nightjar-policy` | ~520 | Shared sans-IO layered controller profile engine (`Global → Per-Controller-Model → Per-Game`), stick deadzone/outer-ring/response-curve math (Linear/Aggressive/Relaxed/Wide/Custom), trigger thresholds, gyro/flick-stick/calibration math, JSON import/export schema, and flat-key legacy migration mapping. |
-| `client/protocol/policy/src/input_deck.rs` `[verify post-sprint code-map.md]` | `nightjar-policy` | ~480 | Shared sans-IO deck evaluator used by BOTH Android and Desktop: chord matcher, back-paddle (`L4/R4/L5/R5`) & Share/Capture bindings, hold/toggle layer stack, radial sector geometry (deadzone + hysteresis + wedge index), safe release-all state emitter. |
-| `client/protocol/client/src/control/input_deck.rs` `[verify post-sprint code-map.md]` | `nightjar-core` | ~180 | Control stream send/receive glue + `0x5500_0081` input queue emitter. |
-| `client/protocol/desktop/src/stream/input_deck_hud.rs` `[verify post-sprint code-map.md]` | `nightjar-desktop` | ~360 | Blur-free HUD radial overlay + layer pill drawn in egui only while open; SDL gyro/gamepad bridge (gates Linux-only code with `target_os = "linux"`). |
-| `client/protocol/desktop/src/ui/controller_editor/mod.rs` `[verify post-sprint code-map.md]` | `nightjar-desktop` | ~280 | Flagship Desktop Visual Controller Editor shell: profile layer switcher (`Global / Model / Game`), import/export JSON, Hub Sync indicator, studio tab routing. |
-| `client/protocol/desktop/src/ui/controller_editor/diagram.rs` `[verify post-sprint code-map.md]` | `nightjar-desktop` | ~420 | Live interactive controller diagram (DualSense, Xbox Series/Elite, Switch Pro / Switch 2 Pro, Steam Controller 2026, Steam Deck/Handheld, Generic) with real-time stick/trigger/button/paddle/trackpad/gyro highlights & direct-focus button/paddle/chord binder. |
-| `client/protocol/desktop/src/ui/controller_editor/sticks_triggers.rs` `[verify post-sprint code-map.md]` | `nightjar-desktop` | ~360 | Sticks & Triggers Studio: live circular/axial deadzone & outer-ring canvas, response curve preview, hair-trigger actuation, DualSense adaptive trigger feel. |
-| `client/protocol/desktop/src/ui/controller_editor/gyro_studio.rs` `[verify post-sprint code-map.md]` | `nightjar-desktop` | ~340 | Gyroscope Studio: live orientation visualizer, activation trigger, output mode (Gyro-to-Mouse / Gyro-to-Stick / Native Motion / DSU), per-axis sensitivity/invert/smoothing/flick-stick, 1-tap Calibrate Zero. |
-| `client/protocol/desktop/src/ui/controller_editor/radials_haptics.rs` `[verify post-sprint code-map.md]` | `nightjar-desktop` | ~360 | Trackpads & 4–12-slice Radial Menu Builder + Haptics & Lightbar Studio (live test pulse, audio-to-haptics toggle/gain, LED/lightbar color). |
-| `client/protocol/desktop/src/strings_70/<code>.rs` (14 locale files) `[verify post-sprint code-map.md]` | `nightjar-desktop` | ~85/locale | 7.0.0 Desktop translations for Visual Controller Editor & Input Deck across all 14 non-English locales, keeping grandfathered `strings/*.rs` <= 1,750 LOC. |
-| `client/protocol/android/src/input_deck.rs` `[verify post-sprint code-map.md]` | `nightjar-android` | ~260 | JNI bridge exposing `nightjar-policy::controller_profile` + `input_deck` evaluators + `0x554D` / `0x5500_0081` senders so Android & Desktop share one engine. |
-| `client/app/src/main/java/com/limelight/binding/input/deck/InputDeckEngine.java` `[verify post-sprint code-map.md]` | Android `app` | ~300 | Wraps JNI `controller_profile` + `input_deck` policy, listens to `ControllerHandler` hook, Android IMU/SensorManager gyro, and focus/lifecycle release-all. |
-| `client/app/src/main/java/com/limelight/binding/input/deck/InputDeckRadialView.java` `[verify post-sprint code-map.md]` | Android `app` | ~340 | Custom `View` rendering radial wheel strictly blur-free (`blur: 0`, `shadowBlur: 0`, `GONE` with zero invalidations when closed). |
-| `client/app/src/main/java/com/limelight/binding/input/editor/ControllerEditorActivity.java` `[verify post-sprint code-map.md]` | Android `app` | ~340 | Flagship Android Visual Controller Editor host (reachable from Settings → Controls, Game Page, and Console Control Center; 100% controller, TV-remote, keyboard, touch, TalkBack navigable). |
-| `client/app/src/main/java/com/limelight/binding/input/editor/ControllerDiagramView.java` `[verify post-sprint code-map.md]` | Android `app` | ~450 | Interactive live-telemetry diagram adapting to DualSense, Xbox Series/Elite, Switch Pro / Switch 2 Pro, Steam Controller 2026, Handheld, Generic, and Touch Studio mode. |
-| `client/app/src/main/java/com/limelight/binding/input/editor/SticksTriggersStudioFragment.java` `[verify post-sprint code-map.md]` | Android `app` | ~380 | Interactive circular/axial deadzone & outer-ring canvas, response curve preview, trigger actuation, DualSense adaptive trigger feel. |
-| `client/app/src/main/java/com/limelight/binding/input/editor/GyroStudioFragment.java` `[verify post-sprint code-map.md]` | Android `app` | ~360 | Live gyro visualizer, activation trigger, output modes, per-axis sensitivity/invert/smoothing/flick-stick, 1-tap Calibrate Zero. |
-| `client/app/src/main/java/com/limelight/binding/input/editor/RadialsHapticsStudioFragment.java` `[verify post-sprint code-map.md]` | Android `app` | ~360 | Trackpads, 4–12-slice Radial Menu Builder, Haptics live test pulse, audio-to-haptics gain, lightbar color. |
-| `client/app/src/main/java/com/limelight/binding/input/editor/TouchStudioTabBridge.java` `[verify post-sprint code-map.md]` | Android `app` | ~280 | Seamless Touch Controller Studio (`#151`) tab inside Controller Editor (freely resizable/reshapable controls, separable ABXY/D-pad, movable floating micro-toolbar, 0%-opacity stealth mode). |
-| `client/app/src/main/java/com/limelight/binding/input/editor/ControllerProfileMigrator.java` `[verify post-sprint code-map.md]` | Android `app` | ~260 | One-shot lossless migration of legacy flat controller `SharedPreferences` keys into the initial `Global` controller profile, verified by `SettingsKeysTest`. |
+| `client/protocol/core/src/input_deck.rs` | `rubylight-protocol` | ~320 | `no_std` wire codecs for `0x554D` (`DeckMessage`) and `0x5500_0081` (`DeckVirtualAxis`), bounds checks, round-trip unit tests. |
+| `client/protocol/native-api/src/input_deck.rs` | `rubylight-native-api` | ~320 | Additive v1 serde types (`DeckList`, `DeckDocument`, `ControllerProfileScope`, `StickCurve`, `TriggerConfig`, `GyroConfig`, `HapticsLightbarConfig`, `DeckLayer`, `RadialMenu`, `ChordBinding`, `ActiveDeckRequest`), fixtures. |
+| `rust/core/input-policy/src/input_deck.rs` | `butterpollo-core` | ~380 | Pure host deck validator (max layers/slices/chords), per-session held-button/key state tracker (`DeckHoldTracker`), safe release-all planner, profile compatibility matrix (`VHF` vs `ViGEmBus`). |
+| `rust/windows/io/src/input/deck_router.rs` | `butterpollo-windows` | ~360 | Routes validated deck actions to `GamepadThread` (`rubylight-vgamepad` VHF slots), `virtual_hid::MOUSE` (`usbip-win2` raw HID mouse, visible notice if falling back to `SendInput`), and `Injector` keyboard chords sharing `SEND_ORDER` + `HELD`. Zero KMDF / zero `mouse_mapper`. |
+| `rust/host/stream/src/stream/input_deck.rs` | `butterpollo` | ~340 | Session deck controller: processes `0x554D` + `0x5500_0081`, enforces `rlInputDeck=1` opt-in & guest slot isolation, drives 15 s hold watchdog, emits `HostAck`/`HostError`, guarantees `release_all` on teardown. |
+| `rust/host/web/src/native_api/input_deck.rs` | `butterpollo` | ~310 | HTTP handlers for `/api/native/v1/input/decks`, `/api/native/v1/input/decks/{id}` (`.layer(DefaultBodyLimit::disable())` + `to_bytes(..., 64 * 1024)` returning JSON `ErrorCode::TooLarge` HTTP `413`), and `/api/native/v1/input/decks/active`; atomic disk persistence under `config_dir/input-decks/`, `09-host-hub-sync` profile bridge. |
+| `client/protocol/policy/src/controller_profile.rs` | `nightjar-policy` | ~520 | Shared sans-IO layered controller profile engine (`Global → Per-Controller-Model → Per-Game`), stick deadzone/outer-ring/response-curve math (Linear/Aggressive/Relaxed/Wide/Custom), trigger thresholds, gyro/flick-stick/calibration math, JSON import/export schema, and flat-key legacy migration mapping. |
+| `client/protocol/policy/src/input_deck.rs` | `nightjar-policy` | ~480 | Shared sans-IO deck evaluator used by BOTH Android and Desktop: chord matcher, back-paddle (`L4/R4/L5/R5`) & Share/Capture bindings, hold/toggle layer stack, radial sector geometry (deadzone + hysteresis + wedge index), safe release-all state emitter. |
+| `client/protocol/client/src/control/input_deck.rs` | `nightjar-core` | ~180 | Control stream send/receive glue + `0x5500_0081` input queue emitter. |
+| `client/protocol/desktop-media/src/stream/input_deck_hud.rs` | `nightjar-desktop` | ~360 | Blur-free HUD radial overlay + layer pill drawn in egui only while open; SDL gyro/gamepad bridge (gates Linux-only code with `target_os = "linux"`). |
+| `client/protocol/desktop-ui/src/ui/controller_editor/mod.rs` | `nightjar-desktop` | ~280 | Flagship Desktop Visual Controller Editor shell: profile layer switcher (`Global / Model / Game`), import/export JSON, Hub Sync indicator, studio tab routing. |
+| `client/protocol/desktop-ui/src/ui/controller_editor/diagram.rs` | `nightjar-desktop` | ~420 | Live interactive controller diagram (DualSense, Xbox Series/Elite, Switch Pro / Switch 2 Pro, Steam Controller 2026, Steam Deck/Handheld, Generic) with real-time stick/trigger/button/paddle/trackpad/gyro highlights & direct-focus button/paddle/chord binder. |
+| `client/protocol/desktop-ui/src/ui/controller_editor/sticks_triggers.rs` | `nightjar-desktop` | ~360 | Sticks & Triggers Studio: live circular/axial deadzone & outer-ring canvas, response curve preview, hair-trigger actuation, DualSense adaptive trigger feel. |
+| `client/protocol/desktop-ui/src/ui/controller_editor/gyro_studio.rs` | `nightjar-desktop` | ~340 | Gyroscope Studio: live orientation visualizer, activation trigger, output mode (Gyro-to-Mouse / Gyro-to-Stick / Native Motion / DSU), per-axis sensitivity/invert/smoothing/flick-stick, 1-tap Calibrate Zero. |
+| `client/protocol/desktop-ui/src/ui/controller_editor/radials_haptics.rs` | `nightjar-desktop` | ~360 | Trackpads & 4–12-slice Radial Menu Builder + Haptics & Lightbar Studio (live test pulse, audio-to-haptics toggle/gain, LED/lightbar color). |
+| `client/protocol/desktop-config/src/strings_70/<code>.rs` (14 locale files) | `nightjar-desktop` | ~85/locale | 7.0.0 Desktop translations for Visual Controller Editor & Input Deck across all 14 non-English locales, keeping grandfathered `strings/*.rs` <= 1,750 LOC. |
+| `client/protocol/android/src/input_deck.rs` | `nightjar-android` | ~260 | JNI bridge exposing `nightjar-policy::controller_profile` + `input_deck` evaluators + `0x554D` / `0x5500_0081` senders so Android & Desktop share one engine. |
+| `client/app/src/main/java/com/limelight/binding/input/deck/InputDeckEngine.java` | Android `app` | ~300 | Wraps JNI `controller_profile` + `input_deck` policy, listens to `ControllerHandler` hook, Android IMU/SensorManager gyro, and focus/lifecycle release-all. |
+| `client/app/src/main/java/com/limelight/binding/input/deck/InputDeckRadialView.java` | Android `app` | ~340 | Custom `View` rendering radial wheel strictly blur-free (`blur: 0`, `shadowBlur: 0`, `GONE` with zero invalidations when closed). |
+| `client/app/src/main/java/com/limelight/binding/input/editor/ControllerEditorActivity.java` | Android `app` | ~340 | Flagship Android Visual Controller Editor host (reachable from Settings → Controls, Game Page, and Console Control Center; 100% controller, TV-remote, keyboard, touch, TalkBack navigable). |
+| `client/app/src/main/java/com/limelight/binding/input/editor/ControllerDiagramView.java` | Android `app` | ~450 | Interactive live-telemetry diagram adapting to DualSense, Xbox Series/Elite, Switch Pro / Switch 2 Pro, Steam Controller 2026, Handheld, Generic, and Touch Studio mode. |
+| `client/app/src/main/java/com/limelight/binding/input/editor/SticksTriggersStudioFragment.java` | Android `app` | ~380 | Interactive circular/axial deadzone & outer-ring canvas, response curve preview, trigger actuation, DualSense adaptive trigger feel. |
+| `client/app/src/main/java/com/limelight/binding/input/editor/GyroStudioFragment.java` | Android `app` | ~360 | Live gyro visualizer, activation trigger, output modes, per-axis sensitivity/invert/smoothing/flick-stick, 1-tap Calibrate Zero. |
+| `client/app/src/main/java/com/limelight/binding/input/editor/RadialsHapticsStudioFragment.java` | Android `app` | ~360 | Trackpads, 4–12-slice Radial Menu Builder, Haptics live test pulse, audio-to-haptics gain, lightbar color. |
+| `client/app/src/main/java/com/limelight/binding/input/editor/TouchStudioTabBridge.java` | Android `app` | ~280 | Seamless Touch Controller Studio (`#151`) tab inside Controller Editor (freely resizable/reshapable controls, separable ABXY/D-pad, movable floating micro-toolbar, 0%-opacity stealth mode). |
+| `client/app/src/main/java/com/limelight/binding/input/editor/ControllerProfileMigrator.java` | Android `app` | ~260 | One-shot lossless migration of legacy flat controller `SharedPreferences` keys into the initial `Global` controller profile, verified by `SettingsKeysTest`. |
 
 ### Driver & hardware architecture boundaries
 
-- **First-party VHF gamepad only for virtual pad slots:** `deck_router.rs` inspects `Backend` (`rust/windows/src/input/gamepad_backend.rs`). When `Backend::Vhf` (`Root\RubylightVirtualGamepad`) is active, virtual buttons, analog sticks, triggers, and profile switches (`Profile::XboxOne`..`SteamController`) execute directly on the slot's VHF handle (`16` concurrent slots). When the user explicitly forced `gamepad = vigem_x360` or `vigem_ds4`, virtual buttons/axes compatible with Xbox 360 / DS4 still work, while an incompatible `ProfileSwitch` returns `HostError::ProfileUnsupported` visibly (never silently switching drivers).
-- **Virtual HID mouse & keyboard:** Relative gyro-to-mouse deltas and radial mouse buttons route through `rust/windows/src/input/virtual_hid.rs` (`MOUSE: Slot<HidMouse>` over signed `usbip-win2`) when `virtual_mouse` is active, or existing `Injector` (`SendInput`) otherwise, with a one-time stream warning if a game rejects `SendInput` and `usbip-win2` is not installed. Keyboard chords route through `Injector::key_scan` under `SEND_ORDER` + `HELD` so multi-client refcounts stay balanced.
+- **First-party VHF gamepad only for virtual pad slots:** `deck_router.rs` inspects `Backend` (`rust/windows/io/src/input/gamepad_backend.rs`). When `Backend::Vhf` (`Root\RubylightVirtualGamepad`) is active, virtual buttons, analog sticks, triggers, and profile switches (`Profile::XboxOne`..`SteamController`) execute directly on the slot's VHF handle (`16` concurrent slots). When the user explicitly forced `gamepad = vigem_x360` or `vigem_ds4`, virtual buttons/axes compatible with Xbox 360 / DS4 still work, while an incompatible `ProfileSwitch` returns `HostError::ProfileUnsupported` visibly (never silently switching drivers).
+- **Virtual HID mouse & keyboard:** Relative gyro-to-mouse deltas and radial mouse buttons route through `rust/windows/io/src/input/virtual_hid.rs` (`MOUSE: Slot<HidMouse>` over signed `usbip-win2`) when `virtual_mouse` is active, or existing `Injector` (`SendInput`) otherwise, with a one-time stream warning if a game rejects `SendInput` and `usbip-win2` is not installed. Keyboard chords route through `Injector::key_scan` under `SEND_ORDER` + `HELD` so multi-client refcounts stay balanced.
 - **No GPU / encoder / capture coupling:** Input Deck runs exclusively on the control/input/gamepad threads (`control`, `gamepads`) and never touches capture, compute shaders, AMD AMF, or NVIDIA NVENC. Both AMD AMF and NVIDIA NVENC, Windows 10, physical displays, WGC, Desktop Duplication, and D3D11 remain 100% unaffected.
 
 ## 4. State Machine, Reconnect Matrix & Crash-Restore Journal
@@ -214,7 +214,7 @@ Host (per session, inside stream/input_deck.rs):
 1. **Client-side focus loss & menu guard:** Opening the Nightjar Stream Menu, switching OS windows (`SDL_EVENT_WINDOW_FOCUS_LOST`), Android `onWindowFocusChanged(false)` / `onPause()`, or Bluetooth controller disconnect immediately runs `InputDeckEvaluator::panic_release()` → closes any radial HUD, resets all held layers to `[0]`, sends `0x554D ReleaseAll` + a zeroed `0x5500_0081` packet (sticks 0, triggers 0, `buttons_mask = 0`), and suppresses deck input until focus returns and held triggers are physically released.
 2. **Host-side authoritative hold tracker (`DeckHoldTracker`):** Every key, mouse button, and VHF gamepad button/axis activated by Input Deck is recorded in `DeckHoldTracker` per session. On ENet peer drop, session pause, guest kick, or `session_teardown`, `DeckHoldTracker::drain_releases()` deterministically emits key-up (`Injector`), mouse-button-up (`virtual_hid::MOUSE` / `Injector`), and zeroed VHF stick/trigger/button state (`GamepadThread`) — even if the client crashed without sending `ReleaseAll`.
 3. **Hold watchdog:** If a client holds a deck key/button/axis continuously for 15 seconds with zero incoming control pings or input packets (silent half-open link), the host triggers `drain_releases()` and logs a `WARN` without waiting for full ENet timeout.
-4. **Secure desktop / UAC boundary:** When `rust/windows/src/input/desktop.rs::secure_desktop_shown()` is true, `deck_router.rs` releases all active deck holds immediately and answers any new `ActionTrigger` with `HostError::SecureDesktopBlocked` so chords never queue up and misfire after UAC dismissal.
+4. **Secure desktop / UAC boundary:** When `rust/windows/io/src/input/desktop.rs::secure_desktop_shown()` is true, `deck_router.rs` releases all active deck holds immediately and answers any new `ActionTrigger` with `HostError::SecureDesktopBlocked` so chords never queue up and misfire after UAC dismissal.
 
 ### Reconnect & multi-client matrix
 
@@ -237,7 +237,7 @@ Host (per session, inside stream/input_deck.rs):
 
 - **Dramatic settings simplification:** Consolidates dozens of legacy flat controller settings (dead zones, stick inversion, face-button swaps, trigger thresholds, gyro sensitivity/axes, rumble/haptics sliders, per-model overrides, touch layout flags) into **ONE Visual Controller Editor** opened from **Settings → Controls**, any **Game Page**, or the in-stream **Console Control Center**!
 - **Lossless key migration (`SettingsKeysTest` + `config.rs::migrate`):** On first 7.0 launch, `ControllerProfileMigrator` (Android) and `config.rs::migrate` (Desktop) read every existing flat controller preference key into the user's initial `Global` profile, clear/retire the legacy flat preference rows in `preferences.xml` / `ui/settings.rs`, and add every retired key to `SettingsKeysTest` so retired names are never reused and no user loses calibration.
-- **One folded host policy toggle:** `input_deck` (bool, default `true`, added to `SETTINGS_30` + `LIVE` + `Config::input_deck()` in `rust/core/src/config/settings30.rs`, folded under `category: 'input'` in Console `rust/web/src/lib/schema/extensions.ts` and `rust/host/src/console/settings.rs`). Updating `rust/core/src/config/settings30.rs` explicitly updates its hardcoded 12-entry test assertions (`there_are_12_unique_settings`, `answers()`, `the_defaults_are_the_documented_values`, and `the_console_schema_lists_exactly_these_settings_with_these_defaults`, which parses `rust/web/src/lib/schema/extensions.ts` via `include_str!`). Two-sentence help: *"Allows Nightjar devices to run custom radial menus, action layers, and virtual controller bindings during a stream. Turn off to accept only standard controller, keyboard, and mouse input."*
+- **One folded host policy toggle:** `input_deck` (bool, default `true`, added to `SETTINGS_30` + `LIVE` + `Config::input_deck()` in `rust/core/config/src/config/settings30.rs`, folded under `category: 'input'` in Console `rust/web/src/lib/schema/extensions.ts` and `rust/host/web/src/console/settings.rs`). Updating `rust/core/config/src/config/settings30.rs` explicitly updates its hardcoded 12-entry test assertions (`there_are_12_unique_settings`, `answers()`, `the_defaults_are_the_documented_values`, and `the_console_schema_lists_exactly_these_settings_with_these_defaults`, which parses `rust/web/src/lib/schema/extensions.ts` via `include_str!`). Two-sentence help: *"Allows Nightjar devices to run custom radial menus, action layers, and virtual controller bindings during a stream. Turn off to accept only standard controller, keyboard, and mouse input."*
 
 ### Visual craft, zero stream-time blur & dynamic glyphs
 
@@ -249,83 +249,83 @@ Host (per session, inside stream/input_deck.rs):
   - ViGEmBus profile refusal: *"This PC is set to ViGEmBus, which cannot switch to a DualSense or Steam Controller layout. Switch the PC's controller driver to Automatic in Rubylight settings."*
   - Secure desktop: *"Windows security prompt is open on the PC. Input Deck bindings are paused until it closes."*
   - Zero "Experimental" anywhere in UI. Zero mod names (no mention of Nucleus Co-op or ANR).
-- **15 locales:** All new strings added in lockstep to `rust/assets/locale/` (host), `client/protocol/desktop/src/strings_70/<code>.rs` (all 14 non-English Desktop tables `de`, `es`, `fr`, `it`, `ja`, `ko`, `pl`, `pt_br`, `ru`, `tr`, `uk`, `vi`, `zh_hans`, `zh_hant`; English literals live at call sites via `tr`/`trf`/`en`, never growing grandfathered `strings/*.rs` past 1,750 LOC), and `client/app/src/main/res/values*/strings.xml`. Radial wedge labels cap at 2 lines (`type.caption` 12 sp, Figtree 600 for Latin-1 / system font for the 9 non-Latin-1 locales) with safe ellipsis so German compound verbs never clip outside a 12-wedge ring.
+- **15 locales:** All new strings added in lockstep to `rust/assets/locale/` (host), `client/protocol/desktop-config/src/strings_70/<code>.rs` (all 14 non-English Desktop tables `de`, `es`, `fr`, `it`, `ja`, `ko`, `pl`, `pt_br`, `ru`, `tr`, `uk`, `vi`, `zh_hans`, `zh_hant`; English literals live at call sites via `tr`/`trf`/`en`, never growing grandfathered `strings/*.rs` past 1,750 LOC), and `client/app/src/main/res/values*/strings.xml`. Radial wedge labels cap at 2 lines (`type.caption` 12 sp, Figtree 600 for Latin-1 / system font for the 9 non-Latin-1 locales) with safe ellipsis so German compound verbs never clip outside a 12-wedge ring.
 
 ## 6. Disjoint Implementer Slices (Phase 3 `parallel()`)
 
 Every file path belongs to **exactly one** slice below (zero overlap across parallel branches):
 
 ### Stage 1 — Slice 13A: Protocol Wire, Lockstep Capabilities, Core Logic, Native API Types, Schema Lockstep & Shared Policy
-- `client/protocol/core/src/ids.rs` `[verify post-sprint code-map.md]`
-- `client/protocol/core/src/lib.rs` `[verify post-sprint code-map.md]`
-- `client/protocol/core/src/input_deck.rs` *(new)* `[verify post-sprint code-map.md]`
-- `client/protocol/core/src/fuzz.rs` `[verify post-sprint code-map.md]`
-- `client/protocol/client/src/http/capabilities.rs` *(adds `Feature::InputDeck` to `Feature`, `Feature::ALL`, `Evidence`, `with_native`)* `[verify post-sprint code-map.md]`
-- `client/protocol/client/tests/capabilities_contract.rs` *(adds `Feature::InputDeck` to exhaustive `feature_name` match)* `[verify post-sprint code-map.md]`
-- `client/app/src/main/java/com/limelight/nvstream/http/HostCapabilities.java` *(adds `INPUT_DECK(0)`)* `[verify post-sprint code-map.md]`
-- `client/app/src/test/resources/protocol/capabilities/*` *(recorded capability fixtures for `InputDeckVersion` + `input.deck`)* `[verify post-sprint code-map.md]`
-- `rust/core/native-api/src/lib.rs` `[verify post-sprint code-map.md]`
-- `rust/core/native-api/src/input_deck.rs` *(new)* `[verify post-sprint code-map.md]`
-- `rust/core/native-api/tests/fixtures/input_deck.json` *(new)* `[verify post-sprint code-map.md]`
-- `rust/core/native-api/tests/fixtures.rs` `[verify post-sprint code-map.md]`
-- `rust/core/src/lib.rs` `[verify post-sprint code-map.md]`
-- `rust/core/src/input_deck.rs` *(new)* `[verify post-sprint code-map.md]`
-- `rust/core/src/input.rs` `[verify post-sprint code-map.md]`
-- `rust/core/src/extensions.rs` `[verify post-sprint code-map.md]`
-- `rust/core/src/config/settings30.rs` *(adds `input_deck` to `SETTINGS_30`, `LIVE`, `Config::input_deck()`, and updates the hardcoded 12-entry test assertions: `there_are_12_unique_settings`, `answers()`, `the_defaults_are_the_documented_values`, and `the_console_schema_lists_exactly_these_settings_with_these_defaults`)* `[verify post-sprint code-map.md]`
-- `rust/web/src/lib/schema/extensions.ts` *(updated in lockstep with `settings30.rs`'s `include_str!` schema assertion)* `[verify post-sprint code-map.md]`
-- `client/protocol/policy/src/lib.rs` `[verify post-sprint code-map.md]`
-- `client/protocol/policy/src/controller_profile.rs` *(new)* `[verify post-sprint code-map.md]`
-- `client/protocol/policy/src/input_deck.rs` *(new)* `[verify post-sprint code-map.md]`
+- `client/protocol/core/src/ids.rs`
+- `client/protocol/core/src/lib.rs`
+- `client/protocol/core/src/input_deck.rs` *(new)*
+- `client/protocol/core/src/fuzz.rs`
+- `client/protocol/policy/src/http/capabilities.rs` *(adds `Feature::InputDeck` to `Feature`, `Feature::ALL`, `Evidence`, `with_native`)*
+- `client/protocol/client/tests/capabilities_contract.rs` *(adds `Feature::InputDeck` to exhaustive `feature_name` match)*
+- `client/app/src/main/java/com/limelight/nvstream/http/HostCapabilities.java` *(adds `INPUT_DECK(0)`)*
+- `client/app/src/test/resources/protocol/capabilities/*` *(recorded capability fixtures for `InputDeckVersion` + `input.deck`)*
+- `client/protocol/native-api/src/lib.rs`
+- `client/protocol/native-api/src/input_deck.rs` *(new)*
+- `client/protocol/native-api/tests/fixtures/input_deck.json` *(new)*
+- `client/protocol/native-api/tests/fixtures.rs`
+- `rust/core/src/lib.rs`
+- `rust/core/input-policy/src/input_deck.rs` *(new)*
+- `rust/core/input-policy/src/input.rs`
+- `rust/core/media-policy/src/extensions.rs`
+- `rust/core/config/src/config/settings30.rs` *(adds `input_deck` to `SETTINGS_30`, `LIVE`, `Config::input_deck()`, and updates the hardcoded 12-entry test assertions: `there_are_12_unique_settings`, `answers()`, `the_defaults_are_the_documented_values`, and `the_console_schema_lists_exactly_these_settings_with_these_defaults`)*
+- `rust/web/src/lib/schema/extensions.ts` *(updated in lockstep with `settings30.rs`'s `include_str!` schema assertion)*
+- `client/protocol/policy/src/lib.rs`
+- `client/protocol/policy/src/controller_profile.rs` *(new)*
+- `client/protocol/policy/src/input_deck.rs` *(new)*
 
 ### Stage 2 — Slice 13B: Host Runtime & Windows VHF/HID Router *(depends on 13A merged)*
-- `rust/windows/src/input.rs` `[verify post-sprint code-map.md]`
-- `rust/windows/src/input/deck_router.rs` *(new)* `[verify post-sprint code-map.md]`
-- `rust/windows/src/input/gamepad_thread.rs` `[verify post-sprint code-map.md]`
-- `rust/windows/src/input/gamepads.rs` `[verify post-sprint code-map.md]`
-- `rust/host/src/extensions.rs` `[verify post-sprint code-map.md]`
-- `rust/host/src/console/settings.rs` `[verify post-sprint code-map.md]`
-- `rust/host/src/stream/control.rs` `[verify post-sprint code-map.md]`
-- `rust/host/src/stream/input_deck.rs` *(new)* `[verify post-sprint code-map.md]`
-- `rust/host/src/native_api.rs` *(registers `/api/native/v1/input/decks`, `/api/native/v1/input/decks/{id}` with `.layer(DefaultBodyLimit::disable())` + handler `axum::body::to_bytes(req.into_body(), 64 * 1024)` so `> 64 KiB` returns JSON `ErrorBody` `ErrorCode::TooLarge` HTTP `413` rather than plain-text `LengthLimitError`, `/api/native/v1/input/decks/active`, and `feature::INPUT_DECK`)* `[verify post-sprint code-map.md]`
-- `rust/host/src/native_api/input_deck.rs` *(new)* `[verify post-sprint code-map.md]`
-- `rust/host/src/stream/reconnect_tests/input_deck_tests.rs` *(new)* `[verify post-sprint code-map.md]`
-- `rust/host/src/nvhttp/native_tests/input_deck.rs` *(new)* `[verify post-sprint code-map.md]`
+- `rust/windows/io/src/input.rs`
+- `rust/windows/io/src/input/deck_router.rs` *(new)*
+- `rust/windows/io/src/input/gamepad_thread.rs`
+- `rust/windows/io/src/input/gamepads.rs`
+- `rust/host/stream/src/extensions.rs`
+- `rust/host/web/src/console/settings.rs`
+- `rust/host/stream/src/stream/control.rs`
+- `rust/host/stream/src/stream/input_deck.rs` *(new)*
+- `rust/host/web/src/native_api.rs` *(registers `/api/native/v1/input/decks`, `/api/native/v1/input/decks/{id}` with `.layer(DefaultBodyLimit::disable())` + handler `axum::body::to_bytes(req.into_body(), 64 * 1024)` so `> 64 KiB` returns JSON `ErrorBody` `ErrorCode::TooLarge` HTTP `413` rather than plain-text `LengthLimitError`, `/api/native/v1/input/decks/active`, and `feature::INPUT_DECK`)*
+- `rust/host/web/src/native_api/input_deck.rs` *(new)*
+- `tests/host/tests/reconnect_tests/input_deck_tests.rs` *(new)*
+- `tests/host/tests/nvhttp_parity/native_tests/input_deck.rs` *(new)*
 
 ### Stage 2 — Slice 13C: Nightjar Core Engine & Desktop Client *(depends on 13A merged, parallel with 13B/13D/13E)*
-- `client/protocol/client/src/http/native.rs` `[verify post-sprint code-map.md]`
-- `client/protocol/client/src/control/input_deck.rs` *(new)* `[verify post-sprint code-map.md]`
-- `client/protocol/client/src/control/driver.rs` `[verify post-sprint code-map.md]`
-- `client/protocol/client/src/control/messages.rs` `[verify post-sprint code-map.md]`
-- `client/protocol/client/src/control/events.rs` `[verify post-sprint code-map.md]`
-- `client/protocol/client/src/input/queue.rs` `[verify post-sprint code-map.md]`
-- `client/protocol/client/tests/control_messages_contract.rs` `[verify post-sprint code-map.md]`
-- `client/protocol/desktop/src/gamepad.rs` `[verify post-sprint code-map.md]`
-- `client/protocol/desktop/src/stream/mod.rs` `[verify post-sprint code-map.md]`
-- `client/protocol/desktop/src/stream/input_deck_hud.rs` *(new)* `[verify post-sprint code-map.md]`
-- `client/protocol/desktop/src/ui/controller_editor/mod.rs`, `diagram.rs`, `sticks_triggers.rs`, `gyro_studio.rs`, `radials_haptics.rs` *(new, all `<= 800` LOC)* `[verify post-sprint code-map.md]`
-- `client/protocol/desktop/src/ui/settings.rs` *(shrinks: replaces flat controller rows with single Controller Editor entry)* `[verify post-sprint code-map.md]`
-- `client/protocol/desktop/src/config.rs` *(lossless migration of legacy flat controller keys into initial `Global` profile)* `[verify post-sprint code-map.md]`
-- `client/protocol/desktop/src/strings_70/<code>.rs` *(all 14 non-English 7.0.0 Desktop locale tables; never growing grandfathered `strings/*.rs` past 1,750 LOC)* `[verify post-sprint code-map.md]`
+- `client/protocol/client/src/http/native.rs`
+- `client/protocol/client/src/control/input_deck.rs` *(new)*
+- `client/protocol/client/src/control/driver.rs`
+- `client/protocol/client/src/control/messages.rs`
+- `client/protocol/client/src/control/events.rs`
+- `client/protocol/client/src/input/queue.rs`
+- `client/protocol/client/tests/control_messages_contract.rs`
+- `client/protocol/desktop-media/src/gamepad.rs`
+- `client/protocol/desktop-media/src/stream/mod.rs`
+- `client/protocol/desktop-media/src/stream/input_deck_hud.rs` *(new)*
+- `client/protocol/desktop-ui/src/ui/controller_editor/mod.rs`, `diagram.rs`, `sticks_triggers.rs`, `gyro_studio.rs`, `radials_haptics.rs` *(new, all `<= 800` LOC)*
+- `client/protocol/desktop-ui/src/ui/settings.rs` *(shrinks: replaces flat controller rows with single Controller Editor entry)*
+- `client/protocol/desktop-config/src/config.rs` *(lossless migration of legacy flat controller keys into initial `Global` profile)*
+- `client/protocol/desktop-config/src/strings_70/<code>.rs` *(all 14 non-English 7.0.0 Desktop locale tables; never growing grandfathered `strings/*.rs` past 1,750 LOC)*
 
 ### Stage 2 — Slice 13D: Nightjar Android Client *(depends on 13A merged, parallel with 13B/13C/13E)*
-- `client/protocol/android/src/lib.rs` `[verify post-sprint code-map.md]`
-- `client/protocol/android/src/input_deck.rs` *(new)* `[verify post-sprint code-map.md]`
-- `client/app/src/main/java/com/limelight/nvstream/jni/RustBridge.java` `[verify post-sprint code-map.md]`
-- `client/app/src/main/java/com/limelight/binding/input/ControllerHandler.java` *(4-line hook only; never grows)* `[verify post-sprint code-map.md]`
-- `client/app/src/main/java/com/limelight/preferences/StreamSettings.java` *(shrinks: replaces flat controller rows with single Controller Editor entry)* `[verify post-sprint code-map.md]`
-- `client/app/src/main/java/com/limelight/binding/input/deck/InputDeckEngine.java` *(new)* `[verify post-sprint code-map.md]`
-- `client/app/src/main/java/com/limelight/binding/input/deck/InputDeckRadialView.java` *(new)* `[verify post-sprint code-map.md]`
-- `client/app/src/main/java/com/limelight/binding/input/editor/ControllerEditorActivity.java`, `ControllerDiagramView.java`, `SticksTriggersStudioFragment.java`, `GyroStudioFragment.java`, `RadialsHapticsStudioFragment.java`, `TouchStudioTabBridge.java`, `ControllerProfileMigrator.java` *(new, all `<= 800` LOC)* `[verify post-sprint code-map.md]`
-- `client/app/src/main/res/values*/strings.xml` `[verify post-sprint code-map.md]`
-- `client/app/src/test/java/com/limelight/binding/input/deck/InputDeckEngineTest.java`, `ControllerProfileMigratorTest.java`, and `client/app/src/test/java/com/limelight/preferences/SettingsKeysTest.java` *(verifies lossless flat-key migration & retired key hygiene)* `[verify post-sprint code-map.md]`
+- `client/protocol/android/src/lib.rs`
+- `client/protocol/android/src/input_deck.rs` *(new)*
+- `client/app/src/main/java/com/limelight/nvstream/jni/RustBridge.java`
+- `client/app/src/main/java/com/limelight/binding/input/ControllerHandler.java` *(4-line hook only; never grows)*
+- `client/app/src/main/java/com/limelight/preferences/StreamSettings.java` *(shrinks: replaces flat controller rows with single Controller Editor entry)*
+- `client/app/src/main/java/com/limelight/binding/input/deck/InputDeckEngine.java` *(new)*
+- `client/app/src/main/java/com/limelight/binding/input/deck/InputDeckRadialView.java` *(new)*
+- `client/app/src/main/java/com/limelight/binding/input/editor/ControllerEditorActivity.java`, `ControllerDiagramView.java`, `SticksTriggersStudioFragment.java`, `GyroStudioFragment.java`, `RadialsHapticsStudioFragment.java`, `TouchStudioTabBridge.java`, `ControllerProfileMigrator.java` *(new, all `<= 800` LOC)*
+- `client/app/src/main/res/values*/strings.xml`
+- `client/app/src/test/java/com/limelight/binding/input/deck/InputDeckEngineTest.java`, `ControllerProfileMigratorTest.java`, and `client/app/src/test/java/com/limelight/preferences/SettingsKeysTest.java` *(verifies lossless flat-key migration & retired key hygiene)*
 
 ### Slice 13E: Host Locales & Documentation *(depends on 13A merged, parallel with 13B/13C/13D)*
-- `rust/assets/locale/` *(host locale entries)* `[verify post-sprint code-map.md]`
-- `docs/control-messages.md` `[verify post-sprint code-map.md]`
-- `docs/native-api.md` `[verify post-sprint code-map.md]`
-- `docs/configuration.md` `[verify post-sprint code-map.md]`
-- `rust/release/notes.d/7-0-input-deck.md` *(new)* `[verify post-sprint code-map.md]`
+- `rust/assets/locale/` *(host locale entries)*
+- `docs/control-messages.md`
+- `docs/native-api.md`
+- `docs/configuration.md`
+- `rust/release/notes.d/7-0-input-deck.md` *(new)*
 
 ## 7. Verification & Measurement Plan
 
@@ -339,7 +339,7 @@ Every file path belongs to **exactly one** slice below (zero overlap across para
    - Disconnect mid-chord releases all held keys, mouse buttons, and VHF gamepad buttons deterministically.
    - Guest device cannot fire keyboard/mouse deck actions or hijack Player 1's slot.
 5. **Android unit & Robolectric:** `gradlew :app:testNonRootDebugUnitTest --tests com.limelight.binding.input.deck.InputDeckEngineTest --tests com.limelight.nvstream.jni.MoonBridgeControlMessagesTest`.
-6. **Architecture & size ratchet:** `python tools/arch_check.py` (including grandfathered `client/protocol/desktop/src/strings/*.rs <= 1,750` LOC) and `python tools/code_map.py check`.
+6. **Architecture & size ratchet:** `python tools/arch_check.py` (including grandfathered `client/protocol/desktop-config/src/strings/*.rs <= 1,750` LOC) and `python tools/code_map.py check`.
 
 ### Visual screenshot checks
 
@@ -358,6 +358,11 @@ Every file path belongs to **exactly one** slice below (zero overlap across para
 
 ---
 
-## 8. Post-Discovery Addendum — Steam Virtual Trackpad Touch-Down Click Guard (`#150`)
+## 8. Post-Discovery & Post-6.4.1 Rebase Addendum (Preserving `#150`, Folding RL `#154` & NJ `#172`, Declarative `settings.toml`)
 
-- **Binary-Pressure Guard on VHF `SteamController` Trackpads (`#150`):** Alongside `d91b511e82`, explicitly verify and enforce inside `TouchStudioTabBridge` / `ModernController` and host `rust/windows/src/input/gamepads.rs:1737` that Android binary-pressure touchscreens (`ABS_MT_PRESSURE = 1.0` -> `65535`) clamp/zero virtual Steam trackpad pressure during touch-move unless an explicit tap/click press bit is active, preventing Steam Input from misfiring trackpad clicks on every touch-down. Add a regression test in Slice 13A/13D covering `ABS_MT_PRESSURE = 1.0` move vs tap-click.
+- **Already Fixed in `6.4.1` (Preserve as Invariant — Do NOT Regress!):** `55616c9aa6` & `36188b4a2e` already fixed Android `#150` Steam virtual trackpad binary touch pressure (`ABS_MT_PRESSURE = 1.0` no longer misfires clicks on touch-down) AND `#138` VHF virtual gamepad devnode recovery. Keep a regression test in Slice 13A/13D verifying `TouchStudioTabBridge` / `ModernController` preserves zero-pressure move vs tap-click.
+- **High-ROI Open Issues Covered Naturally by the Visual Controller Editor (`RL#154`, `NJ#172`):**
+  1. **Per-controller auto-switching OSC layouts (`RL#154`):** Layered `Global → Per-Controller-Model → Per-Game` profiles in `controller_profile.rs` automatically switch the active Touch/OSC overlay layout when the connected physical controller or active game changes (zero extra top-level setting).
+  2. **Configurable OSC Touch Activation Area (`NJ#172`):** Inside the Controller Editor's **Touch Studio** tab (`TouchStudioTabBridge`), allow resizing each touchpad/joystick/button's active hit zone independently of its visual glyph bounds (stored inside the layered controller profile, zero new flat preference keys).
+- **Declarative Host Setting (`rust/core/config/settings.toml`):** Instead of hand-editing `settings30.rs` and `extensions.ts`, declare `input_deck` (`settings_30 = true`) in `rust/core/config/settings.toml` and run `python tools/generated_docs.py` (follow `.agents/skills/add-setting/SKILL.md`!).
+- **Post-Refactoring Crate Note:** `ControllerHandler.java`, `StreamSettings.java`, `Game.java`, `ui/settings.rs`, and host `stream/control.rs` are ALL already decomposed `<= 800` LOC on `origin/main`! Only `client/protocol/desktop-config/src/strings/*.rs` remains ratcheted at `1,750` LOC — put all new Desktop strings in `client/protocol/desktop-config/src/strings_70/<code>.rs`.

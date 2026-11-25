@@ -14,7 +14,7 @@ Provides:
   `agy --model ... --print` flag order, background task await via `manage_task`, `git rev-parse HEAD`
   + `git status --porcelain -uall` verification, and up to 2 fix/re-verify/re-review cycles.
 - Wave 6 fail-closed Release 7.0.0 gating with deterministic artifact assertions (`Cargo.toml`,
-  `build.gradle` `versionName`/`versionCode > 404`, Play `<=500`-char changelog, filled `**Tested.**`),
+  `build.gradle` `versionName`/`versionCode >= 412`, Play `<=500`-char changelog, filled `**Tested.**`),
   explicit maintainer authorization requirement (`authorize_publish=True`), and `try/finally`
   sentinel cleanup.
 """
@@ -32,7 +32,7 @@ from typing import Any, Awaitable, Callable, Iterable, Mapping
 
 SCHEMA_VERSION = 1
 RELEASE_TARGET = "7.0.0"
-MIN_NEXT_ANDROID_VERSION_CODE = 406
+MIN_NEXT_ANDROID_VERSION_CODE = 412
 INTEGRATION_BRANCH = "roadmap/redesign-and-waves-1-5"
 CARBON_MODEL = "gemini-4-carbon-high"
 MAX_CARBON_FIX_CYCLES = 2
@@ -57,20 +57,20 @@ ITEM_CATALOG: tuple[dict[str, Any], ...] = (
     {"id": "04", "slug": "frame-warp-2", "wave": 1, "title": "Frame Warp 2.0", "design_doc": "docs/designs/04-frame-warp-2.md", "depends_on": [], "hw_required": True, "visual_review": False},
     {"id": "05", "slug": "stream-dvr", "wave": 1, "title": "Host-Side Stream DVR & Instant Replay", "design_doc": "docs/designs/05-stream-dvr.md", "depends_on": ["01", "02"], "hw_required": True, "visual_review": True},
     {"id": "06", "slug": "hdr-sdr-tonemap", "wave": 1, "title": "Real-Time HDR-to-SDR Tone Mapping", "design_doc": "docs/designs/06-hdr-sdr-tonemap.md", "depends_on": [], "hw_required": True, "visual_review": False},
-    {"id": "21", "slug": "desktop-perf-and-nvenc", "wave": 1, "title": "Desktop Client Performance Overhaul (macOS, Linux, Windows) & Host NVIDIA NVENC Low-Latency Overhaul", "design_doc": "docs/designs/21-desktop-perf-and-nvenc.md", "depends_on": ["04", "06"], "hw_required": True, "visual_review": False},
+    {"id": "21", "slug": "desktop-perf-and-nvenc", "wave": 1, "title": "Desktop Client Performance Overhaul (macOS, Linux + #181, Windows) & Host NVIDIA NVENC Low-Latency Overhaul", "design_doc": "docs/designs/21-desktop-perf-and-nvenc.md", "depends_on": ["04", "06"], "hw_required": True, "visual_review": False},
     {"id": "22", "slug": "vibepollo-parity-core", "wave": 1, "title": "Vibepollo Protocol & Telemetry Parity Core (Launch Warnings, DXGI/PDH gpu_encoder_percent, FrameLimiterStatus & psmap)", "design_doc": "docs/designs/22-vibepollo-parity-core.md", "depends_on": [], "hw_required": False, "visual_review": False},
     {"id": "27", "slug": "security-and-privacy-hardening", "wave": 1, "title": "Host Network, WebRTC & API Security Hardening + Support-Bundle Privacy Sanitization", "design_doc": "docs/designs/27-security-and-privacy-hardening.md", "depends_on": [], "hw_required": False, "visual_review": False},
     {"id": "28", "slug": "host-capture-gpu-and-power", "wave": 1, "title": "Multi-GPU / Hybrid Laptop Routing, idd-push LUID Coherence & Locked-PC Cold Launch (#117)", "design_doc": "docs/designs/28-host-capture-gpu-and-power.md", "depends_on": ["03"], "hw_required": True, "visual_review": False},
-    {"id": "29", "slug": "android-pacing-and-transport", "wave": 1, "title": "High-Refresh Transport Pacing, Android MediaCodec/ARR Pacing & WebRTC Transport Resilience (#144, #7, #119, #116)", "design_doc": "docs/designs/29-android-pacing-and-transport.md", "depends_on": ["04", "06", "27"], "hw_required": True, "visual_review": False},
+    {"id": "29", "slug": "android-pacing-and-transport", "wave": 1, "title": "High-Refresh Host Burst Pacing, Android MediaCodec Zero-Debt & WebRTC Transport Resilience (#144, #7, #116)", "design_doc": "docs/designs/29-android-pacing-and-transport.md", "depends_on": ["04", "06", "27"], "hw_required": True, "visual_review": False},
     {"id": "07", "slug": "hw-verify", "wave": 1, "title": "Wave 1 Serialized Hardware Verification & Measurement", "design_doc": "docs/designs/07-hw-verify.md", "depends_on": ["03", "04", "05", "06", "21", "22", "27", "28", "29"], "hw_required": True, "visual_review": False},
     # Wave 2: Everyday Quality-of-Life, Multi-Device & Vibepollo/USB Interop
     {"id": "08", "slug": "quick-suspend", "wave": 2, "title": "Quick Suspend & Resume", "design_doc": "docs/designs/08-quick-suspend.md", "depends_on": ["03"], "hw_required": True, "visual_review": True},
-    {"id": "09", "slug": "host-hub-sync", "wave": 2, "title": "Host Hub Sync (Profiles, Covers & Capabilities)", "design_doc": "docs/designs/09-host-hub-sync.md", "depends_on": ["01", "02"], "hw_required": False, "visual_review": True},
+    {"id": "09", "slug": "host-hub-sync", "wave": 2, "title": "Host Hub Sync (Profiles, Covers, Per-Display Recall #163 & Capabilities)", "design_doc": "docs/designs/09-host-hub-sync.md", "depends_on": ["01", "02"], "hw_required": False, "visual_review": True},
     {"id": "10", "slug": "couch-party-audio", "wave": 2, "title": "Couch Party Audio Routing & Spatial Mix", "design_doc": "docs/designs/10-couch-party-audio.md", "depends_on": ["02"], "hw_required": True, "visual_review": True},
     {"id": "11", "slug": "stream-doctor", "wave": 2, "title": "Stream Doctor 2.0 & Upscaler Guidance", "design_doc": "docs/designs/11-stream-doctor.md", "depends_on": ["02"], "hw_required": True, "visual_review": True},
-    {"id": "12", "slug": "phone-safe-area", "wave": 2, "title": "Phone Safe Area & Reverse Landscape (#152)", "design_doc": "docs/designs/12-phone-safe-area.md", "depends_on": ["02"], "hw_required": False, "visual_review": True},
+    {"id": "12", "slug": "phone-safe-area", "wave": 2, "title": "Phone Safe Area, Both-Ways Landscape Flip & Manual Display Centering (#152, #190)", "design_doc": "docs/designs/12-phone-safe-area.md", "depends_on": ["02"], "hw_required": False, "visual_review": True},
     {"id": "23", "slug": "vibepollo-dolby-rtsp", "wave": 2, "title": "Vibepollo Dolby Audio RTSP Negotiation & Unchunked Datagram Receive Parity", "design_doc": "docs/designs/23-vibepollo-dolby-rtsp.md", "depends_on": [], "hw_required": False, "visual_review": False},
-    {"id": "24", "slug": "usb-forwarding-convenience", "wave": 2, "title": "USB Forwarding Convenience (Windows usbipd-win, Linux EACCES Fallback & Controller Arbitration)", "design_doc": "docs/designs/24-usb-forwarding-convenience.md", "depends_on": [], "hw_required": False, "visual_review": False},
+    {"id": "24", "slug": "usb-forwarding-convenience", "wave": 2, "title": "Desktop USB Forwarding Convenience (Windows usbipd-win, Linux EACCES Fallback & Desktop Controller Arbitration)", "design_doc": "docs/designs/24-usb-forwarding-convenience.md", "depends_on": [], "hw_required": False, "visual_review": False},
     {"id": "25", "slug": "ps-speaker-pcm-and-bt", "wave": 2, "title": "PlayStation Controller Speaker (Bluetooth DualSense HID & Vibepollo 0x5602 / 0x5500_0009 Interop)", "design_doc": "docs/designs/25-ps-speaker-pcm-and-bt.md", "depends_on": ["22"], "hw_required": False, "visual_review": False},
     # Wave 3: Power Features, Steam Controller 2026 & Remote Reach
     {"id": "13", "slug": "client-input-deck", "wave": 3, "title": "Visual Console-Grade Controller Editor & Client Input Deck on First-Party Virtual Gamepad", "design_doc": "docs/designs/13-client-input-deck.md", "depends_on": ["09"], "hw_required": True, "visual_review": True},
@@ -692,12 +692,16 @@ async def run_item_lifecycle(
                 save_state(state_path, state)
             plan = await rt.agent(
                 prompt=(
-                    f"Phase 2 dynamic post-sprint path & workflow verification for item {item_id} ({slug}) from `{design_doc}`. "
-                    "Never trust pre-refactor monolithic file paths or line numbers: dynamically inspect the live post-sprint "
-                    "`docs/code-map.md`, `client/docs/code-map.md`, `tools/dev.ps1` flags, `tools/arch_check.py`, and "
-                    "`tools/size_ratchet.json` to resolve every `[verify post-sprint code-map.md]` / `[resolve post-sprint ...]` "
-                    "anchor onto the exact post-sprint split submodules. Return staged disjoint implementer slices "
-                    "(stage=1 for any shared protocol/registration slice, stage=2+ for independent parallel slices)."
+                    f"Phase 2 live post-refactoring path & workflow verification for item {item_id} ({slug}) from `{design_doc}`. "
+                    "Verify every target module against live `docs/code-map.md`, `client/docs/code-map.md`, "
+                    "`tools/dev.ps1`, `tools/arch_check.py`, and the 18-file `tools/size_ratchet.json` across the "
+                    "completed split crates (`butterpollo-{crypto,config,media-policy,input-policy,session}`, "
+                    "`butterpollo-win-{abi,graphics,display,io}`, `butterpollo-{stream,webrtc,web}`, "
+                    "`client/protocol/{core,wire,native-api,policy,client,desktop-config,desktop-ui,desktop-media,desktop,android}`). "
+                    "Follow `origin/main`'s official `.agents/skills/` (`add-control-message`, `add-native-endpoint`, "
+                    "`add-setting`, `check-nvenc`, `isolated-e2e`, `release-prep`) plus `tools/scaffold.py` and `tools/i18n.py`. "
+                    "Return staged disjoint implementer slices (stage=1 for shared protocol/capability/schema slices, "
+                    "stage=2+ for independent parallel slices)."
                 ),
                 schema={
                     "type": "object",
@@ -821,14 +825,14 @@ async def run_item_lifecycle(
                 (
                     "locales",
                     "Update all 15 Nightjar Android locales (`client/app/src/main/res/values*/strings.xml`), "
-                    "add new Desktop translations ONLY in `client/protocol/desktop/src/strings_70/*.rs` (NEVER grow "
-                    "grandfathered `strings/*.rs` past 1,750 LOC!), and update all 22 host locales (`rust/assets/locale/*.json`) "
-                    f"for item {item_id} ({slug}).",
+                    "add new Desktop translations ONLY in `client/protocol/desktop-config/src/strings_70/*.rs` (NEVER grow "
+                    "grandfathered `client/protocol/desktop-config/src/strings/*.rs` past 1,750 LOC!), and update all 22 host "
+                    f"locales (`rust/assets/locale/*.json`) via `python tools/i18n.py` for item {item_id} ({slug}).",
                 ),
                 (
                     "docs",
                     f"Update `docs/`, `client/docs/`, `docs/code-map.md`, `client/docs/code-map.md` and run "
-                    f"`python tools/generated_docs.py` for item {item_id} ({slug}).",
+                    f"`python tools/generated_docs.py` (and `python client/scripts/generate-settings.py` if client settings changed) for item {item_id} ({slug}).",
                 ),
                 (
                     "notes",
@@ -883,7 +887,7 @@ async def run_item_lifecycle(
                 save_state(state_path, state)
             lenses = [
                 ("protocol-security", "Audit PROTOCOL_VERSION preservation, HostCapabilities gating, fuzz/proptest coverage, raw config read bans, and no unsigned KMDF."),
-                ("arch-ratchet", "Audit arch_check.py compliance (<=800 LOC, //! or /** headers, size_ratchet.json including strings_70), code-map.md accuracy, target_os='linux', and hot-thread blocking."),
+                ("arch-ratchet", "Audit arch_check.py compliance (<=800 LOC, //! or /** headers, 18-file size_ratchet.json including desktop-config/src/strings_70), code-map.md accuracy, target_os='linux', loopback-only test binds (no 0.0.0.0 Firewall prompts), and hot-thread blocking."),
                 ("reconnect-restore", "Audit state machine transitions, reconnect/resume/roam matrix, crash-restore journaling, loud failures (no silent encoder fallback), and plain-English errors."),
                 ("client-parity", "Audit Android+Desktop parity, fewer-settings rule, SettingsKeysTest migrations, 15 Nightjar + 22 host locales, zero mod names, zero Experimental, and dynamic input glyphs."),
                 ("visual-ux", f"Follow `.agents/skills/visual-ux-review/SKILL.md`: verify the ground-up 7.0 console-quality design bar (PS5/tvOS/SteamOS OLED/flagship hardware polish), render screenshots on `{branch}` across every affected user-facing surface (Console, /play, /guest, Couch Menu, Setup/Tray, Nightjar Phone/Handheld/TV/Desktop, Websites/READMEs), and inspect them with `read_file` across light/dark/OLED/HC, 360/768/1440 px, German/CJK stress, resolution scaling (#144/#146), blur stability (#61), and zero stream-time blur."),
@@ -1103,7 +1107,7 @@ async def run_wave_6_release(
     rt.phase("Wave 6: Release 7.0.0 Preflight")
     rl_tags: list[str] = []
     nj_tags: list[str] = []
-    prev_tag = "v6.3.0"
+    prev_tag = "v6.4.1"
     if not dry_run:
         rl_out = await rt.call_tool(
             "run_command",
@@ -1143,12 +1147,12 @@ async def run_wave_6_release(
         rt.phase("Wave 6: Version Bump & Release Notes")
         await rt.agent(
             prompt=(
-                f"On integration branch `{INTEGRATION_BRANCH}`, prepare 7.0.0: "
+                f"On integration branch `{INTEGRATION_BRANCH}`, prepare 7.0.0 (follow `.agents/skills/release-prep/SKILL.md`): "
                 "1) Run `python rust/release/bump.py 7.0.0` (and `python rust/release/service_inputs.py --update` if service inputs changed). "
-                "2) Bump `client/app/build.gradle` to `versionName \"7.0.0\"` and increment `versionCode` by 1 (strictly greater than the previous release's `versionCode`, at least 406). "
+                "2) Bump `client/app/build.gradle` to `versionName \"7.0.0\"` and increment `versionCode` strictly greater than the previous release's `versionCode` (at least 412). "
                 "3) Assemble Nightjar notes via `python tools/nightjar_notes.py --out docs/reviews/nightjar-7.0.0-whats-new.md --changelog-en <file>` "
                 "(Play changelog strictly <= 500 chars) and fill in the real `**Tested.**` paragraph. "
-                "4) Run full checks (`tools\\dev.ps1 check`, `arch_check.py`, `code_map.py check`, `generated_docs.py --check`, "
+                "4) Run full checks (`tools\\dev.ps1 check`, `python tools/i18n.py check`, `arch_check.py`, `code_map.py check`, `generated_docs.py --check`, "
                 "`gen_design_tokens.py --check`, `site/build.py`, `client/site/check-links.mjs`)."
             ),
             schema={"type": "string"},

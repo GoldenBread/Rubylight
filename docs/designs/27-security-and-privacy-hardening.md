@@ -1,6 +1,8 @@
 # Item 27: Host Network, WebRTC & API Security Hardening + Support-Bundle Privacy Sanitization (Wave 1)
 
-Status: engineering design (Phase 1). Written against `origin/main` `995f2540c8` (`6.3.0`) and [`00-protocol-reservations.md`](00-protocol-reservations.md).
+Status: engineering design (Phase 1), **rebased 2026-11-25 onto post-refactoring `origin/main` (`955ef39598`, `v6.4.1`)** and [`00-protocol-reservations.md`](00-protocol-reservations.md).
+
+> **Post-6.4.1 Verification Note:** While `6.4.1` (`7c65838199`, `9e0055186b`, `cf9131b14c`, `b223c7bc66`, `103cb1adc5`) hardened RTSS, setup SYSTEM tasks, neural paths, and `--creds` revocation, direct source verification on `origin/main` (`955ef39598`) confirmed **ALL FIVE PILLARS below remain unfixed** (`rust/host/web/src/web.rs:204,212`, `rust/host/web/src/web/tokens.rs:90,93`, `rust/host/webrtc/src/server/pairing.rs:217`, `rust/host/webrtc/src/discovery.rs:43,59`, `rust/host/stream/src/nvhttp/{pairing,probe}.rs`, `rust/core/session/src/{browse,catalog}.rs`, `rust/host/stream/src/maintenance.rs`, and `client/protocol/client/src/report/redact.rs`). All 5 pillars stay intact and updated to exact post-refactoring split crate paths!
 
 ## 1. Summary & User Experience
 
@@ -8,21 +10,21 @@ Rubylight's zero-account, local-first architecture is one of its greatest streng
 
 ### 1.1 Five Concrete Hardening Pillars
 
-1. **WebRTC Signaling Hardening (`rust/host/src/webrtc/server.rs`):**
+1. **WebRTC Signaling Hardening (`rust/host/webrtc/src/server.rs`):**
    - Enforce strict `Origin` validation on `webrtc_port` upgrades (matching `web.rs:453-459,554-560,662-668`, closing Cross-Site WebSocket Hijacking / CSWSH) and prefer TLS console signaling (`/api/webrtc/signal`) whenever available (restricting plain `ws://` `webrtc_port` to explicit opt-in or loopback-only).
    - Never transmit a permanent paired device `secret` over plaintext `ws://` (`webrtc/server.rs:1158-1161` requires `wss://` or an ephemeral single-use pairing handshake).
    - Omit host hardware MAC address from unauthenticated `auth-required` replies (`webrtc/server.rs:749-752`) unless the peer is an already-paired or same-origin LAN session, and add a 30 s per-peer tray-notification cooldown (`:1089-1092`).
-2. **Reverse-Proxy-Aware Local Trust & Auth Rate Limiting (`rust/host/src/web.rs`):**
-   - Route `SignIns::key` (`web.rs:85-89`), `fresh_password` setup (`web.rs:845-850`), and `/api/auth/login` through the existing `network::browser_on_this_pc(peer, local, headers)` guard (`rust/host/src/network.rs:56-96`) so requests forwarded through a local reverse proxy (`nginx`, `cloudflared`, `tailscale serve` carrying `Forwarded`/`X-Forwarded-*` or external `Host`/`Origin`) **never** inherit loopback trust or bypass sign-in brute-force rate limits.
+2. **Reverse-Proxy-Aware Local Trust & Auth Rate Limiting (`rust/host/web/src/web.rs`):**
+   - Route `SignIns::key` (`web.rs:85-89`), `fresh_password` setup (`web.rs:845-850`), and `/api/auth/login` through the existing `network::browser_on_this_pc(peer, local, headers)` guard (`rust/host/stream/src/network.rs:56-96`) so requests forwarded through a local reverse proxy (`nginx`, `cloudflared`, `tailscale serve` carrying `Forwarded`/`X-Forwarded-*` or external `Host`/`Origin`) **never** inherit loopback trust or bypass sign-in brute-force rate limits.
    - Require `__Host-apollo_anon_csrf` OR strict `Origin` + `Sec-Fetch-Site: same-origin` on `POST /api/auth/login` and `POST /api/auth/refresh` (removing `/api/auth/refresh` from CSRF-exempt `public` handling at `web.rs:835,909`).
 3. **Pairing, IPv6 `/64` Rate-Limit Parity & Bandwidth-Probe Guard (`nvhttp/pairing.rs`, `nvhttp/probe.rs`):**
    - Key `nvhttp/pairing.rs` rate limits and a 30 s per-peer pairing tray-popup throttle by IPv6 `/64` prefix (matching `web.rs:91` and `webrtc/clients.rs:86`) so an IPv6 neighbor cannot rotate host bits to bypass brute-force limits or spam Windows notifications.
-   - Guard `/pyrowave-bandwidth-probe` (`rust/host/src/nvhttp/probe.rs:5-24`, which serves 32 MiB) with `launch` permission and the identical active-stream busy lock + rate limit already enforced on `/bandwidth-probe` (`probe.rs:50-78`).
+   - Guard `/pyrowave-bandwidth-probe` (`rust/host/stream/src/nvhttp/probe.rs:5-24`, which serves 32 MiB) with `launch` permission and the identical active-stream busy lock + rate limit already enforced on `/bandwidth-probe` (`probe.rs:50-78`).
 4. **Windows UNC/SMB NTLM Protection & API-Token Least Privilege (`browse.rs`, `catalog.rs`, `web.rs`):**
-   - Reject Windows UNC paths (`\\...`, `//...`, `\\?\UNC\...`) by default in `rust/core/src/browse.rs:48-97` and `rust/core/src/catalog.rs:65-97` so malformed or malicious console/API path probes can never trigger outbound SMB/NTLMv2 credential authentication.
+   - Reject Windows UNC paths (`\\...`, `//...`, `\\?\UNC\...`) by default in `rust/core/session/src/browse.rs:48-97` and `rust/core/session/src/catalog.rs:65-97` so malformed or malicious console/API path probes can never trigger outbound SMB/NTLMv2 credential authentication.
    - Exclude high-privilege account/filesystem routes (`/api/password`, `/api/browse`) from default API-token scopes (`web.rs:210-296`).
 5. **One-Click Privacy-Safe Anonymized Support Bundles — Host & Nightjar Desktop (`butterpollo-core::log_redact`, `maintenance.rs`, `report/redact.rs`, `logfile.rs`):**
-   - Create a canonical `<= 400`-LOC `rust/core/src/log_redact.rs` used by `rust/host/src/maintenance.rs::bundle_with_dump()` to stream-redact WAN/LAN/peer IPs, MAC addresses, PINs/OTPs, bearer/session tokens, Windows user profile paths (`C:\Users\<name>`), client device names, `sunshine_name`, `bind_address`, and `apps.json` game titles (`[app-1]`, `[client-1]`) across `butterpollo.log`, `butterpollo.log.1`, `service.log`, `panic.txt`, and `diagnostics.json`.
+   - Create a canonical `<= 400`-LOC `rust/core/session/src/log_redact.rs` used by `rust/host/stream/src/maintenance.rs::bundle_with_dump()` to stream-redact WAN/LAN/peer IPs, MAC addresses, PINs/OTPs, bearer/session tokens, Windows user profile paths (`C:\Users\<name>`), client device names, `sunshine_name`, `bind_address`, and `apps.json` game titles (`[app-1]`, `[client-1]`) across `butterpollo.log`, `butterpollo.log.1`, `service.log`, `panic.txt`, and `diagnostics.json`.
    - Fold safe read-only environment facts (matching `rust/tests/collect_environment.ps1`) + `log_analysis` + Stream Doctor 2.0 summary into `diagnostics.json`, exclude raw up-to-512 MiB `.dmp` memory minidumps from default support bundles (offering a separate explicit unchecked opt-in **Include crash memory dump** export with a clear plain-English privacy warning), and add a 1-click **Copy GitHub issue summary** button in Console `/help`.
    - Extend shared Nightjar `client/protocol/client/src/report/redact.rs` (currently Android-only paths at line 68) to scrub Windows `C:\Users\<name>`, macOS `/Users/<name>`, and Linux `/home/<name>`, and upgrade Nightjar Desktop `Command::ReportProblem` (`logfile.rs`) to emit a compact redacted `nightjar-support.zip` (logs + GPU/decoder/fast-path capabilities + `.dmp` metadata, never raw heap dumps by default).
 
@@ -43,18 +45,18 @@ Per [`00-protocol-reservations.md`](00-protocol-reservations.md) §7, Item 27 re
 
 ## 3. Architecture & <=800-LOC Module Plan
 
-All repo paths carry `[verify post-sprint code-map.md]` for Phase 2 reconciliation. Every new module stays strictly `<= 800` LOC with `//!` headers; grandfathered files (`web.rs`, `webrtc/server.rs`, `maintenance.rs`) stay at or below their `tools/size_ratchet.json` ceilings.
+All repo paths carry `docs/code-map.md` for Phase 2 reconciliation. Every new module stays strictly `<= 800` LOC with `//!` headers; grandfathered files (`web.rs`, `webrtc/server.rs`, `maintenance.rs`) stay at or below their `tools/size_ratchet.json` ceilings.
 
 | Path | Status | Est. LOC | Responsibility |
 | --- | --- | ---: | --- |
-| `rust/core/src/log_redact.rs` | New | ~360 | `//!` Deterministic streaming redactor for host logs & `diagnostics.json` (IPv4/IPv6, MACs, tokens/PINs, `C:\Users\*`, client/app aliases) + comprehensive unit tests. |
-| `rust/core/src/browse.rs`, `rust/core/src/catalog.rs` | Modify | existing | Reject Windows UNC paths (`\\`, `//`, `\\?\UNC\`) before filesystem metadata calls + unit tests. |
-| `rust/host/src/web/security_hardening.rs` | New | ~260 | `//!` Proxy-aware `browser_on_this_pc` sign-in/setup key derivation, `Origin`+`Sec-Fetch-Site` CSRF guard for `/api/auth/{login,refresh}`, and least-privilege API token scope filter + negative tests. |
-| `rust/host/src/web.rs` | Modify | `<= 1731` | Wire `web/security_hardening.rs` cleanly without growing `web.rs`. |
-| `rust/host/src/webrtc/origin_guard.rs` | New | ~220 | `//!` WebRTC `Origin` validation, `wss://`-only permanent-secret guard, unauthenticated MAC redaction, and 30 s per-peer tray cooldown + negative tests. |
-| `rust/host/src/webrtc/server.rs` | Modify | `<= 1322` | Delegate security checks to `webrtc/origin_guard.rs` (net shrink). |
-| `rust/host/src/nvhttp/pairing.rs`, `rust/host/src/nvhttp/probe.rs` | Modify | existing | IPv6 `/64` rate-limit key + 30 s tray cooldown; guard `/pyrowave-bandwidth-probe` with `launch` permission + active-stream busy lock. |
-| `rust/host/src/maintenance.rs` & `rust/host/src/maintenance/support_zip.rs` | Modify / New | `<= 650` / ~320 | Stream logs through `butterpollo_core::log_redact`, include safe `collect_environment` facts, default-exclude `.dmp` unless `include_dump=1`. |
+| `rust/core/session/src/log_redact.rs` | New | ~360 | `//!` Deterministic streaming redactor for host logs & `diagnostics.json` (IPv4/IPv6, MACs, tokens/PINs, `C:\Users\*`, client/app aliases) + comprehensive unit tests. |
+| `rust/core/session/src/browse.rs`, `rust/core/session/src/catalog.rs` | Modify | existing | Reject Windows UNC paths (`\\`, `//`, `\\?\UNC\`) before filesystem metadata calls + unit tests. |
+| `rust/host/web/src/web/security_hardening.rs` | New | ~260 | `//!` Proxy-aware `browser_on_this_pc` sign-in/setup key derivation, `Origin`+`Sec-Fetch-Site` CSRF guard for `/api/auth/{login,refresh}`, and least-privilege API token scope filter + negative tests. |
+| `rust/host/web/src/web.rs` | Modify | `<= 1731` | Wire `web/security_hardening.rs` cleanly without growing `web.rs`. |
+| `rust/host/webrtc/src/origin_guard.rs` | New | ~220 | `//!` WebRTC `Origin` validation, `wss://`-only permanent-secret guard, unauthenticated MAC redaction, and 30 s per-peer tray cooldown + negative tests. |
+| `rust/host/webrtc/src/server.rs` | Modify | `<= 1322` | Delegate security checks to `webrtc/origin_guard.rs` (net shrink). |
+| `rust/host/stream/src/nvhttp/pairing.rs`, `rust/host/stream/src/nvhttp/probe.rs` | Modify | existing | IPv6 `/64` rate-limit key + 30 s tray cooldown; guard `/pyrowave-bandwidth-probe` with `launch` permission + active-stream busy lock. |
+| `rust/host/stream/src/maintenance.rs` & `rust/host/stream/src/maintenance/support_zip.rs` | Modify / New | `<= 650` / ~320 | Stream logs through `butterpollo_core::log_redact`, include safe `collect_environment` facts, default-exclude `.dmp` unless `include_dump=1`. |
 | `rust/web/src/components/help/SupportBundlePanel.svelte` | Modify | `<= 250` | Add unchecked **Include crash memory dump (may contain sensitive memory)** opt-in + **Copy GitHub issue summary** button. |
 | `client/protocol/client/src/report/redact.rs`, `client/protocol/desktop/src/logfile.rs` & `support_zip.rs` | Modify / New | existing / ~260 | Scrub Windows/macOS/Linux user paths across shared redactor + Desktop `nightjar-support.zip` export with redacted logs and GPU/decoder metadata. |
 
@@ -81,10 +83,10 @@ All repo paths carry `[verify post-sprint code-map.md]` for Phase 2 reconciliati
 
 | Slice | Stage | Exclusive Owned Files (Zero Overlap) |
 | --- | --- | --- |
-| **27-A: Core Redactor & UNC Guard** | **Stage 1** | `rust/core/src/log_redact.rs` (new), `rust/core/src/lib.rs`, `rust/core/src/browse.rs`, `rust/core/src/catalog.rs` `[verify post-sprint code-map.md]` |
-| **27-B: Host Web, Pairing, Probe & WebRTC Hardening** | **Stage 2** (parallel with 27-C, 27-D) | `rust/host/src/web/security_hardening.rs` (new), `rust/host/src/web.rs`, `rust/host/src/webrtc/origin_guard.rs` (new), `rust/host/src/webrtc/server.rs`, `rust/host/src/nvhttp/pairing.rs`, `rust/host/src/nvhttp/probe.rs` `[verify post-sprint code-map.md]` |
-| **27-C: Host Anonymized Support Bundle & Console UI** | **Stage 2** (parallel with 27-B, 27-D) | `rust/host/src/maintenance/support_zip.rs` (new), `rust/host/src/maintenance.rs`, `rust/web/src/components/help/SupportBundlePanel.svelte`, `rust/assets/locale/*.json` (22 host locales) `[verify post-sprint code-map.md]` |
-| **27-D: Nightjar Shared Path Redactor & Desktop Support ZIP** | **Stage 2** (parallel with 27-B, 27-C) | `client/protocol/client/src/report/redact.rs`, `client/protocol/desktop/src/logfile.rs`, `client/protocol/desktop/src/support_zip.rs` (new), `client/protocol/desktop/src/app/command.rs`, `client/protocol/desktop/src/strings_70/*.rs` `[verify post-sprint code-map.md]` |
+| **27-A: Core Redactor & UNC Guard** | **Stage 1** | `rust/core/session/src/log_redact.rs` (new), `rust/core/src/lib.rs`, `rust/core/session/src/browse.rs`, `rust/core/session/src/catalog.rs` |
+| **27-B: Host Web, Pairing, Probe & WebRTC Hardening** | **Stage 2** (parallel with 27-C, 27-D) | `rust/host/web/src/web/security_hardening.rs` (new), `rust/host/web/src/web.rs`, `rust/host/webrtc/src/origin_guard.rs` (new), `rust/host/webrtc/src/server.rs`, `rust/host/stream/src/nvhttp/pairing.rs`, `rust/host/stream/src/nvhttp/probe.rs` |
+| **27-C: Host Anonymized Support Bundle & Console UI** | **Stage 2** (parallel with 27-B, 27-D) | `rust/host/stream/src/maintenance/support_zip.rs` (new), `rust/host/stream/src/maintenance.rs`, `rust/web/src/components/help/SupportBundlePanel.svelte`, `rust/assets/locale/*.json` (22 host locales) |
+| **27-D: Nightjar Shared Path Redactor & Desktop Support ZIP** | **Stage 2** (parallel with 27-B, 27-C) | `client/protocol/client/src/report/redact.rs`, `client/protocol/desktop/src/logfile.rs`, `client/protocol/desktop/src/support_zip.rs` (new), `client/protocol/desktop/src/app/command.rs`, `client/protocol/desktop-config/src/strings_70/*.rs` |
 
 ---
 

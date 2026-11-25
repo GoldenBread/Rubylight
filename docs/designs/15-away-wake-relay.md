@@ -2,7 +2,7 @@
 
 [Protocol reservations](00-protocol-reservations.md) · [Code map](../code-map.md) · [Nightjar code map](../../client/docs/code-map.md)
 
-Status: engineering design (Phase 1). Written against `main` `b3d0c26b9b` (`6.2.0`) and `00-protocol-reservations.md`.
+Status: engineering design (Phase 1). Rebased 2026-11-25 onto post-refactoring `origin/main` `955ef39598` (`v6.4.1`) and `00-protocol-reservations.md`.
 
 ## 1. Summary & User Experience
 
@@ -95,48 +95,48 @@ Builds directly on `client/protocol/traverse/src/crypto.rs` (`DOMAIN = b"rubylig
 3. **Replay protection:** Relay keeps a bounded `VecDeque` + `HashSet` of the last 512 `(nonce, expires_at)` tuples across a `±120 s` window (`240 s` retention). Reused nonces or stale timestamps return `RejectedReplay` without emitting any WoL packet.
 4. **Rate limiting:** Per-`(device_id_hash, target_host_hash)` token bucket allows at most **1 WoL burst** (3 UDP magic packets across target's subnet broadcasts on ports 9 & 7) per **10 seconds**, capped at **10 bursts per 10 minutes**.
 
-### Native API v1 routes (`rust/core/native-api/src/wake_relay.rs`)
+### Native API v1 routes (`client/protocol/native-api/src/wake_relay.rs`)
 
 | Method & Path | Permission | Purpose |
 | --- | --- | --- |
 | `GET /api/native/v1/wake/relay` | `launch` or `host_control` | Returns relay readiness, list of enrolled LAN relay peers (name, id, last_seen_unix, online), and (for paired callers with `launch`) the caller's `WakeRelayBundle` for away wake. |
-| `POST /api/native/v1/wake/relay/enroll` | `host_control` | Enrolls or revokes a LAN relay peer (`action: "enroll" \| "revoke" \| "rotate_epoch"`), validating that the peer shares an IPv4 LAN subnet (`Adapter::shares_subnet`, `rust/core/src/wake.rs:87`) before issuing `relay_master_secret`. |
+| `POST /api/native/v1/wake/relay/enroll` | `host_control` | Enrolls or revokes a LAN relay peer (`action: "enroll" \| "revoke" \| "rotate_epoch"`), validating that the peer shares an IPv4 LAN subnet (`Adapter::shares_subnet`, `rust/core/session/src/wake.rs:87`) before issuing `relay_master_secret`. |
 | `POST /api/native/v1/wake/relay/wake` | `launch` | Direct HTTPS trigger on a relay host (when reachable over LAN or an existing Traverse tunnel) taking `{ target_host_id, epoch, unix_timestamp, nonce_hex, signature_hex }` and returning `WakeStatusResponse`. |
 
 ## 3. Architecture & <=800-LOC Module Plan
 
-All repo paths below carry `[verify post-sprint code-map.md]` for Phase 2 re-verification. Every new file stays strictly `<= 800` LOC with `//!`/`/**` headers and passes `tools/arch_check.py`.
+All repo paths below carry `docs/code-map.md` for Phase 2 re-verification. Every new file stays strictly `<= 800` LOC with `//!`/`/**` headers and passes `tools/arch_check.py`.
 
 ### Grandfathered files in `tools/size_ratchet.json` (DO NOT GROW)
 
 | File | Ratchet ceiling (LOC) | Strategy to stay at or below ceiling |
 | --- | --- | --- |
-| `rust/host/src/internet_play.rs` `[verify post-sprint code-map.md]` | 1010 | Add only a 2-line hook starting/stopping `crate::wake_relay` when `internet_play` restarts or paired devices change. |
-| `rust/host/src/wake.rs` `[verify post-sprint code-map.md]` | 1121 | Reuse existing `readiness()`, `adapters()`, and `WakeGrace` unmodified; zero relay networking added to `wake.rs`. |
-| `rust/host/src/native_api.rs` `[verify post-sprint code-map.md]` | 853 | Add `mod wake_relay;` + 3 route registrations + 1 capability line (`<= 853`). |
-| `client/protocol/traverse/src/host.rs` `[verify post-sprint code-map.md]` | 1112 | Keep existing streaming host service unchanged; Wake Relay runs its own lightweight `WakeRelayService` in `traverse/src/wake_relay_node.rs` reusing `Node`, `stun`, `dht`, and `punch`. |
-| `client/protocol/traverse/src/tunnel.rs` `[verify post-sprint code-map.md]` | 1207 | Untouched — Wake Relay uses single sealed `WakeRequest`/`WakeStatus` datagrams over the punched path, no TCP stream tunnel required! |
-| `client/protocol/client/src/http/capabilities.rs` `[verify post-sprint code-map.md]` | 1257 | Minimal `Feature::AwayWakeRelay` addition (`<= 1257`). |
-| `client/app/src/main/java/com/limelight/nvstream/http/HostCapabilities.java` `[verify post-sprint code-map.md]` | 1347 | Minimal `AWAY_WAKE_RELAY(0)` addition (`<= 1347`). |
-| `client/protocol/desktop/src/hosts.rs` `[verify post-sprint code-map.md]` | 1648 | Delegate remote wake & desktop relay worker to `hosts/wake_relay.rs` (3-line hook). |
-| `client/app/src/main/java/com/limelight/computers/HostActions.java` `[verify post-sprint code-map.md]` | 1484 | Delegate away-wake fallback to `computers/WakeRelayClient.java` (3-line hook in `sendWol`). |
-| `client/app/src/main/java/com/limelight/computers/ComputerManagerService.java` `[verify post-sprint code-map.md]` | 1573 | Store opaque `WakeRelayBundle` JSON alongside existing `internetPlay` bundle via `WakeRelayStore.java` (<=4 lines). |
+| `rust/host/stream/src/internet_play.rs` | 1010 | Add only a 2-line hook starting/stopping `crate::wake_relay` when `internet_play` restarts or paired devices change. |
+| `rust/host/stream/src/wake.rs` | 1121 | Reuse existing `readiness()`, `adapters()`, and `WakeGrace` unmodified; zero relay networking added to `wake.rs`. |
+| `rust/host/web/src/native_api.rs` | 853 | Add `mod wake_relay;` + 3 route registrations + 1 capability line (`<= 853`). |
+| `client/protocol/traverse/src/host.rs` | 1112 | Keep existing streaming host service unchanged; Wake Relay runs its own lightweight `WakeRelayService` in `traverse/src/wake_relay_node.rs` reusing `Node`, `stun`, `dht`, and `punch`. |
+| `client/protocol/traverse/src/tunnel.rs` | 1207 | Untouched — Wake Relay uses single sealed `WakeRequest`/`WakeStatus` datagrams over the punched path, no TCP stream tunnel required! |
+| `client/protocol/policy/src/http/capabilities.rs` | 1257 | Minimal `Feature::AwayWakeRelay` addition (`<= 1257`). |
+| `client/app/src/main/java/com/limelight/nvstream/http/HostCapabilities.java` | 1347 | Minimal `AWAY_WAKE_RELAY(0)` addition (`<= 1347`). |
+| `client/protocol/desktop/src/hosts.rs` | 1648 | Delegate remote wake & desktop relay worker to `hosts/wake_relay.rs` (3-line hook). |
+| `client/app/src/main/java/com/limelight/computers/HostActions.java` | 1484 | Delegate away-wake fallback to `computers/WakeRelayClient.java` (3-line hook in `sendWol`). |
+| `client/app/src/main/java/com/limelight/computers/ComputerManagerService.java` | 1573 | Store opaque `WakeRelayBundle` JSON alongside existing `internetPlay` bundle via `WakeRelayStore.java` (<=4 lines). |
 
 ### Planned new <=800-LOC modules
 
 | New module path | Crate / App | Target LOC | Responsibility |
 | --- | --- | --- | --- |
-| `client/protocol/traverse/src/wake_relay.rs` `[verify post-sprint code-map.md]` | `rubylight-traverse` | ~480 | Sans-IO Wake Relay crypto/record/wire logic: `WakeRelayKeys`, `WakeRequest`/`WakeStatus` codecs, Ed25519 sign/verify, 512-entry sliding replay cache, per-device rate limiter, full NAT-simulator tests (`sim.rs`). |
-| `client/protocol/traverse/src/wake_relay_node.rs` `[verify post-sprint code-map.md]` | `rubylight-traverse` | ~420 | Socket-driving `WakeRelayPeer` (STUN + DHT publish + punch answer + WoL callback) and `WakeRequester` (DHT lookup + punch + signed request + status stream). |
-| `rust/core/native-api/src/wake_relay.rs` `[verify post-sprint code-map.md]` | `rubylight-native-api` | ~220 | Additive v1 serde types (`WakeRelayInfo`, `WakeRelayBundle`, `RelayEnrollRequest`, `RelayWakeRequest`, `WakeStatusResponse`) + fixture tests. |
-| `rust/core/src/wake/relay.rs` `[verify post-sprint code-map.md]` | `butterpollo-core` | ~340 | Pure enrollment/revocation store model, 102-byte WoL magic packet builder (`6x 0xFF + 16x MAC`), LAN subnet verification (`Adapter::shares_subnet`), epoch rotation. |
-| `rust/host/src/wake_relay.rs` `[verify post-sprint code-map.md]` | `butterpollo` | ~440 | Host runtime: persists `wake-relay.json`, runs `WakeRelayPeer` when enrolled as a LAN relay, emits LAN UDP broadcast WoL packets, probes target `/serverinfo`, wires `--wake-relay` headless mode. |
-| `rust/host/src/native_api/wake_relay.rs` `[verify post-sprint code-map.md]` | `butterpollo` | ~260 | Axum handlers for `GET /wake/relay`, `POST /wake/relay/enroll`, `POST /wake/relay/wake`. |
-| `client/protocol/client/src/wake_relay.rs` `[verify post-sprint code-map.md]` | `nightjar-core` | ~310 | Client remote wake orchestrator: tries LAN WoL first (1.5 s), falls back to Traverse `WakeRequester` using cached `WakeRelayBundle`, streams progress events to UI, hands off to normal Traverse `ClientTunnel` once `HostAwake`. |
-| `client/protocol/desktop/src/hosts/wake_relay.rs` `[verify post-sprint code-map.md]` | `nightjar-desktop` | ~380 | Desktop opt-in LAN Wake Relay background worker (Windows/Linux/macOS; Linux-only code strictly `target_os = "linux"`), enrollment UI actions, live wake status feedback. |
-| `client/protocol/android/src/wake_relay.rs` `[verify post-sprint code-map.md]` | `nightjar-android` | ~180 | JNI entry points driving `nightjar_core::wake_relay` from Android (requester-only; Android phones do NOT run as always-on relays due to Doze). |
-| `client/app/src/main/java/com/limelight/computers/WakeRelayClient.java` `[verify post-sprint code-map.md]` | Android `app` | ~260 | Android away-wake runner + offline PC card progress state + plain-English failure dialogs. |
-| `rust/web/src/components/network/WakeRelayPanel.svelte` `[verify post-sprint code-map.md]` | Console `rust/web` | ~290 | Console enrollment panel under Settings → Network (shows enrolled LAN relays, online status, Revoke / Rotate keys, and `--wake-relay` companion setup steps). |
+| `client/protocol/traverse/src/wake_relay.rs` | `rubylight-traverse` | ~480 | Sans-IO Wake Relay crypto/record/wire logic: `WakeRelayKeys`, `WakeRequest`/`WakeStatus` codecs, Ed25519 sign/verify, 512-entry sliding replay cache, per-device rate limiter, full NAT-simulator tests (`sim.rs`). |
+| `client/protocol/traverse/src/wake_relay_node.rs` | `rubylight-traverse` | ~420 | Socket-driving `WakeRelayPeer` (STUN + DHT publish + punch answer + WoL callback) and `WakeRequester` (DHT lookup + punch + signed request + status stream). |
+| `client/protocol/native-api/src/wake_relay.rs` | `rubylight-native-api` | ~220 | Additive v1 serde types (`WakeRelayInfo`, `WakeRelayBundle`, `RelayEnrollRequest`, `RelayWakeRequest`, `WakeStatusResponse`) + fixture tests. |
+| `rust/core/session/src/wake/relay.rs` | `butterpollo-core` | ~340 | Pure enrollment/revocation store model, 102-byte WoL magic packet builder (`6x 0xFF + 16x MAC`), LAN subnet verification (`Adapter::shares_subnet`), epoch rotation. |
+| `rust/host/stream/src/wake_relay.rs` | `butterpollo` | ~440 | Host runtime: persists `wake-relay.json`, runs `WakeRelayPeer` when enrolled as a LAN relay, emits LAN UDP broadcast WoL packets, probes target `/serverinfo`, wires `--wake-relay` headless mode. |
+| `rust/host/web/src/native_api/wake_relay.rs` | `butterpollo` | ~260 | Axum handlers for `GET /wake/relay`, `POST /wake/relay/enroll`, `POST /wake/relay/wake`. |
+| `client/protocol/client/src/wake_relay.rs` | `nightjar-core` | ~310 | Client remote wake orchestrator: tries LAN WoL first (1.5 s), falls back to Traverse `WakeRequester` using cached `WakeRelayBundle`, streams progress events to UI, hands off to normal Traverse `ClientTunnel` once `HostAwake`. |
+| `client/protocol/desktop/src/hosts/wake_relay.rs` | `nightjar-desktop` | ~380 | Desktop opt-in LAN Wake Relay background worker (Windows/Linux/macOS; Linux-only code strictly `target_os = "linux"`), enrollment UI actions, live wake status feedback. |
+| `client/protocol/android/src/wake_relay.rs` | `nightjar-android` | ~180 | JNI entry points driving `nightjar_core::wake_relay` from Android (requester-only; Android phones do NOT run as always-on relays due to Doze). |
+| `client/app/src/main/java/com/limelight/computers/WakeRelayClient.java` | Android `app` | ~260 | Android away-wake runner + offline PC card progress state + plain-English failure dialogs. |
+| `rust/web/src/components/network/WakeRelayPanel.svelte` | Console `rust/web` | ~290 | Console enrollment panel under Settings → Network (shows enrolled LAN relays, online status, Revoke / Rotate keys, and `--wake-relay` companion setup steps). |
 
 ## 4. State Machine, Reconnect Matrix & Crash-Restore Journal
 
@@ -186,7 +186,7 @@ Listening
 
 | Scenario | Expected behavior |
 | --- | --- |
-| **Target wakes from S3 / Modern Standby** | Target host's existing `WakeGrace` (`rust/core/src/wake/grace.rs`, power request `GRACE_REASON`) holds the PC awake while the remote client establishes its `rubylight-traverse` tunnel and starts the stream, preventing immediate re-sleep before RTSP connects. |
+| **Target wakes from S3 / Modern Standby** | Target host's existing `WakeGrace` (`rust/core/session/src/wake/grace.rs`, power request `GRACE_REASON`) holds the PC awake while the remote client establishes its `rubylight-traverse` tunnel and starts the stream, preventing immediate re-sleep before RTSP connects. |
 | **Client switches Wi-Fi → 5G mid-wake** | `WakeRequester` retries with a **new** 16-byte nonce (reusing a nonce would fail replay check by design); if the target already booted, `ProbeTargetLocalHttp` answers `HostAwake` immediately without re-blasting WoL. |
 | **Paired device unpaired on target host** | Target host removes the device from `h.paired`, increments `epoch` in `wake-relay.json`, pushes updated `epoch` to enrolled LAN relays over LAN sync (and includes `revoked_devices` list). Unpaired device's cached `WakeRelayBundle` is rejected with `RejectedAuth`. |
 | **Relay PC restarts or loses power** | On reboot, service/app reloads `wake-relay.json`, runs STUN, republishes DHT record within ~5 s; remote clients seamlessly discover the new external port/session. |
@@ -196,14 +196,14 @@ Listening
 ### Enrollment durability & crash-restore journal
 
 - **Durable store (`config_dir/wake-relay.json`):** Written atomically (`wake-relay.json.tmp` → `sync_all()` → `rename`) on every enrollment, revocation, or epoch rotation. Never stores raw TLS private keys — only scoped `relay_master_secret` bytes (OS ACL restricted to Administrators/SYSTEM on Windows service install, `0600` on Linux/macOS).
-- **Zero unconsented OS/NIC edits:** Away Wake Relay NEVER modifies Windows NIC drivers or power settings on its own; NIC wake readiness continues to use Rubylight's existing consented `--apply-wake-settings` flow (`rust/host/src/wake.rs`).
+- **Zero unconsented OS/NIC edits:** Away Wake Relay NEVER modifies Windows NIC drivers or power settings on its own; NIC wake readiness continues to use Rubylight's existing consented `--apply-wake-settings` flow (`rust/host/stream/src/wake.rs`).
 
 ## 5. Settings & 10/10 Craft Plan
 
 ### Fewer-settings compliance & explicit opt-in
 
 - **Explicit opt-in, default off:**
-  - Host Console: `away_wake_relay` (bool, default `false`), defined in `rust/core/src/config/settings30.rs` and `rust/web/src/lib/schema/extensions.ts` (plus `rust/host/src/console/settings.rs`) and surfaced under *Settings → Network* right below `internet_play`. Disabled/hinted when `internet_play` is off (since Traverse DHT is required). Two-sentence help: *"Allows another always-on Rubylight PC or desktop Nightjar on your home network to wake this PC from away without port forwarding. Uses encrypted peer-to-peer wake requests; nothing is sent to a third-party server."*
+  - Host Console: `away_wake_relay` (bool, default `false`), defined in `rust/core/config/src/config/settings30.rs` and `rust/web/src/lib/schema/extensions.ts` (plus `rust/host/web/src/console/settings.rs`) and surfaced under *Settings → Network* right below `internet_play`. Disabled/hinted when `internet_play` is off (since Traverse DHT is required). Two-sentence help: *"Allows another always-on Rubylight PC or desktop Nightjar on your home network to wake this PC from away without port forwarding. Uses encrypted peer-to-peer wake requests; nothing is sent to a third-party server."*
   - Desktop Nightjar: Single opt-in switch under *Settings → More settings → Streaming* (*Act as LAN wake relay*, default `false`). Hidden on Android phones/tablets/TVs because mobile Doze suspends background DHT maintenance.
 - **Zero extra switches on the Offline PC card:** Nightjar's existing **Wake** action (`pcview_menu_send_wol` / short *"Wake"*) automatically tries LAN first and falls back to the enrolled Away Wake Relay seamlessly.
 
@@ -213,63 +213,63 @@ Listening
 - **Target did not wake:** *"The wake signal reached your home network, but Gaming PC did not respond within 45 seconds. Check Wake-on-LAN readiness in Rubylight's console."*
 - **No relay enrolled:** *"Gaming PC cannot be woken from outside your home network yet. Enroll an always-on Rubylight PC or desktop Nightjar on the same network."*
 - **Auth revoked / clock skew:** *"The wake relay rejected this request. Check that your device clock is accurate, or reconnect on your home network to refresh wake access."*
-- **Zero "Experimental" in UI:** Note that existing `rust/core/native-api/src/wake.rs` has an internal wire enum variant `TargetState::Experimental` for Wi-Fi WoL; user-facing UI MUST NEVER render the word `"Experimental"` — render *"Wi-Fi (depends on adapter and router)"* instead.
-- **Zero stream-time impact / zero mod names:** Wake Relay never adds any stream-time overlay or blur, never names mods, uses Nightjar's dynamic input glyphs on the PC card Wake button (`A` on gamepad / `OK` on remote / `Enter` on keyboard, with **no button hints** shown for touch or mouse per `client/design/README.md:143`), and ships complete translations across all 15 Nightjar locales (`en`, `de`, `es`, `fr`, `it`, `ja`, `ko`, `pl`, `pt_br`, `ru`, `tr`, `uk`, `vi`, `zh_hans`, `zh_hant`, with all new Desktop translations routed to `client/protocol/desktop/src/strings_70/<code>.rs`) and all 22 host locales in `rust/assets/locale/`.
+- **Zero "Experimental" in UI:** Note that existing `client/protocol/native-api/src/wake.rs` has an internal wire enum variant `TargetState::Experimental` for Wi-Fi WoL; user-facing UI MUST NEVER render the word `"Experimental"` — render *"Wi-Fi (depends on adapter and router)"* instead.
+- **Zero stream-time impact / zero mod names:** Wake Relay never adds any stream-time overlay or blur, never names mods, uses Nightjar's dynamic input glyphs on the PC card Wake button (`A` on gamepad / `OK` on remote / `Enter` on keyboard, with **no button hints** shown for touch or mouse per `client/design/README.md:143`), and ships complete translations across all 15 Nightjar locales (`en`, `de`, `es`, `fr`, `it`, `ja`, `ko`, `pl`, `pt_br`, `ru`, `tr`, `uk`, `vi`, `zh_hans`, `zh_hant`, with all new Desktop translations routed to `client/protocol/desktop-config/src/strings_70/<code>.rs`) and all 22 host locales in `rust/assets/locale/`.
 
 ## 6. Disjoint Implementer Slices (Phase 3 Staged `parallel()`)
 
 Executed through `orchestrator_core.py`'s staged slice runner with strictly non-overlapping file ownership. **Stage 1** (`15A` + `15B`) lands all Traverse protocol primitives, core policy, Native API v1 types, and shared registration files before **Stage 2** (`15C`, `15D`, `15E`) fans out in parallel.
 
 ### Stage 1 — Slice 15A: Traverse Wake Relay Protocol, Crypto & NAT Simulator *(parallel with 15B)*
-- `client/protocol/traverse/src/lib.rs` `[verify post-sprint code-map.md]`
-- `client/protocol/traverse/src/record.rs` *(add `Role::WakeRelay`, `Role::WakeRequester`)* `[verify post-sprint code-map.md]`
-- `client/protocol/traverse/src/wire.rs` *(add `Kind::WakeRequest`, `Kind::WakeStatus`)* `[verify post-sprint code-map.md]`
-- `client/protocol/traverse/src/wake_relay.rs` *(new)* `[verify post-sprint code-map.md]`
-- `client/protocol/traverse/src/wake_relay_node.rs` *(new)* `[verify post-sprint code-map.md]`
+- `client/protocol/traverse/src/lib.rs`
+- `client/protocol/traverse/src/record.rs` *(add `Role::WakeRelay`, `Role::WakeRequester`)*
+- `client/protocol/traverse/src/wire.rs` *(add `Kind::WakeRequest`, `Kind::WakeStatus`)*
+- `client/protocol/traverse/src/wake_relay.rs` *(new)*
+- `client/protocol/traverse/src/wake_relay_node.rs` *(new)*
 
 ### Stage 1 — Slice 15B: Core Policy, Native API v1 Types & Shared Registration *(parallel with 15A; lands before Stage 2)*
-- `rust/core/native-api/src/lib.rs` *(export `pub mod wake_relay;` and `feature::WAKE_RELAY = "wake.relay"`)* `[verify post-sprint code-map.md]`
-- `rust/core/native-api/src/wake_relay.rs` *(new)* `[verify post-sprint code-map.md]`
-- `rust/core/native-api/tests/fixtures/wake_relay.json` *(new)* `[verify post-sprint code-map.md]`
-- `rust/core/src/wake.rs` *(expose `pub mod relay;`)* `[verify post-sprint code-map.md]`
-- `rust/core/src/wake/relay.rs` *(new)* `[verify post-sprint code-map.md]`
-- `rust/core/src/extensions.rs` *(add `Offered::away_wake_relay` and `<AwayWakeRelayVersion>1</AwayWakeRelayVersion>`)* `[verify post-sprint code-map.md]`
-- `rust/host/src/extensions.rs` *(populate `Offered::away_wake_relay` from `internet_play && away_wake_relay`)* `[verify post-sprint code-map.md]`
-- `rust/core/src/config/settings30.rs` *(add `away_wake_relay` default `false` to `SETTINGS_30`, `LIVE`, and `Config::away_wake_relay()`, and update the 12-entry `there_are_12_unique_settings` / schema-sync tests)* `[verify post-sprint code-map.md]`
-- `rust/web/src/lib/schema/extensions.ts` *(add `away_wake_relay` setting entry in lockstep with `settings30.rs`'s `the_console_schema_lists_exactly_these_settings_with_these_defaults` test)* `[verify post-sprint code-map.md]`
-- `rust/host/src/native_api.rs` *(advertise `feature::WAKE_RELAY`, declare `mod wake_relay;`, and mount `/wake/relay`, `/wake/relay/enroll`, `/wake/relay/wake`; keep net LOC `<= 853`)* `[verify post-sprint code-map.md]`
-- `rust/host/src/native_api/wake_relay.rs` *(new; Axum handlers backed by `butterpollo_core::wake::relay`)* `[verify post-sprint code-map.md]`
-- `client/protocol/client/src/http/capabilities.rs` *(add `Feature::AwayWakeRelay` to `Feature`, `Feature::ALL`, `Evidence`, `with_native`; keep `<= 1257`)* `[verify post-sprint code-map.md]`
-- `client/protocol/client/tests/capabilities_contract.rs` *(add `Feature::AwayWakeRelay` to exhaustive `feature_name` match)* `[verify post-sprint code-map.md]`
-- `client/app/src/main/java/com/limelight/nvstream/http/HostCapabilities.java` *(add `AWAY_WAKE_RELAY(0)`; keep `<= 1347`)* `[verify post-sprint code-map.md]`
-- `client/app/src/test/resources/protocol/capabilities/*` *(recorded fixtures for `AwayWakeRelayVersion` + `wake.relay`)* `[verify post-sprint code-map.md]`
+- `client/protocol/native-api/src/lib.rs` *(export `pub mod wake_relay;` and `feature::WAKE_RELAY = "wake.relay"`)*
+- `client/protocol/native-api/src/wake_relay.rs` *(new)*
+- `client/protocol/native-api/tests/fixtures/wake_relay.json` *(new)*
+- `rust/core/session/src/wake.rs` *(expose `pub mod relay;`)*
+- `rust/core/session/src/wake/relay.rs` *(new)*
+- `rust/core/media-policy/src/extensions.rs` *(add `Offered::away_wake_relay` and `<AwayWakeRelayVersion>1</AwayWakeRelayVersion>`)*
+- `rust/host/stream/src/extensions.rs` *(populate `Offered::away_wake_relay` from `internet_play && away_wake_relay`)*
+- `rust/core/config/src/config/settings30.rs` *(add `away_wake_relay` default `false` to `SETTINGS_30`, `LIVE`, and `Config::away_wake_relay()`, and update the 12-entry `there_are_12_unique_settings` / schema-sync tests)*
+- `rust/web/src/lib/schema/extensions.ts` *(add `away_wake_relay` setting entry in lockstep with `settings30.rs`'s `the_console_schema_lists_exactly_these_settings_with_these_defaults` test)*
+- `rust/host/web/src/native_api.rs` *(advertise `feature::WAKE_RELAY`, declare `mod wake_relay;`, and mount `/wake/relay`, `/wake/relay/enroll`, `/wake/relay/wake`; keep net LOC `<= 853`)*
+- `rust/host/web/src/native_api/wake_relay.rs` *(new; Axum handlers backed by `butterpollo_core::wake::relay`)*
+- `client/protocol/policy/src/http/capabilities.rs` *(add `Feature::AwayWakeRelay` to `Feature`, `Feature::ALL`, `Evidence`, `with_native`; keep `<= 1257`)*
+- `client/protocol/client/tests/capabilities_contract.rs` *(add `Feature::AwayWakeRelay` to exhaustive `feature_name` match)*
+- `client/app/src/main/java/com/limelight/nvstream/http/HostCapabilities.java` *(add `AWAY_WAKE_RELAY(0)`; keep `<= 1347`)*
+- `client/app/src/test/resources/protocol/capabilities/*` *(recorded fixtures for `AwayWakeRelayVersion` + `wake.relay`)*
 
 ### Stage 2 — Slice 15C: Host Relay Service, CLI & Native Integration Tests *(runs after Stage 1, parallel with 15D/15E)*
-- `rust/host/src/wake_relay.rs` *(new)* `[verify post-sprint code-map.md]`
-- `rust/host/src/internet_play.rs` *(2-line lifecycle hook)* `[verify post-sprint code-map.md]`
-- `rust/host/src/main.rs` *(add `--wake-relay` CLI flag dispatch)* `[verify post-sprint code-map.md]`
-- `rust/host/src/nvhttp/native_tests/wake_relay.rs` *(new)* `[verify post-sprint code-map.md]`
+- `rust/host/stream/src/wake_relay.rs` *(new)*
+- `rust/host/stream/src/internet_play.rs` *(2-line lifecycle hook)*
+- `rust/host/src/main.rs` *(add `--wake-relay` CLI flag dispatch)*
+- `tests/host/tests/nvhttp_parity/native_tests/wake_relay.rs` *(new)*
 
 ### Stage 2 — Slice 15D: Nightjar Engine & Desktop Relay/Requester *(runs after Stage 1, parallel with 15C/15E)*
-- `client/protocol/client/src/wake_relay.rs` *(new)* `[verify post-sprint code-map.md]`
-- `client/protocol/client/src/http/native.rs` `[verify post-sprint code-map.md]`
-- `client/protocol/desktop/src/hosts/wake_relay.rs` *(new)* `[verify post-sprint code-map.md]`
-- `client/protocol/desktop/src/hosts.rs` *(3-line hook)* `[verify post-sprint code-map.md]`
-- `client/protocol/desktop/src/ui/settings.rs` *(1 opt-in row under Streaming)* `[verify post-sprint code-map.md]`
-- `client/protocol/desktop/src/strings_70/<code>.rs` *(all new Desktop Wake Relay translations across the 15 locales, keeping grandfathered `strings/*.rs` untouched)* `[verify post-sprint code-map.md]`
+- `client/protocol/client/src/wake_relay.rs` *(new)*
+- `client/protocol/client/src/http/native.rs`
+- `client/protocol/desktop/src/hosts/wake_relay.rs` *(new)*
+- `client/protocol/desktop/src/hosts.rs` *(3-line hook)*
+- `client/protocol/desktop-ui/src/ui/settings.rs` *(1 opt-in row under Streaming)*
+- `client/protocol/desktop-config/src/strings_70/<code>.rs` *(all new Desktop Wake Relay translations across the 15 locales, keeping grandfathered `strings/*.rs` untouched)*
 
 ### Stage 2 — Slice 15E: Nightjar Android Requester, Host Web Console & Docs *(runs after Stage 1, parallel with 15C/15D)*
-- `client/protocol/android/src/wake_relay.rs` *(new)* `[verify post-sprint code-map.md]`
-- `client/app/src/main/java/com/limelight/computers/WakeRelayClient.java` *(new)* `[verify post-sprint code-map.md]`
-- `client/app/src/main/java/com/limelight/computers/HostActions.java` *(3-line hook)* `[verify post-sprint code-map.md]`
-- `client/app/src/main/java/com/limelight/computers/ComputerManagerService.java` *(bundle storage hook)* `[verify post-sprint code-map.md]`
-- `client/app/src/main/res/values*/strings.xml` `[verify post-sprint code-map.md]`
-- `client/app/src/test/java/com/limelight/computers/WakeRelayClientTest.java` *(new)* `[verify post-sprint code-map.md]`
-- `rust/web/src/components/network/WakeRelayPanel.svelte` *(new)* `[verify post-sprint code-map.md]`
-- `rust/host/src/console/settings.rs` `[verify post-sprint code-map.md]`
-- `rust/assets/locale/` *(host Wake Relay strings across all 22 host locale files)* `[verify post-sprint code-map.md]`
-- `docs/internet-play.md`, `docs/native-api.md`, `docs/configuration.md` `[verify post-sprint code-map.md]`
-- `rust/release/notes.d/7-0-away-wake-relay.md` *(new)* `[verify post-sprint code-map.md]`
+- `client/protocol/android/src/wake_relay.rs` *(new)*
+- `client/app/src/main/java/com/limelight/computers/WakeRelayClient.java` *(new)*
+- `client/app/src/main/java/com/limelight/computers/HostActions.java` *(3-line hook)*
+- `client/app/src/main/java/com/limelight/computers/ComputerManagerService.java` *(bundle storage hook)*
+- `client/app/src/main/res/values*/strings.xml`
+- `client/app/src/test/java/com/limelight/computers/WakeRelayClientTest.java` *(new)*
+- `rust/web/src/components/network/WakeRelayPanel.svelte` *(new)*
+- `rust/host/web/src/console/settings.rs`
+- `rust/assets/locale/` *(host Wake Relay strings across all 22 host locale files)*
+- `docs/internet-play.md`, `docs/native-api.md`, `docs/configuration.md`
+- `rust/release/notes.d/7-0-away-wake-relay.md` *(new)*
 
 ## 7. Verification & Measurement Plan
 
@@ -299,7 +299,7 @@ Executed through `orchestrator_core.py`'s staged slice runner with strictly non-
 
 ## 8. Post-Discovery Addendum — `rubylight-traverse` Dual-Stack IPv6, Mid-Stream Roaming & Video MTU Clamping
 
-Because Away Wake Relay (`15`) and Internet Play both ride on `client/protocol/traverse/` and `rust/host/src/internet_play.rs`, Slice 15A/15B closes three critical Traverse transport blind spots (zero `PROTOCOL_VERSION` or `API_VERSION` changes):
+Because Away Wake Relay (`15`) and Internet Play both ride on `client/protocol/traverse/` and `rust/host/stream/src/internet_play.rs`, Slice 15A/15B closes three critical Traverse transport blind spots (zero `PROTOCOL_VERSION` or `API_VERSION` changes):
 1. **Dual-Stack IPv4 + IPv6 Punching:** Run paired IPv4 + IPv6 UDP sockets inside `traverse::Node` (removing the single-family filter in `node.rs:155-160` and hardcoded `any_ipv4()` in `client.rs:252` & `internet_play.rs:688`), publishing both families in `record.rs` (whose wire format already carries IPv6) and punching Happy-Eyeballs-style so DS-Lite / CGNAT + IPv6 networks connect directly for both streaming and Away Wake Relay.
-2. **Seamless Mid-Stream Wi-Fi <-> 5G Roaming (<2 s vs 45 s stall):** Add `Tunnel::network_changed()` re-bind + immediate STUN/punch burst triggered by OS network hints (bypassing `Bridge::Device`'s `127.0.0.1` blind spot in `roam.rs:211`), and propagate a peer-path-change event through `Bridge::Host` to invoke the host's existing `Session::roamed()` / `rebuild_link_rate()` / `rebuild_congestion()` path (`rust/host/src/stream.rs:524-530`).
+2. **Seamless Mid-Stream Wi-Fi <-> 5G Roaming (<2 s vs 45 s stall):** Add `Tunnel::network_changed()` re-bind + immediate STUN/punch burst triggered by OS network hints (bypassing `Bridge::Device`'s `127.0.0.1` blind spot in `roam.rs:211`), and propagate a peer-path-change event through `Bridge::Host` to invoke the host's existing `Session::roamed()` / `rebuild_link_rate()` / `rebuild_congestion()` path (`rust/host/stream/src/stream.rs:524-530`).
 3. **Tunnelled Video MTU Clamping:** Whenever `network::tunnelled(peer)` is true during RTSP negotiation (`rtsp_server.rs`), clamp effective video `packet_size <= 1200` B (IPv4) / `<= 1160` B (IPv6) so Traverse's 40-byte ChaCha20-Poly1305 overhead (`wire.rs:37`) stays strictly under the 1280-byte IPv6 minimum MTU and cellular/VPN/PPPoE MTUs without fragmentation or black-holing.

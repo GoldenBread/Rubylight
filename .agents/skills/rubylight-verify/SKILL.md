@@ -1,33 +1,36 @@
 ---
 name: rubylight-verify
 description: >-
-  Use when verifying Rubylight host, Nightjar client, console, docs, architecture
-  guardrails, or idle-gated hardware tests during inner-loop development, pre-merge
-  gating, or release preparation.
+  Use when verifying Rubylight host, Nightjar client, console, docs, locales,
+  architecture guardrails, or idle-gated hardware tests during inner-loop development,
+  pre-merge gating, or release preparation.
 ---
 
-# Rubylight & Nightjar Verification Ladder
+# Rubylight & Nightjar Verification Ladder (Post-Refactoring)
 
-Always run the narrowest fast loop while iterating, then escalate to full checks before merging.
-
-> **Prerequisite (post-sprint rebase):** `tools/dev.ps1 -Fast`, `tools/arch_check.py`, and `tools/size_ratchet.json` come from the post-sprint `main` rebase. Wave 0 preflight in `orchestrator_core.py` verifies they exist before starting any coding wave.
+Always run the narrowest fast loop while iterating, then escalate to full checks before merging. Also consult `.agents/skills/isolated-e2e/SKILL.md`, `.agents/skills/check-nvenc/SKILL.md`, and `.agents/skills/release-prep/SKILL.md` for specialized runs.
 
 ## 1. Fast Inner Loop (Phase 3 Iteration)
 
 ```powershell
+$env:TEMP="D:\t"; $env:TMP="D:\t"
 tools\dev.ps1 check -Fast -Base roadmap/redesign-and-waves-1-5
 ```
 
-- Uses `tools/dev.py --fast` (static checks, check-only / `cargo nextest` targeted tests in warm target slots under `tools/build_lock.py` lanes).
+- Uses `tools/dev.py --fast` (`cargo nextest`, `lld`, warm target slots under `tools/build_lock.py` lanes, `-PrubylightTestList`).
 - Add `-DryRun` first when verifying which checks your diff triggers.
 - Never run `cargo fmt --all`; always use `cargo fmt -- --check` (without `--all`).
+- **Disk hygiene (`AGENTS.md`):** Never leave private per-worktree `target/` or `client/app/build/` caches behind; reuse `tools/build_lock.py` target-pool slots and run `python tools/build_lock.py --prune` whenever disk space is tight.
+- **Test hygiene (`AGENTS.md`):** Bind unit-test and probe sockets to loopback (`127.0.0.1`/`[::1]`) or query `GetExtendedTcpTable`/`GetExtendedUdpTable` so rebuilt Cargo test binaries never trigger Windows Defender Firewall prompts.
 
 ## 2. Full Pre-Merge Verification (Phase 4, Phase 5b & Post-Review)
 
 Run all of the following and require exit code 0:
 
 ```powershell
+$env:TEMP="D:\t"; $env:TMP="D:\t"
 tools\dev.ps1 check -Base roadmap/redesign-and-waves-1-5
+python tools/i18n.py check
 python tools/arch_check.py
 python tools/code_map.py check
 python tools/generated_docs.py --check
@@ -36,10 +39,12 @@ git diff --check
 ```
 
 Additional targeted checks when their trees changed:
+- Host settings (`rust/core/config/settings.toml`): `python tools/generated_docs.py` (regenerates `catalog_gen.rs`, `retired_gen.rs`, `console_*_gen.rs`, `rust/web/src/lib/schema/*.gen.ts`, and `docs/configuration.md`).
+- Client settings (`client/protocol/policy/settings.toml`): `python client/scripts/generate-settings.py` (regenerates `settings_catalog_gen.rs`, `defaults_gen.rs`, `SettingsCatalogGen.java`, and `client/docs/settings.md`).
 - Console (`rust/web/`): `npm run check; node --test "*.test.mjs"; npm run build` (via web lane / `dev.ps1`).
 - Nightjar docs/site (`client/`): `node client/scripts/check-doc-links.mjs`, `node client/scripts/device-docs.mjs --check`, `node client/site/check-links.mjs`, `python client/scripts/test_gen_design_tokens.py`.
 - Host site (`site/`): `python site/build.py`.
-- Service executable inputs (`rust/service/` or `update_recovery.rs` / `update_files.rs` / `state/file.rs` / `version_info.rs` / icon): bump `rust/service/Cargo.toml` and run `python rust/release/service_inputs.py --update`.
+- Service executable inputs (`rust/service/` or `rust/core/src/{update_recovery,update_files}.rs` / `rust/core/session/src/state/file.rs` / `rust/assets/version_info.rs` / icon): bump `rust/service/Cargo.toml` and run `python rust/release/service_inputs.py --update`.
 - Verify LF-only line endings on all changed files (no `\r\n`).
 - Never run `python tools/arch_check.py --write-baselines` and never hand-edit `tools/size_ratchet.json` or `tools/arch_baselines.json`.
 
@@ -58,6 +63,7 @@ pwsh tools\remote-check.ps1 -Host laptop -Branch wip/roadmap/<id>-<slug>
 ## 4. Full Package Gate (Exclusive Lock Only)
 
 ```powershell
+$env:TEMP="D:\t"; $env:TMP="D:\t"
 python tools/build_lock.py -- pwsh rust/build.ps1
 ```
 
@@ -70,7 +76,7 @@ Idle-gated serialized hardware runners are **allowed by default** (blocked only 
 - `tools/hw/run.ps1`, `tools/hw/run.py`, `tools/hw/laptop-host.ps1`, `tools/hw/demo-stream.ps1`, `tools/hw/wave1_verify.py`
 - Any `--ignored` / `--run-ignored` native GPU test
 
-Mandatory Procedure:
+Mandatory Procedure (see also `.agents/skills/isolated-e2e/SKILL.md`):
 1. Verify installed host idle first:
    `(Invoke-WebRequest http://127.0.0.1:47989/serverinfo).Content` must report `RustHostSessionCount` = `0` and `RustHostPendingSessionCount` = `0`.
 2. Run serialized isolated test host / runner (`hw_lock`, never two GPU runs concurrently).

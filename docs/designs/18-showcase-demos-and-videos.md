@@ -1,8 +1,8 @@
 # Item 18: Showcase Demos, Tours & Videos (Rubylight 7.0 & Nightjar 7.0 Complete Redesign)
 
-Status: design, not implemented (Wave 5). Written against `main` `b3d0c26b9b` (`6.2.0`), `docs/designs/00-protocol-reservations.md`, and the Wave 0–4 ground-up **7.0 Console-Quality Complete Redesign**.
+Status: design, not implemented (Wave 5). Rebased 2026-11-25 onto post-refactoring `origin/main` `955ef39598` (`v6.4.1`), `docs/designs/00-protocol-reservations.md`, and the Wave 0–4 ground-up **7.0 Console-Quality Complete Redesign**.
 
-Item 18 establishes a 100% reproducible, strictly offline showcase pipeline for the ground-up **Rubylight 7.0** and **Nightjar 7.0** Console-Quality Complete Redesign across four deterministic surfaces: (1) Playwright Studio Console 7.0, Browser `/play` & `/guest`, and companion host-surface captures (Host-Drawn Couch Menu, Installer QR Finish Screen, System Tray) plus 60 fps interactive tours driven by deterministic offline fixtures, (2) Nightjar 7.0 Android offline `DemoLauncherActivity` stills, 60 fps recordings, and multi-cut trailer (`trailer.py`), (3) Nightjar 7.0 Desktop offline CPU-rasterized demo frames (`shot.rs` + `ui/demo_70.rs` wired through `client/protocol/desktop/src/ui.rs`), and (4) an automated provenance & honesty verifier enforcing 100% original procedural/SVG artwork via `covers.mjs`, synthetic flight footage via `GenerateAssets.java`, zero third-party game art/logos/characters, zero mod names in UI media, explicit `DEMO` captions on scripted telemetry, and real measured figures sourced solely from `rust/PERFORMANCE.md`.
+Item 18 establishes a 100% reproducible, strictly offline showcase pipeline for the ground-up **Rubylight 7.0** and **Nightjar 7.0** Console-Quality Complete Redesign across four deterministic surfaces: (1) Playwright Studio Console 7.0, Browser `/play` & `/guest`, and companion host-surface captures (Host-Drawn Couch Menu, Installer QR Finish Screen, System Tray) plus 60 fps interactive tours driven by deterministic offline fixtures, (2) Nightjar 7.0 Android offline `DemoLauncherActivity` stills, 60 fps recordings, and multi-cut trailer (`trailer.py`), (3) Nightjar 7.0 Desktop offline CPU-rasterized demo frames (`shot.rs` + `ui/demo_70.rs` wired through `client/protocol/desktop-ui/src/ui.rs`), and (4) an automated provenance & honesty verifier enforcing 100% original procedural/SVG artwork via `covers.mjs`, synthetic flight footage via `GenerateAssets.java`, zero third-party game art/logos/characters, zero mod names in UI media, explicit `DEMO` captions on scripted telemetry, and real measured figures sourced solely from `rust/PERFORMANCE.md`.
 
 ---
 
@@ -29,9 +29,9 @@ Launching the ground-up **7.0 Console-Quality Complete Redesign** requires cohes
    - **Browser `/play` & `/guest` Surfaces (`rust/web/play/`, `rust/web/guest/`)**:
      - Deterministic offline Playwright captures of the redesigned TV/console browser player (`/play` PIN pairing & controller-navigable library) and browser guest watch/play room (`/guest` invite lobby & active stream frame with synthetic backdrop and `DEMO` badge) without opening any live WebRTC or network socket.
    - **Companion Native Host Surfaces (Offline Deterministic Renders — Zero Live Host Required)**:
-     - **Host-Drawn Couch Menu** — deterministic CPU-rendered RGBA golden frame from `rust/core/src/couch_menu/render.rs` (Main page, Radeon settings, Stream preset, Session actions) composited over synthetic `GenerateAssets.java` flight footage with an explicit `DEMO` badge;
+     - **Host-Drawn Couch Menu** — deterministic CPU-rendered RGBA golden frame from `rust/core/session/src/couch_menu_model/render.rs` (Main page, Radeon settings, Stream preset, Session actions) composited over synthetic `GenerateAssets.java` flight footage with an explicit `DEMO` badge;
      - **Installer QR Finish Screen** — deterministic offline visual capture of `rust/setup/` consuming canonical `rust/setup/src/ui_theme.rs` (created in `01`, consumed in `17`), showing per-component health (`rubylight-vdisplay`, `rubylight-vgamepad` VHF, audio, firewall, service) and the redesigned **QR Finish Screen** for immediate Nightjar pairing;
-     - **System Tray** — deterministic offline capture of canonical `rust/windows/src/tray/status.rs` (created in `01`, extended in `17`) DPI-scaled status badges (`16/24/32/48 px` for Idle, Streaming, Quick Suspended, Repair Needed) paired with the redesigned tray context menu (`Repair drivers & service...`, `Restore displays now`, `Open Diagnostics`).
+     - **System Tray** — deterministic offline capture of canonical `rust/windows/io/src/tray/status.rs` (created in `01`, extended in `17`) DPI-scaled status badges (`16/24/32/48 px` for Idle, Streaming, Quick Suspended, Repair Needed) paired with the redesigned tray context menu (`Repair drivers & service...`, `Restore displays now`, `Open Diagnostics`).
    - **60 fps Interactive Tour**: `console-tour-7.0.mp4` (`1920×1080/60` H.264 High, `+faststart`, silent) + `console-tour.webp` (animated README teaser) recorded against a deterministic fixture server with scripted pointer/keyboard choreography sweeping Command Stage -> Display Topology Visualizer -> Cover-Lit Per-Game Studio -> QR Onboarding -> `Ctrl+K` -> DVR Clips -> Diagnostics -> `/play` & `/guest`.
 
 2. **Nightjar 7.0 Complete Redesign Android Offline Stills, Clips & 60 fps Multi-Cut Trailer (`client/`)**
@@ -46,7 +46,7 @@ Launching the ground-up **7.0 Console-Quality Complete Redesign** requires cohes
      - **Launch Curtain** (`state=curtain`), **Stream Doctor 2.0** (`state=doctor`), and **Coherence Workstation** (`state=coherence`).
    - Updated `trailer.py` + `trailer_beats_70.py` outputs: `trailer-16x9.mp4` (`1920×1080/60`), `trailer-9x16.mp4` (`1080×1920/60` with verified safe areas `y in [290, 1440]`, right `120 px` clear), `teaser.webp` (`<= 2.5 MB`, 25 fps README loop), and `poster-16x9.webp` (`1280×720`) / `poster-9x16.webp` (`720×1280`).
 
-3. **Nightjar 7.0 Desktop Offline CPU-Rasterized Demo Frames (`client/protocol/desktop/src/shot.rs` + `ui/demo_70.rs`)**
+3. **Nightjar 7.0 Desktop Offline CPU-Rasterized Demo Frames (`client/protocol/desktop-ui/src/shot.rs` + `ui/demo_70.rs`)**
    - Deterministic, zero-GPU CPU-rasterized PNGs matching the live egui renderer (`Canvas::paint` + 4-tier glass chain) proving **Desktop / Handheld / TV visual parity** across Cinematic Full-Bleed Console Home (Night, Day, OLED, High Contrast), Console Control Center floating dock & all 6 visual cards, **Visual Console-Grade Controller Editor** (live controller diagram, Sticks & Triggers deadzone/curve studio, Gyroscope Studio, Radial Menu Builder, Haptics & Lightbar), Visual Preview-Card Settings, First-Run & Pairing Cinema, Launch Curtain, Stream Doctor 2.0, Input Deck Radial, Coherence Workstation multi-window switcher, DVR Clips, and Quick Suspend.
 
 4. **Single Original 7.0 Console-Art Fictional Catalog Across Both Repos**
@@ -66,7 +66,7 @@ Even though showcase mode is 100% offline, its mock JSON payloads and render hoo
 | Offline Fixture Surface | Validated Against Real Type / Route / Renderer | Contract Enforcement |
 | --- | --- | --- |
 | Console 7.0 + `/play` + `/guest` Playwright mocks | `rust/web/src/lib/api.ts` TypeScript interfaces + Svelte SSR + `vite.play.config.ts` / `vite.guest.config.ts` bundles | `rust/web/DemoFixtures.test.mjs` validates every fixture response shape (including Display Topology, Per-Game Studio, QR Onboarding, `Ctrl+K`, `/play`, `/guest`, DVR, Quick Suspend, Stream Doctor 2.0) and asserts zero unmocked network calls. |
-| Host-Drawn Couch Menu, Installer QR Finish & System Tray | `rust/core/src/couch_menu/render.rs`, canonical `rust/setup/src/ui_theme.rs` (`-p butterpollo-setup`), canonical `rust/windows/src/tray/status.rs` | Deterministic unit/golden render tests (`cargo test -p butterpollo-core`, `-p butterpollo-setup`, `-p butterpollo-windows`) emit verified offline PNGs directly from real production render code. |
+| Host-Drawn Couch Menu, Installer QR Finish & System Tray | `rust/core/session/src/couch_menu_model/render.rs`, canonical `rust/setup/src/ui_theme.rs` (`-p butterpollo-setup`), canonical `rust/windows/io/src/tray/status.rs` | Deterministic unit/golden render tests (`cargo test -p butterpollo-core`, `-p butterpollo-setup`, `-p butterpollo-windows`) emit verified offline PNGs directly from real production render code. |
 | Nightjar Android `DemoFixtures` / `Demo70States` | `HostCapabilities.Feature` (Wave 1–3 features from `00-protocol-reservations.md` §6) | `DemoFixturesCapabilitiesTest.java` asserts every 7.0.0 demo state enables features strictly via `HostCapabilities` (never `Family.RUBYLIGHT` brand checks). |
 | Nightjar Desktop `ui/demo_70.rs` | `nightjar_core::http::capabilities::HostCapabilities` & `rubylight_native_api` v1 structs | `cargo test -p nightjar-desktop --locked demo_70` compiles against exact production Rust structs; any API break fails compilation immediately. |
 | Benchmark Callout Cards (`trailer.py`, `render-console-tour.py`) | `rust/PERFORMANCE.md` dated run anchors | `tools/check_demo_provenance.py` parses every quoted benchmark number in trailer/tour manifests and asserts exact verbatim match against its `rust/PERFORMANCE.md` anchor text. |
@@ -74,25 +74,25 @@ Even though showcase mode is 100% offline, its mock JSON payloads and render hoo
 ### 2.2 Strict Separation of Debug Demo Code from Release Binaries
 
 - **Android**: All `Demo*` activities, fixtures, procedural covers (`app/src/debug/assets/demo/art/`), and synthetic flight videos (`app/src/debug/assets/demo/video/`) remain strictly under `client/app/src/debug/`. Release APKs (`nonRootRelease`, `rootRelease`) compile and package zero demo bytes (`applicationId` stays `com.butterpollo.client`).
-- **Desktop**: `shot.rs` and `ui/demo_70.rs` remain `#[cfg(any(feature = "demo-library", test))]`, wired strictly through `client/protocol/desktop/src/ui.rs` right beside existing `mod demo;` (NEVER via grandfathered `main.rs` or non-existent `lib.rs`), so release binaries carry zero demo payload.
+- **Desktop**: `shot.rs` and `ui/demo_70.rs` remain `#[cfg(any(feature = "demo-library", test))]`, wired strictly through `client/protocol/desktop-ui/src/ui.rs` right beside existing `mod demo;` (NEVER via grandfathered `main.rs` or non-existent `lib.rs`), so release binaries carry zero demo payload.
 - **Host Console**: `rust/web/scripts/` and `docs/media/` capture scripts are never copied into `rust/web/dist/` or embedded in `butterpollo.exe`.
 
 ---
 
 ## 3. Architecture & <=800-LOC Module Plan
 
-All paths below must be re-verified against `docs/code-map.md` and `client/docs/code-map.md` in Phase 2 (`[verify post-sprint code-map.md]`). Every new `.rs` module carries a `//!` header, every new `.java` class carries a `/**` header, and every new source file stays strictly `<= 800` LOC.
+All paths below must be re-verified against `docs/code-map.md` and `client/docs/code-map.md` in Phase 2 (`docs/code-map.md`). Every new `.rs` module carries a `//!` header, every new `.java` class carries a `/**` header, and every new source file stays strictly `<= 800` LOC.
 
 ### 3.1 Grandfathered Files in `tools/size_ratchet.json` (DO NOT GROW)
 
 | Grandfathered File | Ratchet Ceiling | Strategy in Item 18 |
 | --- | ---: | --- |
-| `client/protocol/desktop/src/ui.rs` `[verify post-sprint code-map.md]` | 1586 | Wire `ui/demo_70.rs` with a 2-line `#[cfg(any(feature = "demo-library", test))] pub(crate) mod demo_70;` declaration beside existing `mod demo;` (NEVER via grandfathered `main.rs` or non-existent `lib.rs`); keep net LOC `<= 1586`. |
-| `client/protocol/desktop/src/ui/demo.rs` `[verify post-sprint code-map.md]` | 859 | Keep existing 6.x fixture untouched; place all 7.0.0 desktop demo states in new `client/protocol/desktop/src/ui/demo_70.rs`. |
-| `client/protocol/desktop/src/ui/tests.rs` `[verify post-sprint code-map.md]` | 9298 | Put all new 7.0.0 CPU screenshot tests in `client/protocol/desktop/src/shot_70_tests.rs`. |
-| `client/app/src/main/java/com/limelight/ui/StreamMenu.java` `[verify post-sprint code-map.md]` | 1321 | Zero edits from Item 18; `Demo70States` drives the real redesigned Console Control Center & Stream Menu via `DemoFixtures`. |
-| `rust/web/src/lib/api.ts` `[verify post-sprint code-map.md]` | 1653 | Zero edits from Item 18; fixtures import existing types read-only. |
-| `client/protocol/desktop/src/strings/*.rs` `[verify post-sprint code-map.md]` | 1750 each | Zero edits from Item 18; desktop demo strings use existing keys or `strings_70/<code>.rs`. |
+| `client/protocol/desktop-ui/src/ui.rs` | 1586 | Wire `ui/demo_70.rs` with a 2-line `#[cfg(any(feature = "demo-library", test))] pub(crate) mod demo_70;` declaration beside existing `mod demo;` (NEVER via grandfathered `main.rs` or non-existent `lib.rs`); keep net LOC `<= 1586`. |
+| `client/protocol/desktop-ui/src/ui/demo.rs` | 859 | Keep existing 6.x fixture untouched; place all 7.0.0 desktop demo states in new `client/protocol/desktop-ui/src/ui/demo_70.rs`. |
+| `client/protocol/desktop-ui/src/ui/tests.rs` | 9298 | Put all new 7.0.0 CPU screenshot tests in `client/protocol/desktop/src/shot_70_tests.rs`. |
+| `client/app/src/main/java/com/limelight/ui/StreamMenu.java` | 1321 | Zero edits from Item 18; `Demo70States` drives the real redesigned Console Control Center & Stream Menu via `DemoFixtures`. |
+| `rust/web/src/lib/api.ts` | 1653 | Zero edits from Item 18; fixtures import existing types read-only. |
+| `client/protocol/desktop-config/src/strings/*.rs` | 1750 each | Zero edits from Item 18; desktop demo strings use existing keys or `strings_70/<code>.rs`. |
 
 *(Note: `.cjs`, `.mjs`, `.ps1`, and `.py` scripts are outside `arch_check.py`'s `.rs/.java/.kt/.ts/.svelte` scope, yet every new script stays modular and `<= 500` LOC for maintainability.)*
 
@@ -100,23 +100,23 @@ All paths below must be re-verified against `docs/code-map.md` and `client/docs/
 
 | Module / Script Path | Target LOC | Responsibility |
 | --- | ---: | --- |
-| `client/scripts/demo/covers.mjs` `[verify post-sprint code-map.md]` | ~420 *(split scenes into `covers_scenes.mjs`)* | Upgraded to 7.0 Console-Quality art direction: generates 100% original procedural SVG artwork (2:3 posters + 16:9 hero-crop-safe compositions, Figtree typography, zero external images/logos) for Android (`app/src/debug/assets/demo/art/N.jpg`), Desktop (`shot.rs`), and Console 7.0 (`rust/web/scripts/demo/art/*.webp`), plus canonical `demo-catalog.json` and `out/demo/assets/covers-contact.png`. |
+| `client/scripts/demo/covers.mjs` | ~420 *(split scenes into `covers_scenes.mjs`)* | Upgraded to 7.0 Console-Quality art direction: generates 100% original procedural SVG artwork (2:3 posters + 16:9 hero-crop-safe compositions, Figtree typography, zero external images/logos) for Android (`app/src/debug/assets/demo/art/N.jpg`), Desktop (`shot.rs`), and Console 7.0 (`rust/web/scripts/demo/art/*.webp`), plus canonical `demo-catalog.json` and `out/demo/assets/covers-contact.png`. |
 | `client/scripts/demo/covers_scenes.mjs` *(new)* | ~480 | Pure procedural SVG scene definitions for the 10 fictional titles, calibrated for both Nightjar ambient extraction and Rubylight Cover-Lit Per-Game Studio lighting. |
-| `client/scripts/demo/GenerateAssets.java` `[verify post-sprint code-map.md]` | ~340 | 100% synthetic Java2D `1920×1080/60` flight footage generator (`sample_*.mp4`) with crisp reference geometry for Frame Warp 2.0, VRR, Stream Doctor 2.0, Modern Virtual Controller Studio (#151), Phone Safe Area (#152), and Couch Menu compositing. |
+| `client/scripts/demo/GenerateAssets.java` | ~340 | 100% synthetic Java2D `1920×1080/60` flight footage generator (`sample_*.mp4`) with crisp reference geometry for Frame Warp 2.0, VRR, Stream Doctor 2.0, Modern Virtual Controller Studio (#151), Phone Safe Area (#152), and Couch Menu compositing. |
 | `rust/web/scripts/demo/fixtures_70.cjs` *(new)* | ~380 | Deterministic Rubylight 7.0 fixtures for every web surface: Console Command Stage, Display Topology Visualizer (physical + `rubylight-vdisplay` + DPI map), Cover-Lit Per-Game Studio, QR Onboarding (scrubbed offline RFC 5737 URI), `Ctrl+K` palette, Browser `/play` & `/guest`, DVR Clips, Devices (`rubylight-vgamepad` VHF ready, Hub Sync, Away Wake Relay), Settings, and Plain-English Diagnostics. 100% original catalog from `demo-catalog.json`; **zero mod names, zero `"Experimental"`**. |
 | `rust/web/scripts/demo/art/` *(generated)* | assets | Procedural SVG/WebP covers exported by `covers.mjs --web` (0 third-party art). |
-| `rust/web/scripts/screenshots.cjs` `[verify post-sprint code-map.md]` | ~280 | Refactored to consume `demo/fixtures_70.cjs`, add `SHOT_MODE=showcase` (enforces fictional catalog + `Sample data` ribbon), and capture all redesigned Rubylight 7.0 routes including Command Stage (`/`), Display Topology Visualizer, Cover-Lit Per-Game Studio, QR Onboarding, `Ctrl+K`, Browser `/play`, Browser `/guest`, DVR, Devices, Settings, and Diagnostics. |
+| `rust/web/scripts/screenshots.cjs` | ~280 | Refactored to consume `demo/fixtures_70.cjs`, add `SHOT_MODE=showcase` (enforces fictional catalog + `Sample data` ribbon), and capture all redesigned Rubylight 7.0 routes including Command Stage (`/`), Display Topology Visualizer, Cover-Lit Per-Game Studio, QR Onboarding, `Ctrl+K`, Browser `/play`, Browser `/guest`, DVR, Devices, Settings, and Diagnostics. |
 | `rust/web/scripts/console-tour.cjs` *(new)* | ~300 | Playwright deterministic 60 fps interactive tour recorder sweeping every redesigned Rubylight 7.0 web surface (Command Stage -> Display Topology Visualizer -> Cover-Lit Per-Game Studio -> QR Onboarding -> `Ctrl+K` -> DVR -> Diagnostics -> `/play` & `/guest`), writing deterministic frames + timing manifest. |
 | `rust/web/scripts/render-console-tour.py` *(new)* | ~280 | Pipes captured Console 7.0 + Couch Menu + Installer QR Finish + Tray frames with Studio 7.0 typography and explicit `Sample data · Offline demo` captions to FFmpeg (`libx264` `1920×1080/60` `+faststart` silent + `libwebp` animated README teaser) with `mpdecimate` smoothness report. |
 | `rust/web/DemoFixtures.test.mjs` *(new)* | ~180 | Node test verifying `fixtures_70.cjs` JSON validity against `api.ts` contracts, zero commercial titles, zero mod names, zero `"Experimental"`, zero real IP/MAC/PIN leaks, and SSR stability across main console, `/play`, and `/guest`. |
-| `rust/web/scripts/capture_host_surfaces.py` *(new)* | ~190 | Orchestrates deterministic offline golden PNG captures for the 3 non-browser host surfaces: Host-Drawn Couch Menu (`rust/core/src/couch_menu/render.rs` composited over `GenerateAssets.java` frame with `DEMO` pill), Installer QR Finish Screen (via `-p butterpollo-setup` + canonical `ui_theme.rs`), and System Tray (`rust/windows/src/tray/status.rs` DPI badges + menu). |
+| `rust/web/scripts/capture_host_surfaces.py` *(new)* | ~190 | Orchestrates deterministic offline golden PNG captures for the 3 non-browser host surfaces: Host-Drawn Couch Menu (`rust/core/session/src/couch_menu_model/render.rs` composited over `GenerateAssets.java` frame with `DEMO` pill), Installer QR Finish Screen (via `-p butterpollo-setup` + canonical `ui_theme.rs`), and System Tray (`rust/windows/io/src/tray/status.rs` DPI badges + menu). |
 | `client/app/src/debug/java/com/limelight/demo/Demo70States.java` *(new)* | ~450 | Debug-only fixture wiring for ALL redesigned Nightjar 7.0 surfaces: `home-cinema`, `control-center` (all 6 visual cards: Quick Actions, Picture/VRR/Frame-Warp, Audio Mixer + Party Voice, Instant Clip DVR, Controller/Radial, Power/Suspend), `controller-editor` (and sub-studio states: live DualSense/Xbox/Switch/Steam/Handheld diagram telemetry, Sticks & Triggers curves, Gyroscope Studio, Radial Menu Builder, Haptics & Lightbar), `settings-cards`, `first-run-cinema`, `virtual-pad-studio` (#151 Touch tab with separable ABXY/D-pad, floating micro-toolbar & 0% stealth), `reverse-landscape` (#152), `curtain`, `doctor`, and `coherence`. Applies explicit `DEMO` overlay watermark on every scripted stream view. |
-| `client/app/src/debug/java/com/limelight/demo/DemoLauncherActivity.java` `[verify post-sprint code-map.md]` | ~220 | Routes new 7.0.0 `--es state ...` extras to `Demo70States.java` while preserving all existing 6.x states. |
-| `client/scripts/demo/capture-stills.ps1` `[verify post-sprint code-map.md]` | ~145 | Captures all 7.0 portrait, handheld, TV, and reverse-landscape stills (`home-cinema`, `control-center-*`, `controller-editor`, `settings-cards`, `first-run-cinema`, `virtual-pad-studio`, `reverse-landscape`, `launch-curtain`, `stream-doctor`, `coherence`) with PNG dimension & safe-area checks. |
-| `client/scripts/demo/capture-video.ps1` `[verify post-sprint code-map.md]` | ~325 | Adds 7.0 60 fps recorded beats (`17-home-cinema`, `18-first-run-pairing`, `19-curtain`, `20-control-center-dock`, `21-controller-editor`, `22-settings-cards`, `23-virtual-pad-studio`, `24-reverse-landscape`, `25-doctor-and-suspend`) locked to the 60 fps Choreographer/screenrecord grid. |
+| `client/app/src/debug/java/com/limelight/demo/DemoLauncherActivity.java` | ~220 | Routes new 7.0.0 `--es state ...` extras to `Demo70States.java` while preserving all existing 6.x states. |
+| `client/scripts/demo/capture-stills.ps1` | ~145 | Captures all 7.0 portrait, handheld, TV, and reverse-landscape stills (`home-cinema`, `control-center-*`, `controller-editor`, `settings-cards`, `first-run-cinema`, `virtual-pad-studio`, `reverse-landscape`, `launch-curtain`, `stream-doctor`, `coherence`) with PNG dimension & safe-area checks. |
+| `client/scripts/demo/capture-video.ps1` | ~325 | Adds 7.0 60 fps recorded beats (`17-home-cinema`, `18-first-run-pairing`, `19-curtain`, `20-control-center-dock`, `21-controller-editor`, `22-settings-cards`, `23-virtual-pad-studio`, `24-reverse-landscape`, `25-doctor-and-suspend`) locked to the 60 fps Choreographer/screenrecord grid. |
 | `client/scripts/demo/trailer_beats_70.py` *(new)* | ~380 | Modular 7.0.0 storyboard beats imported by `trailer.py`: Cinematic Full-Bleed Console Home, First-Run & Pairing Cinema, Launch Curtain, Console Control Center Floating Dock & 6 Visual Cards, **Visual Console-Grade Controller Editor** (live diagram, sticks/curves, gyro, radial builder), Visual Preview-Card Settings, Modern Virtual Controller Studio (#151), Phone Safe Area / Reverse Landscape (#152), Desktop/Handheld/TV Parity, Honest `PERFORMANCE.md` Beat, Platforms & Hosts. |
-| `client/scripts/demo/trailer.py` `[verify post-sprint code-map.md]` | ~430 | Updated orchestrator loading Wave 0 token palette from `client/design/tokens.json` (no hardcoded legacy 6.x colors), integrating `trailer_beats_70.py`, enforcing 9:16 safe areas (`y in [290, 1440]`, right `120 px` clear), `DEMO` captions, and emitting `trailer-16x9.mp4`, `trailer-9x16.mp4`, `teaser.webp`, and posters. |
-| `client/protocol/desktop/src/ui/demo_70.rs` *(new)* | ~410 | Deterministic 7.0.0 desktop demo states matching Android/TV/Handheld parity: Full-Bleed Console Home (Night/Day/OLED/High Contrast), Console Control Center Floating Dock & all 6 visual cards, **Visual Console-Grade Controller Editor** (live diagram, Sticks & Triggers, Gyroscope Studio, Radial Menu Builder, Haptics & Lightbar), Visual Preview-Card Settings, First-Run & Pairing Cinema, Launch Curtain, Stream Doctor 2.0, Input Deck Radial, Coherence Workstation, DVR Clips, and Quick Suspend. |
+| `client/scripts/demo/trailer.py` | ~430 | Updated orchestrator loading Wave 0 token palette from `client/design/tokens.json` (no hardcoded legacy 6.x colors), integrating `trailer_beats_70.py`, enforcing 9:16 safe areas (`y in [290, 1440]`, right `120 px` clear), `DEMO` captions, and emitting `trailer-16x9.mp4`, `trailer-9x16.mp4`, `teaser.webp`, and posters. |
+| `client/protocol/desktop-ui/src/ui/demo_70.rs` *(new)* | ~410 | Deterministic 7.0.0 desktop demo states matching Android/TV/Handheld parity: Full-Bleed Console Home (Night/Day/OLED/High Contrast), Console Control Center Floating Dock & all 6 visual cards, **Visual Console-Grade Controller Editor** (live diagram, Sticks & Triggers, Gyroscope Studio, Radial Menu Builder, Haptics & Lightbar), Visual Preview-Card Settings, First-Run & Pairing Cinema, Launch Curtain, Stream Doctor 2.0, Input Deck Radial, Coherence Workstation, DVR Clips, and Quick Suspend. |
 | `client/protocol/desktop/src/shot_70_tests.rs` *(new)* | ~260 | CPU-rasterized screenshot suite invoking `shot::Canvas` to write verified 7.0.0 desktop PNGs across themes, input sources, and locales without needing a display or GPU. |
 | `tools/check_demo_provenance.py` *(new)* | ~310 | Automated provenance & honesty gate verifying `covers.mjs` 1:1 procedural mapping, zero third-party image inputs, banned commercial title & mod-name list (`Nucleus Co-op`, `ANR`), zero `"Experimental"`, `DEMO` badge presence on every synthetic stream beat, and verbatim `rust/PERFORMANCE.md` citation match. |
 
@@ -217,10 +217,10 @@ Executed via `orchestrator_core.py`'s staged slice runner with strictly non-over
 
 ### Stage 1 — Slice 18A: Unified 7.0 Console-Art Procedural Covers & Synthetic Footage (`covers.mjs` + `GenerateAssets.java`)
 - **Files (exclusive)**:
-  - `client/scripts/demo/covers.mjs` `[verify post-sprint code-map.md]`
+  - `client/scripts/demo/covers.mjs`
   - `client/scripts/demo/covers_scenes.mjs` *(new)*
   - `client/scripts/demo/demo-catalog.json` *(generated canonical schema consumed by Stage 2)*
-  - `client/scripts/demo/GenerateAssets.java` `[verify post-sprint code-map.md]`
+  - `client/scripts/demo/GenerateAssets.java`
   - `client/app/src/debug/assets/demo/art/*.jpg` *(regenerated)*
 
 ### Stage 2 — Slice 18B: Rubylight 7.0 All-Surface Captures & 60 fps Interactive Tour *(parallel with 18C, 18D)*
@@ -228,31 +228,31 @@ Executed via `orchestrator_core.py`'s staged slice runner with strictly non-over
 - **Files (exclusive)**:
   - `rust/web/scripts/demo/fixtures_70.cjs` *(new)*
   - `rust/web/scripts/demo/art/*.webp` *(generated by `covers.mjs --web`)*
-  - `rust/web/scripts/screenshots.cjs` `[verify post-sprint code-map.md]`
+  - `rust/web/scripts/screenshots.cjs`
   - `rust/web/scripts/console-tour.cjs` *(new)*
   - `rust/web/scripts/render-console-tour.py` *(new)*
   - `rust/web/scripts/capture_host_surfaces.py` *(new)*
   - `rust/web/DemoFixtures.test.mjs` *(new)*
-  - `docs/media/build_readme_media.py` `[verify post-sprint code-map.md]`
+  - `docs/media/build_readme_media.py`
 
 ### Stage 2 — Slice 18C: Nightjar 7.0 Android Debug Demo States & 60 fps Capture/Trailer Pipeline *(parallel with 18B, 18D)*
 *(Covers Cinematic Full-Bleed Home, Console Control Center floating dock & 6 visual cards, Visual Preview-Card Settings, First-Run & Pairing Cinema, Modern Virtual Controller Studio #151, Phone Safe Area / Reverse Landscape #152, Launch Curtain, Stream Doctor 2.0, Coherence)*
 - **Files (exclusive)**:
   - `client/app/src/debug/java/com/limelight/demo/Demo70States.java` *(new)*
-  - `client/app/src/debug/java/com/limelight/demo/DemoLauncherActivity.java` `[verify post-sprint code-map.md]`
+  - `client/app/src/debug/java/com/limelight/demo/DemoLauncherActivity.java`
   - `client/app/src/testDebug/java/com/limelight/demo/DemoFixturesCapabilitiesTest.java` *(new)*
-  - `client/scripts/demo/capture-stills.ps1` `[verify post-sprint code-map.md]`
-  - `client/scripts/demo/capture-video.ps1` `[verify post-sprint code-map.md]`
+  - `client/scripts/demo/capture-stills.ps1`
+  - `client/scripts/demo/capture-video.ps1`
   - `client/scripts/demo/trailer_beats_70.py` *(new)*
-  - `client/scripts/demo/trailer.py` `[verify post-sprint code-map.md]`
-  - `client/docs/demo/shotlist.md` `[verify post-sprint code-map.md]`
-  - `client/docs/demo/README.md` `[verify post-sprint code-map.md]`
+  - `client/scripts/demo/trailer.py`
+  - `client/docs/demo/shotlist.md`
+  - `client/docs/demo/README.md`
 
 ### Stage 2 — Slice 18D: Nightjar 7.0 Desktop Offline CPU Demo Frames (`shot.rs` + `ui/demo_70.rs`) *(parallel with 18B, 18C)*
 - **Files (exclusive)**:
-  - `client/protocol/desktop/src/ui/demo_70.rs` *(new)*
+  - `client/protocol/desktop-ui/src/ui/demo_70.rs` *(new)*
   - `client/protocol/desktop/src/shot_70_tests.rs` *(new)*
-  - `client/protocol/desktop/src/ui.rs` *(wire `#[cfg(any(feature = "demo-library", test))] pub(crate) mod demo_70;` right beside existing `mod demo;` — NEVER wire through grandfathered `main.rs` or non-existent `client/protocol/desktop/src/lib.rs`, keeping `ui.rs <= 1586` LOC and `ui/demo.rs` untouched)* `[verify post-sprint code-map.md]`
+  - `client/protocol/desktop-ui/src/ui.rs` *(wire `#[cfg(any(feature = "demo-library", test))] pub(crate) mod demo_70;` right beside existing `mod demo;` — NEVER wire through grandfathered `main.rs` or non-existent `client/protocol/desktop/src/lib.rs`, keeping `ui.rs <= 1586` LOC and `ui/demo.rs` untouched)*
 
 ### Stage 3 — Slice 18E: Provenance & Honesty Automated Gate *(runs after Stage 2)*
 - **Files (exclusive)**:

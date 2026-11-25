@@ -2,7 +2,7 @@
   "schema_version": 1,
   "release_target": "7.0.0",
   "integration_branch": "roadmap/redesign-and-waves-1-5",
-  "updated_at": "2026-11-22T03:06:20Z",
+  "updated_at": "2026-11-25T16:09:27Z",
   "waves": {
     "0": {
       "status": "pending",
@@ -202,7 +202,7 @@
       "id": "21",
       "slug": "desktop-perf-and-nvenc",
       "wave": 1,
-      "title": "Desktop Client Performance Overhaul (macOS, Linux, Windows) & Host NVIDIA NVENC Low-Latency Overhaul",
+      "title": "Desktop Client Performance Overhaul (macOS, Linux + #181, Windows) & Host NVIDIA NVENC Low-Latency Overhaul",
       "design_doc": "docs/designs/21-desktop-perf-and-nvenc.md",
       "depends_on": [
         "04",
@@ -275,7 +275,7 @@
       "id": "29",
       "slug": "android-pacing-and-transport",
       "wave": 1,
-      "title": "High-Refresh Transport Pacing, Android MediaCodec/ARR Pacing & WebRTC Transport Resilience (#144, #7, #119, #116)",
+      "title": "High-Refresh Host Burst Pacing, Android MediaCodec Zero-Debt & WebRTC Transport Resilience (#144, #7, #116)",
       "design_doc": "docs/designs/29-android-pacing-and-transport.md",
       "depends_on": [
         "04",
@@ -342,7 +342,7 @@
       "id": "09",
       "slug": "host-hub-sync",
       "wave": 2,
-      "title": "Host Hub Sync (Profiles, Covers & Capabilities)",
+      "title": "Host Hub Sync (Profiles, Covers, Per-Display Recall #163 & Capabilities)",
       "design_doc": "docs/designs/09-host-hub-sync.md",
       "depends_on": [
         "01",
@@ -400,7 +400,7 @@
       "id": "12",
       "slug": "phone-safe-area",
       "wave": 2,
-      "title": "Phone Safe Area & Reverse Landscape (#152)",
+      "title": "Phone Safe Area, Both-Ways Landscape Flip & Manual Display Centering (#152, #190)",
       "design_doc": "docs/designs/12-phone-safe-area.md",
       "depends_on": [
         "02"
@@ -436,7 +436,7 @@
       "id": "24",
       "slug": "usb-forwarding-convenience",
       "wave": 2,
-      "title": "USB Forwarding Convenience (Windows usbipd-win, Linux EACCES Fallback & Controller Arbitration)",
+      "title": "Desktop USB Forwarding Convenience (Windows usbipd-win, Linux EACCES Fallback & Desktop Controller Arbitration)",
       "design_doc": "docs/designs/24-usb-forwarding-convenience.md",
       "depends_on": [],
       "hw_required": false,

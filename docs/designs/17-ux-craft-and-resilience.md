@@ -1,8 +1,8 @@
 # Item 17: UX Craft, Cold-Start, Installer, Errors & Crash-Restore Soak (#129)
 
-Status: design, not implemented (Wave 4). Written against `main` `b3d0c26b9b` (`6.2.0`) and `docs/designs/00-protocol-reservations.md`.
+Status: design, not implemented (Wave 4). Rebased 2026-11-25 onto post-refactoring `origin/main` `955ef39598` (`v6.4.1`) and `docs/designs/00-protocol-reservations.md`.
 
-Item 17 brings Rubylight 7.0.0 and Nightjar 7.0.0 from feature-complete to craft-complete across six engineering pillars aligned 100% with Wave 0's ground-up **7.0 Console-Quality Complete Redesign** across every user-facing surface: (1) cohesive console-grade tactile UI soundscape & spring-synchronized micro-haptics, (2) sub-250 ms Nightjar cold-start and parallel fast-launch pipeline, (3) redesigned 7.0 Installer + **Instant QR Pairing Finish Screen** (`rust/setup/`, consuming canonical `ui_theme.rs` from `01`) & System Tray (`rust/windows/src/tray.rs`, extending canonical `tray/status.rs` from `01`) polish with live `rubylight-vgamepad` VHF driver health and one-click repair, (4) plain-English error rewrites across `log_analysis/`, host warnings, Native API `ErrorBody { error: ApiError { ... } }`, and Nightjar error sheets, (5) pre-mutation DPI, display & Quick Suspend crash-restore hardening (issue #129) on the single canonical `RecoveryJournalV2` (`rust/core/src/recovery_journal.rs`, `recovery-journal.json` + `--recover-session` service hook from `08`) verified by a 10-cycle forced-kill soak test, and (6) a complete multi-locale (all **22** host locales in `rust/assets/locale/*.json` and all **15** Nightjar locales via `strings_70/<code>.rs`), TalkBack/AccessKit/keyboard accessibility, and dynamic input glyph sweep across all 5 Rubylight surfaces and all Nightjar form factors (auditing/extending canonical `client/protocol/policy/src/input_glyphs.rs` from `02`, preserving Moonlight V+ port credits).
+Item 17 brings Rubylight 7.0.0 and Nightjar 7.0.0 from feature-complete to craft-complete across six engineering pillars aligned 100% with Wave 0's ground-up **7.0 Console-Quality Complete Redesign** across every user-facing surface: (1) cohesive console-grade tactile UI soundscape & spring-synchronized micro-haptics, (2) sub-250 ms Nightjar cold-start and parallel fast-launch pipeline, (3) redesigned 7.0 Installer + **Instant QR Pairing Finish Screen** (`rust/setup/`, consuming canonical `ui_theme.rs` from `01`) & System Tray (`rust/windows/io/src/tray.rs`, extending canonical `tray/status.rs` from `01`) polish with live `rubylight-vgamepad` VHF driver health and one-click repair, (4) plain-English error rewrites across `log_analysis/`, host warnings, Native API `ErrorBody { error: ApiError { ... } }`, and Nightjar error sheets, (5) pre-mutation DPI, display & Quick Suspend crash-restore hardening (issue #129) on the single canonical `RecoveryJournalV2` (`rust/core/session/src/recovery_journal.rs`, `recovery-journal.json` + `--recover-session` service hook from `08`) verified by a 10-cycle forced-kill soak test, and (6) a complete multi-locale (all **22** host locales in `rust/assets/locale/*.json` and all **15** Nightjar locales via `strings_70/<code>.rs`), TalkBack/AccessKit/keyboard accessibility, and dynamic input glyph sweep across all 5 Rubylight surfaces and all Nightjar form factors (auditing/extending canonical `client/protocol/policy/src/input_glyphs.rs` from `02`, preserving Moonlight V+ port credits).
 
 ---
 
@@ -38,23 +38,23 @@ Item 17 brings Rubylight 7.0.0 and Nightjar 7.0.0 from feature-complete to craft
      - Integrates Wave 0's `rubylight-vgamepad` VHF virtual gamepad driver (zero unsigned KMDF; uses Windows Virtual HID Framework) alongside `rubylight-vdisplay`, virtual audio, Windows Firewall, and service registration, displaying live per-component health (Display driver, Virtual gamepad VHF driver, Audio driver, Firewall, Service).
      - **Instant QR Pairing Finish Screen (`rust/setup/src/finish_qr.rs`)**: when installation or repair completes and the local host starts, displays a high-contrast 7.0 pairing QR code + local PIN right inside the installer finish view so the user can aim Nightjar 7.0's **First-Run / Pairing Cinema** straight at the screen and start streaming in seconds — with direct fallback buttons **Open Web Console** and **Finish** (and graceful non-blocking fallback if service start is deferred).
      - **`--repair` one-click repair mode (`rust/setup/src/repair.rs`)**: validates driver-store signatures, restarts stuck services, repairs firewall/Start Menu shortcuts, and verifies live `rubylight-vgamepad` VHF + `rubylight-vdisplay` IDD device enumeration without wiping user config or paired devices.
-   - **System Tray & Notifications (`rust/windows/src/tray.rs`)**: extends Wave 0's canonical `rust/windows/src/tray/status.rs` (created in `01`, extended in `17`) with 7.0 Console-Quality semantic badge scales (`16/24/32/48 px` crisp contrast-ringed emerald = streaming, amber = paused / Quick Suspended, ruby = attention / driver repair needed) for light and dark Windows 10/11 taskbars.
-     - Tooltip, Windows notifications, and tray menu (`rust/windows/src/tray/menu.rs`) display live `rubylight-vgamepad` VHF and `rubylight-vdisplay` health (polled off the Win32 UI thread), plus direct actions: **Show Pairing QR…**, **Repair drivers & service…** (elevates `setup.exe --repair` visibly via UAC; fails visibly if declined), **Restore displays now** (`display_recovery::reset()`), and **Open Diagnostics** (`/help`).
+   - **System Tray & Notifications (`rust/windows/io/src/tray.rs`)**: extends Wave 0's canonical `rust/windows/io/src/tray/status.rs` (created in `01`, extended in `17`) with 7.0 Console-Quality semantic badge scales (`16/24/32/48 px` crisp contrast-ringed emerald = streaming, amber = paused / Quick Suspended, ruby = attention / driver repair needed) for light and dark Windows 10/11 taskbars.
+     - Tooltip, Windows notifications, and tray menu (`rust/windows/io/src/tray/menu.rs`) display live `rubylight-vgamepad` VHF and `rubylight-vdisplay` health (polled off the Win32 UI thread), plus direct actions: **Show Pairing QR…**, **Repair drivers & service…** (elevates `setup.exe --repair` visibly via UAC; fails visibly if declined), **Restore displays now** (`display_recovery::reset()`), and **Open Diagnostics** (`/help`).
 
 4. **Plain-English Error Rewrite**
-   - Every user-visible error across host log analysis (`rust/core/src/log_analysis/`), host console warnings (`rust/host/src/host_warnings.rs`), and Nightjar connection/decoder/native-API sheets follows a strict three-part template:
+   - Every user-visible error across host log analysis (`rust/core/session/src/log_analysis/`), host console warnings (`rust/host/stream/src/host_warnings.rs`), and Nightjar connection/decoder/native-API sheets follows a strict three-part template:
      1. **What happened** — 1–2 short plain-English sentences. Zero raw `HRESULT`, `0x887A0005`, `AMF_CODEC_NOT_SUPPORTED`, `WSAEWOULDBLOCK`, `ECONNREFUSED`, or Java exception class names in the primary text.
      2. **What to do next** — one concrete action or one-click fix button (e.g., "Restart Windows", "Switch to HEVC", "Repair drivers", "Open Firewall settings").
      3. **Technical details** — collapsed disclosure containing the exact error code, timestamp, codec/adapter context, and a **Copy details** button for bug reports.
 
 5. **DPI & Display Crash-Restore Hardening (Issue #129)**
-   - Fixes issue #129 (applications open prior to an exclusive/virtual-display stream returning oversized or mis-scaled after stream end or host crash) and hardens crash recovery for every Wave 0–3 host mutation on the single canonical `RecoveryJournalV2` (`rust/core/src/recovery_journal.rs`, persisted atomically to `recovery-journal.json` with the `--recover-session` service hook created in `08`).
+   - Fixes issue #129 (applications open prior to an exclusive/virtual-display stream returning oversized or mis-scaled after stream end or host crash) and hardens crash recovery for every Wave 0–3 host mutation on the single canonical `RecoveryJournalV2` (`rust/core/session/src/recovery_journal.rs`, persisted atomically to `recovery-journal.json` with the `--recover-session` service hook created in `08`).
    - Every host state mutation—per-monitor Windows DPI scale across ALL physical displays, resolution, refresh rate, rotation, HDR toggle, ICC profile, display arrangement/clone topology, audio sink & per-app audio route, microphone route, frame limiter, GPU driver profile, and Quick Suspend frozen process records—is committed to `recovery-journal.json` (`RecoveryJournalV2`) via atomic write-ahead journaling **BEFORE** the OS mutation executes.
    - Adds a bounded post-restore DPI settlement verifier (`0 ms` / `150 ms` / `500 ms`, capped at `1500 ms`) so asynchronous Windows Explorer/DWM DPI recalculation after monitor wake cannot silently override the restored scale.
    - Verified by an automated **10-cycle forced-kill / crash-restore soak test** (`TerminateProcess` injected at pre-apply, active-stream, and mid-restore windows, exercising `--recover-session` and startup recovery on `recovery-journal.json`).
 
 6. **15 Nightjar + 22 Host Locales, Accessibility & Dynamic Input Glyph Sweep (All Surfaces)**
-   - Brings every new and rewritten 7.0.0 string to 100% parity across **all 5 Rubylight surfaces** (Web Console + no-script HTML console, Browser `/play` & `/guest`, Host-Drawn Couch Menu `L3+R3`, Windows Installer + QR Finish Screen, System Tray & Notifications) in **all 22 host locale files** in `rust/assets/locale/*.json` (`bg`, `cs`, `de`, `en`, `en_GB`, `en_US`, `es`, `fr`, `hu`, `it`, `ja`, `ko`, `pl`, `pt`, `pt_BR`, `ru`, `sv`, `tr`, `uk`, `vi`, `zh`, `zh_TW`) and **all Nightjar form factors & redesigned surfaces** (Phone physics-sheets + Modern Virtual Controller Studio `#151` + Reverse Landscape `#152`, Handheld, Android TV / Fire TV 10-ft OS, Desktop Win/Linux/macOS with `#144`/`#146` scaling, Console Control Center floating dock & visual cards, Visual Preview-Card Settings, First-Run / Pairing Cinema, and Wave 1–3 overlays) in **all 15 Nightjar locales** (`en`, `de`, `es`, `fr`, `it`, `ja`, `ko`, `pl`, `pt_br`, `ru`, `tr`, `uk`, `vi`, `zh_hans`, `zh_hant`, with 100% of new Desktop translations routed exclusively to canonical chained `client/protocol/desktop/src/strings_70/<code>.rs` — zero lines added to grandfathered `strings/*.rs`!).
+   - Brings every new and rewritten 7.0.0 string to 100% parity across **all 5 Rubylight surfaces** (Web Console + no-script HTML console, Browser `/play` & `/guest`, Host-Drawn Couch Menu `L3+R3`, Windows Installer + QR Finish Screen, System Tray & Notifications) in **all 22 host locale files** in `rust/assets/locale/*.json` (`bg`, `cs`, `de`, `en`, `en_GB`, `en_US`, `es`, `fr`, `hu`, `it`, `ja`, `ko`, `pl`, `pt`, `pt_BR`, `ru`, `sv`, `tr`, `uk`, `vi`, `zh`, `zh_TW`) and **all Nightjar form factors & redesigned surfaces** (Phone physics-sheets + Modern Virtual Controller Studio `#151` + Reverse Landscape `#152`, Handheld, Android TV / Fire TV 10-ft OS, Desktop Win/Linux/macOS with `#144`/`#146` scaling, Console Control Center floating dock & visual cards, Visual Preview-Card Settings, First-Run / Pairing Cinema, and Wave 1–3 overlays) in **all 15 Nightjar locales** (`en`, `de`, `es`, `fr`, `it`, `ja`, `ko`, `pl`, `pt_br`, `ru`, `tr`, `uk`, `vi`, `zh_hans`, `zh_hant`, with 100% of new Desktop translations routed exclusively to canonical chained `client/protocol/desktop-config/src/strings_70/<code>.rs` — zero lines added to grandfathered `strings/*.rs`!).
    - Audits and extends the single canonical **`client/protocol/policy/src/input_glyphs.rs`** refactored in `02` from `desktop/src/glyphs.rs` (**explicitly preserving Moonlight V+ port credits** in code comments, `NOTICE`, `rust/THIRD_PARTY.md`, and README per `AGENTS.md`, never naming ports in UI text or release notes) so dynamic input glyphs switch instantaneously on the latest real input event across Console Home, First-Run/Pairing Cinema, Console Control Center floating dock & cards, Visual Preview-Card Settings, Virtual Controller Studio `#151`, Error Sheet, and Wave 1–3 overlays: Xbox, PlayStation (`0x054C`), Nintendo (`0x057E`, respecting Nintendo confirm/cancel swap), Steam Deck (`0x28DE`), Keyboard, TV Remote (`OK`/`Hold OK`), and **no hints for Touch / Mouse**.
    - Full TalkBack (Android — including physics-sheet detents, Control Center dock landmarks, Preview-Card descriptions, Virtual Controller Studio `#151` accessible editor actions), AccessKit & keyboard traversal (Desktop), and WCAG AA (`>= 4.5:1` text / `>= 3.0:1` UI & focus contrast) compliance across all 5 Rubylight surfaces + all Nightjar themes, with zero focus traps and strict `Motion.reduced()` / `prefers-reduced-motion` fidelity.
 
@@ -77,7 +77,7 @@ Per `docs/designs/00-protocol-reservations.md` §7, **Item 17 requires ZERO new 
 
 ### 2.2 Plain-English Error Envelope (Additive Native API v1 Compatibility)
 
-Preserves the existing `ErrorBody { error: ApiError { code, message, setting, retry_after_ms } }` envelope in `rust/core/native-api/src/error.rs` intact (NEVER flattens `error` into a bare string!). Adds `title`, `next_step`, and `technical_detail` strictly as optional `#[serde(default, skip_serializing_if = "Option::is_none")]` fields **inside `ApiError`**:
+Preserves the existing `ErrorBody { error: ApiError { code, message, setting, retry_after_ms } }` envelope in `client/protocol/native-api/src/error.rs` intact (NEVER flattens `error` into a bare string!). Adds `title`, `next_step`, and `technical_detail` strictly as optional `#[serde(default, skip_serializing_if = "Option::is_none")]` fields **inside `ApiError`**:
 
 ```rust
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -122,7 +122,7 @@ Older Nightjar builds continue deserializing `ErrorBody { error: ApiError }` and
 
 ## 3. Architecture & <=800-LOC Module Plan
 
-All paths below must be re-verified against `docs/code-map.md` and `client/docs/code-map.md` in Phase 2 (`[verify post-sprint code-map.md]`).
+All paths below must be re-verified against `docs/code-map.md` and `client/docs/code-map.md` in Phase 2 (`docs/code-map.md`).
 
 ### 3.1 Grandfathered Files in `tools/size_ratchet.json` (DO NOT GROW)
 
@@ -130,40 +130,40 @@ The following relevant files are grandfathered above the 800-LOC ceiling in `too
 
 | Grandfathered File | Ratchet Ceiling | Strategy in Item 17 |
 | --- | ---: | --- |
-| `rust/setup/src/install.rs` `[verify post-sprint code-map.md]` | 2226 | Delegate VHF `rubylight-vgamepad` install & health check to new `rust/setup/src/vgamepad.rs`, repair workflow to `rust/setup/src/repair.rs`, and Instant QR Pairing Finish Screen to `rust/setup/src/finish_qr.rs`. |
-| `rust/setup/src/system.rs` `[verify post-sprint code-map.md]` | 1732 | Keep PnP/driver-store queries for VHF in `rust/setup/src/vgamepad.rs`. |
-| `rust/windows/src/tray.rs` `[verify post-sprint code-map.md]` | 827 | Extend canonical `rust/windows/src/tray/status.rs` (created in `01`) and extract menu construction to `rust/windows/src/tray/menu.rs`; keep `tray.rs` below 800 LOC. |
-| `rust/host/src/display_session.rs` `[verify post-sprint code-map.md]` | 3158 | Add pre-mutation DPI & Quick Suspend journal hook inside new `rust/host/src/display_session/journal_tx.rs` writing canonical `RecoveryJournalV2`. |
-| `rust/windows/src/display_recovery.rs` `[verify post-sprint code-map.md]` | 913 | Split Windows recovery executor into `rust/windows/src/display_recovery/mod.rs`, `restore.rs`, `dpi_settle.rs`, and `soak_tests.rs` consuming canonical `RecoveryJournalV2` from `rust/core/src/recovery_journal.rs` — bringing every file below 500 LOC! |
-| `rust/windows/src/display/recovery.rs` `[verify post-sprint code-map.md]` | 1436 | Call `dpi_settle::verify_and_restore_scales()` instead of adding inline polling logic. |
-| `client/app/src/main/java/com/limelight/console/ConsoleHomeActivity.java` `[verify post-sprint code-map.md]` | 1440 | Delegate cold-start deferral to new `StartupScheduler.java` and warm probe lookup to `DecoderCapabilityCache.java`. |
-| `client/app/src/main/java/com/limelight/GameConnection.java` `[verify post-sprint code-map.md]` | 1942 | Delegate parallel pre-launch to `FastLaunchCoordinator.java` and errors to `ErrorSheet.java`. |
-| `client/app/src/main/java/com/limelight/binding/video/MediaCodecHelper.java` `[verify post-sprint code-map.md]` | 1634 | Wrap probe reads through new `DecoderCapabilityCache.java` (1-line lookup hook). |
-| `client/protocol/desktop/src/main.rs` `[verify post-sprint code-map.md]` | 1124 | Delegate deferred init to `app/startup.rs` and UI feedback to `ui/feedback.rs`. |
-| `client/protocol/desktop/src/ui/dialogs.rs` `[verify post-sprint code-map.md]` | 2537 | Put plain-English error modal in new `ui/error_sheet.rs`. |
-| `client/protocol/desktop/src/strings/*.rs` (14 files) `[verify post-sprint code-map.md]` | 1750 each | **ZERO lines added to `strings/*.rs`:** Route all new 7.0.0 Desktop translations exclusively into per-locale `client/protocol/desktop/src/strings_70/<code>.rs` modules chained by `strings.rs` lookup so no existing grandfathered locale file exceeds its 1750 ceiling! |
+| `rust/setup/src/install.rs` | 2226 | Delegate VHF `rubylight-vgamepad` install & health check to new `rust/setup/src/vgamepad.rs`, repair workflow to `rust/setup/src/repair.rs`, and Instant QR Pairing Finish Screen to `rust/setup/src/finish_qr.rs`. |
+| `rust/setup/src/system.rs` | 1732 | Keep PnP/driver-store queries for VHF in `rust/setup/src/vgamepad.rs`. |
+| `rust/windows/io/src/tray.rs` | 827 | Extend canonical `rust/windows/io/src/tray/status.rs` (created in `01`) and extract menu construction to `rust/windows/io/src/tray/menu.rs`; keep `tray.rs` below 800 LOC. |
+| `rust/host/stream/src/display_session.rs` | 3158 | Add pre-mutation DPI & Quick Suspend journal hook inside new `rust/host/stream/src/display_session/journal_tx.rs` writing canonical `RecoveryJournalV2`. |
+| `rust/windows/display/src/display_recovery.rs` | 913 | Split Windows recovery executor into `rust/windows/display/src/display_recovery/mod.rs`, `restore.rs`, `dpi_settle.rs`, and `soak_tests.rs` consuming canonical `RecoveryJournalV2` from `rust/core/session/src/recovery_journal.rs` — bringing every file below 500 LOC! |
+| `rust/windows/display/src/display/recovery.rs` | 1436 | Call `dpi_settle::verify_and_restore_scales()` instead of adding inline polling logic. |
+| `client/app/src/main/java/com/limelight/console/ConsoleHomeActivity.java` | 1440 | Delegate cold-start deferral to new `StartupScheduler.java` and warm probe lookup to `DecoderCapabilityCache.java`. |
+| `client/app/src/main/java/com/limelight/GameConnection.java` | 1942 | Delegate parallel pre-launch to `FastLaunchCoordinator.java` and errors to `ErrorSheet.java`. |
+| `client/app/src/main/java/com/limelight/binding/video/MediaCodecHelper.java` | 1634 | Wrap probe reads through new `DecoderCapabilityCache.java` (1-line lookup hook). |
+| `client/protocol/desktop/src/main.rs` | 1124 | Delegate deferred init to `app/startup.rs` and UI feedback to `ui/feedback.rs`. |
+| `client/protocol/desktop-ui/src/ui/dialogs.rs` | 2537 | Put plain-English error modal in new `ui/error_sheet.rs`. |
+| `client/protocol/desktop-config/src/strings/*.rs` (14 files) | 1750 each | **ZERO lines added to `strings/*.rs`:** Route all new 7.0.0 Desktop translations exclusively into per-locale `client/protocol/desktop-config/src/strings_70/<code>.rs` modules chained by `strings.rs` lookup so no existing grandfathered locale file exceeds its 1750 ceiling! |
 
 ### 3.2 New & Refactored `<= 800`-LOC Module Plan
 
 | Module Path | Target LOC | Responsibility |
 | --- | ---: | --- |
-| `rust/core/src/log_analysis/mod.rs` `[verify post-sprint code-map.md]` | ~220 | Engine (`analyze`, `classify`, `Finding`, `Rule`), merging split rule tables. Replaces monolithic 550-LOC `log_analysis.rs` (kept under 800). |
-| `rust/core/src/log_analysis/rules_encoder.rs` | ~220 | Plain-English AMF, NVENC, PyroWave, codec, HDR-to-SDR tone-map rules (never claiming NVENC tested on HW; checked against NVENC SDK error codes). |
-| `rust/core/src/log_analysis/rules_display.rs` | ~220 | Plain-English IDD virtual display, WGC, Desktop Duplication, Win10 D3D11, DPI scale #129, and Quick Suspend rules. |
-| `rust/core/src/log_analysis/rules_driver_net.rs` | ~220 | Plain-English `rubylight-vgamepad` VHF, audio sink, firewall, port conflict, STUN/Away Wake Relay, and packet-loss rules. |
-| `rust/core/src/error_catalog.rs` | ~260 | Shared plain-English warning & Native API error catalog (`title`, `explanation`, `next_step`, `action_id`) with unit tests asserting zero raw `0x`/`HRESULT`/`errno` tokens in top-level strings. |
+| `rust/core/session/src/log_analysis/mod.rs` | ~220 | Engine (`analyze`, `classify`, `Finding`, `Rule`), merging split rule tables. Replaces monolithic 550-LOC `log_analysis.rs` (kept under 800). |
+| `rust/core/session/src/log_analysis/rules_encoder.rs` | ~220 | Plain-English AMF, NVENC, PyroWave, codec, HDR-to-SDR tone-map rules (never claiming NVENC tested on HW; checked against NVENC SDK error codes). |
+| `rust/core/session/src/log_analysis/rules_display.rs` | ~220 | Plain-English IDD virtual display, WGC, Desktop Duplication, Win10 D3D11, DPI scale #129, and Quick Suspend rules. |
+| `rust/core/session/src/log_analysis/rules_driver_net.rs` | ~220 | Plain-English `rubylight-vgamepad` VHF, audio sink, firewall, port conflict, STUN/Away Wake Relay, and packet-loss rules. |
+| `rust/core/session/src/error_catalog.rs` | ~260 | Shared plain-English warning & Native API error catalog (`title`, `explanation`, `next_step`, `action_id`) with unit tests asserting zero raw `0x`/`HRESULT`/`errno` tokens in top-level strings. |
 | `rust/setup/src/vgamepad.rs` | ~320 | `rubylight-vgamepad` VHF driver install, pnputil staging, signature check, device-node health query, and safe removal. |
 | `rust/setup/src/repair.rs` | ~340 | `--repair` orchestrator: validates `rubylight-vdisplay`, `rubylight-vgamepad`, virtual audio, service registration, firewall rules, Start Menu shortcut; generates plain-English repair summary. |
 | `rust/setup/src/finish_qr.rs` | ~240 | Redesigned 7.0 Installer **Instant QR Pairing Finish Screen**: queries local host pairing payload/PIN once installed service starts, renders high-contrast QR matrix + PIN + **Open Web Console** / **Finish** buttons styled through canonical `rust/setup/src/ui_theme.rs`, and degrades cleanly when service start is deferred. |
 | `rust/setup/src/ui_theme.rs` *(consume/extend single canonical setup theme module created in `01`)* | ~260 | Consumes and extends canonical 7.0 visual tokens & Win32/Common Controls 6 dark-chrome/brand-icon renderer from `01` with Per-Monitor-V2 DPI-aware installer, QR finish screen, and `--repair` progress styling (zero WebView2 dependency). |
-| `rust/windows/src/tray/status.rs` *(extend canonical module created in `01`)* | ~240 | Extends canonical 7.0 tray status/badge module from `01` with 16/24/32/48 px DPI scales + cached `rubylight-vgamepad` VHF & `rubylight-vdisplay` driver health snapshot (polled off the Win32 UI thread). |
-| `rust/windows/src/tray/menu.rs` | ~260 | Tray context menu & notification builder (`Show Pairing QR…`, `Repair drivers & service…`, `Restore displays now`, `Open Diagnostics`, dynamic app/Quick Suspend items). |
-| `rust/core/src/recovery_journal.rs` *(harden canonical `RecoveryJournalV2` created in `08`)* | ~320 | Single canonical atomic write-ahead journal (`RecoveryJournalV2` persisted to `recovery-journal.json` with `File::sync_all()` + atomic replace), hardened with `scale_requested` and `physical_dpi_baseline` alongside `08`'s Quick Suspend frozen-process entries. |
-| `rust/windows/src/display_recovery/restore.rs` | ~380 | Idempotent crash-restore executor driven by `--recover-session` and startup recovery: reads `RecoveryJournalV2` (`recovery-journal.json`), thaws Quick Suspend frozen processes (verified by `GetProcessTimes`), restores frame limiter, audio/mic routes, arrangement, HDR/ICC/rotation/mode, and per-monitor DPI scales. |
-| `rust/windows/src/display_recovery/dpi_settle.rs` | ~240 | Issue #129 bounded DPI settlement verifier (`0` / `150` / `500 ms` retries, max `1500 ms` budget) catching delayed Explorer/DWM DPI reversion after monitor re-attach. |
-| `rust/windows/src/display_recovery/soak_tests.rs` | ~320 | Deterministic fault-injection & `RecoveryJournalV2` round-trip tests (plus `#[ignore]` live Windows DPI/soak harness). |
-| `rust/host/src/display_session/journal_tx.rs` | ~260 | Transaction guard wrapping display/DPI/audio/suspend mutations into `RecoveryJournalV2` (`recovery-journal.json`): commits `requested` intent BEFORE OS call, finalizes `applied` after OS call, rolls back cleanly on early error. |
-| `rust/host/src/web/system_repair.rs` | ~180 | `GET /api/system/driver-health` and `POST /api/system/repair` (CSRF + local-admin guard + UAC elevation launch of `setup.exe --repair`). |
+| `rust/windows/io/src/tray/status.rs` *(extend canonical module created in `01`)* | ~240 | Extends canonical 7.0 tray status/badge module from `01` with 16/24/32/48 px DPI scales + cached `rubylight-vgamepad` VHF & `rubylight-vdisplay` driver health snapshot (polled off the Win32 UI thread). |
+| `rust/windows/io/src/tray/menu.rs` | ~260 | Tray context menu & notification builder (`Show Pairing QR…`, `Repair drivers & service…`, `Restore displays now`, `Open Diagnostics`, dynamic app/Quick Suspend items). |
+| `rust/core/session/src/recovery_journal.rs` *(harden canonical `RecoveryJournalV2` created in `08`)* | ~320 | Single canonical atomic write-ahead journal (`RecoveryJournalV2` persisted to `recovery-journal.json` with `File::sync_all()` + atomic replace), hardened with `scale_requested` and `physical_dpi_baseline` alongside `08`'s Quick Suspend frozen-process entries. |
+| `rust/windows/display/src/display_recovery/restore.rs` | ~380 | Idempotent crash-restore executor driven by `--recover-session` and startup recovery: reads `RecoveryJournalV2` (`recovery-journal.json`), thaws Quick Suspend frozen processes (verified by `GetProcessTimes`), restores frame limiter, audio/mic routes, arrangement, HDR/ICC/rotation/mode, and per-monitor DPI scales. |
+| `rust/windows/display/src/display_recovery/dpi_settle.rs` | ~240 | Issue #129 bounded DPI settlement verifier (`0` / `150` / `500 ms` retries, max `1500 ms` budget) catching delayed Explorer/DWM DPI reversion after monitor re-attach. |
+| `rust/windows/display/src/display_recovery/soak_tests.rs` | ~320 | Deterministic fault-injection & `RecoveryJournalV2` round-trip tests (plus `#[ignore]` live Windows DPI/soak harness). |
+| `rust/host/stream/src/display_session/journal_tx.rs` | ~260 | Transaction guard wrapping display/DPI/audio/suspend mutations into `RecoveryJournalV2` (`recovery-journal.json`): commits `requested` intent BEFORE OS call, finalizes `applied` after OS call, rolls back cleanly on early error. |
+| `rust/host/web/src/web/system_repair.rs` | ~180 | `GET /api/system/driver-health` and `POST /api/system/repair` (CSRF + local-admin guard + UAC elevation launch of `setup.exe --repair`). |
 | `rust/tests/crash_restore_soak.py` | ~360 | 10-cycle forced-kill (`TerminateProcess`) crash-restore soak harness against an isolated host on port `48123` (`--bind 127.0.0.1`), exercising `RecoveryJournalV2` (`recovery-journal.json`) + `--recover-session`. |
 | `client/protocol/policy/src/error_copy.rs` | ~320 | Host-neutral plain-English error mapper shared by Android (via JNI) and Desktop (`ErrorExplanation { title, what_happened, next_step, action, technical_detail }`). |
 | `client/protocol/policy/src/input_glyphs.rs` *(audit/extend canonical module created in `02`)* | ~280 | Audits and extends the single canonical dynamic glyph resolver refactored in `02` from `desktop/src/glyphs.rs` (`Xbox`, `PlayStation`, `Nintendo`, `SteamDeck`, `Keyboard`, `Remote`, `Touch` — no hints for touch/mouse — from VID/PID + event source + Nintendo A/B swap); **explicitly preserves Moonlight V+ port credits** in code comments, `NOTICE`, `rust/THIRD_PARTY.md`, and README. |
@@ -176,10 +176,10 @@ The following relevant files are grandfathered above the 800-LOC ceiling in `too
 | `client/app/src/main/java/com/limelight/startup/FastLaunchCoordinator.java` | ~280 | Parallel pre-launch fan-out (host readiness, decoder warm-check, audio pre-open, Launch Curtain sync) with strict cancellation on back press. |
 | `client/protocol/desktop/src/app/startup.rs` | ~240 | Desktop cold-start deferred init + GPU/driver-keyed warm decoder capability cache (`decoder_caps_cache.json`). |
 | `client/protocol/desktop/src/app/fast_launch.rs` | ~240 | Desktop parallel pre-launch orchestrator feeding Launch Curtain (`0x5548`). |
-| `client/protocol/desktop/src/ui/feedback.rs` | ~280 | Desktop synthesized PCM console soundscape (focus tick, confirm, back, Control Center open/close, DVR clip chime, pairing chime; SDL3 audio stream closed before stream audio opens) + spring-synced gamepad menu rumble ticks. |
-| `client/protocol/desktop/src/ui/error_sheet.rs` | ~240 | Desktop Nightjar 7.0 console-quality plain-English error sheet with AccessKit labels and collapsible technical details. |
-| `client/protocol/desktop/src/ui/glyphs.rs` | ~220 | Desktop dynamic input glyph painter backed by `nightjar_policy::input_glyphs`. |
-| `client/protocol/desktop/src/strings_70/<code>.rs` (14 non-English locales) | ~180 each | Canonical chained 7.0.0 Desktop translation modules for all 14 non-English locales, keeping grandfathered `strings/*.rs` untouched at `<= 1750` LOC. |
+| `client/protocol/desktop-ui/src/ui/feedback.rs` | ~280 | Desktop synthesized PCM console soundscape (focus tick, confirm, back, Control Center open/close, DVR clip chime, pairing chime; SDL3 audio stream closed before stream audio opens) + spring-synced gamepad menu rumble ticks. |
+| `client/protocol/desktop-ui/src/ui/error_sheet.rs` | ~240 | Desktop Nightjar 7.0 console-quality plain-English error sheet with AccessKit labels and collapsible technical details. |
+| `client/protocol/desktop-ui/src/ui/glyphs.rs` | ~220 | Desktop dynamic input glyph painter backed by `nightjar_policy::input_glyphs`. |
+| `client/protocol/desktop-config/src/strings_70/<code>.rs` (14 non-English locales) | ~180 each | Canonical chained 7.0.0 Desktop translation modules for all 14 non-English locales, keeping grandfathered `strings/*.rs` untouched at `<= 1750` LOC. |
 | `tools/check_i18n.py` | ~300 | Automated locale completeness across **all 22 host locale files** (`rust/assets/locale/*.json`) covering all 5 Rubylight surfaces + **all 15 Nightjar locales** across Android (`values-*/strings.xml`) & Desktop (`strings/` + `strings_70/`, asserting 0 lines added to `strings/*.rs`), placeholder parity, zero-bare-literal, zero-`"Experimental"`, and zero-mod-name verifier. |
 
 ### 3.3 Cold-Start & Fast-Launch Execution Timeline
@@ -251,9 +251,9 @@ Tap "Play" -> show Launch Curtain immediately (<= 16 ms)
 +-------+     +---------------+  or next stream adopts original baseline)
 ```
 
-### 4.2 Canonical `RecoveryJournalV2` (`rust/core/src/recovery_journal.rs`, `recovery-journal.json`)
+### 4.2 Canonical `RecoveryJournalV2` (`rust/core/session/src/recovery_journal.rs`, `recovery-journal.json`)
 
-Item 17 hardens and 10-cycle soaks the **single canonical `RecoveryJournalV2`** created in `08` (`rust/core/src/recovery_journal.rs`, persisted atomically to `recovery-journal.json` and recovered via the `--recover-session` service hook — zero parallel journal files or duplicate suspended-PID schemas). Backwards-compatible with v1 (`#[serde(default)]` on every new field):
+Item 17 hardens and 10-cycle soaks the **single canonical `RecoveryJournalV2`** created in `08` (`rust/core/session/src/recovery_journal.rs`, persisted atomically to `recovery-journal.json` and recovered via the `--recover-session` service hook — zero parallel journal files or duplicate suspended-PID schemas). Backwards-compatible with v1 (`#[serde(default)]` on every new field):
 
 ```rust
 #[derive(Clone, Default, Serialize, Deserialize)]
@@ -315,7 +315,7 @@ Per-display `Entry` adds `#[serde(default)] pub scale_requested: bool;`:
 - **Zero "Experimental" in UI & Zero Mod Names**:
   - Automated CI/lint check (`tools/check_i18n.py`) fails if `"Experimental"` appears in any user-facing UI string table, or if any mod name (`Nucleus Co-op` / `ANR`) appears in Rubylight Web Console, `/play`, `/guest`, Couch Menu, Installer/QR Finish Screen, System Tray, or Nightjar UI strings (`GPL-3.0 §7(e)`).
 - **Host (22 Locales) & Nightjar (15 Locales)**:
-  - Complete parity verified across **all 22 host locale files** in `rust/assets/locale/*.json` (`bg`, `cs`, `de`, `en`, `en_GB`, `en_US`, `es`, `fr`, `hu`, `it`, `ja`, `ko`, `pl`, `pt`, `pt_BR`, `ru`, `sv`, `tr`, `uk`, `vi`, `zh`, `zh_TW`) across all 5 Rubylight surfaces, and **all 15 Nightjar locales** (`en`, `de`, `es`, `fr`, `it`, `ja`, `ko`, `pl`, `pt_br`, `ru`, `tr`, `uk`, `vi`, `zh_hans`, `zh_hant`) in Android (`res/values-*/strings.xml`) and Desktop (canonical chained `client/protocol/desktop/src/strings_70/<code>.rs`, 0 lines added to grandfathered `strings/*.rs`).
+  - Complete parity verified across **all 22 host locale files** in `rust/assets/locale/*.json` (`bg`, `cs`, `de`, `en`, `en_GB`, `en_US`, `es`, `fr`, `hu`, `it`, `ja`, `ko`, `pl`, `pt`, `pt_BR`, `ru`, `sv`, `tr`, `uk`, `vi`, `zh`, `zh_TW`) across all 5 Rubylight surfaces, and **all 15 Nightjar locales** (`en`, `de`, `es`, `fr`, `it`, `ja`, `ko`, `pl`, `pt_br`, `ru`, `tr`, `uk`, `vi`, `zh_hans`, `zh_hant`) in Android (`res/values-*/strings.xml`) and Desktop (canonical chained `client/protocol/desktop-config/src/strings_70/<code>.rs`, 0 lines added to grandfathered `strings/*.rs`).
 - **Platform & Encoder Parity**:
   - Installer & tray keep Windows 10 and Windows 11, physical displays, WGC, Desktop Duplication, D3D11, AMD AMF, and NVIDIA NVENC working. NVENC error-code mappings (`NV_ENC_ERR_*`) are checked strictly against NVIDIA Video Codec SDK headers/samples (`docs/nvenc.md#checking-nvidia-code`) and never claimed as run on NVIDIA hardware.
 
@@ -327,67 +327,67 @@ Every slice below has a **strictly non-overlapping file list** so Wave 4 impleme
 
 ### Slice 17A: Host DPI & Quick Suspend Crash-Restore Journal + Soak Harness (`#129`)
 - **Files (exclusive)**:
-  - `rust/core/src/recovery_journal.rs` *(harden canonical `RecoveryJournalV2` + `recovery-journal.json` schema created in `08`)* `[verify post-sprint code-map.md]`
-  - `rust/windows/src/display_recovery.rs` *(converted to module directory `rust/windows/src/display_recovery/mod.rs`)* `[verify post-sprint code-map.md]`
-  - `rust/windows/src/display_recovery/restore.rs` *(new; invoked by `--recover-session` & startup recovery)*
-  - `rust/windows/src/display_recovery/dpi_settle.rs` *(new)*
-  - `rust/windows/src/display_recovery/soak_tests.rs` *(new)*
-  - `rust/windows/src/display/recovery.rs` `[verify post-sprint code-map.md]`
-  - `rust/host/src/display_session/journal_tx.rs` *(new)*
-  - `rust/host/src/display_session.rs` *(thin 10-line delegation to `journal_tx`; net LOC <= ratchet)* `[verify post-sprint code-map.md]`
-  - `rust/host/src/service_tasks.rs` *(ensure `--recover-session` service hook invokes hardened `RecoveryJournalV2` + `dpi_settle` path)* `[verify post-sprint code-map.md]`
+  - `rust/core/session/src/recovery_journal.rs` *(harden canonical `RecoveryJournalV2` + `recovery-journal.json` schema created in `08`)*
+  - `rust/windows/display/src/display_recovery.rs` *(converted to module directory `rust/windows/display/src/display_recovery/mod.rs`)*
+  - `rust/windows/display/src/display_recovery/restore.rs` *(new; invoked by `--recover-session` & startup recovery)*
+  - `rust/windows/display/src/display_recovery/dpi_settle.rs` *(new)*
+  - `rust/windows/display/src/display_recovery/soak_tests.rs` *(new)*
+  - `rust/windows/display/src/display/recovery.rs`
+  - `rust/host/stream/src/display_session/journal_tx.rs` *(new)*
+  - `rust/host/stream/src/display_session.rs` *(thin 10-line delegation to `journal_tx`; net LOC <= ratchet)*
+  - `rust/host/stream/src/service_tasks.rs` *(ensure `--recover-session` service hook invokes hardened `RecoveryJournalV2` + `dpi_settle` path)*
   - `rust/tests/crash_restore_soak.py` *(new)*
 
 ### Slice 17B: Redesigned 7.0 Installer, QR Finish Screen & System Tray Polish with `rubylight-vgamepad`
 - **Files (exclusive)**:
   - `rust/setup/src/vgamepad.rs` *(new)*
   - `rust/setup/src/repair.rs` *(new)*
-  - `rust/setup/src/finish_qr.rs` *(extend canonical Instant QR Pairing Finish Screen created in Wave 0 Slice `01-F`, styled via canonical `ui_theme.rs` — zero duplicate `finish_qr.rs`)* `[verify post-sprint code-map.md]`
-  - `rust/setup/src/ui_theme.rs` *(consume/extend single canonical setup theme module created in `01`)* `[verify post-sprint code-map.md]`
-  - `rust/setup/src/install.rs` *(thin delegation to `vgamepad.rs`, `repair.rs`, `finish_qr.rs`; net LOC <= ratchet)* `[verify post-sprint code-map.md]`
-  - `rust/setup/src/ui.rs` `[verify post-sprint code-map.md]`
-  - `rust/core/src/tray.rs` `[verify post-sprint code-map.md]`
-  - `rust/windows/src/tray.rs` *(thin delegation; keep `<= 800` LOC)* `[verify post-sprint code-map.md]`
-  - `rust/windows/src/tray/status.rs` *(extend canonical module created in `01`)* `[verify post-sprint code-map.md]`
-  - `rust/windows/src/tray/menu.rs` *(new)*
-  - `rust/host/src/web/system_repair.rs` *(new)*
-  - `rust/host/src/web.rs` *(register `/api/system/driver-health`, `/api/system/repair`; net <= ratchet)* `[verify post-sprint code-map.md]`
+  - `rust/setup/src/finish_qr.rs` *(extend canonical Instant QR Pairing Finish Screen created in Wave 0 Slice `01-F`, styled via canonical `ui_theme.rs` — zero duplicate `finish_qr.rs`)*
+  - `rust/setup/src/ui_theme.rs` *(consume/extend single canonical setup theme module created in `01`)*
+  - `rust/setup/src/install.rs` *(thin delegation to `vgamepad.rs`, `repair.rs`, `finish_qr.rs`; net LOC <= ratchet)*
+  - `rust/setup/src/ui.rs`
+  - `rust/core/session/src/tray.rs`
+  - `rust/windows/io/src/tray.rs` *(thin delegation; keep `<= 800` LOC)*
+  - `rust/windows/io/src/tray/status.rs` *(extend canonical module created in `01`)*
+  - `rust/windows/io/src/tray/menu.rs` *(new)*
+  - `rust/host/web/src/web/system_repair.rs` *(new)*
+  - `rust/host/web/src/web.rs` *(register `/api/system/driver-health`, `/api/system/repair`; net <= ratchet)*
 
 ### Slice 17C: Host Plain-English Errors (`log_analysis` & `host_warnings`)
 - **Files (exclusive)**:
-  - `rust/core/src/log_analysis.rs` *(converted to `rust/core/src/log_analysis/mod.rs`)* `[verify post-sprint code-map.md]`
-  - `rust/core/src/log_analysis/rules_encoder.rs` *(new)*
-  - `rust/core/src/log_analysis/rules_display.rs` *(new)*
-  - `rust/core/src/log_analysis/rules_driver_net.rs` *(new)*
-  - `rust/core/src/error_catalog.rs` *(new)*
-  - `rust/host/src/host_warnings.rs` `[verify post-sprint code-map.md]`
-  - `rust/core/native-api/src/error.rs` *(preserve `ErrorBody { error: ApiError }`; add optional `#[serde(default, skip_serializing_if = "Option::is_none")]` `title`, `next_step`, `technical_detail` inside `ApiError`)* `[verify post-sprint code-map.md]`
+  - `rust/core/session/src/log_analysis.rs` *(converted to `rust/core/session/src/log_analysis/mod.rs`)*
+  - `rust/core/session/src/log_analysis/rules_encoder.rs` *(new)*
+  - `rust/core/session/src/log_analysis/rules_display.rs` *(new)*
+  - `rust/core/session/src/log_analysis/rules_driver_net.rs` *(new)*
+  - `rust/core/session/src/error_catalog.rs` *(new)*
+  - `rust/host/stream/src/host_warnings.rs`
+  - `client/protocol/native-api/src/error.rs` *(preserve `ErrorBody { error: ApiError }`; add optional `#[serde(default, skip_serializing_if = "Option::is_none")]` `title`, `next_step`, `technical_detail` inside `ApiError`)*
 
 ### Slice 17D: Shared Client Policy (`nightjar-policy`) for Errors, Glyphs & Console Soundscape/Haptics
 - **Files (exclusive)**:
-  - `client/protocol/policy/src/lib.rs` `[verify post-sprint code-map.md]`
+  - `client/protocol/policy/src/lib.rs`
   - `client/protocol/policy/src/error_copy.rs` *(new)*
-  - `client/protocol/policy/src/input_glyphs.rs` *(audit/extend canonical module created in `02`; preserve Moonlight V+ port credits in code comments, `NOTICE`, `rust/THIRD_PARTY.md`, and README)* `[verify post-sprint code-map.md]`
+  - `client/protocol/policy/src/input_glyphs.rs` *(audit/extend canonical module created in `02`; preserve Moonlight V+ port credits in code comments, `NOTICE`, `rust/THIRD_PARTY.md`, and README)*
   - `client/protocol/policy/src/feedback.rs` *(new)*
   - `client/protocol/android/src/policy_ux.rs` *(new JNI bridge for error_copy, input_glyphs, feedback)*
-  - `client/protocol/android/src/lib.rs` *(wire `policy_ux` module; net <= ratchet)* `[verify post-sprint code-map.md]`
+  - `client/protocol/android/src/lib.rs` *(wire `policy_ux` module; net <= ratchet)*
 
 ### Slice 17E: Nightjar Android Cold-Start, Fast Launch, Console Soundscape, Spring-Synced Haptics, ErrorSheet & A11y
 *(Depends on 17D JNI bridge)*
 - **Files (exclusive)**:
-  - `client/app/src/main/java/com/limelight/ui/Haptics.java` *(spring-synced Console Home, Control Center, physics-sheet detent & Virtual Controller Studio `#151` micro-haptics)* `[verify post-sprint code-map.md]`
-  - `client/app/src/main/java/com/limelight/ui/Springs.java` *(thin spring-detent callback hook to `Haptics` & `UiSoundscape`)* `[verify post-sprint code-map.md]`
+  - `client/app/src/main/java/com/limelight/ui/Haptics.java` *(spring-synced Console Home, Control Center, physics-sheet detent & Virtual Controller Studio `#151` micro-haptics)*
+  - `client/app/src/main/java/com/limelight/ui/Springs.java` *(thin spring-detent callback hook to `Haptics` & `UiSoundscape`)*
   - `client/app/src/main/java/com/limelight/ui/UiSoundscape.java` *(new)*
   - `client/app/src/main/java/com/limelight/ui/ErrorSheet.java` *(new)*
   - `client/app/src/main/java/com/limelight/ui/InputGlyphs.java` *(new)*
-  - `client/app/src/main/java/com/limelight/ui/InputSource.java` `[verify post-sprint code-map.md]`
+  - `client/app/src/main/java/com/limelight/ui/InputSource.java`
   - `client/app/src/main/java/com/limelight/startup/StartupScheduler.java` *(new)*
   - `client/app/src/main/java/com/limelight/startup/DecoderCapabilityCache.java` *(new)*
   - `client/app/src/main/java/com/limelight/startup/FastLaunchCoordinator.java` *(new)*
-  - `client/app/src/main/java/com/limelight/console/ConsoleHomeActivity.java` *(thin delegation; net <= ratchet)* `[verify post-sprint code-map.md]`
-  - `client/app/src/main/java/com/limelight/GameConnection.java` *(thin delegation; net <= ratchet)* `[verify post-sprint code-map.md]`
-  - `client/app/src/main/java/com/limelight/binding/video/MediaCodecHelper.java` *(1-line cache lookup; net <= ratchet)* `[verify post-sprint code-map.md]`
-  - `client/app/src/main/java/com/limelight/preferences/PreferenceConfiguration.java` *(add `ui_sounds`; net <= ratchet)* `[verify post-sprint code-map.md]`
+  - `client/app/src/main/java/com/limelight/console/ConsoleHomeActivity.java` *(thin delegation; net <= ratchet)*
+  - `client/app/src/main/java/com/limelight/GameConnection.java` *(thin delegation; net <= ratchet)*
+  - `client/app/src/main/java/com/limelight/binding/video/MediaCodecHelper.java` *(1-line cache lookup; net <= ratchet)*
+  - `client/app/src/main/java/com/limelight/preferences/PreferenceConfiguration.java` *(add `ui_sounds`; net <= ratchet)*
   - `client/app/src/test/java/com/limelight/startup/ColdStartAndCacheTest.java` *(new)*
   - `client/app/src/test/java/com/limelight/ui/ErrorSheetAndGlyphsTest.java` *(new)*
 
@@ -396,22 +396,22 @@ Every slice below has a **strictly non-overlapping file list** so Wave 4 impleme
 - **Files (exclusive)**:
   - `client/protocol/desktop/src/app/startup.rs` *(new)*
   - `client/protocol/desktop/src/app/fast_launch.rs` *(new)*
-  - `client/protocol/desktop/src/ui/feedback.rs` *(new — console soundscape cues + spring-synced gamepad menu rumble)*
-  - `client/protocol/desktop/src/ui/spring.rs` *(thin spring-settle notification hook to `ui/feedback.rs`)* `[verify post-sprint code-map.md]`
-  - `client/protocol/desktop/src/ui/error_sheet.rs` *(new)*
-  - `client/protocol/desktop/src/ui/glyphs.rs` *(new)*
-  - `client/protocol/desktop/src/main.rs` *(thin delegation; net <= ratchet)* `[verify post-sprint code-map.md]`
-  - `client/protocol/desktop/src/config.rs` *(add `ui_sounds: false`; net <= ratchet)* `[verify post-sprint code-map.md]`
-  - `client/protocol/desktop/src/ui/settings.rs` *(add `ui_sounds` row; net <= ratchet)* `[verify post-sprint code-map.md]`
+  - `client/protocol/desktop-ui/src/ui/feedback.rs` *(new — console soundscape cues + spring-synced gamepad menu rumble)*
+  - `client/protocol/desktop-ui/src/ui/spring.rs` *(thin spring-settle notification hook to `ui/feedback.rs`)*
+  - `client/protocol/desktop-ui/src/ui/error_sheet.rs` *(new)*
+  - `client/protocol/desktop-ui/src/ui/glyphs.rs` *(new)*
+  - `client/protocol/desktop/src/main.rs` *(thin delegation; net <= ratchet)*
+  - `client/protocol/desktop-config/src/config.rs` *(add `ui_sounds: false`; net <= ratchet)*
+  - `client/protocol/desktop-ui/src/ui/settings.rs` *(add `ui_sounds` row; net <= ratchet)*
 
 ### Slice 17G: All-Surface Locale Completeness Sweep (22 Host / 15 Nightjar) & i18n / A11y Linter
 *(Runs after 17C/17E/17F freeze English strings)*
 - **Files (exclusive)**:
   - `tools/check_i18n.py` *(new)*
-  - `rust/assets/locale/*.json` *(all **22** host locale files covering Web Console, `/play`, `/guest`, Couch Menu, Installer/QR Finish, and Tray)* `[verify post-sprint code-map.md]`
-  - `client/app/src/main/res/values/strings.xml` and `values-*/strings.xml` *(all **15** Nightjar locales: base English + 14 translated XMLs covering Phone/Handheld/TV, Control Center, Preview-Card Settings, First-Run/Pairing Cinema, Virtual Controller Studio `#151`, and Wave 1–3)* `[verify post-sprint code-map.md]`
-  - `client/protocol/desktop/src/strings.rs` `[verify post-sprint code-map.md]`
-  - `client/protocol/desktop/src/strings_70/<code>.rs` *(all new 7.0.0 Desktop translations across the 14 non-English locales; **0 lines added** to grandfathered `strings/*.rs`)*
+  - `rust/assets/locale/*.json` *(all **22** host locale files covering Web Console, `/play`, `/guest`, Couch Menu, Installer/QR Finish, and Tray)*
+  - `client/app/src/main/res/values/strings.xml` and `values-*/strings.xml` *(all **15** Nightjar locales: base English + 14 translated XMLs covering Phone/Handheld/TV, Control Center, Preview-Card Settings, First-Run/Pairing Cinema, Virtual Controller Studio `#151`, and Wave 1–3)*
+  - `client/protocol/desktop-config/src/strings.rs`
+  - `client/protocol/desktop-config/src/strings_70/<code>.rs` *(all new 7.0.0 Desktop translations across the 14 non-English locales; **0 lines added** to grandfathered `strings/*.rs`)*
 
 ---
 
@@ -455,17 +455,19 @@ All GPU / live Windows display runs MUST obey the hardware gate:
 
 ---
 
-## 8. Post-Discovery & 6.3.0 Rebase Addendum — Drivers, Migration, Cloud-Save Guard, Defender & Symbols
+## 8. Post-Discovery & Post-6.4.1 Rebase Addendum — Drivers, Migration, Cloud-Save Guard, Defender, `tools/i18n.py` & Symbols
 
-- **6.3.0 Rebase (`#142`, `#143`, `minSdk 25`):**
-  1. Extract and wrap `ac92a5335c`'s already-landed VHF setup logic (`rust/setup/src/install.rs:1597-1628` + `libvirtualgamepad.rs`) into `rust/setup/src/vgamepad.rs` rather than duplicating install/uninstall flows.
-  2. Route `6.3.0`'s `DisplayRecoveryRetry` (`rust/host/src/runtime.rs`) through canonical `RecoveryJournalV2`, preserve `64286ea09a`'s `install_panic_hook(shared_log)` (`main.rs:526`), and align Android cold-start fallback floor to `6.3.0`'s `minSdk 25` (Android 7.1).
+- **Post-6.4.1 Rebase (`#129` partial, `#138`, `tools/i18n.py`, `minSdk 25`):**
+  1. `6.4.1` (`5f4e666ea6`) already persisted per-monitor desktop source IDs on restore and filtered disconnected cached paths out of `wake_watch` (`#129` partial), and `6.3.2`/`6.4.1` (`b5db0e10ec`, `36188b4a2e`) already added VHF virtual gamepad devnode recovery (`#138`). Build Slice 17A's `RecoveryJournalV2` + `dpi_settle` + 10-cycle forced-kill soak cleanly on top of those fixes without duplicating them!
+  2. Extract and wrap existing VHF setup logic (`rust/setup/src/install/` + `libvirtualgamepad.rs`) into `rust/setup/src/vgamepad.rs` rather than duplicating install/uninstall flows.
+  3. Route `DisplayRecoveryRetry` through canonical `RecoveryJournalV2`, preserve `install_panic_hook(shared_log)`, and align Android cold-start fallback floor to `minSdk 25` (Android 7.1).
+  4. **Reuse & extend `tools/i18n.py` (DO NOT duplicate `tools/check_i18n.py`!):** `origin/main` now ships `tools/i18n.py` + `tools/i18n_glossary.json`. In Slice 17G, extend `tools/i18n.py check` to cover `client/protocol/desktop-config/src/strings_70/<code>.rs` + zero-`"Experimental"` / zero-mod-name linting instead of creating a parallel `tools/check_i18n.py`.
 - **Service Auto-Repair for `rubylight-vgamepad` & Stuck Updater Recovery (Slice 17B):**
-  1. Extend `rust/service/src/driver.rs`, `supervisor.rs`, and `install.rs::repair_drivers` to monitor and auto-repair BOTH `rubylight-vdisplay` and `rubylight-vgamepad` (independent daily rate-limits in `driver-repair.json`), and flag a post-rollback driver protocol check after `update_recovery::restore()`.
-  2. Fix `rust/core/src/update_recovery.rs:49-60`: when `update-result.json` stays in `phase == "installing"` while `update.lock` is free and `"backup"` is missing (crash before backup), transition to `phase == "failed"` with an actionable error so `report_failed_install` never stays silent forever.
-- **One-Click Post-Install & Side-by-Side Sunshine/Apollo/Vibepollo Migration (Slice 17B):** Expose a Web Console / Troubleshoot **Import from Sunshine / Apollo / Vibepollo** action backed by `migration::import` + `settings_backup` dry-run diff preview and `before-restore-*` snapshot, and lift `install.rs:1242-1258`'s `--side-by-side` and `>1 sources` blocks so evaluators can pick a source profile interactively or promote side-by-side installs cleanly.
+  1. Extend `rust/service/src/driver.rs`, `supervisor.rs`, and `rust/setup/src/install/` `repair_drivers` to monitor and auto-repair BOTH `rubylight-vdisplay` and `rubylight-vgamepad` (independent daily rate-limits in `driver-repair.json`), and flag a post-rollback driver protocol check after `update_recovery::restore()`.
+  2. Fix `rust/core/src/update_recovery.rs`: when `update-result.json` stays in `phase == "installing"` while `update.lock` is free and `"backup"` is missing (crash before backup), transition to `phase == "failed"` with an actionable error so `report_failed_install` never stays silent forever. (Note: `rust/core/src/update_recovery.rs` stays in root `rust/core/src/` — bump `rust/service/Cargo.toml` and run `python rust/release/service_inputs.py --update` when changing it!)
+- **One-Click Post-Install & Side-by-Side Sunshine/Apollo/Vibepollo Migration (Slice 17B):** Expose a Web Console / Troubleshoot **Import from Sunshine / Apollo / Vibepollo** action backed by `migration::import` + `settings_backup` dry-run diff preview and `before-restore-*` snapshot, and lift `--side-by-side` and `>1 sources` blocks so evaluators can pick a source profile interactively or promote side-by-side installs cleanly.
 - **Cloud-Save & OneDrive `game_settings`/`game_files` Race Guard (Slice 17A):** Synchronously flush `game_files::flush` inside `RunningApp::stop` right after game exit before releasing launcher cloud-upload focus, preserve original file mtimes when restored content is byte-identical, and detect Steam `remotecache.vdf` / OneDrive Known Folder Move (`Documents\My Games`) to warn clearly on the App page and skip unsafe overwrites while locked/syncing.
 - **Pre-Publish Defender Scan, Authenticode Gate & Smart App Control Copy (Slice 17B):** Port Nightjar's `client/scripts/defender-scan.ps1` into `.github/workflows/rust-windows.yml` and `rust/release/check.ps1`, add `Get-AuthenticodeSignature` + timestamp verification on non-RC tags in `check.ps1`, and detect Windows Smart App Control / S mode refusal when staging `rubylight-vdisplay`'s catalog in `rust/setup/` with plain-English guidance.
 - **Release Debug-Symbol Archival, Minidump Symbolication & 7.0.0 Release Sync (New Slice 17H — CI/Tooling Only):**
   1. Archive detached debug symbols (`objcopy --only-keep-debug` + `--add-gnu-debuglink` on Windows MinGW/Linux, `dsymutil` on macOS) as `rubylight-<ver>-windows-x64-symbols.tar.zst` & `nightjar-desktop-<ver>-<platform>-symbols.tar.zst` per release tag (keeping end-user installers stripped), and ship `tools/symbolicate.py` (`<= 250` LOC) resolving `.dmp` RVAs via `llvm-symbolizer`/`addr2line`.
-  2. Ship `tools/check_release_sync.py` (`<= 250` LOC) and update `rust/release/bump.py` to lockstep-verify `Cargo.toml` == `client/app/build.gradle` `versionName` (`versionCode >= 406`) == `packaging/winget/` (updating stale `3.0.0-rc.2` + adding Nightjar Windows manifest) == single pinned `RUBYLIGHT_SHA` in `client/.github/workflows/release.yml` (fixing split lines `108`/`385`/`697`) == `service_inputs.py` == `notes.d` / Play `<= 500`-char changelog.
+  2. Ship `tools/check_release_sync.py` (`<= 250` LOC) and update `rust/release/bump.py` to lockstep-verify `Cargo.toml` == `client/app/build.gradle` `versionName` (`versionCode >= 412`) == `packaging/winget/` (updating stale manifest + adding Nightjar Windows manifest) == single pinned `RUBYLIGHT_SHA` in `client/.github/workflows/release.yml` == `service_inputs.py` == `notes.d` / Play `<= 500`-char changelog.

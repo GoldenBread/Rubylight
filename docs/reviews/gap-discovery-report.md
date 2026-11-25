@@ -1,6 +1,40 @@
 # Rubylight 7.0.0 & Nightjar 7.0.0 — Multi-Scout Gap Discovery & Value-Filter Report
 
-Date: 2026-11-22 · Worktree: `C:\src\rl-roadmap-prep` (against `origin/main` 6.3.0 `995f2540c8` and live open issues on `RamazanKara/Rubylight` & `RamazanKara/nightjar`)
+Date: 2026-11-22 (reconciled **2026-11-25** against post-refactoring `origin/main` `955ef39598`, `v6.4.1`, and `wip/v6.4.2`) · Worktree: `C:\src\rl-roadmap-prep`
+
+---
+
+## 0. Post-6.4.1 & Post-Refactoring Reconciliation (2026-11-25)
+
+Between the initial 2026-11-22 audit (`6.3.0`, `995f2540c8`) and **`origin/main` (`955ef39598`, `v6.4.1`, plus 2 CI/release commits on `wip/v6.4.2`)**, **204 commits** landed: the entire multi-wave architecture refactoring completed (`tools/size_ratchet.json` shrunk to **18** files), declarative `settings.toml` codegen + `tools/i18n.py` + `tools/scaffold.py` + 6 official `.agents/skills/*` shipped, and a major wave of `6.3.1`–`6.4.1` performance, pacing, USB, audio, HDR, and security fixes shipped. Every item below was code-verified directly against `origin/main` so the 7.0.0 `/swarm` team **never duplicates finished work or regresses `6.4.1` fixes**:
+
+### 0.1 Already Shipped in `6.3.1`–`6.4.1` (Pruned from 7.0.0 Scope — Preserve & Do Not Redo!)
+- **Host / Client Architecture Refactoring (100% Complete):** Split `rust/core/{crypto,config,media-policy,input-policy,session}`, `rust/windows/{abi,graphics,display,io}` + `rust/probes/`, `rust/host/{stream,webrtc,web}` + `tests/{host,interop}`, `client/protocol/{core,wire,native-api,traverse,policy,client,desktop-config,desktop-ui,desktop-media,desktop,android}` (Edition 2024, MSRV 1.94), pure-JDK Android JNI (`Nightjar*Jni.java`), and declarative `settings.toml` catalogs. Only 18 files remain in `tools/size_ratchet.json` (`14` `desktop-config/src/strings/*.rs` tables at 1,750 LOC + 4 narrow host/service/driver files).
+- **Host & Client Performance (`6.3.1`–`6.4.1`, narrows `21` & `29`):**
+  - NVENC 8-bit native 4:4:4 (`AYUV`) on D3D12 compute (`#150`, `73c8c5655f`) & D3D12 teardown drain (`#148`, `3175dc9bf5`, `d9d789d7c4`, `4c7325d2ea`).
+  - `6.3.3` hot-path perf (`eef890c7a2`, `e123e41179`, `eec4e143b7`, `c72eb933ea`, `194345c99b`, `2124d268b8`): idle repeat texture reuse, event-driven encoder wakeups, coalesced dynamic rate-control updates, async CUDA 10-bit 4:4:4 stream, RTX HDR/Video shared D3D11/D3D12 fences, MetalFX ring texture pool & VT IOSurface cache, D3D11/Vulkan/KMS copy reductions.
+  - Windows D3D11VA decode-device isolation + auto-reconnect (`#154`, `a79fcaf1a3`), desktop idle CPU/power draw (`#179`, `c84e646eba`, `803b348f1b`), Linux phase-lock + EGL no-wait + gamescope VRR (`#175`, `719b12e8b6`), V4L2 probe cache + Main10 multi-frame probe (`#77`), PyroWave eager warmup (`#147`) & probe log (`#159`), and `modes.rs:126` fallback refresh cap `<= fastest`.
+- **Android Pacing, Audio, Orientation, USB & UI (`6.3.2`–`6.4.1`, narrows `02`, `10`, `12`, `13`, `24`, `29`):**
+  - Android 5.1/7.1/7.1.4 low-latency AAudio (`#156`, `0975ddb505` — **removed from `10`**).
+  - Android & host fractional FPS + Vulkan scanout phase + monotonic Balanced vsyncs (`#119`, `49c4641534`, `a6617aabc6`, `5f4e666ea6`), pinned phone refresh recovery (`#168`, `9e5add15c5`, `a6617aabc6`), MediaTek/full-range Vulkan (`#153`, `70599b3c0d`), and `480hz` virtual display option (`#144`/`#7`).
+  - `StreamOrientation.REVERSE_LANDSCAPE = 4` (`#152`, `55616c9aa6` — `12` now builds `LANDSCAPE_FLIP = 5`, Flip 180°, `SAFE_FIT = 4`, safe-area policy & `#190` cleanly on top!).
+  - Inbox WinUSB + async libusb isochronous USB forwarding (`aa7eea0bd5`, `7633eec58c`, `c358b3fa50`) AND **Android Track 8C USB controller arbitration** (`5bab93f402`, `UsbDriverService.shouldClaimDevice`/`releaseActiveDevice`/`awaitDeviceRelease` — **`24` is now Desktop-only!**).
+  - Steam virtual trackpad binary touch-down fix (`#150`, `55616c9aa6`), VHF virtual gamepad devnode recovery (`#138`, `b5db0e10ec`, `36188b4a2e`), Desktop `Native (75%)/(50%)` (`#137`), Windowed launcher (`#167`), Android `0%` OSC opacity (`#171`), Android TV `(i)` help & layout polish (`#140`, `#155`), Tailscale/CGNAT multi-endpoint (`#164`), per-device `stream_audio`/`audio_passthrough`/`audio_sink` (`#140` partial), per-game `native_pen_touch` (`#157`), `#145` HDR recovery + `run/encode.rs:78` `RgbaF16` `sdr_white_nits`, `#129` monitor desktop source-ID persistence, and Track H4 RTSS/setup/neural hardening (`7c65838199`, `cf9131b14c`, `103cb1adc5`).
+
+### 0.2 Confirmed STILL Unbuilt on `origin/main` (Retained in 7.0.0) + High-ROI New Open Issues Folded
+- **All 5 pillars of `27` (Security & Privacy)** remain open in live code (`web.rs:204,212`, `web/tokens.rs:90,93`, `webrtc/server/pairing.rs:217`, `webrtc/discovery.rs:43`, `nvhttp/{pairing,probe}.rs`, `browse.rs`/`catalog.rs` UNC, host+desktop log redaction & default `.dmp` exclusion).
+- **All of `28` (Multi-GPU / `idd-push` LUID / `#117` wake)** remains open in live code (`encoder_gpu.rs:164` `one_vendor`, `idd_push.rs:112`, `wake.rs:422` `GetLastInputInfo`, `setup.rs:252` `display_swap_chain() == Some(false)`).
+- **Remaining `29` (High-Hz Host Burst Pacing, Shield `#7` Zero-Debt & WebRTC Resilience)** remains open in live code (`network_pacing.rs:279`, `congestion/trendline.rs:8` `BURST_US = 5_000`, `PreferenceConfiguration.java:129` `experimentalChipsetTuning`, `webrtc/sdp.rs:254` `set_fb_transport_cc(false)`, `webrtc/media.rs:55` `DISCONNECT_TIMEOUT = 3s`, `webrtc/server/connection.rs:438` ignored `Candidate`, `webrtc/guests.rs:55` fixed 2 s `KEYFRAME_INTERVAL`).
+- **Remaining `21` (Desktop Perf & NVENC):** macOS direct `VTDecompressionSession`/`AVSampleBufferDisplayLayer`/`CAMetalLayer`/async MetalFX/`CADisplayLink` phase-lock + `self_update.rs:171` (`CopyKind::Managed`) & `update_check.rs:137` (`"Linux"` UA); Linux Wayland `wl_subsurface`+syncobj, KMS atomic FB LRU, V4L2 M2M `P010` `#77` + `aarch64` CI; Windows DirectFlip/Waitable/MPO + D3D12 Video Decode + `#120`; Host NVENC remaining D3D12 pre-registered async ring/VBV/AQ/split-encode/LTR-RFI/zero-rebuild RTX swap + AMF `Av1RateControlSkipFrameEnable = false`.
+- **High-ROI New Open Issues Folded Cleanly (Zero New Roadmap Items, Zero Settings Bloat):**
+  - **Nightjar `#181`** (Linux/gamescope: shown fps stuck at ~60% of received fps after source fps change) → folded into **`21`** Slice `21-B`.
+  - **Nightjar `#190`** (Manual display centering for phone camera cutouts / curved edges) → folded into **`12`** (`Safe-Fit` framing).
+  - **Nightjar `#191`** (Device battery & clock in compact overlay) → folded into **`02`** (Stats HUD).
+  - **Rubylight `#154`** (Per-controller auto-switching OSC layouts) & **Nightjar `#172`** (Configurable OSC touch activation area) → folded into **`13`** (Visual Controller Editor layered profiles & Touch Studio tab).
+  - **Nightjar `#163`** (Auto-select profile on screen connected) → covered directly by **`09`** (`display_matcher` per-display recall).
+- **New Open Issues Deferred to 7.1+ / Out of 7.0.0 Scope:** RL `#149` (Intel host support), NJ `#189` (simultaneous pinch-zoom + 2-finger scroll), NJ `#170` (hybrid WoW cursor), NJ `#166` (multi-monitor streaming — Coherence `14` covers multi-window workstation; multi-monitor full-screen remains 7.1+), NJ `#98` (parallel apps), NJ `#70` (Xbox UWP), NJ `#47` (LG webOS).
+
+---
 
 Six independent read-only specialist scouts (3× `gemini-4-neon-xhigh`, 3× `gemini-4-hydrogen-xhigh`) audited the real codebase, all 14 commits landed between `b3d0c26b9b` and `6.3.0` (`995f2540c8`, including `#142`, `#143`, and `fc1704feb3`), every open issue across both GitHub repositories, and `docs/designs/00..21`, surfacing **40 raw findings**. Every finding was then subjected to a strict **value-vs-bloat principal-engineer filter**.
 

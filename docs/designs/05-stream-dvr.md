@@ -1,6 +1,6 @@
 # Item 05: Host-Side Stream DVR & Instant Replay (`stream-dvr`)
 
-Status: design, not implemented (Wave 1, Rubylight & Nightjar 7.0.0). Written against `main` `b3d0c26b9b` (`6.2.0`) and [protocol reservations](00-protocol-reservations.md).
+Status: design, not implemented (Wave 1, Rubylight & Nightjar 7.0.0). Rebased 2026-11-25 onto post-refactoring `origin/main` `955ef39598` (`v6.4.1`) and [protocol reservations](00-protocol-reservations.md).
 
 ## 1. Summary & User Experience
 
@@ -72,9 +72,9 @@ All identifiers strictly follow [00-protocol-reservations.md](00-protocol-reserv
   - `body[4..12]` (`u64` LE): `file_bytes`.
   - `body[12..14]` (`u16` LE): `clip_id_len` (`<= 64` UTF-8 bytes), followed by `clip_id` UTF-8 bytes (ASCII UUID/timestamp slug).
 
-### 2.3 Native API v1 Routes (`rust/core/native-api/src/dvr.rs`)
+### 2.3 Native API v1 Routes (`client/protocol/native-api/src/dvr.rs`)
 
-All routes mount under `/api/native/v1`, authenticate paired client TLS certificates, and verify device permissions live from `h.paired` on every request (`rust/host/src/native_api.rs`). Request structs use `#[serde(deny_unknown_fields)]`; responses use `#[serde(default)]` and `#[serde(other)] Unknown` on enums.
+All routes mount under `/api/native/v1`, authenticate paired client TLS certificates, and verify device permissions live from `h.paired` on every request (`rust/host/web/src/native_api.rs`). Request structs use `#[serde(deny_unknown_fields)]`; responses use `#[serde(default)]` and `#[serde(other)] Unknown` on enums.
 
 | Method & Route | Permission | Purpose |
 |---|---|---|
@@ -84,7 +84,7 @@ All routes mount under `/api/native/v1`, authenticate paired client TLS certific
 | `GET /api/native/v1/dvr/clips` | `view` | Paginated clip list (`?limit=50&cursor=...`) returning `ClipSummary[]` (`id`, `app_title`, `created_unix_ms`, `duration_ms`, `width`, `height`, `fps`, `codec`, `hdr`, `container`, `size_bytes`, `kind: "replay" | "manual"`) |
 | `DELETE /api/native/v1/dvr/clips/{id}` | `host_control` | Permanently delete a clip and its sidecar metadata from disk; updates quota totals atomically |
 
-Console 2.0 also exposes matching session-cookie/CSRF-guarded web routes under `/api/dvr/*` (registered in `token_catalog` in `rust/host/src/web.rs`) including `GET /api/dvr/clips/{id}/download` with `Content-Disposition: attachment` and strict path-traversal rejection (`id` validated to `[a-zA-Z0-9_-]{8,64}`).
+Console 2.0 also exposes matching session-cookie/CSRF-guarded web routes under `/api/dvr/*` (registered in `token_catalog` in `rust/host/web/src/web.rs`) including `GET /api/dvr/clips/{id}/download` with `Content-Disposition: attachment` and strict path-traversal rejection (`id` validated to `[a-zA-Z0-9_-]{8,64}`).
 
 ---
 
@@ -124,7 +124,7 @@ Audio Capture -> Opus Encode (audio thread)     │
    - When DVR is off (`!dvr.is_active()`), the tap costs **one `AtomicBool::load(Ordering::Relaxed)`** — zero allocation, zero memcpy, zero lock.
    - If `dvr-mux` is momentarily busy flushing a clip to a slow HDD and the bounded channel fills, `try_send` drops the tap packet immediately, increments an atomic `dvr_tap_drops` counter, and NEVER stalls the stream. On drop, `dvr-mux` marks a discontinuity and resyncs at the next IDR keyframe.
 2. **Whole frames and slice-delivery reassembly:**
-   - In `rust/windows/src/encoder.rs`, `Encoded::unit` is either `Unit::Whole`, `Unit::Slice { index }`, or `Unit::Last { index }`.
+   - In `rust/windows/graphics/src/encoder.rs`, `Encoded::unit` is either `Unit::Whole`, `Unit::Slice { index }`, or `Unit::Last { index }`.
    - When `Unit::Whole`, the tap clones `encoded.bytes` (or transfers a copy into a small pooled `Vec<u8>`) right before handing `Encoded` to `video_send` (note: `Encoded::drop` returns `bytes` to `crate::frame_pool`, so cloning into a separate DVR pool keeps `frame_pool` contention-free).
    - When `video_slice_delivery` is active (`Unit::Slice` / `Unit::Last`), `dvr-mux` itself reassembles slices by `frame_index` off the session thread — the session thread simply `try_send`s each slice's byte copy with its `(frame_index, unit, idr, pts_us, codec, width, height, fps_millihz, hdr_mode)` metadata.
 3. **Keyframes (IDR) & GOP boundary management for Instant Replay:**
@@ -133,7 +133,7 @@ Audio Capture -> Opus Encode (audio thread)     │
    - If `SaveClip` is pressed before the first IDR arrives, the ring checks `has_keyframe()`; if empty, it immediately triggers one host IDR request and refuses cleanly with `DvrReason::NoKeyframeYet` (or waits up to 250 ms asynchronously on `dvr-mux` for the first IDR before declining).
    - When evicting old entries from the RAM ring buffer to satisfy either `ring_capacity_secs` or `dvr_max_ram_mb` (default `512` MiB, hard ceiling `2048` MiB), eviction always trims up to the next **IDR boundary** (while preserving the active SPS/PPS/VPS/AV1 sequence header!) so the remaining ring always starts cleanly on a decodable keyframe.
 4. **Audio tap & codec policy:**
-   - In `rust/host/src/stream/audio_encoder.rs`, `AudioEncoder::Opus(opus)` already produces exact 48 kHz Opus packets with monotonic `position: u64` (48 kHz sample counter from `AudioClock`, drift-free!). The tap `try_send`s `(position_samples, channel_count, mapping_family, opus_bytes)` immediately after `opus.encode_frame(samples)`.
+   - In `rust/host/stream/src/stream/audio_encoder.rs`, `AudioEncoder::Opus(opus)` already produces exact 48 kHz Opus packets with monotonic `position: u64` (48 kHz sample counter from `AudioClock`, drift-free!). The tap `try_send`s `(position_samples, channel_count, mapping_family, opus_bytes)` immediately after `opus.encode_frame(samples)`.
    - **Passthrough audio (`PCM`, `AC3`, `E-AC3`):** In v1, fragmented MP4 (`fMP4`) natively supports H.264/HEVC/AV1 + Opus (`Opus`/`dOps` box per ISO/IEC 14496-12 + Opus-in-ISOBMFF spec). If the stream negotiates passthrough `PCM`, `AC3`, or `E-AC3`, the DVR records **video + audio in `.mkv` (Matroska)** if Matroska muxing is selected, OR for `.mp4` explicitly logs a warning and reports `audio_codec_unsupported` (never silently producing a broken/corrupt MP4). Specifically: v1 implements a clean pure-Rust **fragmented MP4 (fMP4)** muxer for `H.264/HEVC/AV1 + Opus` (zero external DLL/FFmpeg process needed, works on every Windows 10/11 PC, plays directly in Windows Media Player, VLC, Discord, browsers, and Console 2.0!) and refuses non-Opus passthrough audio cleanly with `DvrReason::AudioCodecUnsupported` ("Clips require Opus audio; switch audio codec from passthrough to Opus to record clips").
 5. **Codec parameter sets & HDR metadata in fMP4:**
    - **H.264 (AVC):** Extract SPS/PPS NALUs from Annex-B start codes on every IDR; write `avc1` + `avcC` box, convert Annex-B NALUs to 4-byte length-prefixed AVCC in `mdat`.
@@ -156,43 +156,43 @@ Every new Rust module starts with a `//!` doc header and every new Java class st
 
 | Grandfathered file | Ratchet ceiling | How we avoid growing it |
 |---|---|---|
-| `rust/host/src/stream/video/run.rs` `[verify post-sprint code-map.md]` | `1956` | Single 4-line call `dvr.tap_video(&output, &stream)` in `send_frames` + periodic soft-IDR check via `dvr.wants_idr(now)` (helper lives in new `stream/dvr.rs`; extract 10+ lines of nearby inline helper if net lines would exceed ceiling) |
-| `rust/host/src/stream/control.rs` `[verify post-sprint code-map.md]` | `2675` | Single match arm `DVR_STATE_MESSAGE_TYPE => crate::stream::dvr::handle_control(...)` (<=6 lines; extract equivalent lines or keep <=2675) |
-| `rust/host/src/stream.rs` `[verify post-sprint code-map.md]` | `1324` | Add `pub(crate) dvr: Option<Arc<DvrHandle>>` field wiring (<=5 lines) |
-| `rust/host/src/native_api.rs` `[verify post-sprint code-map.md]` | `853` | Add `mod dvr;`, 5 route registrations in `router()`, and 1 `feature::STREAM_DVR` push (<=10 lines; trim/delegated handlers live in `native_api/dvr.rs`) |
-| `rust/host/src/state.rs` `[verify post-sprint code-map.md]` | `2247` | Add `pub dvr: Arc<crate::dvr_store::DvrStore>` field on `Host` (<=4 lines) |
-| `rust/host/src/web.rs` `[verify post-sprint code-map.md]` | `1731` | Add `/api/dvr/*` dispatch to `crate::web::dvr::handle` (<=8 lines) |
-| `rust/core/src/config.rs` `[verify post-sprint code-map.md]` | `1373` | Delegate `dvr_*` accessors to new `rust/core/src/config/dvr.rs` (<=5 lines in `config.rs`) |
-| `rust/core/src/session.rs` `[verify post-sprint code-map.md]` | `1803` | Single `pub dvr_state: Arc<...>` or atomic flag field (<=4 lines) |
-| `rust/web/src/lib/api.ts` `[verify post-sprint code-map.md]` | `1653` | Put DVR API functions in new `rust/web/src/lib/api/dvr.ts` and re-export (1 line in `api.ts`) |
-| `client/protocol/client/src/http/capabilities.rs` `[verify post-sprint code-map.md]` | `1257` | Add `StreamDvr` enum variant & 3-line evidence match (offset by compacting/extracting evidence helpers if needed to stay `<=1257`) |
-| `client/protocol/client/src/http/native.rs` `[verify post-sprint code-map.md]` | `821` | Put DVR client calls in new `client/protocol/client/src/http/native_dvr.rs` (1 `mod` line in `native.rs`) |
-| `client/app/src/main/java/com/limelight/nvstream/http/HostCapabilities.java` `[verify post-sprint code-map.md]` | `1347` | Add `STREAM_DVR` enum constant + capability check (<=5 lines) |
-| `client/app/src/main/java/com/limelight/ui/StreamMenu.java` `[verify post-sprint code-map.md]` | `1321` | Delegate DVR tile rendering & clicks to new `StreamMenuDvrSection.java` (<=6 lines) |
-| `client/protocol/desktop/src/stream/mod.rs` `[verify post-sprint code-map.md]` | `2914` | Delegate `0x554A` events/actions to new `stream/dvr.rs` (<=8 lines) |
-| `client/protocol/desktop/src/strings/*.rs` `[verify post-sprint code-map.md]` | `1750` | **Do NOT edit `strings/*.rs` (0 headroom).** Route all new Stream DVR Desktop translations to the canonical 7.0.0 per-locale overflow files `client/protocol/desktop/src/strings_70/<code>.rs` (established in Design 02, chained in `strings.rs` and verified by `strings/tests.rs`). |
+| `rust/host/stream/src/stream/video/run.rs` | `1956` | Single 4-line call `dvr.tap_video(&output, &stream)` in `send_frames` + periodic soft-IDR check via `dvr.wants_idr(now)` (helper lives in new `stream/dvr.rs`; extract 10+ lines of nearby inline helper if net lines would exceed ceiling) |
+| `rust/host/stream/src/stream/control.rs` | `2675` | Single match arm `DVR_STATE_MESSAGE_TYPE => crate::stream::dvr::handle_control(...)` (<=6 lines; extract equivalent lines or keep <=2675) |
+| `rust/host/stream/src/stream.rs` | `1324` | Add `pub(crate) dvr: Option<Arc<DvrHandle>>` field wiring (<=5 lines) |
+| `rust/host/web/src/native_api.rs` | `853` | Add `mod dvr;`, 5 route registrations in `router()`, and 1 `feature::STREAM_DVR` push (<=10 lines; trim/delegated handlers live in `native_api/dvr.rs`) |
+| `rust/host/stream/src/state.rs` | `2247` | Add `pub dvr: Arc<crate::dvr_store::DvrStore>` field on `Host` (<=4 lines) |
+| `rust/host/web/src/web.rs` | `1731` | Add `/api/dvr/*` dispatch to `crate::web::dvr::handle` (<=8 lines) |
+| `rust/core/config/src/config.rs` | `1373` | Delegate `dvr_*` accessors to new `rust/core/config/src/config/dvr.rs` (<=5 lines in `config.rs`) |
+| `rust/core/session/src/session.rs` | `1803` | Single `pub dvr_state: Arc<...>` or atomic flag field (<=4 lines) |
+| `rust/web/src/lib/api.ts` | `1653` | Put DVR API functions in new `rust/web/src/lib/api/dvr.ts` and re-export (1 line in `api.ts`) |
+| `client/protocol/policy/src/http/capabilities.rs` | `1257` | Add `StreamDvr` enum variant & 3-line evidence match (offset by compacting/extracting evidence helpers if needed to stay `<=1257`) |
+| `client/protocol/client/src/http/native.rs` | `821` | Put DVR client calls in new `client/protocol/client/src/http/native_dvr.rs` (1 `mod` line in `native.rs`) |
+| `client/app/src/main/java/com/limelight/nvstream/http/HostCapabilities.java` | `1347` | Add `STREAM_DVR` enum constant + capability check (<=5 lines) |
+| `client/app/src/main/java/com/limelight/ui/StreamMenu.java` | `1321` | Delegate DVR tile rendering & clicks to new `StreamMenuDvrSection.java` (<=6 lines) |
+| `client/protocol/desktop-media/src/stream/mod.rs` | `2914` | Delegate `0x554A` events/actions to new `stream/dvr.rs` (<=8 lines) |
+| `client/protocol/desktop-config/src/strings/*.rs` | `1750` | **Do NOT edit `strings/*.rs` (0 headroom).** Route all new Stream DVR Desktop translations to the canonical 7.0.0 per-locale overflow files `client/protocol/desktop-config/src/strings_70/<code>.rs` (established in Design 02, chained in `strings.rs` and verified by `strings/tests.rs`). |
 
 #### New `<=800-LOC` modules to create
 
 | Planned Path | Est. LOC | Ownership (`//!` / `/**`) |
 |---|---|---|
-| `client/protocol/core/src/stream_dvr.rs` `[verify post-sprint code-map.md]` | ~220 | Wire codecs for `0x554A` (`DVR_STATE_MESSAGE_TYPE`), `ClientRequest`, `HostState`, `ClipResult`, `DvrReason`, unit tests |
-| `rust/core/native-api/src/dvr.rs` `[verify post-sprint code-map.md]` | ~180 | Native API v1 types (`DvrStatus`, `ClipRequest`, `RecordRequest`, `ClipSummary`, `ClipList`, `DvrState`, `DvrReason`) + fixture serde tests |
-| `rust/core/src/dvr.rs` `[verify post-sprint code-map.md]` | ~380 | Pure OS-free DVR state machine, bounded RAM GOP ring buffer (`RingBuffer`), byte/time/keyframe eviction, slice reassembler, soft-IDR scheduler, quota policy |
-| `rust/core/src/dvr/fmp4.rs` `[verify post-sprint code-map.md]` | ~520 | Pure-Rust ISO BMFF fragmented MP4 muxer (`ftyp`/`moov`/`avcC`/`hvcC`/`av1C`/`dOps`/`colr`/`mdcv`/`clli`/`moof`/`mdat`), Annex-B -> AVCC/HVCC converter, OBU parser |
-| `rust/core/src/config/dvr.rs` `[verify post-sprint code-map.md]` | ~120 | Typed `DvrConfig` parser/validator (`dvr_enabled`, `dvr_ring_seconds`, `dvr_max_ram_mb`, `dvr_quota_gb`, `dvr_directory`) |
-| `rust/host/src/dvr_store.rs` `[verify post-sprint code-map.md]` | ~340 | Host-wide clip catalog, atomic `.tmp` write/rename, startup orphan `.tmp` cleanup, disk-space & quota enforcement (`GetDiskFreeSpaceExW` via `butterpollo-windows`) |
-| `rust/host/src/stream/dvr.rs` `[verify post-sprint code-map.md]` | ~420 | Per-session `DvrHandle` (lock-free `AtomicBool` + bounded `sync_channel`), `dvr-mux` worker thread (`BelowNormal`), `0x554A` control handler, session teardown flush |
-| `rust/host/src/native_api/dvr.rs` `[verify post-sprint code-map.md]` | ~260 | Axum handlers for `GET /dvr`, `POST /dvr/clip`, `POST /dvr/record`, `GET /dvr/clips`, `DELETE /dvr/clips/{id}` |
-| `rust/host/src/web/dvr.rs` `[verify post-sprint code-map.md]` | ~220 | Console 2.0 `/api/dvr/*` handlers including safe clip download & open-folder action |
-| `rust/web/src/lib/api/dvr.ts` `[verify post-sprint code-map.md]` | ~120 | Typed Console 2.0 DVR API client |
-| `rust/web/src/components/dvr/ClipsDrawer.svelte` `[verify post-sprint code-map.md]` | ~380 | Console 2.0 Clips drawer (list, quota meter, download, preview, delete) |
-| `client/protocol/client/src/http/native_dvr.rs` `[verify post-sprint code-map.md]` | ~160 | `nightjar-core` HTTP wrappers for `/api/native/v1/dvr*` |
-| `client/protocol/desktop/src/stream/dvr.rs` `[verify post-sprint code-map.md]` | ~240 | Desktop DVR state tracking, `0x554A` dispatch, Stream Menu tile & shortcut trigger |
-| `client/app/src/main/java/com/limelight/ui/StreamMenuDvrSection.java` `[verify post-sprint code-map.md]` | ~240 | Android Stream Menu **Save Clip** + **Record** tile & status toast |
-| `client/protocol/desktop/src/strings_70/<code>.rs` (14 per-locale files from Design 02) `[verify post-sprint code-map.md]` | +~25 LOC each (<=800) | All 14 non-English Desktop translations for Stream DVR (English literals at call sites; zero lines added to grandfathered `strings/*.rs`) |
+| `client/protocol/core/src/stream_dvr.rs` | ~220 | Wire codecs for `0x554A` (`DVR_STATE_MESSAGE_TYPE`), `ClientRequest`, `HostState`, `ClipResult`, `DvrReason`, unit tests |
+| `client/protocol/native-api/src/dvr.rs` | ~180 | Native API v1 types (`DvrStatus`, `ClipRequest`, `RecordRequest`, `ClipSummary`, `ClipList`, `DvrState`, `DvrReason`) + fixture serde tests |
+| `rust/core/media-policy/src/dvr.rs` | ~380 | Pure OS-free DVR state machine, bounded RAM GOP ring buffer (`RingBuffer`), byte/time/keyframe eviction, slice reassembler, soft-IDR scheduler, quota policy |
+| `rust/core/media-policy/src/dvr/fmp4.rs` | ~520 | Pure-Rust ISO BMFF fragmented MP4 muxer (`ftyp`/`moov`/`avcC`/`hvcC`/`av1C`/`dOps`/`colr`/`mdcv`/`clli`/`moof`/`mdat`), Annex-B -> AVCC/HVCC converter, OBU parser |
+| `rust/core/config/src/config/dvr.rs` | ~120 | Typed `DvrConfig` parser/validator (`dvr_enabled`, `dvr_ring_seconds`, `dvr_max_ram_mb`, `dvr_quota_gb`, `dvr_directory`) |
+| `rust/host/stream/src/dvr_store.rs` | ~340 | Host-wide clip catalog, atomic `.tmp` write/rename, startup orphan `.tmp` cleanup, disk-space & quota enforcement (`GetDiskFreeSpaceExW` via `butterpollo-windows`) |
+| `rust/host/stream/src/stream/dvr.rs` | ~420 | Per-session `DvrHandle` (lock-free `AtomicBool` + bounded `sync_channel`), `dvr-mux` worker thread (`BelowNormal`), `0x554A` control handler, session teardown flush |
+| `rust/host/web/src/native_api/dvr.rs` | ~260 | Axum handlers for `GET /dvr`, `POST /dvr/clip`, `POST /dvr/record`, `GET /dvr/clips`, `DELETE /dvr/clips/{id}` |
+| `rust/host/web/src/web/dvr.rs` | ~220 | Console 2.0 `/api/dvr/*` handlers including safe clip download & open-folder action |
+| `rust/web/src/lib/api/dvr.ts` | ~120 | Typed Console 2.0 DVR API client |
+| `rust/web/src/components/dvr/ClipsDrawer.svelte` | ~380 | Console 2.0 Clips drawer (list, quota meter, download, preview, delete) |
+| `client/protocol/client/src/http/native_dvr.rs` | ~160 | `nightjar-core` HTTP wrappers for `/api/native/v1/dvr*` |
+| `client/protocol/desktop-media/src/stream/dvr.rs` | ~240 | Desktop DVR state tracking, `0x554A` dispatch, Stream Menu tile & shortcut trigger |
+| `client/app/src/main/java/com/limelight/ui/StreamMenuDvrSection.java` | ~240 | Android Stream Menu **Save Clip** + **Record** tile & status toast |
+| `client/protocol/desktop-config/src/strings_70/<code>.rs` (14 per-locale files from Design 02) | +~25 LOC each (<=800) | All 14 non-English Desktop translations for Stream DVR (English literals at call sites; zero lines added to grandfathered `strings/*.rs`) |
 
-*(Note: `rust/host/src/stream/audio.rs` is 495 LOC and `audio_encoder.rs` is 251 LOC — both well below the 800-LOC ceiling; tapping Opus output in `audio_encoder.rs` adds ~8 lines. Also all stream config reads go through `rust/host/src/stream/config.rs`, never raw `Config` reads inside `stream/`, satisfying `arch_check.py`'s `raw-config-read` lint.)*
+*(Note: `rust/host/stream/src/stream/audio.rs` is 495 LOC and `audio_encoder.rs` is 251 LOC — both well below the 800-LOC ceiling; tapping Opus output in `audio_encoder.rs` adds ~8 lines. Also all stream config reads go through `rust/host/stream/src/stream/config.rs`, never raw `Config` reads inside `stream/`, satisfying `arch_check.py`'s `raw-config-read` lint.)*
 
 ---
 
@@ -262,7 +262,7 @@ Every new Rust module starts with a `//!` doc header and every new Java class st
 
 ### 5.1 Fewer-Settings Rule & Default-Off Gate
 
-Only **4 host settings** in a single folded Console 2.0 group (**Stream DVR & Clips**, under `rust/web/src/lib/schema/video.ts` `[verify post-sprint code-map.md]` and `rust/host/src/console/settings.rs` `[verify post-sprint code-map.md]`) and **zero local preference keys** on Nightjar (so `SettingsKeysTest` is untouched):
+Only **4 host settings** in a single folded Console 2.0 group (**Stream DVR & Clips**, under `rust/web/src/lib/schema/video.ts` `docs/code-map.md` and `rust/host/web/src/console/settings.rs` `docs/code-map.md`) and **zero local preference keys** on Nightjar (so `SettingsKeysTest` is untouched):
 
 | Key | Type | Default | Help text (exact 2-sentence rule: what you get, what it costs, when to change it) |
 |---|---|---|---|
@@ -286,7 +286,7 @@ Only **4 host settings** in a single folded Console 2.0 group (**Stream DVR & Cl
   - `DiskFull` / `QuotaExceeded` -> `"Not enough free disk space on the host PC to save this clip. Free up space or delete older clips."`
   - `NoKeyframeYet` -> `"Waiting for the stream to capture a full frame. Try saving again in a moment."`
   - `AudioCodecUnsupported` -> `"Clips require Opus audio. Switch audio codec from passthrough to Opus to record clips."`
-- **All 15 locales:** Every new UI string (Stream Menu tiles, toasts, error messages, Console 2.0 settings & Clips drawer) lands in all 15 locales: `en`, `de`, `es`, `fr`, `it`, `ja`, `ko`, `pl`, `pt_br`, `ru`, `tr`, `uk`, `vi`, `zh_hans`, `zh_hant` across `rust/assets/locale/`, `client/protocol/desktop/src/strings_70/<code>.rs` (canonical 7.0.0 overflow files from Design 02; zero lines added to grandfathered `strings/*.rs`), and `client/app/src/main/res/values-*/strings.xml`.
+- **All 15 locales:** Every new UI string (Stream Menu tiles, toasts, error messages, Console 2.0 settings & Clips drawer) lands in all 15 locales: `en`, `de`, `es`, `fr`, `it`, `ja`, `ko`, `pl`, `pt_br`, `ru`, `tr`, `uk`, `vi`, `zh_hans`, `zh_hant` across `rust/assets/locale/`, `client/protocol/desktop-config/src/strings_70/<code>.rs` (canonical 7.0.0 overflow files from Design 02; zero lines added to grandfathered `strings/*.rs`), and `client/app/src/main/res/values-*/strings.xml`.
 
 ---
 
@@ -296,13 +296,13 @@ Designed for Phase 3 `parallel()` execution with **strictly non-overlapping file
 
 | Slice | Parallel Group | Exclusive File List (zero overlap!) |
 |---|---|---|
-| **5A: Protocol & Native API Wire Contracts** | Stage 1 | `client/protocol/core/src/ids.rs`, `client/protocol/core/src/lib.rs`, `client/protocol/core/src/stream_dvr.rs` (new), `client/protocol/core/src/fuzz.rs`, `rust/core/native-api/src/lib.rs`, `rust/core/native-api/src/dvr.rs` (new), `rust/core/native-api/tests/fixtures.rs`, `rust/core/native-api/tests/fixtures/dvr_*.json` (new), `docs/control-messages.md`, `docs/native-api.md` |
-| **5B: Core Ring Buffer, fMP4 Muxer & Config** | Stage 1 (parallel with 5A) | `rust/core/src/lib.rs`, `rust/core/src/dvr.rs` (new), `rust/core/src/dvr/fmp4.rs` (new), `rust/core/src/config.rs`, `rust/core/src/config/dvr.rs` (new), `rust/core/src/config/overrides.rs`, `rust/core/src/config/tests.rs` |
-| **5C: Host Engine, Taps, Control, Native API & Web/Console Backend** | Stage 2 (after 5A+5B) | `rust/core/src/extensions.rs`, `rust/core/src/session.rs`, `rust/host/src/dvr_store.rs` (new), `rust/host/src/stream/dvr.rs` (new; `rust/host/src/stream/dvr/**`), `rust/host/src/stream.rs`, `rust/host/src/stream/video/run.rs`, `rust/host/src/stream/audio_encoder.rs`, `rust/host/src/stream/control.rs`, `rust/host/src/extensions.rs`, `rust/host/src/state.rs`, `rust/host/src/main.rs`, `rust/host/src/native_api.rs`, `rust/host/src/native_api/dvr.rs` (new), `rust/host/src/web.rs`, `rust/host/src/web/dvr.rs` (new), `rust/host/src/console/settings.rs`, `rust/assets/locale/*.json`, `docs/configuration.md`, `rust/host/src/nvhttp/native_tests/dvr.rs` (new), `rust/host/src/stream/reconnect_tests/dvr_tests.rs` (new) |
+| **5A: Protocol & Native API Wire Contracts** | Stage 1 | `client/protocol/core/src/ids.rs`, `client/protocol/core/src/lib.rs`, `client/protocol/core/src/stream_dvr.rs` (new), `client/protocol/core/src/fuzz.rs`, `client/protocol/native-api/src/lib.rs`, `client/protocol/native-api/src/dvr.rs` (new), `client/protocol/native-api/tests/fixtures.rs`, `client/protocol/native-api/tests/fixtures/dvr_*.json` (new), `docs/control-messages.md`, `docs/native-api.md` |
+| **5B: Core Ring Buffer, fMP4 Muxer & Config** | Stage 1 (parallel with 5A) | `rust/core/src/lib.rs`, `rust/core/media-policy/src/dvr.rs` (new), `rust/core/media-policy/src/dvr/fmp4.rs` (new), `rust/core/config/src/config.rs`, `rust/core/config/src/config/dvr.rs` (new), `rust/core/config/src/config/overrides.rs`, `rust/core/config/src/config/tests.rs` |
+| **5C: Host Engine, Taps, Control, Native API & Web/Console Backend** | Stage 2 (after 5A+5B) | `rust/core/media-policy/src/extensions.rs`, `rust/core/session/src/session.rs`, `rust/host/stream/src/dvr_store.rs` (new), `rust/host/stream/src/stream/dvr.rs` (new; `rust/host/stream/src/stream/dvr/**`), `rust/host/stream/src/stream.rs`, `rust/host/stream/src/stream/video/run.rs`, `rust/host/stream/src/stream/audio_encoder.rs`, `rust/host/stream/src/stream/control.rs`, `rust/host/stream/src/extensions.rs`, `rust/host/stream/src/state.rs`, `rust/host/src/main.rs`, `rust/host/web/src/native_api.rs`, `rust/host/web/src/native_api/dvr.rs` (new), `rust/host/web/src/web.rs`, `rust/host/web/src/web/dvr.rs` (new), `rust/host/web/src/console/settings.rs`, `rust/assets/locale/*.json`, `docs/configuration.md`, `tests/host/tests/nvhttp_parity/native_tests/dvr.rs` (new), `tests/host/tests/reconnect_tests/dvr_tests.rs` (new) |
 | **5D: Console 2.0 Web Frontend (`rust/web/**` Only)** | Stage 2 (parallel with 5C — zero `butterpollo` crate dependency) | `rust/web/src/lib/api.ts`, `rust/web/src/lib/api/dvr.ts` (new), `rust/web/src/lib/schema/video.ts`, `rust/web/src/components/dvr/ClipsDrawer.svelte` (new), `rust/web/DvrClips.test.mjs` (new) |
-| **5E: Nightjar Core, Desktop & Android** | Stage 2 (parallel with 5C+5D) | `client/protocol/client/src/http/capabilities.rs`, `client/protocol/client/src/http/native.rs`, `client/protocol/client/src/http/native_dvr.rs` (new), `client/protocol/client/src/control/messages.rs`, `client/protocol/client/src/control/events.rs`, `client/protocol/client/src/control/session.rs`, `client/protocol/client/tests/control_messages_contract.rs`, `client/protocol/client/tests/capabilities_contract.rs`, `client/protocol/desktop/src/stream/mod.rs`, `client/protocol/desktop/src/stream/dvr.rs` (new), `client/protocol/desktop/src/strings_70/*.rs` (per-locale `strings_70/<code>.rs`; never editing grandfathered `strings/*.rs`), `client/protocol/desktop/src/strings/tests.rs`, `client/protocol/android/src/lib.rs`, `client/app/src/main/java/com/limelight/nvstream/http/HostCapabilities.java`, `client/app/src/main/java/com/limelight/nvstream/jni/RustBridge.java`, `client/app/src/main/java/com/limelight/ui/StreamMenu.java`, `client/app/src/main/java/com/limelight/ui/StreamMenuDvrSection.java` (new), `client/app/src/main/res/values*/strings.xml`, `client/app/src/test/resources/protocol/capabilities/*` |
+| **5E: Nightjar Core, Desktop & Android** | Stage 2 (parallel with 5C+5D) | `client/protocol/policy/src/http/capabilities.rs`, `client/protocol/client/src/http/native.rs`, `client/protocol/client/src/http/native_dvr.rs` (new), `client/protocol/client/src/control/messages.rs`, `client/protocol/client/src/control/events.rs`, `client/protocol/client/src/control/session.rs`, `client/protocol/client/tests/control_messages_contract.rs`, `client/protocol/client/tests/capabilities_contract.rs`, `client/protocol/desktop-media/src/stream/mod.rs`, `client/protocol/desktop-media/src/stream/dvr.rs` (new), `client/protocol/desktop-config/src/strings_70/*.rs` (per-locale `strings_70/<code>.rs`; never editing grandfathered `strings/*.rs`), `client/protocol/desktop-config/src/strings/tests.rs`, `client/protocol/android/src/lib.rs`, `client/app/src/main/java/com/limelight/nvstream/http/HostCapabilities.java`, `client/app/src/main/java/com/limelight/nvstream/jni/RustBridge.java`, `client/app/src/main/java/com/limelight/ui/StreamMenu.java`, `client/app/src/main/java/com/limelight/ui/StreamMenuDvrSection.java` (new), `client/app/src/main/res/values*/strings.xml`, `client/app/src/test/resources/protocol/capabilities/*` |
 
-*(Every path above is marked `[verify post-sprint code-map.md]` for Phase 2 reconciliation before worktrees spawn.)*
+*(Every path above is marked `docs/code-map.md` for Phase 2 reconciliation before worktrees spawn.)*
 
 ---
 

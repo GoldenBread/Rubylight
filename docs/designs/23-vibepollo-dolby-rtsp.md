@@ -1,6 +1,6 @@
 # Item 23: Vibepollo Dolby Audio RTSP Negotiation & Unchunked Datagram Receive Parity (Wave 2 — PR 2: Track 5)
 
-Status: engineering design (Phase 1). Written against `origin/main` `995f2540c8` (`6.3.0`) and [`00-protocol-reservations.md`](00-protocol-reservations.md).
+Status: engineering design (Phase 1). Rebased 2026-11-25 onto post-refactoring `origin/main` `955ef39598` (`v6.4.1`) and [`00-protocol-reservations.md`](00-protocol-reservations.md).
 
 ## 1. Summary & User Experience
 
@@ -19,7 +19,7 @@ Item 23 delivers **PR 2 (Track 5)**: seamless Dolby AC-3 / E-AC-3 passthrough in
    - **Fix `MAX_PACKET_SIZE = 1400` Truncation (`audio/mod.rs` + `audio/queue.rs`):** Unchunked 640 kbps AC-3 / E-AC-3 datagrams reach **~2,588 bytes** and were silently truncated at `MAX_PACKET_SIZE = 1400`! Raise the active receive/decrypt/RS buffer cap dynamically to **`4096 + 64`** bytes **only when unchunked Dolby is active**, and verify `audio/queue.rs` Reed-Solomon block sizing handles `<= 4096`-byte shards cleanly while keeping Opus / Rubylight chunked audio / `golden_audio` / `golden_fec` / `difftest` **byte-for-byte identical**!
 4. **Android Passthrough Unlock (`SettingRules.java`, `PreferenceConfiguration.java`):**
    - Unlock Android's `Audio passthrough` preference when connected to Vibepollo hosts advertising `a=x-ss-audio-codec-offer` even when Rubylight's `AudioCodecs` `/serverinfo` element is absent.
-5. **Optional Host Interop (`rust/host/src/rtsp_server.rs`):**
+5. **Optional Host Interop (`rust/host/stream/src/rtsp_server.rs`):**
    - Optional additive host support for third-party clients sending `a=x-ss-audio-codec-accept:AC3|EAC3` (responding with `X-SS-Audio-Codec` while keeping Rubylight's own `a=x-rl-audio.codecs` negotiation 100% unchanged and preferred when present).
 
 ---
@@ -36,7 +36,7 @@ Per [`00-protocol-reservations.md`](00-protocol-reservations.md):
 
 ## 3. Architecture & <=800-LOC Module Plan
 
-All target modules below are conceptual anchors — **resolve exact post-sprint file paths, split submodules, and `tools/size_ratchet.json` ceilings live via `docs/code-map.md` and `client/docs/code-map.md` before assigning implementer slices** (`[resolve post-sprint via docs/code-map.md & client/docs/code-map.md]`). Grandfathered files MUST NOT grow past their live post-sprint ceilings.
+All target modules below are conceptual anchors — **resolve exact post-sprint file paths, split submodules, and `tools/size_ratchet.json` ceilings live via `docs/code-map.md` and `client/docs/code-map.md` before assigning implementer slices** (`docs/code-map.md & client/docs/code-map.md`). Grandfathered files MUST NOT grow past their live post-sprint ceilings.
 
 | Path | Status | Est. LOC | Responsibility |
 | --- | --- | ---: | --- |
@@ -44,7 +44,7 @@ All target modules below are conceptual anchors — **resolve exact post-sprint 
 | `client/protocol/client/src/rtsp/describe.rs`, `rtsp/mod.rs`, `rtsp/tests.rs` | Modify | `<= ceiling` | Delegate Vibepollo Dolby negotiation to `dolby_ss.rs` whenever `a=x-rl-audio.codecs` is absent; commit 32 ms duration only on confirmed AC3/EAC3. |
 | `client/protocol/client/src/audio/mod.rs`, `audio/queue.rs`, `session/mod.rs` | Modify | `<= ceiling` | Dynamic `4096 + 64` receive/RS shard cap when unchunked Dolby is active; skip `receiver.assemble_frames()` on Vibepollo unchunked Dolby while preserving chunked & Opus paths bit-for-bit. |
 | `client/app/src/main/java/com/limelight/preferences/{SettingRules,PreferenceConfiguration}.java`, `HostCapabilities.java` | Modify | `<= ceiling` | Unlock passthrough on hosts offering `x-ss-audio-codec-offer` without `AudioCodecs` (capability-gated, never brand-gated). |
-| `rust/host/src/rtsp_server.rs` & `rust/core/src/rtsp.rs` *(optional host interop)* | Modify | `<= ceiling` | Accept third-party `a=x-ss-audio-codec-accept` while preserving `a=x-rl-audio.codecs` priority unchanged. |
+| `rust/host/stream/src/rtsp_server.rs` & `rust/core/media-policy/src/rtsp.rs` *(optional host interop)* | Modify | `<= ceiling` | Accept third-party `a=x-ss-audio-codec-accept` while preserving `a=x-rl-audio.codecs` priority unchanged. |
 
 ---
 
@@ -78,9 +78,9 @@ DESCRIBE received:
 
 | Slice | Stage | Exclusive Owned Files (Zero Overlap) |
 | --- | --- | --- |
-| **23-A: Nightjar Core RTSP Dolby Negotiation & Unchunked Receive/RS** | **Stage 1** | `client/protocol/client/src/rtsp/dolby_ss.rs` (new), `client/protocol/client/src/rtsp/describe.rs`, `client/protocol/client/src/rtsp/mod.rs`, `client/protocol/client/src/rtsp/tests.rs`, `client/protocol/client/src/audio/mod.rs`, `client/protocol/client/src/audio/queue.rs`, `client/protocol/client/src/session/mod.rs`, `client/protocol/client/src/http/capabilities.rs`, `client/protocol/client/tests/capabilities_contract.rs` `[resolve post-sprint via docs/code-map.md & client/docs/code-map.md]` |
-| **23-B: Nightjar Android Passthrough Unlock** | **Stage 2** (after 23-A; parallel with 23-C) | `client/app/src/main/java/com/limelight/nvstream/http/HostCapabilities.java`, `client/app/src/main/java/com/limelight/preferences/SettingRules.java`, `client/app/src/main/java/com/limelight/preferences/PreferenceConfiguration.java`, `client/app/src/test/java/com/limelight/preferences/SettingRulesTest.java` `[resolve post-sprint via docs/code-map.md & client/docs/code-map.md]` |
-| **23-C: Optional Host Third-Party `x-ss-audio-codec-accept` Interop** | **Stage 2** (parallel with 23-B) | `rust/core/src/rtsp.rs`, `rust/host/src/rtsp_server.rs` `[resolve post-sprint via docs/code-map.md & client/docs/code-map.md]` |
+| **23-A: Nightjar Core RTSP Dolby Negotiation & Unchunked Receive/RS** | **Stage 1** | `client/protocol/client/src/rtsp/dolby_ss.rs` (new), `client/protocol/client/src/rtsp/describe.rs`, `client/protocol/client/src/rtsp/mod.rs`, `client/protocol/client/src/rtsp/tests.rs`, `client/protocol/client/src/audio/mod.rs`, `client/protocol/client/src/audio/queue.rs`, `client/protocol/client/src/session/mod.rs`, `client/protocol/policy/src/http/capabilities.rs`, `client/protocol/client/tests/capabilities_contract.rs` `docs/code-map.md & client/docs/code-map.md` |
+| **23-B: Nightjar Android Passthrough Unlock** | **Stage 2** (after 23-A; parallel with 23-C) | `client/app/src/main/java/com/limelight/nvstream/http/HostCapabilities.java`, `client/app/src/main/java/com/limelight/preferences/SettingRules.java`, `client/app/src/main/java/com/limelight/preferences/PreferenceConfiguration.java`, `client/app/src/test/java/com/limelight/preferences/SettingRulesTest.java` `docs/code-map.md & client/docs/code-map.md` |
+| **23-C: Optional Host Third-Party `x-ss-audio-codec-accept` Interop** | **Stage 2** (parallel with 23-B) | `rust/core/media-policy/src/rtsp.rs`, `rust/host/stream/src/rtsp_server.rs` `docs/code-map.md & client/docs/code-map.md` |
 
 ---
 

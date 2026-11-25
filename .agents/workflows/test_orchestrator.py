@@ -45,7 +45,7 @@ class OrchestratorCoreTests(unittest.TestCase):
         (self.root / "tools" / "size_ratchet.json").write_text('{"max_loc": 800, "files": {}}\n', encoding="utf-8", newline="\n")
         (self.root / "tools" / "dev.ps1").write_text("param([switch] $Fast)\n", encoding="utf-8", newline="\n")
 
-    def _seed_valid_release_artifacts(self, version_code: int = 406) -> None:
+    def _seed_valid_release_artifacts(self, version_code: int = 412) -> None:
         (self.root / "Cargo.toml").write_text('[workspace.package]\nversion = "7.0.0"\n', encoding="utf-8", newline="\n")
         gradle = self.root / "client" / "app" / "build.gradle"
         gradle.parent.mkdir(parents=True, exist_ok=True)
@@ -156,7 +156,7 @@ class OrchestratorCoreTests(unittest.TestCase):
         self.assertTrue(any("Cargo.toml" in e for e in errs))
         self.assertTrue(any("Maintainer confirmation required" in e for e in errs))
 
-        self._seed_valid_release_artifacts(version_code=406)
+        self._seed_valid_release_artifacts(version_code=412)
         self.assertEqual(
             core.evaluate_release_gate(
                 st,
@@ -168,14 +168,14 @@ class OrchestratorCoreTests(unittest.TestCase):
             [],
         )
 
-        # Unbumped versionCode (405, already used by 6.3.0) fails closed.
-        self._seed_valid_release_artifacts(version_code=405)
+        # Unbumped versionCode (411, already reserved for 6.4.2; 6.4.1 is 410) fails closed.
+        self._seed_valid_release_artifacts(version_code=411)
         errs_vc = core.verify_release_artifacts(self.root)
-        self.assertTrue(any("versionCode (405)" in e for e in errs_vc))
+        self.assertTrue(any("versionCode (411)" in e for e in errs_vc))
 
         # Play changelog > 500 chars fails closed.
-        self._seed_valid_release_artifacts(version_code=406)
-        play = self.root / "client/fastlane/metadata/android/en-US/changelogs/406.txt"
+        self._seed_valid_release_artifacts(version_code=412)
+        play = self.root / "client/fastlane/metadata/android/en-US/changelogs/412.txt"
         play.write_text("x" * 501 + "\n", encoding="utf-8", newline="\n")
         errs_len = core.verify_release_artifacts(self.root)
         self.assertTrue(any("501 chars" in e for e in errs_len))
@@ -276,7 +276,7 @@ class OrchestratorCoreTests(unittest.TestCase):
                 "blocking_findings": [{
                     "item_id": "03",
                     "severity": "high",
-                    "file": "rust/host/src/launch_focus.rs",
+                    "file": "rust/host/stream/src/launch_focus.rs",
                     "issue": "Lock held across Win32 call",
                     "required_fix": "Release current_app mutex first",
                 }],

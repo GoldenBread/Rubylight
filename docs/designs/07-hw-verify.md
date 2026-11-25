@@ -1,6 +1,6 @@
 # Item 07: Serialized Hardware Verification & Measurement Plan (`hw-verify`)
 
-Status: design, not implemented (Wave 1, Rubylight & Nightjar 7.0.0). Written against `main` `b3d0c26b9b` (`6.2.0`), [protocol reservations](00-protocol-reservations.md), `tools/hw/catalog.yaml`, `rust/release/README.md`, and `docs/encoder-focus-design.md` Section 9.
+Status: design, not implemented (Wave 1, Rubylight & Nightjar 7.0.0). Rebased 2026-11-25 onto post-refactoring `origin/main` `955ef39598` (`v6.4.1`), [protocol reservations](00-protocol-reservations.md), `tools/hw/catalog.yaml`, `rust/release/README.md`, and `docs/encoder-focus-design.md` Section 9.
 
 ## 1. Summary & User Experience
 
@@ -80,19 +80,19 @@ Note that Python/YAML files in `tools/` and `rust/release/` are outside `arch_ch
 
 | Grandfathered file | Ratchet ceiling | How we avoid growing it |
 |---|---|---|
-| `rust/windows/examples/look_probe.rs` `[verify post-sprint code-map.md]` | `1540` | **Do NOT grow `look_probe.rs`!** Put Frame Warp 2.0 synthetic gyro/velocity curve generation in a new `<=400-LOC` helper `rust/windows/examples/look_probe_v2.rs` (or a sibling module `examples/look_probe/v2.rs` if converted) leaving `look_probe.rs` at `<=1540` LOC. |
-| `client/protocol/cli/src/main.rs` `[verify post-sprint code-map.md]` | `1744` | Put Wave 1 CLI verification flags (`--dvr-clip-at`, `--sdr-tonemap`, `--fw2-csv`) in new `client/protocol/cli/src/wave1.rs` (<=8 lines in `main.rs`, balanced by extracting an existing helper if needed). |
+| `rust/windows/examples/look_probe.rs` | `1540` | **Do NOT grow `look_probe.rs`!** Put Frame Warp 2.0 synthetic gyro/velocity curve generation in a new `<=400-LOC` helper `rust/windows/examples/look_probe_v2.rs` (or a sibling module `examples/look_probe/v2.rs` if converted) leaving `look_probe.rs` at `<=1540` LOC. |
+| `client/protocol/cli/src/main.rs` | `1744` | Put Wave 1 CLI verification flags (`--dvr-clip-at`, `--sdr-tonemap`, `--fw2-csv`) in new `client/protocol/cli/src/wave1.rs` (<=8 lines in `main.rs`, balanced by extracting an existing helper if needed). |
 
 #### New `<=800-LOC` files & catalog additions
 
 | Planned Path | Est. LOC | Ownership |
 |---|---|---|
-| `rust/release/wave1_verify.py` `[verify post-sprint code-map.md]` | ~420 | Orchestrator for Wave 1 ABBA runs (`curtain`, `frame-warp2`, `dvr`, `tonemap`, `summarize`), enforcing per-arm idle check, `machine_load.py`, `gpu_hang.py`, and exit-code-3 abort |
-| `rust/release/wave1_gates.py` `[verify post-sprint code-map.md]` | ~280 | Pure statistical ABBA noise calculator (`max(|A1-A2|, |B1-B2|)`), budget evaluator (`+0.05/+0.10/+0.20 ms`), DVR `ffprobe` sync verifier, HDR golden diff checker, `PERFORMANCE.md` markdown emitter |
-| `rust/release/test_wave1_verify.py` `[verify post-sprint code-map.md]` | ~320 | Deterministic pytest/unittest suite over synthetic timing JSONL, DVR ffprobe JSON, HDR golden fixtures, and exit-code-3 abort behavior (zero GPU required) |
-| `rust/windows/examples/hdr_tonemap_probe.rs` `[verify post-sprint code-map.md]` | ~360 | Standalone `#[allow]`-free probe generating synthetic scRGB FP16 & HDR10 PQ ramp/color-checker/specular textures, running D3D12 `compute::Converter` + D3D11 `gpu_color::Converter`, comparing against CPU reference (`butterpollo_core::sdr_tonemap`), outputting JSON metrics + side-by-side PNGs |
-| `rust/windows/examples/look_probe_v2.rs` `[verify post-sprint code-map.md]` | ~340 | Frame Warp 2.0 synthetic camera + gyro/velocity + depth-layered HUD probe emitting `OUT.json` + `OUT.frames.csv` compatible with `frame_warp_accuracy.py` |
-| `tools/hw/catalog.yaml` `[verify post-sprint code-map.md]` | +110 | 8 new `wave1-*` catalog entries (`desktop` and `laptop-host` pairs for Items 03, 04, 05, 06), initially `status: pending` until Wave 1 binaries land on `main`, then flipped to `ready` |
+| `rust/release/wave1_verify.py` | ~420 | Orchestrator for Wave 1 ABBA runs (`curtain`, `frame-warp2`, `dvr`, `tonemap`, `summarize`), enforcing per-arm idle check, `machine_load.py`, `gpu_hang.py`, and exit-code-3 abort |
+| `rust/release/wave1_gates.py` | ~280 | Pure statistical ABBA noise calculator (`max(|A1-A2|, |B1-B2|)`), budget evaluator (`+0.05/+0.10/+0.20 ms`), DVR `ffprobe` sync verifier, HDR golden diff checker, `PERFORMANCE.md` markdown emitter |
+| `rust/release/test_wave1_verify.py` | ~320 | Deterministic pytest/unittest suite over synthetic timing JSONL, DVR ffprobe JSON, HDR golden fixtures, and exit-code-3 abort behavior (zero GPU required) |
+| `rust/windows/examples/hdr_tonemap_probe.rs` | ~360 | Standalone `#[allow]`-free probe generating synthetic scRGB FP16 & HDR10 PQ ramp/color-checker/specular textures, running D3D12 `compute::Converter` + D3D11 `gpu_color::Converter`, comparing against CPU reference (`butterpollo_core::sdr_tonemap`), outputting JSON metrics + side-by-side PNGs |
+| `rust/windows/examples/look_probe_v2.rs` | ~340 | Frame Warp 2.0 synthetic camera + gyro/velocity + depth-layered HUD probe emitting `OUT.json` + `OUT.frames.csv` compatible with `frame_warp_accuracy.py` |
+| `tools/hw/catalog.yaml` | +110 | 8 new `wave1-*` catalog entries (`desktop` and `laptop-host` pairs for Items 03, 04, 05, 06), initially `status: pending` until Wave 1 binaries land on `main`, then flipped to `ready` |
 
 ---
 
@@ -173,7 +173,7 @@ All slices have **strictly non-overlapping file lists** and can be built in para
 | **7C: GPU Tone-Map Golden Probe (`hdr_tonemap_probe`)** | Stage 2 (after Item 06's Slice 6C) | `rust/windows/examples/hdr_tonemap_probe.rs` (new) |
 | **7D: Frame Warp 2.0 Synthetic Probe & CLI Hooks** | Stage 2 (after Item 04 lands) | `rust/windows/examples/look_probe_v2.rs` (new), `client/protocol/cli/src/wave1.rs` (new), `client/protocol/cli/src/main.rs` |
 
-*(Every path above is marked `[verify post-sprint code-map.md]` for Phase 2 reconciliation.)*
+*(Every path above is marked `docs/code-map.md` for Phase 2 reconciliation.)*
 
 ---
 
@@ -205,7 +205,7 @@ For every ABBA quartet (`A1 = off/baseline`, `B1 = feature`, `A2 = off/baseline`
 
 ### 7.3 NVIDIA NVENC Verification Protocol (Non-Hardware)
 
-For every Wave 1 item touching `rust/windows/src/nvenc.rs` or shared converters (`compute.rs`, `gpu_color.rs`, `encoder.rs`):
+For every Wave 1 item touching `rust/windows/graphics/src/nvenc.rs` or shared converters (`compute.rs`, `gpu_color.rs`, `encoder.rs`):
 
 1. Verify every NVENC struct field, API version gate (11/12/13), and call ordering against vendored `nvEncodeAPI.h` (`rust/THIRD_PARTY.md`) per `docs/nvenc.md#checking-nvidia-code` (author check + independent reviewer check naming exact header paths/lines).
 2. Run full fake-driver suite: `cargo test -p butterpollo-windows --locked nvenc`.

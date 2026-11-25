@@ -1,21 +1,25 @@
 # Protocol ID, Capability & Native API Reservations (Rubylight & Nightjar 7.0.0)
 
-Status: design reservation table (Phase 0 contract). Written against `main` `b3d0c26b9b` (`6.2.0`).
+Status: design reservation table (Phase 0 contract). Rebased onto post-refactoring `origin/main` `955ef39598` (`v6.4.1`, ready for `6.4.2`).
 
 This single document reserves every new control-stream message ID, input packet magic, `/serverinfo` element, RTSP `DESCRIBE` / `ANNOUNCE` attribute, launch parameter, `rubylight-native-api` v1 feature string, HTTP route, and `HostCapabilities::Feature` variant across Waves 1–3 of the 7.0.0 roadmap. Parallel implementer branches MUST NOT allocate IDs outside this table.
 
+Follow `origin/main`'s official workflow skills when wiring any entry here:
+- `.agents/skills/add-control-message/SKILL.md` (`python tools/scaffold.py control-message <name> --id 0x55XX`)
+- `.agents/skills/add-native-endpoint/SKILL.md` (`python tools/scaffold.py native-endpoint <name> ...`)
+
 ## 1. Non-Negotiable Compatibility Invariants
 
-1. **`PROTOCOL_VERSION` stays unchanged.** Stock Moonlight clients and older Nightjar builds negotiate and stream byte-for-byte as before; any client that opts into nothing new sees nothing new (`rust/host/src/stream/reconnect_tests/extension_tests.rs`).
-2. **`rubylight_native_api::API_VERSION` stays `1`.** All native API changes are strictly additive: new endpoints under `/api/native/v1`, new optional response fields (`#[serde(default)]`), `#[serde(deny_unknown_fields)]` on request bodies, and `Unknown` catch-all enum variants. The existing `ErrorBody { error: ApiError { code, message, setting, retry_after_ms } }` envelope in `rust/core/native-api/src/error.rs` is preserved intact (any new fields are optional additions inside `ApiError`).
-3. **Capability-gated, never brand-gated.** Nightjar gates every feature strictly via `HostCapabilities::has(Feature::...)` (both Rust `client/protocol/client/src/http/capabilities.rs` and Java `client/app/src/main/java/com/limelight/nvstream/http/HostCapabilities.java`), never on `Family::Rubylight` or version strings (`tools/arch_check.py` enforces this).
-4. **Protocol changes land with their client side** in the same change (`rubylight-protocol`, `nightjar-core`, `nightjar-desktop`, `nightjar-android` / Java, plus contract tests).
+1. **`PROTOCOL_VERSION` stays unchanged.** Stock Moonlight clients and older Nightjar builds negotiate and stream byte-for-byte as before; any client that opts into nothing new sees nothing new (`tests/host/tests/reconnect_tests/extension_tests.rs`).
+2. **`rubylight_native_api::API_VERSION` stays `1`.** All native API changes are strictly additive: new endpoints under `/api/native/v1`, new optional response fields (`#[serde(default)]`), `#[serde(deny_unknown_fields)]` on request bodies, and `Unknown` catch-all enum variants. The existing `ErrorBody { error: ApiError { code, message, setting, retry_after_ms } }` envelope in `client/protocol/native-api/src/error.rs` is preserved intact (any new fields are optional additions inside `ApiError`).
+3. **Capability-gated, never brand-gated.** Nightjar gates every feature strictly via `HostCapabilities::has(Feature::...)` (both Rust `client/protocol/policy/src/http/capabilities.rs` and Java `client/app/src/main/java/com/limelight/nvstream/http/HostCapabilities.java`), never on `Family::Rubylight` or version strings (`tools/arch_check.py` enforces this).
+4. **Protocol changes land with their client side** in the same change (`rubylight-protocol`, `rubylight-wire`, `rubylight-native-api`, `nightjar-policy`, `nightjar-core`, `nightjar-desktop-*`, `nightjar-android` / Java, plus contract & `tests/interop/` tests).
 5. **No collisions with reserved/foreign ranges** in `client/protocol/core/src/ids.rs`:
    - Existing `RUBYLIGHT_3_CONTROL_IDS = 0x5539..=0x5546` (`0x5542` remains reserved for cursor position), followed by `0x5547` (`transport_feedback::TRANSPORT_FEEDBACK_MESSAGE_TYPE`).
    - Foreign client range: `0x5506..=0x5510` (untouched; only adopted `0x5508`, `0x5510`).
    - DualSense haptics: `0x5601`; capability bit mask `HAPTICS_CAPABILITY = 0x8000` (all reserved IDs keep bit 15 clear).
    - Existing input magics up to `0x5500_0080` (`CONTROLLER_IDENTITY_MAGIC`), reserved touchpad magics `[0x5500_0009, 0x5500_000A]`.
-6. **Per-route body limits**: `rust/host/src/native_api.rs` enforces a router-wide `DefaultBodyLimit::max(16 * 1024)` (16 KiB). Routes accepting larger JSON payloads (`PUT /hub/profiles/{id}` and `PUT /input/decks/{id}`, up to 64 KiB) MUST attach an explicit per-route `.layer(DefaultBodyLimit::disable())` and read the body via `axum::body::to_bytes(req.into_body(), 64 * 1024)`, rejecting oversize payloads with structured JSON `ErrorBody` (`ErrorCode::TooLarge`, `"too_large"`, HTTP `413`) instead of Axum's plain-text `LengthLimitError`.
+6. **Per-route body limits**: `rust/host/web/src/native_api.rs` enforces a router-wide `DefaultBodyLimit::max(16 * 1024)` (16 KiB). Routes accepting larger JSON payloads (`PUT /hub/profiles/{id}` and `PUT /input/decks/{id}`, up to 64 KiB) MUST attach an explicit per-route `.layer(DefaultBodyLimit::disable())` and read the body via `axum::body::to_bytes(req.into_body(), 64 * 1024)`, rejecting oversize payloads with structured JSON `ErrorBody` (`ErrorCode::TooLarge`, `"too_large"`, HTTP `413`) instead of Axum's plain-text `LengthLimitError`.
 
 ## 2. Control-Stream Message IDs (`client/protocol/core/src/ids.rs`)
 
@@ -40,7 +44,7 @@ Add `pub const RUBYLIGHT_7_CONTROL_IDS: RangeInclusive<u16> = 0x5548..=0x554F;` 
 
 ## 4. `/serverinfo` Elements, RTSP `DESCRIBE` / `ANNOUNCE`, and Launch Parameters
 
-All fields appear in `rust/core/src/extensions.rs` (`Offered`) only when the host has the capability enabled and ready.
+All fields appear in `rust/core/media-policy/src/extensions.rs` (`Offered`) only when the host has the capability enabled and ready.
 
 | Item | `/serverinfo` Element | Value | `DESCRIBE` Line | Launch / `ANNOUNCE` Opt-In |
 | --- | --- | --- | --- | --- |
@@ -57,15 +61,15 @@ All fields appear in `rust/core/src/extensions.rs` (`Offered`) only when the hos
 | 14 `coherence-workstation` | `CoherenceVersion` | `1` | `a=x-rl-control:0x554E` | Launch `rlCoherence=1` |
 | 15 `away-wake-relay` | `AwayWakeRelayVersion` | `1` | *(none; `rubylight-traverse` peer relay)* | Native API v1 `wake.relay` |
 
-## 5. Native API v1 Features & Routes (`rust/core/native-api/src/`)
+## 5. Native API v1 Features & Routes (`client/protocol/native-api/src/` & `rust/host/web/src/native_api/`)
 
-All routes live under `/api/native/v1`, authenticate paired device TLS certificates, verify device permissions on every call, and use `rust/core/native-api/src/error.rs` status codes (`not_paired` → `403`, `permission_required` → `403`, `not_session_owner` → `409`, `not_writable` → `409`, `too_large` → `413`).
+All routes live under `/api/native/v1`, authenticate paired device TLS certificates, verify device permissions on every call, and use `client/protocol/native-api/src/error.rs` status codes (`not_paired` → `403`, `permission_required` → `403`, `not_session_owner` → `409`, `not_writable` → `409`, `too_large` → `413`).
 
 | Item | `feature::*` Constant & Wire String | Routes | Required Permission |
 | --- | --- | --- | --- |
 | 03 `launch-curtain` | `LAUNCH_CURTAIN = "session.launch_curtain"` | `GET /session/curtain`, `POST /session/curtain/dismiss` | `view` (read), `launch` (dismiss) |
 | 05 `stream-dvr` | `STREAM_DVR = "stream.dvr"` | `GET /dvr`, `POST /dvr/clip`, `POST /dvr/record`, `GET /dvr/clips`, `DELETE /dvr/clips/{id}` | `view` (read), `launch` (clip/record), `host_control` (delete) |
-| 06 `hdr-sdr-tonemap` | `STREAM_SETTINGS = "stream.settings"`, `HDR_SDR_TONEMAP = "video.sdr_tonemap"` | **New** `GET /stream/settings`, `POST /stream/settings` (`rust/core/native-api/src/stream.rs`, `rust/host/src/native_api/stream_settings.rs`) | `launch` |
+| 06 `hdr-sdr-tonemap` | `STREAM_SETTINGS = "stream.settings"`, `HDR_SDR_TONEMAP = "video.sdr_tonemap"` | **New** `GET /stream/settings`, `POST /stream/settings` (`client/protocol/native-api/src/stream.rs`, `rust/host/web/src/native_api/stream_settings.rs`) | `launch` |
 | 08 `quick-suspend` | `QUICK_SUSPEND = "session.quick_suspend"` | `GET /session/suspend`, `POST /session/suspend`, `POST /session/resume` | `view` (read), `launch` (owner) or `host_control` |
 | 09 `host-hub-sync` | `HUB_SYNC = "hub.sync"` | `GET /hub/snapshot`, `PUT /hub/profiles/{id}` *(64 KiB body limit)*, `DELETE /hub/profiles/{id}`, `GET /hub/covers/{app_id}` | `list` (read), `launch` (own device profiles) |
 | 10 `couch-party-audio` | `AUDIO_PARTY = "audio.party"` | `GET /audio/party`, `POST /audio/party` | `view` (read), `launch` or active guest (own slot) |
@@ -76,7 +80,7 @@ All routes live under `/api/native/v1`, authenticate paired device TLS certifica
 
 ## 6. Nightjar `HostCapabilities::Feature` Mapping
 
-Every new capability is added in lockstep to `client/protocol/client/src/http/capabilities.rs` (`Feature`, `Feature::ALL`, `Evidence`, `with_native`) AND `client/app/src/main/java/com/limelight/nvstream/http/HostCapabilities.java`, backed by recorded fixtures in `client/app/src/test/resources/protocol/capabilities/` verified by `capabilities_contract.rs`.
+Every new capability is added in lockstep to `client/protocol/policy/src/http/capabilities.rs` (`Feature`, `Feature::ALL`, `Evidence`, `with_native`) AND `client/app/src/main/java/com/limelight/nvstream/http/HostCapabilities.java`, backed by recorded fixtures in `client/app/src/test/resources/protocol/capabilities/` verified by `client/protocol/client/tests/capabilities_contract.rs`.
 
 | Item | Rust `Feature` / Java `HostCapabilities.Feature` | Proven By |
 | --- | --- | --- |

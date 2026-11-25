@@ -1,17 +1,20 @@
-# Item 12: Phone Safe Area & Reverse Landscape (#152)
+# Item 12: Phone Safe Area, Both-Ways Landscape Flip & Manual Display Centering (#152, #190)
 
-Status: design, not implemented (Wave 2 — Rubylight & Nightjar 7.0.0). Written against `main` `b3d0c26b9b` (`6.2.0`), `docs/designs/00-protocol-reservations.md`, and `tools/size_ratchet.json`.
+Status: design, not implemented (Wave 2 — Rubylight & Nightjar 7.0.0). Rebased **2026-11-25** onto post-refactoring `origin/main` (`955ef39598`, `v6.4.1`), `docs/designs/00-protocol-reservations.md`, and `tools/size_ratchet.json` (18 files).
+
+> **Post-6.4.1 Rebase Note (`StreamOrientation.REVERSE_LANDSCAPE = 4` ALREADY SHIPPED!):**
+> `6.4.1` (`55616c9aa6` + `98354a7863`) already landed `StreamOrientation.REVERSE_LANDSCAPE = 4` (`"reverse_landscape"`, `SCREEN_ORIENTATION_REVERSE_LANDSCAPE`). Item 12 builds cleanly ON TOP of `REVERSE_LANDSCAPE = 4`: new **`LANDSCAPE_FLIP`** takes index **`5`** (never colliding with `4`!), adds one-tap **Flip 180°**, adds deterministic `nightjar-policy::safe_area` (`VideoScaling.SAFE_FIT = 4`, cutout + API 31+ `RoundedCorner` + gesture bar + fold hinge + `DisplayListener` for `ROTATION_90 ↔ ROTATION_270` with 0 `0x5532` sends), and folds open **Nightjar `#190`** (optional manual horizontal/vertical display-centering offset inside Safe Area for asymmetrical camera cutouts & curved edges).
 
 ## 1. Summary & User Experience
 
-Phone gamers increasingly play with telescopic USB-C controllers (whose connector sits on the right or left side), angled USB-C charging/headphone cables, or side volume/power buttons that require holding the phone rotated 180° into **Reverse Landscape** (`Surface.ROTATION_270`). Today in Nightjar (`client/app/src/main/java/com/limelight/ui/StreamOrientation.java`), `LANDSCAPE` requests `ActivityInfo.SCREEN_ORIENTATION_USER_LANDSCAPE` — which obeys Android's system portrait rotation lock by locking exclusively to standard landscape (`ROTATION_90`), refusing to flip right-side-up when mounted in a reverse-edge controller!
+Phone gamers increasingly play with telescopic USB-C controllers (whose connector sits on the right or left side), angled USB-C charging/headphone cables, or side volume/power buttons that require holding the phone rotated 180° into **Reverse Landscape** (`Surface.ROTATION_270`) or flipping freely between standard and reverse landscape. `6.4.1` added hard-locked `REVERSE_LANDSCAPE` (`4`), while `LANDSCAPE` (`SCREEN_ORIENTATION_USER_LANDSCAPE`) still refuses to flip automatically when portrait rotation lock is on.
 
-At the same time, modern phones combine asymmetrical hole-punch cameras (which flip from the **left** edge in `ROTATION_90` to the **right** edge in `ROTATION_270`), large OLED corner radii, bottom gesture-navigation pills, and foldable hinges. While `AdaptiveLayout.java` handles basic display cutouts on the root container, video framing lacks a dedicated cutout-safe **Safe-Fit** option, rounded-corner insets are ignored by corner HUD overlays, and on-screen controller buttons or performance stats can sit partially clipped behind camera punches or trigger Android's bottom gesture bar when flipped to Reverse Landscape.
+At the same time, modern phones combine asymmetrical hole-punch cameras (which flip from the **left** edge in `ROTATION_90` to the **right** edge in `ROTATION_270`), large OLED corner radii, bottom gesture-navigation pills, curved edges (`#190`), and foldable hinges. While `AdaptiveLayout.java` handles basic display cutouts on the root container, video framing lacks a dedicated cutout-safe **Safe-Fit** option (and manual fine-centering `#190`), rounded-corner insets are ignored by corner HUD overlays, and on-screen controller buttons or performance stats can sit partially clipped behind camera punches or trigger Android's bottom gesture bar when flipped to Reverse Landscape.
 
-**Phone Safe Area & Reverse Landscape (#152)** solves both halves cleanly on the client with **zero host protocol changes**:
+**Phone Safe Area, Both-Ways Landscape Flip & Manual Display Centering (#152, #190)** solves these cleanly on the client with **zero host protocol changes**:
 
-- **Reverse Landscape & Both-Ways Landscape:** Extends the existing `stream_orientation` picker with **Landscape (either side)** (`SCREEN_ORIENTATION_SENSOR_LANDSCAPE`, flips freely between standard and reverse landscape even when portrait rotation lock is on!) and **Reverse landscape** (`SCREEN_ORIENTATION_REVERSE_LANDSCAPE`, hard-locks 180° for playing in bed without accelerometer drift), plus a one-tap **Flip 180°** quick action in the Stream Menu when in landscape.
-- **Deterministic Safe-Area Policy (`nightjar-policy::safe_area`):** Computes exact, non-overlapping screen rectangles from `DisplayCutout`, `RoundedCorner` (API 31+), `mandatorySystemGestures` (gesture bar), `systemBars`, and `FoldingFeature` hinges across `ROTATION_0 / 90 / 180 / 270`:
+- **Both-Ways Landscape & Quick Flip (atop `6.4.1`'s `REVERSE_LANDSCAPE = 4`):** Extends the existing `stream_orientation` picker with **Landscape (either side)** (`LANDSCAPE_FLIP = 5`, `SCREEN_ORIENTATION_SENSOR_LANDSCAPE`, flips freely between standard and reverse landscape even when portrait rotation lock is on!) alongside `6.4.1`'s **Reverse landscape** (`REVERSE_LANDSCAPE = 4`), plus a one-tap **Flip 180°** quick action in the Console Control Center / Stream Menu when in landscape.
+- **Deterministic Safe-Area Policy (`nightjar-policy::safe_area`) + Manual Display Centering (`#190`):** Computes exact, non-overlapping screen rectangles from `DisplayCutout`, `RoundedCorner` (API 31+), `mandatorySystemGestures` (gesture bar), `systemBars`, and `FoldingFeature` hinges across `ROTATION_0 / 90 / 180 / 270`, plus optional clamped per-device manual centering offsets (`offset_x_pct`, `offset_y_pct` in `-15%..+15%` of safe margin, default `0%`, adjusted cleanly inside the Control Center / Display preview card for asymmetrical cutouts & curved screens per `#190`!):
   - **Video framing (`Fit` / `Safe-Fit` / `Fill` / `Stretch` / `1:1`):**
     - **Safe-Fit** frames the video strictly inside the cutout- and corner-safe rectangle so zero game HUD pixels vanish behind a hole-punch camera in either landscape direction. When connected to a virtual-display host that supports `0x5532` reconfigure (`StreamResizePolicy`), Safe-Fit can optionally size the virtual display to match the exact cutout-free pixel area!
     - **Fit** keeps aspect ratio across the full window (clearing only a half-opened foldable hinge).
@@ -37,12 +40,12 @@ Stored under the **existing** preference key `StreamOrientation.PREF = "stream_o
 | --- | --- | --- | --- |
 | `"auto"` | `AUTO` (`0`, default) | Existing rules (`USER_LANDSCAPE` / `FULL_USER` on tablets/foldables) | Unchanged default for existing users |
 | `"landscape"` | `LANDSCAPE` (`1`) | `SCREEN_ORIENTATION_USER_LANDSCAPE` | Standard landscape (existing behavior preserved) |
-| `"landscape_flip"` | `LANDSCAPE_FLIP` (`4`, new) | `SCREEN_ORIENTATION_SENSOR_LANDSCAPE` | Landscape on **either side** (flips 180° for USB-C controllers even with Android portrait rotation lock ON; never flips to portrait) |
-| `"reverse_landscape"` | `REVERSE_LANDSCAPE` (`5`, new) | `SCREEN_ORIENTATION_REVERSE_LANDSCAPE` | Locks 180° reverse landscape (ideal when lying down with a bottom-port USB-C grip) |
 | `"portrait"` | `PORTRAIT` (`2`) | `SCREEN_ORIENTATION_USER_PORTRAIT` | Portrait lock (unchanged) |
 | `"rotate"` | `ROTATE` (`3`) | `SCREEN_ORIENTATION_FULL_USER` | All 4 orientations within system lock (unchanged) |
+| `"reverse_landscape"` | `REVERSE_LANDSCAPE` (`4`, shipped in `6.4.1`) | `SCREEN_ORIENTATION_REVERSE_LANDSCAPE` | Locks 180° reverse landscape (already shipped in `6.4.1`; preserved at index `4`!) |
+| `"landscape_flip"` | `LANDSCAPE_FLIP` (`5`, new) | `SCREEN_ORIENTATION_SENSOR_LANDSCAPE` | Landscape on **either side** (flips 180° for USB-C controllers even with Android portrait rotation lock ON; never flips to portrait) |
 
-*(Older builds encountering unknown `"landscape_flip"` or `"reverse_landscape"` fall safely back to `AUTO` via `StreamOrientation.fromValue()`.)*
+*(Older builds encountering unknown `"landscape_flip"` fall safely back to `AUTO` via `StreamOrientation.fromValue()`. Update `client/protocol/policy/settings.toml` and regenerate via `python client/scripts/generate-settings.py`.)*
 
 ### Video Framing Mapping (`VideoScaling.java`)
 
@@ -123,14 +126,14 @@ Key deterministic geometry rules:
 
 | Grandfathered / Touched File | Ratchet / Current LOC | Strategy to Avoid Growth |
 | --- | --- | --- |
-| `client/app/src/main/java/com/limelight/Game.java` `[verify post-sprint code-map.md]` | 1883 LOC (ratchet) | **Zero net LOC growth!** Delegate inset/rotation handling to `StreamSafeAreaController` via existing `GameVideoOutput` hooks. |
-| `client/app/src/main/java/com/limelight/GameVideoOutput.java` `[verify post-sprint code-map.md]` | 1346 LOC (ratchet) | Keep <=12-line delegation into new `StreamSafeAreaController.java` (and trim duplicated inset logic so net LOC stays <= 1346!). |
-| `client/app/src/main/java/com/limelight/binding/input/pad/PadControlView.java` `[verify post-sprint code-map.md]` | 1023 LOC (ratchet) | Add a 6-line `setSafeAreaBounds(Rect)` setter; all safe-area clamping math stays in `SafeAreaPolicy.java`. |
-| `client/app/src/main/java/com/limelight/ui/StreamMenu.java` `[verify post-sprint code-map.md]` | 1321 LOC (ratchet) | Add single "Flip screen 180°" row (visible only in landscape on non-TV phones) via 5-line hook into `StreamSafeAreaController.toggleLandscapeFlip()`. |
-| `client/app/src/main/java/com/limelight/ui/ActionSheet.java` `[verify post-sprint code-map.md]` | 1396 LOC (ratchet) | Consume `menu_area` from `AdaptiveLayout` — zero net growth. |
-| `client/app/src/main/java/com/limelight/preferences/PreferenceConfiguration.java` `[verify post-sprint code-map.md]` | 1961 LOC (ratchet) | **Zero new keys** (reuses `stream_orientation` and `video_scaling`); zero net growth! |
-| `client/app/src/main/java/com/limelight/preferences/StreamSettings.java` `[verify post-sprint code-map.md]` | 3425 LOC (ratchet) | Zero new rows needed — existing `stream_orientation` and `video_scaling` list preferences automatically pick up the new entries from XML arrays! |
-| `client/app/src/test/java/com/limelight/preferences/SettingsKeysTest.java` `[verify post-sprint code-map.md]` | 976 LOC (ratchet) | Remains completely unchanged (verifies zero key regressions automatically!). |
+| `client/app/src/main/java/com/limelight/Game.java` | 1883 LOC (ratchet) | **Zero net LOC growth!** Delegate inset/rotation handling to `StreamSafeAreaController` via existing `GameVideoOutput` hooks. |
+| `client/app/src/main/java/com/limelight/GameVideoOutput.java` | 1346 LOC (ratchet) | Keep <=12-line delegation into new `StreamSafeAreaController.java` (and trim duplicated inset logic so net LOC stays <= 1346!). |
+| `client/app/src/main/java/com/limelight/binding/input/pad/PadControlView.java` | 1023 LOC (ratchet) | Add a 6-line `setSafeAreaBounds(Rect)` setter; all safe-area clamping math stays in `SafeAreaPolicy.java`. |
+| `client/app/src/main/java/com/limelight/ui/StreamMenu.java` | 1321 LOC (ratchet) | Add single "Flip screen 180°" row (visible only in landscape on non-TV phones) via 5-line hook into `StreamSafeAreaController.toggleLandscapeFlip()`. |
+| `client/app/src/main/java/com/limelight/ui/ActionSheet.java` | 1396 LOC (ratchet) | Consume `menu_area` from `AdaptiveLayout` — zero net growth. |
+| `client/app/src/main/java/com/limelight/preferences/PreferenceConfiguration.java` | 1961 LOC (ratchet) | **Zero new keys** (reuses `stream_orientation` and `video_scaling`); zero net growth! |
+| `client/app/src/main/java/com/limelight/preferences/StreamSettings.java` | 3425 LOC (ratchet) | Zero new rows needed — existing `stream_orientation` and `video_scaling` list preferences automatically pick up the new entries from XML arrays! |
+| `client/app/src/test/java/com/limelight/preferences/SettingsKeysTest.java` | 976 LOC (ratchet) | Remains completely unchanged (verifies zero key regressions automatically!). |
 
 ### New & Touched Module Breakdown
 
@@ -139,12 +142,12 @@ Key deterministic geometry rules:
 | `client/protocol/policy/src/safe_area.rs` (new) | `nightjar-policy` | ~380 | Pure safe-area solver (`compute(&SafeAreaInput) -> SafeAreaLayout`), rounded-corner chord math, fold-hinge split, `virtual_display_area` sizing, trace replay harness |
 | `client/app/src/main/java/com/limelight/ui/SafeAreaPolicy.java` (new) | `nightjar-android` | ~320 | Lockstep Java implementation of `nightjar_policy::safe_area::compute` + Android `WindowInsetsCompat` & API 31+ `RoundedCorner` extractor (graceful `0` on API < 31) |
 | `client/app/src/main/java/com/limelight/ui/StreamSafeAreaController.java` (new) | `nightjar-android` | ~360 | Coordinates `AdaptiveLayout` insets, rotation observation (`DisplayManager.DisplayListener` for `ROTATION_90 ↔ ROTATION_270` since Android does NOT fire `onConfigurationChanged` on 180° flips!), applies `video_area` to `StreamView`, `overlay_area` to `GameOverlays`, `osc_area` to `PadControlView`, and triggers `0x5532` resize ONLY when `virtual_display_area` dimensions change |
-| `client/app/src/main/java/com/limelight/ui/StreamOrientation.java` `[verify post-sprint code-map.md]` | `nightjar-android` | 136 → ~185 | Adds `LANDSCAPE_FLIP` (`SCREEN_ORIENTATION_SENSOR_LANDSCAPE`), `REVERSE_LANDSCAPE` (`SCREEN_ORIENTATION_REVERSE_LANDSCAPE`), and `flipLandscape(currentRotation)` helper |
-| `client/app/src/main/java/com/limelight/ui/VideoScaling.java` `[verify post-sprint code-map.md]` | `nightjar-android` | 134 → ~160 | Adds `SAFE_FIT` (`4`, `"safe_fit"`) with `legacyStretch(SAFE_FIT) == false`, `usesCutoutSafeArea(mode)` helper |
-| `client/app/src/main/java/com/limelight/ui/AdaptiveLayout.java` `[verify post-sprint code-map.md]` | `nightjar-android` | 273 → ~315 | Delegates streaming safe-area math to `SafeAreaPolicy` and notifies `StreamSafeAreaController` with full `SafeAreaLayout` (video, overlay, menu, OSC rects separately instead of one coarse root padding!) |
-| `client/app/src/main/java/com/limelight/ui/StreamWindow.java` `[verify post-sprint code-map.md]` | `nightjar-android` | 17 → ~28 | Adds `int videoScalingMode()` so `AdaptiveLayout` knows `SAFE_FIT` vs `FIT` vs `FILL` cleanly |
-| `client/app/src/main/java/com/limelight/GameOverlays.java` `[verify post-sprint code-map.md]` | `nightjar-android` | 367 → ~390 | Applies `overlay_area` margins to `performanceOverlayScroll` and `streamMenuHint` so both dodge camera punches & rounded corners in `ROTATION_90` and `ROTATION_270` |
-| `client/app/src/main/java/com/limelight/ui/StreamPresentation.java` `[verify post-sprint code-map.md]` | `nightjar-android` | 32 → ~38 | Explicitly sets `external_presentation = true` (zero phone cutout padding on external display) |
+| `client/app/src/main/java/com/limelight/ui/StreamOrientation.java` | `nightjar-android` | 136 → ~185 | Adds `LANDSCAPE_FLIP` (`SCREEN_ORIENTATION_SENSOR_LANDSCAPE`), `REVERSE_LANDSCAPE` (`SCREEN_ORIENTATION_REVERSE_LANDSCAPE`), and `flipLandscape(currentRotation)` helper |
+| `client/app/src/main/java/com/limelight/ui/VideoScaling.java` | `nightjar-android` | 134 → ~160 | Adds `SAFE_FIT` (`4`, `"safe_fit"`) with `legacyStretch(SAFE_FIT) == false`, `usesCutoutSafeArea(mode)` helper |
+| `client/app/src/main/java/com/limelight/ui/AdaptiveLayout.java` | `nightjar-android` | 273 → ~315 | Delegates streaming safe-area math to `SafeAreaPolicy` and notifies `StreamSafeAreaController` with full `SafeAreaLayout` (video, overlay, menu, OSC rects separately instead of one coarse root padding!) |
+| `client/app/src/main/java/com/limelight/ui/StreamWindow.java` | `nightjar-android` | 17 → ~28 | Adds `int videoScalingMode()` so `AdaptiveLayout` knows `SAFE_FIT` vs `FIT` vs `FILL` cleanly |
+| `client/app/src/main/java/com/limelight/GameOverlays.java` | `nightjar-android` | 367 → ~390 | Applies `overlay_area` margins to `performanceOverlayScroll` and `streamMenuHint` so both dodge camera punches & rounded corners in `ROTATION_90` and `ROTATION_270` |
+| `client/app/src/main/java/com/limelight/ui/StreamPresentation.java` | `nightjar-android` | 32 → ~38 | Explicitly sets `external_presentation = true` (zero phone cutout padding on external display) |
 
 *(Note on Desktop parity: Desktop Nightjar has no camera punch-hole or mobile orientation sensor, so desktop UI adds zero irrelevant phone settings — matching `client/AGENTS.md`'s "hide what doesn't apply" rule! `nightjar-policy::safe_area` still compiles cleanly in the workspace across Windows, Linux, and macOS so future handheld notch/corner devices can reuse it immediately.)*
 
@@ -210,7 +213,7 @@ Android deliberately does **NOT** invoke `Activity.onConfigurationChanged` on a 
   - When tapping *Flip 180°* in split-screen or on an external display: *"Screen flip isn't available in windowed or external-display mode."* (never silent no-op).
 - **Dynamic input glyphs:** The in-stream *Flip 180°* quick action and Stream Menu rows inherit Nightjar's dynamic Xbox/PS/Nintendo/Keyboard glyph prompts; hidden automatically on Android TV (`UI_MODE_TYPE_TELEVISION`) and external presentations where flipping a TV makes no sense.
 - **Zero stream-time blur / zero extra layers:** Verified by inspection and view-hierarchy test: `StreamView`, `GameOverlays`, and `PadControlView` apply bounds/margins directly — zero `setRenderEffect`, zero `LAYER_TYPE_HARDWARE`, zero alpha-composited blur surfaces over the `SurfaceView`.
-- **Zero `"Experimental"`, zero mod names, 15 locales:** New option labels (*Landscape (either side)*, *Reverse landscape*, *Safe fit*, *Flip screen 180°*) translated in all 15 Android `values*/strings.xml` files (and `client/protocol/desktop/src/strings/*.rs` only if any shared string is referenced in desktop tests).
+- **Zero `"Experimental"`, zero mod names, 15 locales:** New option labels (*Landscape (either side)*, *Reverse landscape*, *Safe fit*, *Flip screen 180°*) translated in all 15 Android `values*/strings.xml` files (and `client/protocol/desktop-config/src/strings/*.rs` only if any shared string is referenced in desktop tests).
 
 ## 6. Disjoint Implementer Slices
 

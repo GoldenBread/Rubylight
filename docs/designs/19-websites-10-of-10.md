@@ -1,6 +1,6 @@
 # Item 19: Rubylight & Nightjar Websites 10/10 — Ground-Up 7.0 Visual Redesign
 
-Status: design, not implemented (Wave 5). Written against `main` `b3d0c26b9b` (`6.2.0`), `docs/designs/00-protocol-reservations.md`, and the Wave 0–4 ground-up **7.0 Console-Quality Complete Redesign**.
+Status: design, not implemented (Wave 5). Rebased 2026-11-25 onto post-refactoring `origin/main` `955ef39598` (`v6.4.1`), `docs/designs/00-protocol-reservations.md`, and the Wave 0–4 ground-up **7.0 Console-Quality Complete Redesign**.
 
 Item 19 executes a **complete ground-up 7.0 visual redesign** of BOTH static websites—**Rubylight 7.0** (`site/`, built by `site/build.py` into `_site/`) and **Nightjar 7.0** (`client/site/` + `de/`, plain static HTML/CSS/JS with zero runtime bundler)—around the brand-new **7.0 Console-Quality Brand Identity**. Both sites derive 100% of their CSS custom properties deterministically from Wave 0's canonical token sources (Wave 0's new `rust/web/src/styles/tokens.css` for Rubylight via `tools/sync_site_tokens.py`; Wave 0's new `client/design/tokens.json` for Nightjar via `client/scripts/gen_design_tokens.py` emitting `client/site/assets/design-tokens.css` — ZERO `sync-site-tokens.mjs`!), showcase verified Item 18 offline 7.0 captures across every redesigned surface, cite only real measured runs from `rust/PERFORMANCE.md`, enforce Nightjar's strict `< 6 MB` non-video asset ceiling via `client/site/check-links.mjs`, pass an automated `360 / 768 / 1440 px × Light / Dark` visual review matrix, and publish cleanly via history-preserving fast-forward `gh-pages` commits.
 
@@ -21,7 +21,7 @@ Item 19 executes a **complete ground-up 7.0 visual redesign** of BOTH static web
   2. **Browser `/play` & `/guest` Players** — PIN-paired TV/console browser player and zero-account WebRTC browser guest rooms;
   3. **Host-Drawn Couch Menu** — universal in-stream overlay working on stock Moonlight, Artemis, and Nightjar alike with zero closed-path GPU cost;
   4. **Windows Installer & QR Finish Screen** — `rust/setup/` (`butterpollo-setup`) consuming canonical `rust/setup/src/ui_theme.rs`, one-click `--repair`, integrated `rubylight-vgamepad` VHF driver (zero unsigned KMDF), and instant post-install QR pairing;
-  5. **System Tray & No-Script HTML Console Parity** — canonical `rust/windows/src/tray/status.rs` DPI-aware status badges & driver repair menu plus synchronized zero-JS HTML console fallback.
+  5. **System Tray & No-Script HTML Console Parity** — canonical `rust/windows/io/src/tray/status.rs` DPI-aware status badges & driver repair menu plus synchronized zero-JS HTML console fallback.
   - Clear, scannable Waves 1–4 feature architecture: **VHF Virtual Gamepads (`rubylight-vgamepad`)**, **Launch Curtain**, **Frame Warp 2.0**, **Stream DVR**, **HDR-to-SDR Tone-Mapping**, **Desktop Client Performance & NVENC Low-Latency Overhaul** (Windows DirectFlip/Waitable/D3D12 decode & Intel Linux DMA-BUF Wayland/KMS measured on local hardware; macOS direct VideoToolbox/Metal CI-verified & NVIDIA NVENC SDK 13.0 header/fake-driver-verified), **Quick Suspend**, **Host Hub Sync**, **Couch Party Audio**, **Stream Doctor 2.0**, **Visual Controller Editor & Client Input Deck**, **Coherence Workstation**, **Away Wake Relay**, and **Issue #129 Crash-Restore Soak (`RecoveryJournalV2`)**.
   - Explicitly preserves Windows 10 & 11, physical displays, WGC, Desktop Duplication, D3D11, AMD Radeon (AMF), and NVIDIA (NVENC) compatibility statements—describing NVIDIA NVENC and macOS Apple Silicon honestly as header/sample/CI-verified without ever claiming local NVIDIA or Apple Silicon hardware benchmark runs.
 - **Honest `PERFORMANCE.md` Benchmark Strip**:
@@ -34,7 +34,7 @@ Item 19 executes a **complete ground-up 7.0 visual redesign** of BOTH static web
 
 - **Ground-Up 7.0 Console-Quality Brand Identity via `gen_design_tokens.py` (ZERO `sync-site-tokens.mjs`!)**:
   - Every Nightjar page loads `assets/design-tokens.css` immediately before `assets/site.css` (zero client-side bundler or runtime build step).
-  - `client/site/assets/design-tokens.css` is generated strictly from Wave 0's brand-new `client/design/tokens.json` by **`client/scripts/gen_design_tokens.py`** — the single `--check`-enforced token generator emitting Android XML (`design_tokens.xml`), Desktop Rust (`client/protocol/desktop/src/ui/design_tokens.rs`), and Nightjar site CSS (`client/site/assets/design-tokens.css`). **No `sync-site-tokens.mjs` or duplicate JS token script exists anywhere.**
+  - `client/site/assets/design-tokens.css` is generated strictly from Wave 0's brand-new `client/design/tokens.json` by **`client/scripts/gen_design_tokens.py`** — the single `--check`-enforced token generator emitting Android XML (`design_tokens.xml`), Desktop Rust (`client/protocol/desktop-ui/src/ui/design_tokens.rs`), and Nightjar site CSS (`client/site/assets/design-tokens.css`). **No `sync-site-tokens.mjs` or duplicate JS token script exists anywhere.**
   - `client/site/assets/site.css` is redesigned from the ground up to consume `--nj-*` custom properties for Light (Day), Dark (Night), and High-Contrast (`prefers-contrast: more`) schemes — zero hardcoded legacy 6.x hex literals anywhere in `site.css`.
 - **Brand-New 7.0 Banners, Social Card (`og.png`) & Complete 7.0 Surface Showcase**:
   - Refreshed brand mark, 7.0 social card `client/site/assets/og.png` (`1200×630`), and Item 18 WebP showcase frames covering every redesigned Nightjar 7.0 surface:
@@ -74,8 +74,8 @@ Per `docs/designs/00-protocol-reservations.md` §7, **Item 19 requires ZERO prot
 | --- | --- | --- |
 | Rubylight Download Version & Tag | `README.md` (`[Download 7.0.0](https://github.com/RamazanKara/Rubylight/releases/tag/v7.0.0)`) | `site/build.py::release()` -> `{{download_label}}`, `{{download_url}}`, `{{version}}` |
 | Rubylight Benchmark Figures | `rust/PERFORMANCE.md` dated run sections (RX 7900 XT / Radeon 780M only) | `site/index.html` stat cards + `site/build.py::check_landing()` fragment verification |
-| Rubylight 7.0 Visual Tokens | Wave 0's new `rust/web/src/styles/tokens.css` `[verify post-sprint code-map.md]` (zero legacy 6.x hardcoded colors) | `site/tokens.css` generated by `tools/sync_site_tokens.py` (`--check` enforced in CI) and consumed by `site/style.css` |
-| Nightjar 7.0 Visual Tokens | Wave 0's new `client/design/tokens.json` `[verify post-sprint code-map.md]` (zero legacy 6.x hardcoded colors) | `python client/scripts/gen_design_tokens.py --check` (the SOLE generator of Android XML, Desktop `ui/design_tokens.rs`, and `client/site/assets/design-tokens.css`; ZERO `sync-site-tokens.mjs`!) |
+| Rubylight 7.0 Visual Tokens | Wave 0's new `rust/web/src/styles/tokens.css` `docs/code-map.md` (zero legacy 6.x hardcoded colors) | `site/tokens.css` generated by `tools/sync_site_tokens.py` (`--check` enforced in CI) and consumed by `site/style.css` |
+| Nightjar 7.0 Visual Tokens | Wave 0's new `client/design/tokens.json` `docs/code-map.md` (zero legacy 6.x hardcoded colors) | `python client/scripts/gen_design_tokens.py --check` (the SOLE generator of Android XML, Desktop `ui/design_tokens.rs`, and `client/site/assets/design-tokens.css`; ZERO `sync-site-tokens.mjs`!) |
 | Nightjar Privacy Policy | `client/docs/PRIVACY.md` | `client/site/privacy.html` (section-heading & policy-point sync verified in review checklist) |
 | Nightjar Device Results | `client/site/data/device-results.json` (format v1 via `client/scripts/add-device-results.mjs`) | `client/site/devices.html` + `client/docs/devices.md` (via `tools/generated_docs.py`) |
 | Nightjar Asset Budget, Links & Honesty | `client/site/check-links.mjs` | Enforces 0 broken local/repo files, 0 missing/duplicate `#ids`, HTTPS-only external links, `preload="none"` + zero autoplay on `<video>`, zero `"Experimental"` / mod names, and total non-video `assets/` `< 6 MB` (`6144 KiB`). |
@@ -84,7 +84,7 @@ Per `docs/designs/00-protocol-reservations.md` §7, **Item 19 requires ZERO prot
 
 ## 3. Architecture & <=800-LOC Module Plan
 
-All paths below must be re-verified against `docs/code-map.md` and `client/docs/code-map.md` in Phase 2 (`[verify post-sprint code-map.md]`).
+All paths below must be re-verified against `docs/code-map.md` and `client/docs/code-map.md` in Phase 2 (`docs/code-map.md`).
 
 ### 3.1 Grandfathered Files in `tools/size_ratchet.json` (DO NOT GROW)
 
@@ -96,20 +96,20 @@ Item 19 modifies only HTML, CSS, JS, Python, SVG, PNG, WebP, and MP4 assets unde
 | --- | ---: | --- |
 | `tools/sync_site_tokens.py` *(new)* | ~190 | Deterministically extracts Wave 0's new 7.0 light/dark/reduced-motion CSS custom properties from `rust/web/src/styles/tokens.css` into `site/tokens.css`, validates zero legacy hardcoded palette drift in `site/style.css`, and supports `--check` for CI. |
 | `site/tokens.css` *(new, generated)* | ~120 | Generated 1:1 from Wave 0's `rust/web/src/styles/tokens.css` (surfaces, typography, radii, elevation, `--accent*`, `--brand*`, `--focus`, status & media tokens for Light and Dark schemes). |
-| `site/build.py` `[verify post-sprint code-map.md]` | ~490 | Adds `site/tokens.css` & `site/og.png` to `STATIC`, excludes `docs/designs/` via `INTERNAL`, runs token-sync and banned-term checks (forbidding `"Experimental"` and mod names in landing copy), builds `_site/`, and verifies every link + GitHub heading `#fragment`. |
-| `site/style.css` `[verify post-sprint code-map.md]` | ~600 | Ground-up 7.0 Console-Quality redesign consuming `site/tokens.css` exclusively (zero raw legacy 6.x hex values); responsive console-stage hero, 5-surface spotlight grid, benchmark strip, high-contrast & `@media (prefers-reduced-motion: reduce)` compliance across `360 / 768 / 1440 px`. |
-| `site/index.html` `[verify post-sprint code-map.md]` | ~420 | Ground-up Rubylight 7.0 landing page showcasing all 5 redesigned surfaces (Web Studio Console 7.0, Browser `/play` & `/guest`, Host-Drawn Couch Menu, Installer QR Finish Screen, System Tray & No-Script parity), Waves 1–3 capabilities, `PERFORMANCE.md`-anchored strip, `preload="none"` 60 fps tour video, auto-synced `Download 7.0.0` CTA, and Nightjar cross-link. |
-| `site/page.html` `[verify post-sprint code-map.md]` | ~95 | Documentation shell loading `site/tokens.css` + `site/style.css` with skip-link, accessible landmarks, and updated 7.0 brand header. |
+| `site/build.py` | ~490 | Adds `site/tokens.css` & `site/og.png` to `STATIC`, excludes `docs/designs/` via `INTERNAL`, runs token-sync and banned-term checks (forbidding `"Experimental"` and mod names in landing copy), builds `_site/`, and verifies every link + GitHub heading `#fragment`. |
+| `site/style.css` | ~600 | Ground-up 7.0 Console-Quality redesign consuming `site/tokens.css` exclusively (zero raw legacy 6.x hex values); responsive console-stage hero, 5-surface spotlight grid, benchmark strip, high-contrast & `@media (prefers-reduced-motion: reduce)` compliance across `360 / 768 / 1440 px`. |
+| `site/index.html` | ~420 | Ground-up Rubylight 7.0 landing page showcasing all 5 redesigned surfaces (Web Studio Console 7.0, Browser `/play` & `/guest`, Host-Drawn Couch Menu, Installer QR Finish Screen, System Tray & No-Script parity), Waves 1–3 capabilities, `PERFORMANCE.md`-anchored strip, `preload="none"` 60 fps tour video, auto-synced `Download 7.0.0` CTA, and Nightjar cross-link. |
+| `site/page.html` | ~95 | Documentation shell loading `site/tokens.css` + `site/style.css` with skip-link, accessible landmarks, and updated 7.0 brand header. |
 | `site/favicon.svg`, `site/og.png`, `site/poster.jpg` | assets | Refreshed 7.0 BrandMark favicon, `1200×630` social card, and `1280×720` tour video poster derived from Item 18. |
-| `client/scripts/gen_design_tokens.py` `[verify post-sprint code-map.md]` | ~195 | Extended sole `--check`-enforced token generator from Wave 0's new `client/design/tokens.json` to Android XML, Desktop Rust (`client/protocol/desktop/src/ui/design_tokens.rs`), and `client/site/assets/design-tokens.css` (adding Light/Dark/High-Contrast CSS custom property blocks directly from `tokens.json`; ZERO `sync-site-tokens.mjs`!). |
-| `client/scripts/test_gen_design_tokens.py` `[verify post-sprint code-map.md]` | ~140 | Unit tests verifying deterministic LF generation and Light/Dark/High-Contrast CSS custom properties emitted into `client/site/assets/design-tokens.css`. |
+| `client/scripts/gen_design_tokens.py` | ~195 | Extended sole `--check`-enforced token generator from Wave 0's new `client/design/tokens.json` to Android XML, Desktop Rust (`client/protocol/desktop-ui/src/ui/design_tokens.rs`), and `client/site/assets/design-tokens.css` (adding Light/Dark/High-Contrast CSS custom property blocks directly from `tokens.json`; ZERO `sync-site-tokens.mjs`!). |
+| `client/scripts/test_gen_design_tokens.py` | ~140 | Unit tests verifying deterministic LF generation and Light/Dark/High-Contrast CSS custom properties emitted into `client/site/assets/design-tokens.css`. |
 | `client/site/assets/design-tokens.css` *(generated by `gen_design_tokens.py`)* | ~115 | Generated 7.0 Nightjar CSS custom properties from `client/design/tokens.json` (zero hand edits). |
-| `client/site/assets/site.css` `[verify post-sprint code-map.md]` | ~240 | Ground-up 7.0 Nightjar Console-Quality redesign consuming `--nj-*` variables from `design-tokens.css` (zero legacy 6.x hardcoded hex colors); full-bleed showcase cards, Control Center feature grid, `@media (prefers-contrast: more)` & `@media (prefers-reduced-motion: reduce)`, zero overflow at `360 / 768 / 1440 px`. |
-| `client/site/assets/site.js` `[verify post-sprint code-map.md]` | ~48 | Zero-autoplay 16:9 ↔ 9:16 responsive trailer swap (`preload="none"`, never swaps once playback starts). |
-| `client/site/check-links.mjs` `[verify post-sprint code-map.md]` | ~160 | Enforces `< 6 MB` non-video asset ceiling, local/anchor/repo-doc links, `gen_design_tokens.py --check` alignment, `preload="none"` + zero-`autoplay` on `<video>`, zero raw legacy 6.x hex overrides in `site.css`, and banned-term checks (`Experimental` / mod names). |
-| `client/site/index.html`, `de/index.html` `[verify post-sprint code-map.md]` | ~170 each | Ground-up Nightjar 7.0 EN & DE landing pages showcasing Full-Bleed Console Home, Console Control Center floating dock & 6 visual cards, Visual Preview-Card Settings, First-Run & Pairing Cinema, Modern Virtual Controller Studio (#151), Phone Safe Area / Reverse Landscape (#152), Desktop/Handheld/TV parity, refreshed WebP shots, and 60 fps trailer. |
-| `client/site/download.html`, `de/download.html` `[verify post-sprint code-map.md]` | ~135 each | Updated 7.0.0 Android APK (preserving SHA-256 signing fingerprint `312ed322c7c29d1aec4fae4a3979ebcb557af44d821d7f4746c0968548eb630b`) + Windows/Linux/macOS downloads in EN & DE. |
-| `client/site/docs.html`, `devices.html`, `privacy.html`, `404.html` `[verify post-sprint code-map.md]` | ~115 each | Updated 7.0 docs hub, `device-results.json` table, `PRIVACY.md`-synced privacy page, and 404 recovery page, all loading `design-tokens.css` before `site.css`. |
+| `client/site/assets/site.css` | ~240 | Ground-up 7.0 Nightjar Console-Quality redesign consuming `--nj-*` variables from `design-tokens.css` (zero legacy 6.x hardcoded hex colors); full-bleed showcase cards, Control Center feature grid, `@media (prefers-contrast: more)` & `@media (prefers-reduced-motion: reduce)`, zero overflow at `360 / 768 / 1440 px`. |
+| `client/site/assets/site.js` | ~48 | Zero-autoplay 16:9 ↔ 9:16 responsive trailer swap (`preload="none"`, never swaps once playback starts). |
+| `client/site/check-links.mjs` | ~160 | Enforces `< 6 MB` non-video asset ceiling, local/anchor/repo-doc links, `gen_design_tokens.py --check` alignment, `preload="none"` + zero-`autoplay` on `<video>`, zero raw legacy 6.x hex overrides in `site.css`, and banned-term checks (`Experimental` / mod names). |
+| `client/site/index.html`, `de/index.html` | ~170 each | Ground-up Nightjar 7.0 EN & DE landing pages showcasing Full-Bleed Console Home, Console Control Center floating dock & 6 visual cards, Visual Preview-Card Settings, First-Run & Pairing Cinema, Modern Virtual Controller Studio (#151), Phone Safe Area / Reverse Landscape (#152), Desktop/Handheld/TV parity, refreshed WebP shots, and 60 fps trailer. |
+| `client/site/download.html`, `de/download.html` | ~135 each | Updated 7.0.0 Android APK (preserving SHA-256 signing fingerprint `312ed322c7c29d1aec4fae4a3979ebcb557af44d821d7f4746c0968548eb630b`) + Windows/Linux/macOS downloads in EN & DE. |
+| `client/site/docs.html`, `devices.html`, `privacy.html`, `404.html` | ~115 each | Updated 7.0 docs hub, `device-results.json` table, `PRIVACY.md`-synced privacy page, and 404 recovery page, all loading `design-tokens.css` before `site.css`. |
 | `tools/site_review.mjs` *(new)* | ~300 | Playwright automated visual review runner capturing Rubylight `_site/` and all 8 Nightjar `client/site/` pages at **`360×800`, `768×1024`, and `1440×900`** in **Light & Dark** themes + reduced-motion & contrast assertions, writing PNGs into gitignored `_review/` folders and failing on any horizontal overflow, broken image, or autoplaying video. |
 
 ### 3.3 Nightjar Non-Video Asset Budget Allocation (`< 6 MB` Hard Cap)
@@ -206,21 +206,21 @@ Every slice below owns a strictly non-overlapping file list for Wave 5 `parallel
 - **Files (exclusive)**:
   - `tools/sync_site_tokens.py` *(new)*
   - `site/tokens.css` *(new, generated from Wave 0's `rust/web/src/styles/tokens.css`)*
-  - `site/build.py` `[verify post-sprint code-map.md]`
-  - `site/style.css` `[verify post-sprint code-map.md]`
-  - `site/page.html` `[verify post-sprint code-map.md]`
-  - `site/index.html` `[verify post-sprint code-map.md]`
+  - `site/build.py`
+  - `site/style.css`
+  - `site/page.html`
+  - `site/index.html`
   - `site/favicon.svg`, `site/og.png`, `site/poster.jpg` *(refreshed 7.0 brand & Item 18 tour media)*
 
 ### Slice 19B: Nightjar 7.0 Site (`client/site/` + `de/`) `gen_design_tokens.py` Sync & 8-Page Ground-Up Redesign
 - **Files (exclusive)**:
-  - `client/scripts/gen_design_tokens.py` *(extend sole `--check`-enforced generator of `client/site/assets/design-tokens.css`; ZERO `sync-site-tokens.mjs`!)* `[verify post-sprint code-map.md]`
-  - `client/scripts/test_gen_design_tokens.py` `[verify post-sprint code-map.md]`
+  - `client/scripts/gen_design_tokens.py` *(extend sole `--check`-enforced generator of `client/site/assets/design-tokens.css`; ZERO `sync-site-tokens.mjs`!)*
+  - `client/scripts/test_gen_design_tokens.py`
   - `client/site/assets/design-tokens.css` *(regenerated strictly by `client/scripts/gen_design_tokens.py`)*
-  - `client/site/assets/site.css` `[verify post-sprint code-map.md]`
-  - `client/site/assets/site.js` `[verify post-sprint code-map.md]`
-  - `client/site/check-links.mjs` `[verify post-sprint code-map.md]`
-  - `client/site/README.md` `[verify post-sprint code-map.md]`
+  - `client/site/assets/site.css`
+  - `client/site/assets/site.js`
+  - `client/site/check-links.mjs`
+  - `client/site/README.md`
   - `client/site/index.html`, `client/site/download.html`, `client/site/docs.html`, `client/site/devices.html`, `client/site/privacy.html`, `client/site/404.html`
   - `client/site/de/index.html`, `client/site/de/download.html`
   - `client/site/assets/*.webp`, `client/site/assets/og.png`, `client/site/assets/launcher.png`, `client/site/assets/favicon.png`, `client/site/assets/trailer-*.mp4` *(refreshed 7.0 brand & Item 18 media)*
@@ -265,6 +265,6 @@ Review PNGs are saved into gitignored `_site_review/` and `client/site/_review/`
 
 ---
 
-## 8. Post-Discovery & 6.3.0 (`fc1704feb3`) Rebase Addendum
+## 8. Post-Discovery & Post-6.4.1 (`955ef39598` / `fc1704feb3`) Rebase Addendum
 
-- **Build Cleanly Atop `6.3.0` (`fc1704feb3`) Site Structure:** Commit `fc1704feb3` already redesigned `site/index.html`, `site/style.css`, and `client/site/index.html` around `.pillars` and the 5-stage `.pipeline` with an explicit policy against stale release-specific static charts. Wave 5 Slice `19A`/`19B` MUST reconcile against `fc1704feb3` cleanly: keep the crisp 7.0 Obsidian Studio / Obsidian Cinema token pipeline (`sync_site_tokens.py` + `gen_design_tokens.py`), and for performance references link directly to dated `rust/PERFORMANCE.html#<anchor>` runs (or clearly dated, auto-checked excerpts from `rust/PERFORMANCE.md` — updating any contradictory HTML comment in `site/index.html` cleanly). Also highlight Items `27` (local-first privacy & anonymized support bundles), `28` (multi-GPU + locked-PC wake), and `29` (high-refresh & Android pacing) honestly alongside `21`.
+- **Build Cleanly Atop `6.3.0`–`6.4.1` Site Structure:** Commit `fc1704feb3` already redesigned `site/index.html`, `site/style.css`, and `client/site/index.html` around `.pillars` and the 5-stage `.pipeline` with an explicit policy against stale release-specific static charts. Wave 5 Slice `19A`/`19B` MUST reconcile against `origin/main` (`v6.4.1`/`6.4.2`) cleanly: keep the crisp 7.0 Obsidian Studio / Obsidian Cinema token pipeline (`sync_site_tokens.py` + `gen_design_tokens.py` emitting `client/protocol/desktop-ui/src/ui/design_tokens.rs` & `client/site/assets/design-tokens.css`), and for performance references link directly to dated `rust/PERFORMANCE.html#<anchor>` runs (or clearly dated, auto-checked excerpts from `rust/PERFORMANCE.md` — updating any contradictory HTML comment in `site/index.html` cleanly). Also highlight Items `27` (local-first privacy & anonymized support bundles), `28` (multi-GPU + locked-PC wake), and `29` (high-refresh host burst pacing, Shield zero-debt & WebRTC resilience) honestly alongside `21`.

@@ -1,6 +1,6 @@
 # Item 08: Quick Suspend & Resume (`quick-suspend`)
 
-Status: design, not implemented (Wave 2, Rubylight & Nightjar 7.0.0). Written against `main` `b3d0c26b9b` (`6.2.0`) and [protocol reservations](00-protocol-reservations.md).
+Status: design, not implemented (Wave 2, Rubylight & Nightjar 7.0.0). Rebased 2026-11-25 onto post-refactoring `origin/main` `955ef39598` (`v6.4.1`) and [protocol reservations](00-protocol-reservations.md).
 
 ## 1. Summary & User Experience
 
@@ -9,7 +9,7 @@ Handheld consoles let players put a single-player game to sleep in one tap and p
 - **Explicit or automatic freeze:** For opted-in single-player games, a player can tap **Suspend Game** in Nightjar's Stream Menu (sending `0x554B` or `POST /api/native/v1/session/suspend`) or let Rubylight automatically freeze the game when the client disconnects (`quick_suspend = on_disconnect`).
 - **What happens during Quick Suspend:**
   1. Rubylight validates the running app's verified owned process tree against a **strict, non-overridable safety denylist** (anti-cheat engines, protected processes, launchers, overlays, system processes, active guests/co-op).
-  2. **Write-ahead durability first:** Before freezing a single thread, Rubylight atomically writes and `sync_all()`s the exact `(pid, created_100ns, exe_name, prev_audio_muted)` records into the canonical `RecoveryJournalV2` (`rust/core/src/recovery_journal.rs`, persisted atomically to `recovery-journal.json` alongside `session.json`, carrying `suspended_pids` plus display/DPI/audio state — unified with `17-ux-craft-and-resilience.md`) and mirrors `game_frozen` into `session.json`.
+  2. **Write-ahead durability first:** Before freezing a single thread, Rubylight atomically writes and `sync_all()`s the exact `(pid, created_100ns, exe_name, prev_audio_muted)` records into the canonical `RecoveryJournalV2` (`rust/core/session/src/recovery_journal.rs`, persisted atomically to `recovery-journal.json` alongside `session.json`, carrying `suspended_pids` plus display/DPI/audio state — unified with `17-ux-craft-and-resilience.md`) and mirrors `game_frozen` into `session.json`.
   3. Rubylight cleanly mutes the game's WASAPI audio session (preventing stuck audio-buffer buzz), freezes the game's verified process tree via `ntdll.dll`'s `NtSuspendProcess`, and drops the stream's capture & encoder while keeping `SessionState::Suspended` (and keeping the display topology stable so the frozen game's D3D11/D3D12 device is never lost!). GPU 3D/VCN utilization drops to near 0% as the frozen game stops submitting frames.
 - **Instant Resume:** When the player reconnects (`/resume`) or taps **Resume** (`0x554B` / `POST /api/native/v1/session/resume`), Rubylight verifies each recorded `(pid, creation_time_100ns)` still matches the exact same process, calls `NtResumeProcess`, restores the original WASAPI mute state, removes the journal entry, and resumes streaming seamlessly.
 - **Safety-first guarantees:**
@@ -71,7 +71,7 @@ All identifiers strictly follow [00-protocol-reservations.md](00-protocol-reserv
   - `body[2..4]` (`u16` LE): `suspended_pid_count` (`0` unless `state == Suspended`).
   - `body[4..12]` (`u64` LE): `suspended_since_unix_ms` (`0` unless `state == Suspended`).
 
-### 2.3 Native API v1 Routes (`rust/core/native-api/src/quick_suspend.rs`)
+### 2.3 Native API v1 Routes (`client/protocol/native-api/src/quick_suspend.rs`)
 
 Mounted under `/api/native/v1`, authenticated by paired TLS certificate, checking live device permissions on every call:
 
@@ -89,7 +89,7 @@ Also extends `GET /api/native/v1/session` (`SessionSnapshot`) additively with `#
 
 ### 3.1 Windows Process Suspension & Safety Architecture
 
-#### Narrow Win32/NT wrapper (`rust/windows/src/process/suspend.rs`)
+#### Narrow Win32/NT wrapper (`rust/windows/io/src/process/suspend.rs`)
 
 - **Dynamic System32 loading:** Loads `ntdll.dll` via `LOAD_LIBRARY_SEARCH_SYSTEM32` (matching `nvenc.rs::system_library`) and resolves:
   - `NtSuspendProcess(HANDLE) -> NTSTATUS`
@@ -99,14 +99,14 @@ Also extends `GET /api/native/v1/session` (`SessionSnapshot`) additively with `#
   2. Call `GetProcessTimes` and compare the 64-bit `CreationTime` (`FILETIME`, 100 ns ticks) against the expected `started: u64` from `RunningApp::owned_processes` (or the persisted journal).
   3. If `CreationTime != expected_started`, the original process exited and Windows reused the PID -> **NEVER suspend or resume it**; skip cleanly and log info.
 - **Atomic all-or-nothing tree freeze with rollback:**
-  1. Resolve target process list from `RunningApp::owned_processes` (`rust/host/src/process.rs:469`: Steam tracker, Playnite tracker, Windows Job object `child.process_ids()`, verified `foreign` PIDs). If empty (e.g. Desktop or untracked detached app), refuse with `NoOwnedProcess`.
+  1. Resolve target process list from `RunningApp::owned_processes` (`rust/host/stream/src/process.rs:469`: Steam tracker, Playnite tracker, Windows Job object `child.process_ids()`, verified `foreign` PIDs). If empty (e.g. Desktop or untracked detached app), refuse with `NoOwnedProcess`.
   2. Filter out known launcher parent executables (never freeze `steam.exe`, `steamwebhelper.exe`, `EpicGamesLauncher.exe`, `Playnite*.exe`, `GalaxyClient.exe`, `EADesktop.exe`, `upc.exe`, `Battle.net.exe`). If zero game processes remain after filtering launchers, refuse with `NoOwnedProcess`.
   3. Run the **hard safety check** (`butterpollo_core::quick_suspend::evaluate_safety`) over BOTH the target tree AND active host processes/services:
      - **Anti-cheat hard denylist (process names & installed/running service names):** `EasyAntiCheat*`, `EACLauncher*`, `BEService`, `BEDaisy`, `vgc`, `vgtray`, `vgk`, `EAAntiCheat*`, `FACEITService`, `PnkBstrA`, `PnkBstrB`, `GameMon*`, `xhunter1`, `mhyprot*`, `HoYoKProtect`, `randgrid`, `atvi-brynhildr`, `denuvo-anti-cheat`. Also checks if any target process has `ProcessProtectionInformation` (PPL/Protected) -> refuses with `AntiCheatDetected` / `ProtectedProcess`.
      - **System / critical process denylist:** PID `<= 4`, Session 0 processes, `csrss.exe`, `winlogon.exe`, `dwm.exe`, `explorer.exe`, `lsass.exe`, `smss.exe`, `services.exe`, `svchost.exe`, `butterpollo.exe`, `butterpollo-service.exe`, `conhost.exe`, `audiodg.exe`.
      - **Session state guards:** Active multi-client guests (`GuestsActive`), active co-op session (`CoopSession`), or launch/teardown in progress (`SessionBusy`).
-  4. **Write-ahead journal BEFORE freeze:** Synchronously update `RecoveryJournalV2` (`rust/core/src/recovery_journal.rs`) and write + `File::sync_all()` + atomic rename `recovery-journal.json` (alongside `session.json`) containing every `suspended_pids` record `(pid, created_100ns, app_id, app_title, exe, suspend_count, prev_audio_muted, suspended_unix_ms)` plus any active display/DPI/audio recovery state.
-  5. **Mute game audio cleanly:** Using WASAPI `IAudioSessionManager2` (`rust/windows/src/audio_app_route.rs` / new `audio_mute.rs`), locate audio sessions belonging to target PIDs, record each session's current `GetMute()`, and call `SetMute(TRUE)`. (Prevents frozen games whose DirectSound/WASAPI ring buffer wasn't flushed from looping a 20 ms buzz on host speakers!)
+  4. **Write-ahead journal BEFORE freeze:** Synchronously update `RecoveryJournalV2` (`rust/core/session/src/recovery_journal.rs`) and write + `File::sync_all()` + atomic rename `recovery-journal.json` (alongside `session.json`) containing every `suspended_pids` record `(pid, created_100ns, app_id, app_title, exe, suspend_count, prev_audio_muted, suspended_unix_ms)` plus any active display/DPI/audio recovery state.
+  5. **Mute game audio cleanly:** Using WASAPI `IAudioSessionManager2` (`rust/windows/io/src/audio_app_route.rs` / new `audio_mute.rs`), locate audio sessions belonging to target PIDs, record each session's current `GetMute()`, and call `SetMute(TRUE)`. (Prevents frozen games whose DirectSound/WASAPI ring buffer wasn't flushed from looping a 20 ms buzz on host speakers!)
   6. **Suspend in leaf-first order** (children before parents, preventing parent crash-reporters/watchdogs from thinking a child hung): if ANY `NtSuspendProcess` returns non-zero `NTSTATUS` (e.g. `STATUS_ACCESS_DENIED`), **immediately roll back** by calling `NtResumeProcess` on every already-suspended PID, restoring audio mute, clearing `suspended_pids` in `recovery-journal.json` (deleting the file if no display/DPI/audio entries remain), and returning `ProtectedProcess` / `IoOrOsError`.
 - **Why display topology stays intact while suspended (critical GPU insight):**
   - When a client disconnects after Quick Suspend, the stream stops capture and destroys the encoder (`video/teardown.rs`), dropping host capture/encode GPU load to `0%`.
@@ -114,45 +114,45 @@ Also extends `GET /api/native/v1/session` (`SessionSnapshot`) additively with `#
 
 ### 3.2 `<=800-LOC` Module Plan & `size_ratchet.json` Compliance
 
-**Critical `size_ratchet.json` constraint spotted:** `rust/host/src/session_control.rs` is currently **774 LOC** and is **NOT grandfathered** in `tools/size_ratchet.json` (hard ceiling = `800` LOC, only 26 lines of headroom!). Therefore, ALL Quick Suspend orchestration on `Host` MUST live in a brand-new sibling module `rust/host/src/session_control/quick_suspend.rs`, with at most `<= 10` lines of delegation inside `session_control.rs`!
+**Critical `size_ratchet.json` constraint spotted:** `rust/host/stream/src/session_control.rs` is currently **774 LOC** and is **NOT grandfathered** in `tools/size_ratchet.json` (hard ceiling = `800` LOC, only 26 lines of headroom!). Therefore, ALL Quick Suspend orchestration on `Host` MUST live in a brand-new sibling module `rust/host/stream/src/session_control/quick_suspend.rs`, with at most `<= 10` lines of delegation inside `session_control.rs`!
 
 #### Grandfathered files touched (from `tools/size_ratchet.json`)
 
 | Grandfathered file | Ratchet ceiling | How we avoid growing it |
 |---|---|---|
-| `rust/host/src/process.rs` `[verify post-sprint code-map.md]` | `2064` | Expose existing `RunningApp::owned_processes` as `pub(crate)` (<=4 lines; zero new logic in `process.rs`) |
-| `rust/windows/src/process.rs` `[verify post-sprint code-map.md]` | `1725` | Add `pub mod suspend;` (1 line! All `ntdll` suspend/resume/safety/PPL logic lives in `rust/windows/src/process/suspend.rs`) |
-| `rust/host/src/stream/control.rs` `[verify post-sprint code-map.md]` | `2675` | Single match arm `QUICK_SUSPEND_MESSAGE_TYPE => crate::session_control::quick_suspend::handle_control(...)` (<=6 lines) |
-| `rust/host/src/native_api.rs` `[verify post-sprint code-map.md]` | `853` | Add `mod quick_suspend;`, 3 routes in `router()`, and `feature::QUICK_SUSPEND` (<=8 lines) |
-| `rust/host/src/main.rs` `[verify post-sprint code-map.md]` | `914` | Add `--recover-session` CLI flag dispatch & startup recovery call over `RecoveryJournalV2` (<=8 lines) |
-| `rust/host/src/state.rs` `[verify post-sprint code-map.md]` | `2247` | Add `pub quick_suspend: Mutex<crate::session_control::quick_suspend::Tracker>` (<=3 lines) |
-| `rust/service/src/supervisor.rs` `[verify post-sprint code-map.md]` | `827` | Invoke canonical `--recover-session` on unexpected host exit (<=8 lines, plus `rust/service/Cargo.toml` version bump + `python rust/release/service_inputs.py --update` per `rust/release/README.md`) |
-| `rust/core/src/config.rs` `[verify post-sprint code-map.md]` | `1373` | Add 4-line `pub fn quick_suspend(&self)` delegating to `crate::quick_suspend::Policy::parse` |
-| `client/protocol/client/src/http/capabilities.rs` `[verify post-sprint code-map.md]` | `1257` | Add `QuickSuspend` variant (<=4 lines) |
-| `client/protocol/client/src/http/native.rs` `[verify post-sprint code-map.md]` | `821` | Put Quick Suspend HTTP calls in new `client/protocol/client/src/http/native_suspend.rs` (1 `mod` line) |
-| `client/app/src/main/java/com/limelight/nvstream/http/HostCapabilities.java` `[verify post-sprint code-map.md]` | `1347` | Add `QUICK_SUSPEND` variant (<=4 lines) |
-| `client/app/src/main/java/com/limelight/ui/StreamMenu.java` `[verify post-sprint code-map.md]` | `1321` | Delegate Suspend Game tile to new `StreamMenuSuspendSection.java` (<=6 lines) |
-| `client/protocol/desktop/src/stream/mod.rs` `[verify post-sprint code-map.md]` | `2914` | Delegate `0x554B` events/commands to new `stream/quick_suspend.rs` (<=8 lines) |
-| `client/protocol/desktop/src/strings/*.rs` `[verify post-sprint code-map.md]` | `1750` | **Zero growth!** Route all new 7.0.0 Quick Suspend Desktop translations to `client/protocol/desktop/src/strings_70/<code>.rs` (all 14 non-English locale tables; English literals live at call sites; never ad-hoc files or `strings/*.rs`) |
+| `rust/host/stream/src/process.rs` | `2064` | Expose existing `RunningApp::owned_processes` as `pub(crate)` (<=4 lines; zero new logic in `process.rs`) |
+| `rust/windows/io/src/process.rs` | `1725` | Add `pub mod suspend;` (1 line! All `ntdll` suspend/resume/safety/PPL logic lives in `rust/windows/io/src/process/suspend.rs`) |
+| `rust/host/stream/src/stream/control.rs` | `2675` | Single match arm `QUICK_SUSPEND_MESSAGE_TYPE => crate::session_control::quick_suspend::handle_control(...)` (<=6 lines) |
+| `rust/host/web/src/native_api.rs` | `853` | Add `mod quick_suspend;`, 3 routes in `router()`, and `feature::QUICK_SUSPEND` (<=8 lines) |
+| `rust/host/src/main.rs` | `914` | Add `--recover-session` CLI flag dispatch & startup recovery call over `RecoveryJournalV2` (<=8 lines) |
+| `rust/host/stream/src/state.rs` | `2247` | Add `pub quick_suspend: Mutex<crate::session_control::quick_suspend::Tracker>` (<=3 lines) |
+| `rust/service/src/supervisor.rs` | `827` | Invoke canonical `--recover-session` on unexpected host exit (<=8 lines, plus `rust/service/Cargo.toml` version bump + `python rust/release/service_inputs.py --update` per `rust/release/README.md`) |
+| `rust/core/config/src/config.rs` | `1373` | Add 4-line `pub fn quick_suspend(&self)` delegating to `crate::quick_suspend::Policy::parse` |
+| `client/protocol/policy/src/http/capabilities.rs` | `1257` | Add `QuickSuspend` variant (<=4 lines) |
+| `client/protocol/client/src/http/native.rs` | `821` | Put Quick Suspend HTTP calls in new `client/protocol/client/src/http/native_suspend.rs` (1 `mod` line) |
+| `client/app/src/main/java/com/limelight/nvstream/http/HostCapabilities.java` | `1347` | Add `QUICK_SUSPEND` variant (<=4 lines) |
+| `client/app/src/main/java/com/limelight/ui/StreamMenu.java` | `1321` | Delegate Suspend Game tile to new `StreamMenuSuspendSection.java` (<=6 lines) |
+| `client/protocol/desktop-media/src/stream/mod.rs` | `2914` | Delegate `0x554B` events/commands to new `stream/quick_suspend.rs` (<=8 lines) |
+| `client/protocol/desktop-config/src/strings/*.rs` | `1750` | **Zero growth!** Route all new 7.0.0 Quick Suspend Desktop translations to `client/protocol/desktop-config/src/strings_70/<code>.rs` (all 14 non-English locale tables; English literals live at call sites; never ad-hoc files or `strings/*.rs`) |
 
 #### New `<=800-LOC` modules to create
 
 | Planned Path | Est. LOC | Ownership (`//!` / `/**`) |
 |---|---|---|
-| `client/protocol/core/src/quick_suspend.rs` `[verify post-sprint code-map.md]` | ~200 | Wire codecs for `0x554B` (`QUICK_SUSPEND_MESSAGE_TYPE`), `ClientRequest`, `HostState`, `SuspendReason`, round-trip tests |
-| `rust/core/native-api/src/quick_suspend.rs` `[verify post-sprint code-map.md]` | ~160 | Native API v1 types (`QuickSuspendStatus`, `SuspendRequest`, `ResumeRequest`, `QuickSuspendState`, `SuspendReason`) + fixture tests |
-| `rust/core/src/recovery_journal.rs` `[verify post-sprint code-map.md]` | ~220 | Canonical `RecoveryJournalV2` schema (`suspended_pids` plus display/DPI/audio state), atomic `recovery-journal.json` persistence helpers alongside `session.json`, shared by Item 08 and Item 17 (`17-ux-craft-and-resilience.md`) |
-| `rust/core/src/quick_suspend.rs` `[verify post-sprint code-map.md]` | ~420 | Pure OS-free policy (`Policy { Off, Manual, OnDisconnect }`), non-overridable anti-cheat/launcher/system denylist, process-tree filter, leaf-first ordering, `SuspendedPidRecord` mapping into `RecoveryJournalV2`, state transitions, full unit tests |
-| `rust/windows/src/process/suspend.rs` `[verify post-sprint code-map.md]` | ~380 | Narrow System32 `ntdll.dll` `NtSuspendProcess`/`NtResumeProcess` wrapper, `GetProcessTimes` PID-identity verifier, PPL/protected check, anti-cheat service probe, atomic rollback |
-| `rust/windows/src/audio_mute.rs` `[verify post-sprint code-map.md]` | ~220 | Per-PID WASAPI `IAudioSessionManager2` mute/restore helper (best-effort with logged warning; never blocks suspend/resume) |
-| `rust/host/src/session_control/quick_suspend.rs` `[verify post-sprint code-map.md]` | ~460 | Host Quick Suspend manager: synchronous write-ahead `RecoveryJournalV2` (`recovery-journal.json` alongside `session.json`, `sync_all` + rename), suspend/resume orchestration, `Drop` failsafe, auto-suspend on disconnect, auto-resume on `/resume`, Close-game/End-session auto-resume before terminate, `0x554B` handler |
-| `rust/host/src/native_api/quick_suspend.rs` `[verify post-sprint code-map.md]` | ~200 | Axum handlers for `GET/POST /session/suspend` and `POST /session/resume` |
-| `client/protocol/client/src/http/native_suspend.rs` `[verify post-sprint code-map.md]` | ~140 | `nightjar-core` HTTP wrappers for `/api/native/v1/session/suspend` and `/resume` |
-| `client/protocol/desktop/src/stream/quick_suspend.rs` `[verify post-sprint code-map.md]` | ~220 | Desktop Stream Menu Suspend Game tile, Home "Suspended — Resume" badge, `0x554B` dispatch |
-| `client/app/src/main/java/com/limelight/ui/StreamMenuSuspendSection.java` `[verify post-sprint code-map.md]` | ~220 | Android Stream Menu Suspend Game tile + plain-English refusal dialog/toast |
-| `client/protocol/desktop/src/strings_70/<code>.rs` (14 locale files) `[verify post-sprint code-map.md]` | ~35/locale | All 14 non-English 7.0.0 Desktop translation tables for Quick Suspend & Resume (`de`, `es`, `fr`, `it`, `ja`, `ko`, `pl`, `pt_br`, `ru`, `tr`, `uk`, `vi`, `zh_hans`, `zh_hant`; English literals live at call sites; never ad-hoc files or grandfathered `strings/*.rs`) |
+| `client/protocol/core/src/quick_suspend.rs` | ~200 | Wire codecs for `0x554B` (`QUICK_SUSPEND_MESSAGE_TYPE`), `ClientRequest`, `HostState`, `SuspendReason`, round-trip tests |
+| `client/protocol/native-api/src/quick_suspend.rs` | ~160 | Native API v1 types (`QuickSuspendStatus`, `SuspendRequest`, `ResumeRequest`, `QuickSuspendState`, `SuspendReason`) + fixture tests |
+| `rust/core/session/src/recovery_journal.rs` | ~220 | Canonical `RecoveryJournalV2` schema (`suspended_pids` plus display/DPI/audio state), atomic `recovery-journal.json` persistence helpers alongside `session.json`, shared by Item 08 and Item 17 (`17-ux-craft-and-resilience.md`) |
+| `rust/core/session/src/quick_suspend.rs` | ~420 | Pure OS-free policy (`Policy { Off, Manual, OnDisconnect }`), non-overridable anti-cheat/launcher/system denylist, process-tree filter, leaf-first ordering, `SuspendedPidRecord` mapping into `RecoveryJournalV2`, state transitions, full unit tests |
+| `rust/windows/io/src/process/suspend.rs` | ~380 | Narrow System32 `ntdll.dll` `NtSuspendProcess`/`NtResumeProcess` wrapper, `GetProcessTimes` PID-identity verifier, PPL/protected check, anti-cheat service probe, atomic rollback |
+| `rust/windows/io/src/audio_mute.rs` | ~220 | Per-PID WASAPI `IAudioSessionManager2` mute/restore helper (best-effort with logged warning; never blocks suspend/resume) |
+| `rust/host/stream/src/session_control/quick_suspend.rs` | ~460 | Host Quick Suspend manager: synchronous write-ahead `RecoveryJournalV2` (`recovery-journal.json` alongside `session.json`, `sync_all` + rename), suspend/resume orchestration, `Drop` failsafe, auto-suspend on disconnect, auto-resume on `/resume`, Close-game/End-session auto-resume before terminate, `0x554B` handler |
+| `rust/host/web/src/native_api/quick_suspend.rs` | ~200 | Axum handlers for `GET/POST /session/suspend` and `POST /session/resume` |
+| `client/protocol/client/src/http/native_suspend.rs` | ~140 | `nightjar-core` HTTP wrappers for `/api/native/v1/session/suspend` and `/resume` |
+| `client/protocol/desktop-media/src/stream/quick_suspend.rs` | ~220 | Desktop Stream Menu Suspend Game tile, Home "Suspended — Resume" badge, `0x554B` dispatch |
+| `client/app/src/main/java/com/limelight/ui/StreamMenuSuspendSection.java` | ~220 | Android Stream Menu Suspend Game tile + plain-English refusal dialog/toast |
+| `client/protocol/desktop-config/src/strings_70/<code>.rs` (14 locale files) | ~35/locale | All 14 non-English 7.0.0 Desktop translation tables for Quick Suspend & Resume (`de`, `es`, `fr`, `it`, `ja`, `ko`, `pl`, `pt_br`, `ru`, `tr`, `uk`, `vi`, `zh_hans`, `zh_hant`; English literals live at call sites; never ad-hoc files or grandfathered `strings/*.rs`) |
 
-*(Note: `rust/host/src/session_control.rs` stays `<= 785` LOC, `rust/core/src/session_state.rs` stays `<= 430` LOC, and `rust/host/src/service_tasks.rs` stays `<= 180` LOC — all well under 800 LOC!)*
+*(Note: `rust/host/stream/src/session_control.rs` stays `<= 785` LOC, `rust/core/session/src/session_state.rs` stays `<= 430` LOC, and `rust/host/stream/src/service_tasks.rs` stays `<= 180` LOC — all well under 800 LOC!)*
 
 ---
 
@@ -222,10 +222,10 @@ Also extends `GET /api/native/v1/session` (`SessionSnapshot`) additively with `#
 
 ### 4.3 Canonical Write-Ahead Crash-Restore Journal (`RecoveryJournalV2`) & Multi-Layer Watchdog
 
-Because `rust/host/src/session_control.rs:174` writes `session.json` asynchronously *without* `sync_all()`, Quick Suspend **never relies solely on `session.json`'s async writer**. Instead, Item 08 and Item 17 (`17-ux-craft-and-resilience.md`) share **ONE canonical `RecoveryJournalV2`** (`rust/core/src/recovery_journal.rs`) and **ONE canonical service recovery CLI hook (`--recover-session`)** — zero duplicate or conflicting journal files or CLI flags:
+Because `rust/host/stream/src/session_control.rs:174` writes `session.json` asynchronously *without* `sync_all()`, Quick Suspend **never relies solely on `session.json`'s async writer**. Instead, Item 08 and Item 17 (`17-ux-craft-and-resilience.md`) share **ONE canonical `RecoveryJournalV2`** (`rust/core/session/src/recovery_journal.rs`) and **ONE canonical service recovery CLI hook (`--recover-session`)** — zero duplicate or conflicting journal files or CLI flags:
 
 1. **Canonical Write-Ahead Journal (`<profile>\recovery-journal.json`, alongside `session.json`):**
-   - Schema (`RecoveryJournalV2`, `schema_version: 2`, defined in `rust/core/src/recovery_journal.rs`), carrying `suspended_pids` plus display/DPI/audio recovery state:
+   - Schema (`RecoveryJournalV2`, `schema_version: 2`, defined in `rust/core/session/src/recovery_journal.rs`), carrying `suspended_pids` plus display/DPI/audio recovery state:
      ```json
      {
        "schema_version": 2,
@@ -254,7 +254,7 @@ Because `rust/host/src/session_control.rs:174` writes `session.json` asynchronou
 3. **Three-layer crash recovery (zero permanently-frozen games):**
    - **Layer 1 — In-process `Drop` & panic hook (`QuickSuspendTracker::drop` + `session_shutdown`):** Clean shutdown or unwinding panic immediately calls `resume_all()`.
    - **Layer 2 — Host startup recovery (`recover_session` in `rust/host/src/main.rs`):** Runs unconditionally at startup (both supervised and standalone) BEFORE any HTTP/RTSP listener starts. Reads `RecoveryJournalV2` from `recovery-journal.json`, verifies `(pid, created_100ns)` for every entry in `suspended_pids`, calls `NtResumeProcess` (`suspend_count` times), restores WASAPI mute, clears `suspended_pids` (deleting `recovery-journal.json` when no display/DPI/audio state remains), and logs a visible `quick_suspend_recovered` warning: `"Rubylight stopped while <Title> was suspended; the game was automatically resumed."`
-   - **Layer 3 — Windows Service Watchdog (`butterpollo-service.exe` + `rust/host/src/service_tasks.rs`):**
+   - **Layer 3 — Windows Service Watchdog (`butterpollo-service.exe` + `rust/host/stream/src/service_tasks.rs`):**
      - Defines **ONE canonical service recovery CLI hook** `--recover-session --config-dir <PROFILE>` in `service_tasks.rs` (same contract as `--restore-nucleus-at-console`): Item 08 defines `--recover-session` to thaw `suspended_pids` and restore session state from `recovery-journal.json`, and Item 17 (`17-ux-craft-and-resilience.md`) hardens this exact same hook with per-monitor DPI settlement and a 10-cycle forced-kill crash-restore soak.
      - If the supervised `butterpollo.exe` exits with a non-zero crash code or is killed while `<PROFILE>\recovery-journal.json` exists, `rust/service/src/supervisor.rs` immediately runs `butterpollo.exe --recover-session --config-dir <PROFILE>` even if restart backoff is active or the service is stopping!
      - **Service versioning compliance (`rust/release/README.md`):** Because Layer 3 modifies `rust/service/src/supervisor.rs` and `rust/service/src/tasks.rs`, its implementer slice explicitly bumps `rust/service/Cargo.toml` and runs `python rust/release/service_inputs.py --update` (verified by `test_release.py`).
@@ -285,7 +285,7 @@ Because `rust/host/src/session_control.rs:174` writes `session.json` asynchronou
   - `NoOwnedProcess` -> `"Quick Suspend works only for launched games, not Desktop sessions."`
   - `GuestsActive` -> `"Cannot suspend the game while guests are watching or playing."`
   - `CoopSession` -> `"Quick Suspend is unavailable during multi-instance co-op sessions."`
-- **All 15 locales:** Every label, badge, help text, and refusal string translated across all 15 locales (`en`, `de`, `es`, `fr`, `it`, `ja`, `ko`, `pl`, `pt_br`, `ru`, `tr`, `uk`, `vi`, `zh_hans`, `zh_hant`). Desktop routes all 14 non-English translation tables to `client/protocol/desktop/src/strings_70/<code>.rs` (English literals live at call sites via `tr`/`trf`/`en`; never ad-hoc files and never growing grandfathered `strings/*.rs` past 1,750 LOC).
+- **All 15 locales:** Every label, badge, help text, and refusal string translated across all 15 locales (`en`, `de`, `es`, `fr`, `it`, `ja`, `ko`, `pl`, `pt_br`, `ru`, `tr`, `uk`, `vi`, `zh_hans`, `zh_hant`). Desktop routes all 14 non-English translation tables to `client/protocol/desktop-config/src/strings_70/<code>.rs` (English literals live at call sites via `tr`/`trf`/`en`; never ad-hoc files and never growing grandfathered `strings/*.rs` past 1,750 LOC).
 
 ---
 
@@ -295,14 +295,14 @@ All slices have **strictly non-overlapping file lists** for Phase 3 `parallel()`
 
 | Slice | Parallel Group | Exclusive File List (zero overlap!) |
 |---|---|---|
-| **8A: Protocol `0x554B` & Native API Wire Types** | Stage 1 | `client/protocol/core/src/ids.rs`, `client/protocol/core/src/lib.rs`, `client/protocol/core/src/quick_suspend.rs` (new), `client/protocol/core/src/fuzz.rs`, `rust/core/native-api/src/lib.rs`, `rust/core/native-api/src/quick_suspend.rs` (new), `rust/core/native-api/src/session.rs`, `rust/core/native-api/tests/fixtures.rs`, `rust/core/native-api/tests/fixtures/quick_suspend_*.json` (new), `docs/control-messages.md`, `docs/native-api.md` |
-| **8B: Core Safety Policy, Denylist & Canonical `RecoveryJournalV2` Schema** | Stage 1 (parallel with 8A) | `rust/core/src/lib.rs`, `rust/core/src/recovery_journal.rs` (new), `rust/core/src/quick_suspend.rs` (new), `rust/core/src/session_state.rs`, `rust/core/src/config.rs`, `rust/core/src/config/overrides.rs`, `rust/core/src/config/tests.rs` |
-| **8C: Windows NT Suspend/Resume & Per-PID Audio Mute** | Stage 1 (parallel with 8A+8B) | `rust/windows/src/process.rs`, `rust/windows/src/process/suspend.rs` (new), `rust/windows/src/lib.rs`, `rust/windows/src/audio_mute.rs` (new) |
-| **8D: Host Session Orchestration, Control, Native API, Console Settings & Watchdog** | Stage 2 (after 8A+8B+8C) | `rust/core/src/extensions.rs`, `rust/host/src/extensions.rs`, `rust/host/src/process.rs`, `rust/host/src/state.rs`, `rust/host/src/session_control.rs`, `rust/host/src/session_control/quick_suspend.rs` (new), `rust/host/src/nvhttp/launch_steps.rs`, `rust/host/src/stream/control.rs`, `rust/host/src/native_api.rs`, `rust/host/src/native_api/quick_suspend.rs` (new), `rust/host/src/console/settings.rs`, `rust/host/src/service_tasks.rs`, `rust/host/src/main.rs`, `rust/service/Cargo.toml`, `rust/service/src/supervisor.rs`, `rust/service/src/tasks.rs`, `rust/service/inputs.txt`, `rust/assets/locale/*.json`, `docs/configuration.md`, `rust/host/src/nvhttp/native_tests/quick_suspend.rs` (new), `rust/host/src/stream/reconnect_tests/quick_suspend_tests.rs` (new) |
+| **8A: Protocol `0x554B` & Native API Wire Types** | Stage 1 | `client/protocol/core/src/ids.rs`, `client/protocol/core/src/lib.rs`, `client/protocol/core/src/quick_suspend.rs` (new), `client/protocol/core/src/fuzz.rs`, `client/protocol/native-api/src/lib.rs`, `client/protocol/native-api/src/quick_suspend.rs` (new), `client/protocol/native-api/src/session.rs`, `client/protocol/native-api/tests/fixtures.rs`, `client/protocol/native-api/tests/fixtures/quick_suspend_*.json` (new), `docs/control-messages.md`, `docs/native-api.md` |
+| **8B: Core Safety Policy, Denylist & Canonical `RecoveryJournalV2` Schema** | Stage 1 (parallel with 8A) | `rust/core/src/lib.rs`, `rust/core/session/src/recovery_journal.rs` (new), `rust/core/session/src/quick_suspend.rs` (new), `rust/core/session/src/session_state.rs`, `rust/core/config/src/config.rs`, `rust/core/config/src/config/overrides.rs`, `rust/core/config/src/config/tests.rs` |
+| **8C: Windows NT Suspend/Resume & Per-PID Audio Mute** | Stage 1 (parallel with 8A+8B) | `rust/windows/io/src/process.rs`, `rust/windows/io/src/process/suspend.rs` (new), `rust/windows/src/lib.rs`, `rust/windows/io/src/audio_mute.rs` (new) |
+| **8D: Host Session Orchestration, Control, Native API, Console Settings & Watchdog** | Stage 2 (after 8A+8B+8C) | `rust/core/media-policy/src/extensions.rs`, `rust/host/stream/src/extensions.rs`, `rust/host/stream/src/process.rs`, `rust/host/stream/src/state.rs`, `rust/host/stream/src/session_control.rs`, `rust/host/stream/src/session_control/quick_suspend.rs` (new), `rust/host/stream/src/nvhttp/launch_steps.rs`, `rust/host/stream/src/stream/control.rs`, `rust/host/web/src/native_api.rs`, `rust/host/web/src/native_api/quick_suspend.rs` (new), `rust/host/web/src/console/settings.rs`, `rust/host/stream/src/service_tasks.rs`, `rust/host/src/main.rs`, `rust/service/Cargo.toml`, `rust/service/src/supervisor.rs`, `rust/service/src/tasks.rs`, `rust/service/inputs.txt`, `rust/assets/locale/*.json`, `docs/configuration.md`, `tests/host/tests/nvhttp_parity/native_tests/quick_suspend.rs` (new), `tests/host/tests/reconnect_tests/quick_suspend_tests.rs` (new) |
 | **8E: Console 2.0 Frontend (`rust/web/**` ONLY)** | Stage 2 (parallel with 8D) | `rust/web/src/lib/schema/basics.ts`, `rust/web/src/components/session/SuspendedGameBanner.svelte` (new), `rust/web/QuickSuspend.test.mjs` (new) |
-| **8F: Nightjar Core, Desktop & Android** | Stage 2 (parallel with 8D+8E) | `client/protocol/client/src/http/capabilities.rs`, `client/protocol/client/src/http/native.rs`, `client/protocol/client/src/http/native_suspend.rs` (new), `client/protocol/client/src/control/messages.rs`, `client/protocol/client/src/control/events.rs`, `client/protocol/client/src/control/session.rs`, `client/protocol/client/tests/control_messages_contract.rs`, `client/protocol/client/tests/capabilities_contract.rs`, `client/protocol/desktop/src/stream/mod.rs`, `client/protocol/desktop/src/stream/quick_suspend.rs` (new), `client/protocol/desktop/src/strings.rs`, `client/protocol/desktop/src/strings_70/<code>.rs` (14 non-English locale tables; never ad-hoc files or grandfathered `strings/*.rs`), `client/protocol/android/src/lib.rs`, `client/app/src/main/java/com/limelight/nvstream/http/HostCapabilities.java`, `client/app/src/main/java/com/limelight/nvstream/jni/RustBridge.java`, `client/app/src/main/java/com/limelight/ui/StreamMenu.java`, `client/app/src/main/java/com/limelight/ui/StreamMenuSuspendSection.java` (new), `client/app/src/main/res/values*/strings.xml`, `client/app/src/test/resources/protocol/capabilities/*` |
+| **8F: Nightjar Core, Desktop & Android** | Stage 2 (parallel with 8D+8E) | `client/protocol/policy/src/http/capabilities.rs`, `client/protocol/client/src/http/native.rs`, `client/protocol/client/src/http/native_suspend.rs` (new), `client/protocol/client/src/control/messages.rs`, `client/protocol/client/src/control/events.rs`, `client/protocol/client/src/control/session.rs`, `client/protocol/client/tests/control_messages_contract.rs`, `client/protocol/client/tests/capabilities_contract.rs`, `client/protocol/desktop-media/src/stream/mod.rs`, `client/protocol/desktop-media/src/stream/quick_suspend.rs` (new), `client/protocol/desktop-config/src/strings.rs`, `client/protocol/desktop-config/src/strings_70/<code>.rs` (14 non-English locale tables; never ad-hoc files or grandfathered `strings/*.rs`), `client/protocol/android/src/lib.rs`, `client/app/src/main/java/com/limelight/nvstream/http/HostCapabilities.java`, `client/app/src/main/java/com/limelight/nvstream/jni/RustBridge.java`, `client/app/src/main/java/com/limelight/ui/StreamMenu.java`, `client/app/src/main/java/com/limelight/ui/StreamMenuSuspendSection.java` (new), `client/app/src/main/res/values*/strings.xml`, `client/app/src/test/resources/protocol/capabilities/*` |
 
-*(Every path above is marked `[verify post-sprint code-map.md]` for Phase 2 reconciliation.)*
+*(Every path above is marked `docs/code-map.md` for Phase 2 reconciliation.)*
 
 ---
 
@@ -334,7 +334,7 @@ All slices have **strictly non-overlapping file lists** for Phase 3 `parallel()`
 - **Nightjar & arch checks:**
   - `cargo test -p nightjar-core --locked capabilities_contract control_messages_contract`
   - `gradlew :app:testNonRootDebugUnitTest --tests com.limelight.ui.StreamMenuTest --tests com.limelight.preferences.SettingsKeysTest`
-  - `python tools/arch_check.py` (explicitly verifying `rust/host/src/session_control.rs <= 800` LOC, grandfathered `client/protocol/desktop/src/strings/*.rs <= 1,750` LOC, and all new modules `<= 800` LOC with `//!`/`/**` headers!)
+  - `python tools/arch_check.py` (explicitly verifying `rust/host/stream/src/session_control.rs <= 800` LOC, grandfathered `client/protocol/desktop-config/src/strings/*.rs <= 1,750` LOC, and all new modules `<= 800` LOC with `//!`/`/**` headers!)
   - `python tools/code_map.py check`
 
 ### 7.2 Visual & Screenshot Checks
