@@ -208,6 +208,7 @@ fn a_plug_keeps_the_slots_free_and_stops_where_the_driver_says_so() {
 /// a later unplug no other client could do.
 #[test]
 fn a_vigem_pad_that_will_not_unplug_frees_its_slot_with_its_client() {
+    let _stranded = stranded_slots();
     let slot = Slot::reserve().unwrap();
     let global = slot.id();
     std::mem::forget(slot);

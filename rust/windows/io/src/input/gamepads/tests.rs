@@ -170,6 +170,7 @@ fn a_feedback_poll_refused_the_handle_marks_the_pads_lost() {
 /// their slots are free for the pads opened next rather than stranded.
 #[test]
 fn lost_pads_free_their_slots_without_unplugging() {
+    let _stranded = stranded_slots();
     let slot = Slot::reserve().unwrap();
     let global = slot.id();
     std::mem::forget(slot);
@@ -314,6 +315,7 @@ fn a_feedback_poll_that_finds_the_device_gone_creates_the_pad_again() {
 /// unplug finish instead.
 #[test]
 fn a_feedback_poll_never_brings_back_a_pad_the_client_removed() {
+    let _stranded = stranded_slots();
     let slot = Slot::reserve().unwrap();
     let global = slot.id();
     std::mem::forget(slot);
