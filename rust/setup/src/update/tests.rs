@@ -627,3 +627,40 @@ fn a_finished_transaction_takes_the_empty_staging_folder_with_it() -> Result<()>
     assert!(install.path().exists());
     Ok(())
 }
+
+#[test]
+fn rollback_continues_past_a_blocked_file_and_still_restarts_the_host() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let installed = root.path().join("installed");
+    std::fs::create_dir(&installed)?;
+    std::fs::write(installed.join("a.exe"), b"old a")?;
+    std::fs::write(installed.join("b.dll"), b"old b")?;
+    let paths = ["a.exe", "b.dll"].into_iter().map(str::to_owned).collect();
+    let backup = Backup::create(&installed, &root.path().join("backup"), &paths)?;
+    std::fs::write(installed.join("a.exe"), b"new a")?;
+    std::fs::write(installed.join("b.dll"), b"new b")?;
+    // Simulate a file that cannot be replaced by replacing it with a non-empty directory.
+    std::fs::remove_file(installed.join("a.exe"))?;
+    std::fs::create_dir(installed.join("a.exe"))?;
+    std::fs::write(installed.join("a.exe/lock"), b"x")?;
+
+    let restarted = std::cell::Cell::new(false);
+    let failure = attempt_install(
+        &backup,
+        &installed,
+        || bail!("update startup failed"),
+        || Ok(()),
+        || {
+            restarted.set(true);
+            Ok(())
+        },
+    )
+    .unwrap_err();
+    assert!(
+        restarted.get(),
+        "host must be restarted even after partial restore failure"
+    );
+    assert!(failure.recovery.is_err());
+    assert_eq!(std::fs::read(installed.join("b.dll"))?, b"old b");
+    Ok(())
+}

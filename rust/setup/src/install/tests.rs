@@ -623,3 +623,21 @@ fn the_health_check_asks_the_configured_bind_address() {
     wait_ready(address, Some("9.9")).unwrap();
     assert!(host.join().unwrap().contains("Host: 127.0.0.1\r\n"));
 }
+
+#[test]
+fn hkcu_uninstall_commands_are_never_run_elevated() {
+    use windows::Win32::System::Registry::HKEY_CURRENT_USER;
+    let hkcu = detect::Product {
+        key: "Sunshine".into(),
+        name: "Sunshine".into(),
+        version: "0.23.0".into(),
+        location: None,
+        uninstall: Some(r"C:\Users\alice\payload.exe".into()),
+        quiet_uninstall: Some(r"C:\Users\alice\payload.exe /S".into()),
+        msi: false,
+        root: HKEY_CURRENT_USER,
+    };
+    assert_eq!(legacy_uninstall(&hkcu, |_| true), None);
+    let error = remove_legacy(&hkcu).unwrap_err();
+    assert!(error.to_string().contains("elevated"), "{error:#}");
+}

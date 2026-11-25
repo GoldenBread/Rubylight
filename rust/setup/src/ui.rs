@@ -7,7 +7,9 @@ use windows::{
         Foundation::{FreeLibrary, HMODULE, HWND, LPARAM, S_FALSE, S_OK, WPARAM},
         System::{
             ApplicationInstallationAndServicing::{ACTCTXW, ActivateActCtx, CreateActCtxW},
-            LibraryLoader::{GetProcAddress, LoadLibraryW},
+            LibraryLoader::{
+                GetModuleHandleW, GetProcAddress, LOAD_LIBRARY_SEARCH_SYSTEM32, LoadLibraryExW,
+            },
         },
         UI::{
             Controls::*,
@@ -20,31 +22,28 @@ use windows::{
 type TaskDialogIndirect =
     unsafe extern "system" fn(*const TASKDIALOGCONFIG, *mut i32, *mut i32, *mut BOOL) -> HRESULT;
 
-const MANIFEST: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
-  <dependency><dependentAssembly>
-    <assemblyIdentity type="win32" name="Microsoft.Windows.Common-Controls" version="6.0.0.0"
-      processorArchitecture="*" publicKeyToken="6595b64144ccf1df" language="*"/>
-  </dependentAssembly></dependency>
-</assembly>"#;
+const ISOLATIONAWARE_MANIFEST_RESOURCE_ID: PCWSTR = PCWSTR(std::ptr::without_provenance(2));
+const ACTCTX_FLAG_RESOURCE_NAME_VALID: u32 = 0x0000_0008;
+const ACTCTX_FLAG_HMODULE_VALID: u32 = 0x0000_0080;
 
 /// TaskDialogIndirect from Common Controls 6, loaded once.
 fn task_dialog() -> Option<TaskDialogIndirect> {
     static FUNCTION: std::sync::OnceLock<Option<usize>> = std::sync::OnceLock::new();
-    // SAFETY: the manifest path outlives CreateActCtxW and the module stays loaded while the address is in use.
+    // SAFETY: the embedded manifest resource lives in the current module and `library` stays loaded while the address is in use.
     let address = FUNCTION.get_or_init(|| unsafe {
-        let manifest = std::env::temp_dir().join("butterpollo-setup-controls.manifest");
-        std::fs::write(&manifest, MANIFEST).ok()?;
-        let source = HSTRING::from(manifest.as_os_str());
+        let module = GetModuleHandleW(None).ok()?;
         let context = CreateActCtxW(&ACTCTXW {
             cbSize: size_of::<ACTCTXW>() as u32,
-            lpSource: PCWSTR(source.as_ptr()),
+            dwFlags: ACTCTX_FLAG_HMODULE_VALID | ACTCTX_FLAG_RESOURCE_NAME_VALID,
+            lpResourceName: ISOLATIONAWARE_MANIFEST_RESOURCE_ID,
+            hModule: module,
             ..Default::default()
         })
         .ok()?;
         let mut cookie = 0;
         ActivateActCtx(Some(context), &mut cookie).ok()?;
-        let library: HMODULE = LoadLibraryW(w!("comctl32.dll")).ok()?;
+        let library: HMODULE =
+            LoadLibraryExW(w!("comctl32.dll"), None, LOAD_LIBRARY_SEARCH_SYSTEM32).ok()?;
         match GetProcAddress(library, windows::core::s!("TaskDialogIndirect")) {
             Some(function) => Some(function as usize),
             None => {
@@ -357,4 +356,17 @@ pub fn finished(
         );
     }
     button == 100
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn task_dialog_loads_from_embedded_manifest_without_temp_file() {
+        let stale = std::env::temp_dir().join("butterpollo-setup-controls.manifest");
+        let _ = std::fs::remove_file(&stale);
+        assert!(task_dialog().is_some());
+        assert!(!stale.exists());
+    }
 }

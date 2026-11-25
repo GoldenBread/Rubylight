@@ -222,6 +222,9 @@ pub(super) fn copy_tree(source: &Path, target: &Path) -> Result<()> {
 }
 
 pub(super) fn remove_legacy(product: &crate::detect::Product) -> Result<()> {
+    if product.root == windows::Win32::System::Registry::HKEY_CURRENT_USER {
+        bail!("per-user uninstall commands cannot run while elevated");
+    }
     let (command, in_place) = legacy_uninstall(product, is_nsis).context("no uninstall command")?;
     let (code, _) = system::run_cmd(&command, Duration::from_secs(300))?;
     if code != 0 {
@@ -246,6 +249,9 @@ pub(super) fn legacy_uninstall(
     product: &crate::detect::Product,
     nsis: impl Fn(&Path) -> bool,
 ) -> Option<(String, Option<PathBuf>)> {
+    if product.root == windows::Win32::System::Registry::HKEY_CURRENT_USER {
+        return None;
+    }
     let command = product
         .quiet_uninstall
         .clone()

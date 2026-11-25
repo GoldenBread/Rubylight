@@ -14,11 +14,26 @@ fn main() {
     println!("cargo:rerun-if-changed={}", icon.display());
     println!("cargo:rerun-if-changed=../assets/version_info.rs");
     let path = icon.display().to_string().replace('\\', "/");
-    let icon = format!("1 ICON \"{path}\"\n");
+    let controls = std::path::PathBuf::from(std::env::var("OUT_DIR").unwrap())
+        .join("butterpollo-setup-controls.manifest");
+    std::fs::write(
+        &controls,
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <dependency><dependentAssembly>
+    <assemblyIdentity type="win32" name="Microsoft.Windows.Common-Controls" version="6.0.0.0"
+      processorArchitecture="*" publicKeyToken="6595b64144ccf1df" language="*"/>
+  </dependentAssembly></dependency>
+</assembly>
+"#,
+    )
+    .unwrap();
+    let controls_path = controls.display().to_string().replace('\\', "/");
+    let extra = format!("1 ICON \"{path}\"\n2 24 \"{controls_path}\"\n");
     let rc = write_resource(
         "setup",
         Some("butterpollo-setup.exe"),
-        &icon,
+        &extra,
         "Rubylight Setup",
         false,
     );

@@ -3,7 +3,7 @@ use super::wide;
 use anyhow::{Result, bail};
 use windows::{
     Win32::{
-        Foundation::{ERROR_FILE_NOT_FOUND, ERROR_SUCCESS},
+        Foundation::{ERROR_FILE_NOT_FOUND, ERROR_MORE_DATA, ERROR_SUCCESS},
         System::Registry::*,
     },
     core::{PCWSTR, PWSTR},
@@ -152,8 +152,9 @@ pub fn values(root: HKEY, path: &str, view: REG_SAM_FLAGS) -> Vec<String> {
         return Vec::new();
     };
     let mut names = Vec::new();
-    for index in 0.. {
-        let mut name = [0u16; 2048];
+    let mut name = vec![0u16; 2048];
+    let mut index = 0u32;
+    loop {
         let mut length = name.len() as u32;
         // SAFETY: `key` is an open key and `length` is the capacity of `name` in characters.
         let status = unsafe {
@@ -168,10 +169,15 @@ pub fn values(root: HKEY, path: &str, view: REG_SAM_FLAGS) -> Vec<String> {
                 None,
             )
         };
+        if status == ERROR_MORE_DATA && name.len() < 65_536 {
+            name.resize((name.len() * 2).min(65_536), 0);
+            continue;
+        }
         if status != ERROR_SUCCESS {
             break;
         }
         names.push(String::from_utf16_lossy(&name[..length as usize]));
+        index += 1;
     }
     names
 }
