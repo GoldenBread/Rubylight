@@ -13,6 +13,8 @@ pub struct Snapshot {
     pub scale: std::collections::BTreeMap<String, u32>,
     #[serde(default)]
     pub rotation: std::collections::BTreeMap<String, u32>,
+    #[serde(default)]
+    pub sources: std::collections::BTreeMap<String, u32>,
 }
 impl Snapshot {
     pub fn read(path: &std::path::Path) -> Result<Self> {
@@ -44,6 +46,11 @@ impl Snapshot {
             .collect();
         snapshot.rotation = snapshot
             .rotation
+            .into_iter()
+            .map(|(id, v)| (normalized(&id), v))
+            .collect();
+        snapshot.sources = snapshot
+            .sources
             .into_iter()
             .map(|(id, v)| (normalized(&id), v))
             .collect();
@@ -92,6 +99,7 @@ impl Snapshot {
             clone_groups: groups.iter().filter(|g| g.len() > 1).cloned().collect(),
             scale: Default::default(),
             rotation: Default::default(),
+            sources: Default::default(),
         };
         for (id, mode) in modes {
             let number = |key| mode[key].as_u64().context("invalid saved display mode");
@@ -153,6 +161,10 @@ impl Snapshot {
                 .map(|m| (m.device_id.clone(), m.hdr_enabled))
                 .collect(),
             rotation: topology.rotations_of(&monitors),
+            sources: monitors
+                .iter()
+                .map(|m| (m.device_id.clone(), m.source))
+                .collect(),
             clone_groups: Topology::clone_groups_of(&monitors),
             scale: monitors
                 .iter()
@@ -169,7 +181,7 @@ impl Snapshot {
     }
     /// Whether every display this layout turns on is connected now.
     pub fn displays_connected(&self) -> bool {
-        let Ok(available) = Topology::query_all().map(|t| t.monitors()) else {
+        let Ok(available) = Topology::query_all().map(|t| t.available_monitors()) else {
             return false;
         };
         self.displays_present(&available)
@@ -211,7 +223,7 @@ impl Snapshot {
             bail!("unsupported Rust display snapshot version");
         }
         let current = Topology::query()?;
-        let available = Topology::query_all()?.monitors();
+        let available = Topology::query_all()?.available_monitors();
         let preserve = |id: &str| excluded.iter().any(|e| id.eq_ignore_ascii_case(e));
         let ids = self.active_ids(&current.monitors(), &available, excluded);
         if ids.is_empty() {
@@ -220,7 +232,13 @@ impl Snapshot {
             tracing::warn!("no display of the saved layout is connected; nothing to restore");
             return Ok(());
         }
-        Topology::set_active(&ids).context("cannot activate the saved displays")?;
+        let primary = self
+            .nodes
+            .iter()
+            .find(|n| n.active && n.primary && !preserve(&n.device_id))
+            .map(|n| n.device_id.as_str());
+        Topology::set_active_preferred(&ids, &self.sources, primary)
+            .context("cannot activate the saved displays")?;
         // A display that cannot take back its old setting must not leave the
         // rest of the layout unrestored; report every such failure at the end.
         let mut failures = Vec::new();

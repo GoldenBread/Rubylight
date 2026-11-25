@@ -221,7 +221,7 @@ fn without_reports_pacer_claims_match_an_untouched_pacer() {
     for frame in 0..1000u32 {
         let now = start + period * frame + Duration::from_micros(u64::from(frame % 5) * 700);
         if let Some(interval) = sync.interval(now, period) {
-            paced.set_period(interval);
+            paced.set_period(now, interval);
         }
         assert_eq!(
             paced.allowed_at(now),
@@ -388,6 +388,40 @@ fn a_stream_runs_at_the_rate_its_request_asks_for() {
     let mut stream = artemis_announce(120);
     apply(&mut stream, 0, &limited);
     assert_eq!(stream.fps_millihz(), 120_000);
+    // Nightjar #119: when launch carries an exact fractional rate (59.94 / 119.88 Hz)
+    // and RTSP SDP only carried the rounded integer `maxFPS`, preserve the fractional rate.
+    for (launch, request) in [(59_940, 60), (119_880, 120), (23_976, 24)] {
+        let mut fractional = artemis_announce(request);
+        apply(&mut fractional, launch, &Config::default());
+        assert_eq!(fractional.fps_millihz(), launch);
+    }
+    // An explicit fractional SDP rate is not overwritten by a different launch rate.
+    let mut explicit = Negotiated::from_sdp(b"a=x-nv-video[0].maxFPS:59940\n").unwrap();
+    apply(&mut explicit, 60_000, &Config::default());
+    assert_eq!(explicit.fps_millihz(), 59_940);
+}
+
+#[test]
+fn pacer_set_period_banks_accrued_credit_across_phase_lock_steps() {
+    let start = Instant::now();
+    let old = Duration::from_micros(16_667);
+    let slower = Duration::from_micros(25_000);
+    let mut pacer = Pacer::new(start, old);
+    pacer.claimed(start);
+    let step = start + old;
+    // Exactly one old period has elapsed; stepping to a slower period must bank
+    // the full frame of credit earned at `old` instead of dividing elapsed time
+    // by `slower` into a -0.333 phantom deficit that delays the next frame.
+    pacer.set_period(step, slower);
+    pacer.claimed(step);
+    let next = step + slower;
+    assert_eq!(pacer.allowed_at(next), next);
+    // Stepping back to a faster period must bank at `slower` instead of creating
+    // a +0.50 phantom surplus that admits an early frame before `next + old`.
+    pacer.set_period(next, old);
+    pacer.claimed(next);
+    assert!(pacer.allowed_at(next + old / 2) > next + old / 2);
+    assert_eq!(pacer.allowed_at(next + old), next + old);
 }
 #[test]
 fn a_warp_stream_request_keeps_the_clients_bitrate() {

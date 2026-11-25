@@ -139,7 +139,12 @@ impl Prepared {
     }
 
     pub(super) fn finish_feed(&mut self, fed: Result<bool>) -> Result<()> {
-        if let (Ok(true), Some(display)) = (&fed, &self.display) {
+        self.finish_feed_with(fed, true)
+    }
+
+    pub(super) fn finish_feed_with(&mut self, fed: Result<bool>, keep_layout: bool) -> Result<()> {
+        let recreated = fed?;
+        if recreated && let Some(display) = &self.display {
             self.output = display.output.clone();
             self.revision = self.revision.wrapping_add(1);
             self.machine.begin_recovery(std::time::Instant::now());
@@ -159,8 +164,8 @@ impl Prepared {
                 self.recovery_dimensions,
                 display::virtual_scale,
             )?;
-            if let Some(arrangement) = &self._arrangement {
-                self.lay_out_again(arrangement)?;
+            if self._arrangement.is_some() {
+                self.lay_out_again()?;
             }
             if self.machine.recovery.take_mode() {
                 if let Some(display) = &self.display {
@@ -180,10 +185,10 @@ impl Prepared {
                 )?;
             }
             self.machine.finish_recovery();
-        } else {
+        } else if keep_layout {
             self.keep_layout(true)?;
         }
-        fed.map(|_| ())
+        Ok(())
     }
 
     fn bring_back_game(&self) {
@@ -216,15 +221,25 @@ impl Prepared {
         });
     }
 
-    pub(super) fn lay_out_again(&self, arrangement: &display_arrangement::Lease) -> Result<()> {
-        let retained = self.remote_monitors();
+    pub(super) fn lay_out_again(&mut self) -> Result<()> {
+        let Some(arrangement) = self._arrangement.as_ref() else {
+            return Ok(());
+        };
+        let mut retained = self.remote_monitors();
+        retained.extend(self.machine.layout_watch.kept().iter().cloned());
+        let departures = display_arrangement::departures();
+        let unsettled = self.machine.departure_unsettled(departures);
         reapply_settling(
-            self.machine
-                .departure_unsettled(display_arrangement::departures()),
+            unsettled,
             &self.mode_report,
             || arrangement.reapply(&self.output, &retained),
             || arrangement.reapply_after_departure(&self.output, &retained),
-        )
+        )?;
+        if unsettled {
+            self.machine.departures = departures;
+            self.machine.layout_watch.departure_handled();
+        }
+        Ok(())
     }
 
     fn remote_monitors(&self) -> Vec<String> {

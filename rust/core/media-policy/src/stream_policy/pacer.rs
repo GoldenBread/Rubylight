@@ -161,7 +161,9 @@ impl Pacer {
     /// Phase lock: claims follow the client's refresh period instead of the
     /// stream's own. The source phase keeps its period; the two differ by a
     /// few parts in ten thousand.
-    pub fn set_period(&mut self, period: Duration) {
+    pub fn set_period(&mut self, now: Instant, period: Duration) {
+        self.credit = self.credit(now);
+        self.credit_at = now;
         self.period = period;
     }
     pub fn with_spacing(mut self, periods: f64) -> Self {

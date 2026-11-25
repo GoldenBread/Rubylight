@@ -542,7 +542,7 @@ impl Drop for Guard {
             self.virtual_display.is_some(),
             monitors().ok().as_deref(),
             set_hdr,
-            |previous, applied| restore_mode_rate(&self.output, &self.identity, previous, applied),
+            |previous, applied| restore_mode_rate(&self.identity, previous, applied),
             |previous, applied| {
                 crate::display_recovery::put_back(
                     rotation(&self.identity),

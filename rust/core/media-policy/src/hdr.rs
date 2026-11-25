@@ -68,12 +68,44 @@ impl HdrFallback {
         rtx_hdr_active: bool,
         now: Instant,
     ) -> HdrTransition {
+        self.observe_for_encoder(
+            webrtc,
+            negotiated_hdr,
+            stream_hdr,
+            source_is_bgra8,
+            display_in_hdr,
+            rtx_hdr_active,
+            false,
+            now,
+        )
+    }
+
+    /// Like [`Self::observe`], but when `encoder_missing` is true (capture
+    /// recovery / backend switch before the replacement encoder is created),
+    /// skips [`HDR_FALLBACK_GRACE`] so the new encoder starts directly in
+    /// ten-bit SDR instead of encoding BGRA8 under HDR10 metadata for 2 s.
+    #[allow(clippy::too_many_arguments)]
+    pub fn observe_for_encoder(
+        &mut self,
+        webrtc: bool,
+        negotiated_hdr: bool,
+        stream_hdr: bool,
+        source_is_bgra8: bool,
+        display_in_hdr: Option<bool>,
+        rtx_hdr_active: bool,
+        encoder_missing: bool,
+        now: Instant,
+    ) -> HdrTransition {
         if webrtc || !negotiated_hdr {
             self.sdr_since = None;
             return HdrTransition::None;
         }
         if stream_hdr {
             if source_is_bgra8 && display_in_hdr == Some(false) && !rtx_hdr_active {
+                if encoder_missing {
+                    self.sdr_since = None;
+                    return HdrTransition::FallbackToSdr;
+                }
                 let since = *self.sdr_since.get_or_insert(now);
                 if now.saturating_duration_since(since) >= HDR_FALLBACK_GRACE {
                     self.sdr_since = None;
@@ -418,5 +450,24 @@ mod tests {
         let mut sdr_stream = sdr_negotiated.clone();
         restore_hdr(&mut sdr_stream, &sdr_negotiated);
         assert!(!sdr_stream.hdr && sdr_stream.sdr_10bit);
+    }
+
+    #[test]
+    fn hdr_fallback_is_immediate_when_encoder_is_missing_after_recovery() {
+        let now = Instant::now();
+        let mut tracker = HdrFallback::default();
+        assert_eq!(
+            tracker.observe_for_encoder(false, true, true, true, Some(false), false, true, now),
+            HdrTransition::FallbackToSdr
+        );
+        // Active RTX HDR or unreadable colour space still does not drop HDR.
+        assert_eq!(
+            tracker.observe_for_encoder(false, true, true, true, Some(false), true, true, now),
+            HdrTransition::None
+        );
+        assert_eq!(
+            tracker.observe_for_encoder(false, true, true, true, None, false, true, now),
+            HdrTransition::None
+        );
     }
 }

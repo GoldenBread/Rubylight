@@ -33,8 +33,9 @@ impl Refresh {
             let clock = u16::from_le_bytes([d[0], d[1]]);
             if clock == 0 {
                 if d[3] == 0xfd && d[6] > 0 {
-                    self.max_vertical_hz =
-                        Some(self.max_vertical_hz.unwrap_or(0).max(u32::from(d[6])));
+                    // EDID 1.4 Range Limits vertical rate offset (+255 Hz).
+                    let max_v = u32::from(d[6]) + if d[4] & 0x02 != 0 { 255 } else { 0 };
+                    self.max_vertical_hz = Some(self.max_vertical_hz.unwrap_or(0).max(max_v));
                 }
                 continue;
             }
@@ -93,6 +94,21 @@ mod tests {
         assert_eq!(Refresh::parse(&[]).support(120), (None, "unknown"));
         for length in 0..256 {
             let _ = Refresh::parse(&vec![0x02; length]);
+        }
+    }
+
+    #[test]
+    fn edid_14_vertical_rate_offset_supports_360hz_and_480hz_monitors() {
+        for (raw, expected) in [(105u8, 360u32), (225, 480)] {
+            let mut bytes = vec![0; 128];
+            bytes[54 + 3] = 0xfd;
+            bytes[54 + 4] = 0x02; // +255 Hz max vertical rate offset
+            bytes[54 + 6] = raw;
+            let info = Refresh::parse(&bytes);
+            assert_eq!(info.max_vertical_hz, Some(expected));
+            assert_eq!(info.support(expected), (Some(true), "range"));
+            assert_eq!(info.support(288), (Some(true), "range"));
+            assert_eq!(info.support(expected + 60), (Some(false), "range"));
         }
     }
 }

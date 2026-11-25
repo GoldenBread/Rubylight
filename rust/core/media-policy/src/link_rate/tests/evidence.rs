@@ -509,3 +509,34 @@ fn a_rise_in_rtt_alone_is_no_evidence() {
     assert!(rig.changes.is_empty());
     assert_eq!(rig.kbps, 40_000);
 }
+
+#[test]
+fn non_network_and_fenced_invalidations_do_not_poison_post_fence_incidents() {
+    // T2-18: a non-network RFI must not open an incident that swallows real network RFIs.
+    let mut rig = Rig::new(21_388);
+    rig.clean(1_000);
+    rig.lr.on_invalidation(3000, 3005, false, rig.now());
+    for first in [3000, 3060, 3120] {
+        rig.lr.on_invalidation(first, first + 2, true, rig.now());
+        rig.clean(100);
+    }
+    rig.clean(400);
+    assert_eq!(rig.cuts(), 1, "{:?}", rig.kinds());
+
+    // A fenced RFI during a suppression fence must not swallow a real post-fence RFI
+    // covering overlapping frame indices within INCIDENT_GAP.
+    let mut rig = Rig::new(21_388);
+    rig.clean(1_000);
+    rig.lr.on_latch(rig.now(), true, true);
+    let fence_at = rig.lr.fence_at().unwrap();
+    // Send a fenced RFI right before the fence ends, then clear the fence and send 3 real RFIs.
+    rig.lr.on_invalidation(4000, 4010, true, rig.now());
+    let wait_ms = fence_at.saturating_duration_since(rig.now()).as_millis() as u64 + 20;
+    rig.clean(wait_ms);
+    for first in [4000, 4060, 4120] {
+        rig.lr.on_invalidation(first, first + 2, true, rig.now());
+        rig.clean(100);
+    }
+    rig.clean(400);
+    assert_eq!(rig.cuts(), 1, "{:?}", rig.kinds());
+}

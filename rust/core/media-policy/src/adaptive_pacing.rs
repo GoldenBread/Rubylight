@@ -171,7 +171,8 @@ impl AdaptivePacing {
             self.initialized = true;
             self.limit = Some(self.seed_rate(encoder_kbps));
         } else if self.ceiling != previous_ceiling || self.floor != previous_floor {
-            if self.ceiling != previous_ceiling {
+            let ceiling_changed = self.ceiling != previous_ceiling;
+            if ceiling_changed {
                 // Route activity and RTT from before a changed ceiling do
                 // not validate probing the replacement route.
                 self.last_ping = None;
@@ -187,7 +188,7 @@ impl AdaptivePacing {
             // A tentative faster rate has not earned promotion. Retain its
             // preceding rate, adjusted for the new demand, and gather fresh
             // evidence instead of confirming across a changed wire budget.
-            if let Some(probe) = self.probe.take() {
+            let retracted_probe = if let Some(probe) = self.probe.take() {
                 self.limit = Some(probe.stable);
                 if self.any_loss {
                     // The same report may raise FEC before the control loop
@@ -196,11 +197,19 @@ impl AdaptivePacing {
                     self.startup = false;
                     self.recovery_hold = (self.recovery_hold * 2).min(Duration::from_secs(60));
                 }
+                true
+            } else {
+                false
+            };
+            if let Some(limit) = &mut self.limit {
+                *limit = (*limit).clamp(self.floor, self.ceiling);
             }
-            self.clean_since = None;
-            self.unhealthy_since = None;
-            self.last_sample = None;
-            self.awaiting_fence = true;
+            if ceiling_changed || retracted_probe || self.current() != previous_rate {
+                self.clean_since = None;
+                self.unhealthy_since = None;
+                self.last_sample = None;
+                self.awaiting_fence = true;
+            }
         }
         if let Some(limit) = &mut self.limit {
             let next = (*limit).clamp(self.floor, self.ceiling);

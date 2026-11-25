@@ -220,10 +220,7 @@ impl Inner {
             self.note_written(device, &ids);
             worker.queue_apply(device, gpu, changes)
         };
-        let result = ticket?.wait();
-        // The write may have changed more than it reported, or gone on after a timeout.
-        self.note_written(device, &ids);
-        result
+        ticket?.wait()
     }
     /// Forget what the panel showed, after a write or a restore.
     pub fn forget(&self) {

@@ -298,9 +298,9 @@ impl Ready {
             butterpollo_win_io::input::on_input_desktop(|| -> Result<()> {
                 let mut prepared = self._state.lock().unwrap();
                 let fed = prepared.display.as_mut().map_or(Ok(false), Guard::resume);
-                prepared.finish_feed(fed)?;
-                if let Some(arrangement) = &prepared._arrangement {
-                    prepared.lay_out_again(arrangement)?;
+                prepared.finish_feed_with(fed, false)?;
+                if prepared._arrangement.is_some() {
+                    prepared.lay_out_again()?;
                     if let Some(display) = &prepared.display {
                         display.apply_virtual_mode("after resume layout");
                     }
@@ -509,6 +509,17 @@ enum Raise {
     Raised(u32),
 }
 
+/// Whether RTSP only sent the rounded integer `maxFPS` corresponding to an
+/// exact fractional launch rate (e.g. 59.94 -> 60 or 119.88 -> 120), in which
+/// case `retime` keeps the already-prepared display and RTSS limiter instead
+/// of overwriting them with the rounded integer rate.
+pub(super) fn keeps_fractional_launch_rate(launch_rate: u32, stream: &Negotiated) -> bool {
+    let stream_rate = stream.fps_millihz();
+    launch_rate != stream_rate
+        && stream_rate == stream.fps.saturating_mul(1000)
+        && stream.fps == launch_rate.saturating_add(500) / 1000
+}
+
 pub fn retime(
     preparation: StreamPreparation,
     h: &Shared,
@@ -524,6 +535,9 @@ pub fn retime(
             "the stream asks for another size, HDR or VRR than its display has; it gets a new display"
         );
         return Ok(Err(preparation));
+    }
+    if keeps_fractional_launch_rate(launch_rate, stream) {
+        return Ok(Ok(preparation));
     }
     let (virtual_mode, joined) = {
         let prepared = display._state.lock().unwrap();

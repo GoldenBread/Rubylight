@@ -34,24 +34,29 @@ pub fn apply_color(stream: &mut Negotiated, config: &Config) {
 pub const PACKED_DOLBY_VISION: &str = "Dolby Vision is off for packed 4:4:4 streams: the device unpacks the packed picture itself, so a Dolby Vision decoder would tone-map the packed layout instead of the picture. The stream carries static HDR10 instead";
 /// Why a native 4:4:4 stream never carries Dolby Vision.
 pub const NATIVE_444_DOLBY_VISION: &str = "Dolby Vision is off for YUV 4:4:4 streams: its profiles 8.1 and 8.4 are 4:2:0 only. The stream carries static HDR10 instead";
+/// Why a full-range stream never carries Dolby Vision.
+pub const FULL_RANGE_DOLBY_VISION: &str = "Dolby Vision is off for full-range streams: its RPU base-layer profiles assume limited-range video. The stream carries static HDR10 instead";
 /// A packed 4:4:4 stream whose client picked Dolby Vision streams static
 /// HDR10, from the control channel: the client decodes the packed
 /// picture as plain sample data and unpacks it in its own shader, and the
 /// RPU would not survive the unpack. A native 4:4:4 stream (HEVC Rext) does
-/// the same: Dolby Vision profile 8 is HEVC Main10 4:2:0. The log and the
-/// session's warnings say so; any other stream clears the warning. Returns
-/// whether it dropped it.
+/// the same: Dolby Vision profile 8 is HEVC Main10 4:2:0. A full-range
+/// stream likewise falls back to static HDR10 because the RPU metadata
+/// assumes limited-range video. The log and the session's warnings say so;
+/// any other stream clears the warning. Returns whether it dropped it.
 pub fn packed_drops_dolby_vision(
     stream: &mut Negotiated,
     warnings: &(impl crate::WarningSink + ?Sized),
 ) -> bool {
-    let dropped = (stream.chroma_packing != 0 || stream.yuv444)
+    let dropped = (stream.chroma_packing != 0 || stream.yuv444 || stream.full_range())
         && stream.hdr_format & rubylight_protocol::hdr::DOLBY_VISION != 0;
     if dropped {
         let reason = if stream.yuv444 {
             NATIVE_444_DOLBY_VISION
-        } else {
+        } else if stream.chroma_packing != 0 {
             PACKED_DOLBY_VISION
+        } else {
+            FULL_RANGE_DOLBY_VISION
         };
         tracing::warn!(hdr_format = stream.hdr_format, "{reason}");
         warnings.set("hdr_dolby_vision", reason);
@@ -108,6 +113,15 @@ pub fn apply(stream: &mut Negotiated, launch_millihz: u32, config: &Config) {
     // rate. Turned on here, the stream is encoded at the launch rate.
     let limit = config.boolean("limit_framerate", false);
     if limit && (1..=4_000_000).contains(&launch_millihz) {
+        stream.rate_millihz = launch_millihz;
+    } else if (1000..=4_000_000).contains(&launch_millihz)
+        && stream.fps_millihz() == stream.fps.saturating_mul(1000)
+        && launch_millihz != stream.fps_millihz()
+        && stream.fps == launch_millihz.saturating_add(500) / 1000
+    {
+        // Launch carried a fractional refresh (e.g. 59.94 Hz) while RTSP SDP
+        // only carried the rounded integer `maxFPS` (60). Preserve the launch's
+        // exact millihertz rate instead of snapping to the rounded integer.
         stream.rate_millihz = launch_millihz;
     }
     let fec = config.integer("fec_percentage", 20);

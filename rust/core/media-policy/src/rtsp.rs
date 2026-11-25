@@ -321,18 +321,17 @@ impl Negotiated {
             n.width &= !1;
             n.height &= !1;
         }
-        n.fps = get("x-nv-video[0].maxFPS", n.fps)?;
-        n.rate_millihz = if n.fps > 1000 {
-            n.fps
+        let raw_fps = get("x-nv-video[0].maxFPS", n.fps)?;
+        let explicit_millihz = raw_fps > 1000;
+        if explicit_millihz {
+            n.rate_millihz = raw_fps;
+            n.fps = raw_fps.saturating_add(500) / 1000;
         } else {
-            n.fps.saturating_mul(1000)
-        };
-        if n.fps > 4000 {
-            n.rate_millihz = n.fps;
-            n.fps = n.fps.saturating_add(500) / 1000;
+            n.fps = raw_fps;
+            n.rate_millihz = raw_fps.saturating_mul(1000);
         }
         let refresh_x100 = get("x-nv-video[0].clientRefreshRateX100", 0)?;
-        if refresh_x100 > 0 && refresh_x100.saturating_add(50) / 100 == n.fps {
+        if !explicit_millihz && refresh_x100 > 0 && refresh_x100.saturating_add(50) / 100 == n.fps {
             n.rate_millihz = refresh_x100
                 .checked_mul(10)
                 .ok_or_else(|| anyhow::anyhow!("refresh rate overflow"))?;

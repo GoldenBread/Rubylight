@@ -701,3 +701,26 @@ fn streamed_blocks_overwrite_every_byte_of_dirty_shards() {
         }
     }
 }
+
+#[test]
+fn streamed_blocks_step_down_on_non_monotonic_fec_parity_peaks() {
+    // T2-19: for (min_fec=24, pct=10), max_data=231 (231+24=255), yet 230 data shards
+    // computes parity=26 (230+26=256 > 255). Stepping down must emit valid blocks instead
+    // of failing with "FEC parity count exceeds protocol limit".
+    for (fec, min_fec, early_shards) in [(10, 24, 230), (15, 34, 220), (16, 36, 218)] {
+        let size = (early_shards + 10) * SLICE;
+        let payload = frame_bytes(size);
+        let parts = [
+            (early_shards + 1) * SLICE,
+            size - (early_shards + 1) * SLICE,
+        ];
+        let mut p = packetizer(fec, min_fec, None);
+        let (sent, result) = run(&mut p, &payload, &parts, 2, 2, size + 20 * SLICE);
+        result.unwrap_or_else(|e| panic!("fec={fec} min={min_fec}: {e:#}"));
+        assert!(sent.done);
+        assert!(sent.blocks.iter().all(|b| b.data + b.parity <= 255));
+        let (stream, layout) = reassemble(&sent.packets, None);
+        assert_identical(&stream, &payload);
+        assert_recoverable(&sent.packets, None, &layout);
+    }
+}

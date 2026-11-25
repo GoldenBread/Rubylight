@@ -284,3 +284,36 @@ fn vrr_negotiated_after_launch_requires_new_display_preparation() {
     launch.vrr_low_latency = true;
     assert_eq!(stream_mode(&launch), stream_mode(&negotiated));
 }
+
+#[test]
+fn retime_keeps_fractional_launch_rate_when_sdp_only_carries_rounded_integer_fps() {
+    for (launch_rate, sdp_fps) in [(59_940, 60), (119_880, 120), (23_976, 24)] {
+        let rounded = Negotiated {
+            fps: sdp_fps,
+            rate_millihz: 0,
+            ..Default::default()
+        };
+        assert!(super::lifecycle::keeps_fractional_launch_rate(
+            launch_rate,
+            &rounded
+        ));
+    }
+    // A genuine rate change (e.g. Warp 60 -> 120) or explicit fractional SDP rate still retimes.
+    let warp = Negotiated {
+        fps: 120,
+        rate_millihz: 120_000,
+        ..Default::default()
+    };
+    assert!(!super::lifecycle::keeps_fractional_launch_rate(
+        59_940, &warp
+    ));
+    let explicit_different = Negotiated {
+        fps: 60,
+        rate_millihz: 59_940,
+        ..Default::default()
+    };
+    assert!(!super::lifecycle::keeps_fractional_launch_rate(
+        60_000,
+        &explicit_different
+    ));
+}

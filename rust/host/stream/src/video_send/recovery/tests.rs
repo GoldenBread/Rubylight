@@ -461,3 +461,34 @@ fn the_first_picture_and_live_loss_use_the_same_pace_as_sending() {
         slow.bps
     );
 }
+
+#[test]
+fn per_frame_packetizer_fec_swings_do_not_churn_adaptive_pacing_floor() {
+    let fixture = crate::state::test_support::Fixture::new();
+    let (session, config, _) = wireless_hint_stream(&fixture, "", 1, true);
+    assert!(session.automatic_pacing_enabled());
+    let period = Duration::from_secs_f64(1. / 60.);
+    let peer = "192.0.2.9:12345".parse().unwrap();
+    let route = Link {
+        bps: 1_000_000_000,
+        wireless: false,
+        ..Default::default()
+    };
+    let mut packetizer = VideoPacketizer {
+        sequence: 0,
+        iv_counter: 0,
+        frame: 1,
+        packet_size: 1392,
+        fec_percent: session.fec_percent(),
+        min_fec: 2,
+        key: Some([0; 16]),
+    };
+    let baseline = pace(&session, &config, &packetizer, period, peer, route);
+    // Simulate per-frame statistical / recovery-IDR FEC changes on the packetizer.
+    for per_frame_fec in [5, 10, 20, 40, 80] {
+        packetizer.fec_percent = per_frame_fec;
+        let next = pace(&session, &config, &packetizer, period, peer, route);
+        assert_eq!(next.needed, baseline.needed, "fec={per_frame_fec}");
+        assert_eq!(next.bps, baseline.bps, "fec={per_frame_fec}");
+    }
+}

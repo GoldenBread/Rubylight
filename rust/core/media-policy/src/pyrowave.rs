@@ -453,21 +453,22 @@ pub fn row_steps(width: u32, height: u32, chroma444: bool) -> Vec<u16> {
 type RowStepsEntry = (u32, bool, Arc<Vec<u16>>);
 fn cached_row_steps(bitstream: &[u8]) -> Arc<Vec<u16>> {
     static LAST: Mutex<Option<RowStepsEntry>> = Mutex::new(None);
-    let header = word(bitstream, 0);
+    // Bits 0..28 hold width/height; bits 28..30 carry the rotating 3-bit frame sequence counter.
+    let geometry = word(bitstream, 0) & 0x0fff_ffff;
     let chroma444 = (word(bitstream, 4) >> 26) & 1 != 0;
     let mut last = LAST.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-    if let Some((h, c, steps)) = last.as_ref()
-        && *h == header
+    if let Some((g, c, steps)) = last.as_ref()
+        && *g == geometry
         && *c == chroma444
     {
         return steps.clone();
     }
     let steps = Arc::new(row_steps(
-        (header & 0x3fff) + 1,
-        ((header >> 14) & 0x3fff) + 1,
+        (geometry & 0x3fff) + 1,
+        ((geometry >> 14) & 0x3fff) + 1,
         chroma444,
     ));
-    *last = Some((header, chroma444, steps.clone()));
+    *last = Some((geometry, chroma444, steps.clone()));
     steps
 }
 pub fn record_frame(bitstream: &[u8], payload: usize, limit: usize) -> Result<Vec<u8>> {

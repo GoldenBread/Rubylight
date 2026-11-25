@@ -612,3 +612,71 @@ fn duplicate_and_reordered_reports_are_ignored() {
     assert_eq!(c.snapshot(36_000)["reports"], 3);
     assert_eq!(c.snapshot(36_000)["packets"], 6);
 }
+
+#[test]
+fn client_clock_underflow_and_backward_jumps_do_not_overflow_or_stall_eviction() {
+    let mut clock = ClientClock::default();
+    assert_eq!(clock.unwrap(0), 0);
+    // Stepping backward past 0 must clamp to 0 instead of wrapping near u64::MAX.
+    assert_eq!(clock.unwrap(0xFFF0_0000), 0);
+    assert_eq!(clock.unwrap(1_000), 0x0010_0000 + 1_000);
+
+    // Feed Control::on_report with backward base_arrival_us and extreme timestamps:
+    // must not panic on overflow, and acked window must stay bounded.
+    let stream = crate::rtsp::Negotiated::default();
+    let mut c = Control::new(&stream, true, 0, false);
+    let started = Instant::now();
+    let ledger = SendLedger::new(started);
+    ledger.enable(false);
+    let packets: Vec<Vec<u8>> = (0..20u16)
+        .map(|i| {
+            let mut p = vec![0u8; 1000];
+            p[2..4].copy_from_slice(&i.to_be_bytes());
+            p
+        })
+        .collect();
+    ledger.record(&packets, 28, started + Duration::from_millis(1));
+    let send = |seq: u32, base_arrival_us: u32| {
+        TransportFeedback {
+            base: 0,
+            stride: 1,
+            seq,
+            base_arrival_us,
+            entries: vec![0, 50],
+            ..Default::default()
+        }
+        .encode()
+        .unwrap()
+    };
+    assert!(c.on_report(&ledger, 10_000, &send(1, 0)));
+    assert!(c.on_report(&ledger, 20_000, &send(2, 0xFFF0_0000)));
+    assert!(c.on_report(&ledger, 30_000, &send(3, 1_000)));
+    // Backward arrival jump clears stale acked entries and host_us bounds window growth.
+    let mut cc = Congestion::new(1_000_000, 100_000_000);
+    for i in 0..20u64 {
+        let now_us = (i + 1) * 200_000;
+        let arrival = if i == 10 { 500 } else { 10_000_000 + i * 100 };
+        let pkt = [PacketResult {
+            sent_us: now_us.saturating_sub(1_000),
+            arrival_us: Some(arrival),
+            wire_bytes: 1_200,
+        }];
+        cc.on_feedback(
+            now_us,
+            Feedback {
+                packets: &pkt,
+                stride: 1,
+                late: 0,
+                skipped: 0,
+            },
+            16,
+        );
+    }
+    assert!(
+        cc.acked.len() <= 8,
+        "acked window stayed bounded: {}",
+        cc.acked.len()
+    );
+    assert!(cc.acked_bps().is_some());
+    assert!(cc.sent_bps().is_some());
+}

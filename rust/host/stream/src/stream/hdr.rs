@@ -91,7 +91,7 @@ impl Media {
         ) {
             return false;
         }
-        self.apply_hdr_fallback(s, stream, image);
+        self.apply_hdr_fallback(s, stream, image, false);
         true
     }
 
@@ -108,21 +108,23 @@ impl Media {
         image: &GpuImage,
         prepared: &crate::display_session::Ready,
         rtx_hdr_active: bool,
+        encoder_missing: bool,
         tracker: &mut HdrFallback,
         now: Instant,
     ) -> bool {
-        match tracker.observe(
+        match tracker.observe_for_encoder(
             s.launch.transport == Transport::WebRtc,
             s.config.hdr,
             stream.hdr,
             image.pixel == Pixel::Bgra8,
             image.gpu.display_in_hdr(),
             rtx_hdr_active,
+            encoder_missing,
             now,
         ) {
             HdrTransition::None => false,
             HdrTransition::FallbackToSdr => {
-                self.apply_hdr_fallback(s, stream, image);
+                self.apply_hdr_fallback(s, stream, image, !encoder_missing);
                 prepared.note_hdr_fallback();
                 true
             }
@@ -151,21 +153,37 @@ impl Media {
         s: &Session,
         stream: &mut butterpollo_media_policy::rtsp::Negotiated,
         image: &GpuImage,
+        mid_stream: bool,
     ) {
         stream_sdr_10bit(stream);
         if s.disable_hdr() {
             let _ = self.control_wake.send(&[1]);
         }
-        tracing::warn!(
-            client = %s.launch.client.name,
-            output = %image.gpu.display.display_name,
-            source_pixel = ?image.pixel,
-            "display HDR did not stay active; falling back to 10-bit SDR for this stream"
-        );
-        s.launch.warnings.set(
-            "display_hdr",
-            "Requested display HDR state was not applied; capture source HDR is off, so this stream fell back to SDR. Check Windows HDR and the display policy, or reconnect with HDR disabled.",
-        );
+        let warning = hdr_fallback_warning(mid_stream);
+        if mid_stream {
+            tracing::warn!(
+                client = %s.launch.client.name,
+                output = %image.gpu.display.display_name,
+                source_pixel = ?image.pixel,
+                "display left HDR during the stream; falling back to 10-bit SDR"
+            );
+        } else {
+            tracing::warn!(
+                client = %s.launch.client.name,
+                output = %image.gpu.display.display_name,
+                source_pixel = ?image.pixel,
+                "display HDR did not stay active; falling back to 10-bit SDR for this stream"
+            );
+        }
+        s.launch.warnings.set("display_hdr", warning);
+    }
+}
+
+fn hdr_fallback_warning(mid_stream: bool) -> &'static str {
+    if mid_stream {
+        "Display HDR turned off during the stream; this stream fell back to 10-bit SDR and will return to HDR automatically if HDR turns back on."
+    } else {
+        "Requested display HDR state was not applied; capture source HDR is off, so this stream fell back to SDR. Check Windows HDR and the display policy, or reconnect with HDR disabled."
     }
 }
 
@@ -223,5 +241,15 @@ mod tests {
         );
         assert!(!sdr_session.restore_hdr(restored_meta));
         assert!(!sdr_session.hdr_active());
+    }
+
+    #[test]
+    fn startup_and_mid_stream_hdr_fallback_warnings_are_distinct() {
+        let startup = hdr_fallback_warning(false);
+        let mid_stream = hdr_fallback_warning(true);
+        assert_ne!(startup, mid_stream);
+        assert!(startup.contains("not applied"));
+        assert!(mid_stream.contains("during the stream"));
+        assert!(mid_stream.contains("return to HDR automatically"));
     }
 }

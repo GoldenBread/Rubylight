@@ -588,3 +588,92 @@ fn a_listed_set_of_monitors_gives_refresh_rotations_and_clone_groups() {
         vec![vec!["first".to_string(), "second".to_string()]]
     );
 }
+
+#[test]
+fn preferred_sources_preserve_saved_source_ids_and_primary_source_zero() {
+    let gpu = LUID {
+        LowPart: 1,
+        HighPart: 0,
+    };
+    let path = |source: u32, target: u32, active: bool| {
+        let mut p = DISPLAYCONFIG_PATH_INFO::default();
+        p.sourceInfo.adapterId = gpu;
+        p.sourceInfo.id = source;
+        p.targetInfo.adapterId = gpu;
+        p.targetInfo.id = target;
+        p.targetInfo.targetAvailable = true.into();
+        p.flags = if active { DISPLAYCONFIG_PATH_ACTIVE } else { 0 };
+        p
+    };
+    // Both targets can use source 0 or 1; target 20 is currently active on source 0,
+    // while target 10 was the saved primary on source 0 and target 20 was saved on source 1.
+    let t10 = vec![path(0, 10, false), path(1, 10, false)];
+    let t20 = vec![path(0, 20, true), path(1, 20, false)];
+    let chosen =
+        extended_paths_preferred(&[(t10.clone(), Some(0), true), (t20.clone(), Some(1), false)])
+            .unwrap();
+    assert_eq!(chosen[0].sourceInfo.id, 0);
+    assert_eq!(chosen[1].sourceInfo.id, 1);
+
+    // Without saved source IDs, the saved primary still prefers source 0 over an
+    // unpreferred target that has an alternative source.
+    let chosen = extended_paths_preferred(&[(t10, None, true), (t20, None, false)]).unwrap();
+    assert_eq!(chosen[0].sourceInfo.id, 0);
+    assert_eq!(chosen[1].sourceInfo.id, 1);
+}
+
+#[test]
+fn target_paths_available_filter_excludes_disconnected_cached_routes() {
+    let gpu = LUID {
+        LowPart: 1,
+        HighPart: 0,
+    };
+    let make = |target: u32, available: bool| {
+        let mut p = DISPLAYCONFIG_PATH_INFO::default();
+        p.targetInfo.adapterId = gpu;
+        p.targetInfo.id = target;
+        p.targetInfo.targetAvailable = available.into();
+        p
+    };
+    let topology = Topology {
+        paths: vec![make(10, true), make(20, false)],
+        modes: Vec::new(),
+    };
+    assert_eq!(topology.target_paths(false).len(), 2);
+    let avail = topology.target_paths(true);
+    assert_eq!(avail.len(), 1);
+    assert_eq!(avail[0].targetInfo.id, 10);
+}
+
+#[test]
+fn referenced_modes_compacts_unreferenced_entries_and_returns_empty_when_all_invalid() {
+    let mode0 = DISPLAYCONFIG_MODE_INFO {
+        id: 10,
+        ..Default::default()
+    };
+    let mode1 = DISPLAYCONFIG_MODE_INFO {
+        id: 20,
+        ..Default::default()
+    };
+    let mode2 = DISPLAYCONFIG_MODE_INFO {
+        id: 30,
+        ..Default::default()
+    };
+    let mut p = DISPLAYCONFIG_PATH_INFO::default();
+    p.sourceInfo.Anonymous.modeInfoIdx = 2;
+    p.targetInfo.Anonymous.modeInfoIdx = DISPLAYCONFIG_PATH_MODE_IDX_INVALID;
+    let (paths, modes) =
+        super::super::hotplug::referenced_modes(&[p], &[mode0, mode1, mode2]).unwrap();
+    assert_eq!(modes.len(), 1);
+    assert_eq!(modes[0].id, 30);
+    // SAFETY: Non-virtual modeInfoIdx was initialized above.
+    assert_eq!(unsafe { paths[0].sourceInfo.Anonymous.modeInfoIdx }, 0);
+    assert_eq!(
+        // SAFETY: Non-virtual modeInfoIdx was initialized above.
+        unsafe { paths[0].targetInfo.Anonymous.modeInfoIdx },
+        DISPLAYCONFIG_PATH_MODE_IDX_INVALID
+    );
+    p.sourceInfo.Anonymous.modeInfoIdx = DISPLAYCONFIG_PATH_MODE_IDX_INVALID;
+    let (_, empty) = super::super::hotplug::referenced_modes(&[p], &[mode0, mode1]).unwrap();
+    assert!(empty.is_empty());
+}

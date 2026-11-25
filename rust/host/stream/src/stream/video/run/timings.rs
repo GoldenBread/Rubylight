@@ -156,6 +156,7 @@ impl TimingsWindow {
                     let pushed = virtual_display_limited(
                         backend == "idd-push",
                         capture_mhz,
+                        display_mhz,
                         raw_source_mhz.unwrap_or(source_mhz),
                         limit_mhz,
                     );

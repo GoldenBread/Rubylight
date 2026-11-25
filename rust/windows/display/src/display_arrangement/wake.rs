@@ -468,7 +468,7 @@ pub(super) fn woken_to_watch(
 /// [`woken_to_watch`] for what is connected now.
 pub(super) fn displays_to_watch(before: &Snapshot, target: &str) -> Vec<String> {
     settled(|| {
-        let monitors = Topology::query_all()?.monitors();
+        let monitors = Topology::query_all()?.available_monitors();
         let others: Vec<String> = monitors
             .iter()
             .filter(|m| !m.is_rubylight())

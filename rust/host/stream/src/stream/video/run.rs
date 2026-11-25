@@ -547,6 +547,7 @@ impl SessionThread<'_> {
                 &raw_image,
                 &prepared,
                 enhancer.hdr_peak(&runtime_config).is_some(),
+                encoder.is_none(),
                 &mut hdr_fallback,
                 Instant::now(),
             ) {

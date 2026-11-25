@@ -348,6 +348,9 @@ pub(super) fn advance_pacing(
         // client's recovery request does not, or a client
         // losing packets left every game frame late.
         if butterpollo_media_policy::stream_policy::counts_toward_rate(fresh, recovering) {
+            // Bank and spend credit at the period that was in force up to `begin`
+            // before applying any Phase Lock period step for the next interval.
+            pacer.claimed(begin);
             // Phase lock: holding frames here would only move the
             // wait from the client to the host, so the lock sets
             // the rate cap to the client's refresh instead. VRR
@@ -368,16 +371,15 @@ pub(super) fn advance_pacing(
                     let mut grid = latest.grid.lock().unwrap();
                     unlocked_grid_period.get_or_insert(grid.period);
                     grid.period = interval;
-                    pacer.set_period(interval);
+                    pacer.set_period(begin, interval);
                 }
                 None => {
                     if let Some(original) = unlocked_grid_period.take() {
                         latest.grid.lock().unwrap().period = original;
-                        pacer.set_period(period);
+                        pacer.set_period(begin, period);
                     }
                 }
             }
-            pacer.claimed(begin);
         }
         latest.grid.lock().unwrap().anchor = pacer.allowed_at(begin);
     } else {

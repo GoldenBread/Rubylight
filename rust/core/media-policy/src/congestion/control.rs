@@ -110,7 +110,7 @@ impl ClientClock {
             None => u64::from(base),
             Some((raw, value)) => {
                 let delta = base.wrapping_sub(raw) as i32;
-                value.wrapping_add_signed(i64::from(delta))
+                value.saturating_add_signed(i64::from(delta))
             }
         };
         self.last = Some((base, value));
@@ -307,7 +307,7 @@ impl Control {
             match ledger.lookup(id, now_us) {
                 Some((sent_us, wire_bytes)) => self.buffer.push(PacketResult {
                     sent_us,
-                    arrival_us: offset.map(|offset| base + offset),
+                    arrival_us: offset.map(|offset| base.saturating_add(offset)),
                     wire_bytes,
                 }),
                 None => unmatched += 1,

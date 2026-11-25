@@ -56,6 +56,7 @@ pub struct AmfBacklog {
     outstanding: usize,
     service_time: Option<Duration>,
     frame_time: Option<Duration>,
+    overlap_lead: Option<Duration>,
     overlap_at: Option<Instant>,
     drain_until: Option<Instant>,
 }
@@ -74,6 +75,7 @@ impl AmfBacklog {
             outstanding: 0,
             service_time: None,
             frame_time: None,
+            overlap_lead: None,
             overlap_at: None,
             drain_until: None,
         }
@@ -126,7 +128,18 @@ impl AmfBacklog {
 
     /// Call only after SubmitInput accepts a surface, never on INPUT_FULL.
     pub fn submitted(&mut self) {
+        self.submitted_at(Instant::now());
+    }
+
+    /// [`Self::submitted`] at an explicit instant, anchoring the overlap lead
+    /// to this submission when starting from an idle pipeline.
+    pub fn submitted_at(&mut self, now: Instant) {
         self.outstanding = self.outstanding.saturating_add(1);
+        if self.outstanding == 1
+            && let Some(lead) = self.overlap_lead
+        {
+            self.overlap_at = Some(now + lead);
+        }
     }
 
     /// Call only for valid output matched to an accepted submission. Expiring a
@@ -157,7 +170,9 @@ impl AmfBacklog {
             let total = encoding.saturating_add(preparation);
             self.frame_time = Some(self.frame_time.map_or(total, |old| old.min(total)));
             // Leave another poll allowance for the driver's wake-up jitter.
-            self.overlap_at = Some(now + service.saturating_sub(preparation + QUERY_TIMEOUT * 2));
+            let lead = service.saturating_sub(preparation + QUERY_TIMEOUT * 2);
+            self.overlap_lead = Some(lead);
+            self.overlap_at = Some(now + lead);
         }
     }
 }

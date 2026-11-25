@@ -289,6 +289,31 @@ pub(super) fn supported_modes(output: &str) -> Vec<(u32, u32, u32)> {
     }
     modes
 }
+fn highest_refresh_in(
+    modes: &[(u32, u32, u32)],
+    requested: Option<(u32, u32)>,
+    current: (u32, u32),
+) -> Result<butterpollo_media_policy::framegen::Rate> {
+    let best_for = |w, h| {
+        modes
+            .iter()
+            .filter(|&&(mw, mh, _)| mw == w && mh == h)
+            .map(|&(_, _, hz)| hz)
+            .max()
+            .unwrap_or(0)
+    };
+    let best = requested
+        .map(|(w, h)| best_for(w, h))
+        .filter(|&hz| hz > 0)
+        .unwrap_or_else(|| best_for(current.0, current.1));
+    if best == 0 {
+        let (width, height) = requested.unwrap_or(current);
+        bail!("selected display has no mode for {width}x{height}");
+    }
+    Ok(butterpollo_media_policy::framegen::Rate(
+        best.saturating_mul(1000),
+    ))
+}
 pub fn highest_refresh(
     output: &str,
     resolution: Option<(u32, u32)>,
@@ -309,9 +334,8 @@ pub fn highest_refresh(
         })
         .context("selected display unavailable")?;
     let current = mode(&monitor.display_name)?;
-    let (width, height) = resolution.unwrap_or((current.dmPelsWidth, current.dmPelsHeight));
     let name: Vec<_> = monitor.display_name.encode_utf16().chain(Some(0)).collect();
-    let mut best = 0;
+    let mut enumerated = Vec::new();
     for index in 0..4096 {
         let mut candidate = DEVMODEW {
             dmSize: size_of::<DEVMODEW>() as u16,
@@ -329,16 +353,17 @@ pub fn highest_refresh(
         {
             break;
         }
-        if candidate.dmPelsWidth == width && candidate.dmPelsHeight == height {
-            best = best.max(candidate.dmDisplayFrequency);
-        }
+        enumerated.push((
+            candidate.dmPelsWidth,
+            candidate.dmPelsHeight,
+            candidate.dmDisplayFrequency,
+        ));
     }
-    if best == 0 {
-        bail!("selected display has no mode for {width}x{height}");
-    }
-    Ok(butterpollo_media_policy::framegen::Rate(
-        best.saturating_mul(1000),
-    ))
+    highest_refresh_in(
+        &enumerated,
+        resolution,
+        (current.dmPelsWidth, current.dmPelsHeight),
+    )
 }
 
 #[cfg(test)]
@@ -467,5 +492,25 @@ mod tests {
             refresh_retry(requested, &ModeOutcome::Kept((3840, 2160, 60_000)), &[]),
             None
         );
+    }
+    #[test]
+    fn highest_refresh_falls_back_to_current_resolution_when_requested_is_not_native() {
+        let modes = [(1920, 1080, 60), (1920, 1080, 144), (2560, 1440, 165)];
+        // Native requested resolution uses its highest refresh.
+        assert_eq!(
+            highest_refresh_in(&modes, Some((1920, 1080)), (2560, 1440))
+                .unwrap()
+                .0,
+            144_000
+        );
+        // Non-native client resolution (e.g. tablet 2560x1600) falls back to current resolution.
+        assert_eq!(
+            highest_refresh_in(&modes, Some((2560, 1600)), (2560, 1440))
+                .unwrap()
+                .0,
+            165_000
+        );
+        // No matching mode at all still bails.
+        assert!(highest_refresh_in(&modes, Some((2560, 1600)), (3840, 2160)).is_err());
     }
 }

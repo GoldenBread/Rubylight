@@ -178,6 +178,28 @@ fn a_native_444_stream_drops_dolby_vision_loudly_and_streams_hdr10() {
     }
 }
 #[test]
+fn a_full_range_stream_drops_dolby_vision_loudly_and_streams_hdr10() {
+    use rubylight_protocol::hdr;
+    let warnings = crate::TestWarnings::default();
+    for (codec, format) in [(1, hdr::DV_81), (1, hdr::DV_84), (2, hdr::DV_101)] {
+        let mut full = Negotiated::from_sdp(
+            format!(
+                "a=x-nv-video[0].dynamicRangeMode:1\na=x-nv-video[0].encoderCscMode:5\na=x-nv-vqos[0].bitStreamFormat:{codec}\na=x-rl-video[0].hdrFormat:{format}\n"
+            )
+            .as_bytes(),
+        )
+        .unwrap();
+        assert!(full.full_range());
+        assert!(packed_drops_dolby_vision(&mut full, &warnings));
+        assert!(full.hdr && full.hdr_format == 0 && !full.hlg());
+        assert_eq!(crate::dovi::negotiated(&full), None);
+        let shown = warnings.snapshot();
+        assert_eq!(shown.len(), 1);
+        assert_eq!(shown[0].code, "hdr_dolby_vision");
+        assert_eq!(shown[0].message, FULL_RANGE_DOLBY_VISION);
+    }
+}
+#[test]
 fn a_packed_stream_drops_hlg_loudly_and_streams_hdr10() {
     let offered = crate::extensions::Offered {
         hdr_formats: crate::extensions::hdr_offer(0x200, true, true),

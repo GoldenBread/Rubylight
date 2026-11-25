@@ -358,6 +358,10 @@ fn virtual_refresh_reads_vibepollo_spellings() {
     for (value, mode) in [
         ("2x", VirtualRefresh::Legacy),
         ("fixed_2x", VirtualRefresh::Legacy),
+        ("480hz", VirtualRefresh::Hz480),
+        ("480", VirtualRefresh::Hz480),
+        ("fixed-480hz", VirtualRefresh::Hz480),
+        ("8x", VirtualRefresh::Hz480),
         ("No", VirtualRefresh::Disabled),
         ("disable", VirtualRefresh::Disabled),
         ("smoother", VirtualRefresh::Enabled),
@@ -374,4 +378,13 @@ fn virtual_refresh_reads_vibepollo_spellings() {
     let c = Config::parse("virtual_display_refresh=fixed-2x").unwrap();
     let p = Policy::resolve(&c, Rate(60000), true, "none", false, false).unwrap();
     assert_eq!(p.display_rate, Rate(120000));
+    let c480 = Config::parse("virtual_display_refresh=480hz").unwrap();
+    let p480 = Policy::resolve(&c480, Rate(60_000), true, "none", false, false).unwrap();
+    assert_eq!(p480.display_rate, Rate(480_000));
+    assert!(p480.enabled && p480.follows_display);
+    assert_eq!(
+        display_rate(Rate(60_000), false, VirtualRefresh::Hz480),
+        Rate(60_000)
+    );
+    assert_eq!(advertised(&c480, true), (true, true, 0));
 }

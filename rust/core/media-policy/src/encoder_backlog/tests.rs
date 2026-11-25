@@ -36,7 +36,7 @@ fn recovery_waits_for_output_without_permanently_stopping_a_depth_one_encoder() 
     queue.submitted();
     queue.completed(now, Duration::from_millis(5), Duration::from_millis(1));
     let accepted = now + Duration::from_millis(1);
-    queue.submitted();
+    queue.submitted_at(accepted);
     let overlap = accepted + Duration::from_millis(3);
     assert_eq!(queue.admission_limit(overlap), 2);
     assert_eq!(queue.recovery_admission_limit(overlap, Some(accepted)), 1);
@@ -99,12 +99,12 @@ fn complete(queue: &mut AmfBacklog) {
 fn depth_one_admits_conversion_near_the_next_predicted_output() {
     let now = Instant::now();
     let mut queue = AmfBacklog::new(Some(0));
-    queue.submitted();
+    queue.submitted_at(now);
     queue.completed(now, Duration::from_millis(5), Duration::from_millis(1));
-    queue.submitted();
+    queue.submitted_at(now);
     assert_eq!(queue.admission_limit(now + Duration::from_micros(1999)), 1);
     assert_eq!(queue.admission_limit(now + Duration::from_millis(2)), 2);
-    queue.submitted();
+    queue.submitted_at(now + Duration::from_millis(2));
     assert_eq!(
         backpressure(2, 0, queue.admission_limit(now + Duration::from_secs(1))),
         Backpressure::Encoder
@@ -121,12 +121,27 @@ fn each_valid_output_delays_the_next_claim_without_losing_network_overlap() {
         backpressure(0, 1, queue.admission_limit(now)),
         Backpressure::None
     );
-    queue.submitted();
+    queue.submitted_at(now);
     let later = now + Duration::from_millis(6);
     assert_eq!(queue.admission_limit(later), 2);
     queue.completed(later, Duration::from_millis(5), Duration::from_millis(1));
     assert_eq!(queue.admission_limit(later), 1);
     assert_eq!(queue.admission_limit(later + Duration::from_millis(3)), 2);
+}
+
+#[test]
+fn idle_gap_between_frames_anchors_overlap_to_the_new_submission() {
+    let t0 = Instant::now();
+    let mut queue = AmfBacklog::new(Some(0));
+    queue.submitted_at(t0);
+    // 5 ms encode, 1 ms prep -> 2 ms overlap lead (5 - (1 + 2)).
+    queue.completed(t0, Duration::from_millis(5), Duration::from_millis(1));
+    // Non-saturated stream sits idle for 16 ms before the next frame submits.
+    let t1 = t0 + Duration::from_millis(16);
+    queue.submitted_at(t1);
+    assert_eq!(queue.admission_limit(t1), 1);
+    assert_eq!(queue.admission_limit(t1 + Duration::from_micros(1999)), 1);
+    assert_eq!(queue.admission_limit(t1 + Duration::from_millis(2)), 2);
 }
 
 #[test]

@@ -12,7 +12,9 @@ use identity::monitor_id;
 pub(super) use identity::{Route, is_physical_monitor, is_rubylight_monitor, is_virtual_monitor};
 pub(super) use routes::activate_target;
 #[cfg(test)]
-use routes::{activation_paths, extended_paths, keep_active_modes, moving_targets};
+use routes::{
+    activation_paths, extended_paths, extended_paths_preferred, keep_active_modes, moving_targets,
+};
 
 pub struct Topology {
     pub(super) paths: Vec<DISPLAYCONFIG_PATH_INFO>,
@@ -225,11 +227,13 @@ impl Topology {
         bail!("display topology is changing")
     }
     pub fn restore(&self) -> Result<()> {
-        // SAFETY: The owned path and mode slices remain valid for this synchronous display configuration call.
+        let (paths, modes) = super::hotplug::referenced_modes(&self.paths, &self.modes)?;
+        let modes = (!modes.is_empty()).then_some(modes.as_slice());
+        // SAFETY: The owned path and compacted mode slices remain valid for this synchronous display configuration call.
         unsafe {
             check(SetDisplayConfig(
-                Some(&self.paths),
-                Some(&self.modes),
+                Some(&paths),
+                modes,
                 SDC_APPLY | SDC_USE_SUPPLIED_DISPLAY_CONFIG | SDC_ALLOW_CHANGES,
             ))
         }
@@ -359,8 +363,19 @@ impl Topology {
         Ok(())
     }
     pub fn monitors(&self) -> Vec<Monitor> {
-        let primary = crate::desktop::primary_display_name();
-        let mut paths: Vec<_> = self.paths.iter().collect();
+        self.monitors_filtered(false)
+    }
+    /// Connected monitors only (`targetAvailable`), filtering out disconnected
+    /// cached routes returned by [`Self::query_all`].
+    pub fn available_monitors(&self) -> Vec<Monitor> {
+        self.monitors_filtered(true)
+    }
+    fn target_paths(&self, only_available: bool) -> Vec<&DISPLAYCONFIG_PATH_INFO> {
+        let mut paths: Vec<_> = self
+            .paths
+            .iter()
+            .filter(|p| !only_available || p.targetInfo.targetAvailable.as_bool())
+            .collect();
         paths.sort_by_key(|p| p.flags & DISPLAYCONFIG_PATH_ACTIVE == 0);
         let mut targets = std::collections::BTreeSet::new();
         paths
@@ -372,6 +387,12 @@ impl Topology {
                     p.targetInfo.id,
                 ))
             })
+            .collect()
+    }
+    fn monitors_filtered(&self, only_available: bool) -> Vec<Monitor> {
+        let primary = crate::desktop::primary_display_name();
+        self.target_paths(only_available)
+            .into_iter()
             // SAFETY: Both name structures have matching header types and sizes and remain live throughout the queries.
             .filter_map(|p| unsafe {
                 let mut source = DISPLAYCONFIG_SOURCE_DEVICE_NAME {

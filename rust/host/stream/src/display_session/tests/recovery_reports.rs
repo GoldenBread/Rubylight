@@ -621,3 +621,22 @@ fn machine_phase_stays_in_lockstep_with_active_count_across_pause_recovery_and_m
     assert_eq!(display.active.load(Ordering::Acquire), 0);
     assert_eq!(phase(), SessionPhase::Paused);
 }
+
+#[test]
+fn finish_feed_propagates_feed_error_before_keep_layout_and_resume_skips_premature_keep_layout() {
+    use butterpollo_media_policy::display_policy::PrimaryChange;
+
+    let fixture = crate::state::test_support::Fixture::new();
+    let mut prepared = test_prepared(&fixture.host);
+    // T2-15: feed error propagates immediately without consuming paused_change in keep_layout.
+    prepared.machine.paused_change = Some(PrimaryChange::Display);
+    let err = prepared
+        .finish_feed(Err(anyhow::anyhow!("driver lease lost")))
+        .unwrap_err();
+    assert!(err.to_string().contains("driver lease lost"));
+    assert_eq!(prepared.machine.paused_change, Some(PrimaryChange::Display));
+    // T2-15: Ready::resume's `finish_feed_with(Ok(false), false)` preserves `paused_change`
+    // until after `lay_out_again` runs.
+    prepared.finish_feed_with(Ok(false), false).unwrap();
+    assert_eq!(prepared.machine.paused_change, Some(PrimaryChange::Display));
+}

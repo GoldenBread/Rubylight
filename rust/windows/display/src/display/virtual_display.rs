@@ -580,9 +580,18 @@ impl VirtualDisplay {
             self.options.peak_nits,
         ))?;
         // A new display: its driver list starts again from the mode it is created with.
-        self.offered = vec![self.mode];
-        self.startup_protection = Some(protection);
-        self.resolve(&response)?;
+        let previous_offered = std::mem::replace(&mut self.offered, vec![self.mode]);
+        let previous_protection = self.startup_protection.replace(protection);
+        let previous_route = self.driver_route;
+        let previous_switched_on = self.switched_on;
+        if let Err(error) = self.resolve(&response) {
+            DisplayProvider::remove(&self.driver, self.id);
+            self.offered = previous_offered;
+            self.startup_protection = previous_protection;
+            self.driver_route = previous_route;
+            self.switched_on = previous_switched_on;
+            return Err(error);
+        }
         // Retain a resolved recovery even if protection needs a retry, so
         // Guard::feed still completes HDR/startup validation next time.
         self.generation = self.generation.wrapping_add(1);

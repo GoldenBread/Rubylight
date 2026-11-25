@@ -178,20 +178,24 @@ impl Calibrator {
         content: (u16, u16),
         thumbnail: (usize, usize),
     ) {
-        let old_scale = self.scale;
+        let (old_scale, old_content) = (self.scale, self.content);
+        let old_thumb = [
+            f64::from(old_content.0) / old_scale[0],
+            f64::from(old_content.1) / old_scale[1],
+        ];
         self.picture = (picture.0.max(1), picture.1.max(1));
         self.content = (content.0.max(1), content.1.max(1));
+        let new_thumb = [thumbnail.0.max(1) as f64, thumbnail.1.max(1) as f64];
         self.scale = [
-            f64::from(self.content.0) / thumbnail.0.max(1) as f64,
-            f64::from(self.content.1) / thumbnail.1.max(1) as f64,
+            f64::from(self.content.0) / new_thumb[0],
+            f64::from(self.content.1) / new_thumb[1],
         ];
         self.layout = Layout::new(self.content, thumbnail);
-        if old_scale != self.scale {
-            // Samples are in the old thumbnail's pixels.
+        if old_scale != self.scale || old_content != self.content {
             self.samples.clear();
             for fit in [&mut self.mouse, &mut self.stick].into_iter().flatten() {
-                for (axis, gain) in fit.gain.iter_mut().enumerate() {
-                    *gain *= old_scale[axis] / self.scale[axis];
+                for axis in 0..2 {
+                    fit.gain[axis] *= new_thumb[axis] / old_thumb[axis];
                 }
             }
         }
@@ -238,17 +242,21 @@ impl Calibrator {
         self.layout.resolve(motion, self.lens)
     }
 
+    fn picture_ratio(&self, prior: &Prior) -> [f64; 2] {
+        [
+            f64::from(self.content.0) / f64::from(prior.picture_width.max(1)),
+            f64::from(self.content.1) / f64::from(prior.picture_height.max(1)),
+        ]
+    }
+
     /// Starts from what an earlier session learned: the lags apply at once and the gains lock
     /// as soon as recent input confirms them.
     pub fn set_prior(&mut self, prior: Prior) {
-        let scale = |gain: [f32; 2]| {
-            let ratio = [
-                f64::from(self.content.0) / f64::from(prior.picture_width.max(1)),
-                f64::from(self.content.1) / f64::from(prior.picture_height.max(1)),
-            ];
+        let ratio = self.picture_ratio(&prior);
+        let scale = |g: [f32; 2]| {
             [
-                f64::from(gain[0]) * ratio[0] / self.scale[0],
-                f64::from(gain[1]) * ratio[1] / self.scale[1],
+                f64::from(g[0]) * ratio[0] / self.scale[0],
+                f64::from(g[1]) * ratio[1] / self.scale[1],
             ]
         };
         if let (Some(gain), Some(lag_us)) = (prior.mouse_gain, prior.mouse_lag_us) {
@@ -288,17 +296,23 @@ impl Calibrator {
             return self.prior;
         }
         let focal = self.lens.map(|lens| self.layout.focal(lens) as f32);
-        let picture = |gain: [f64; 2]| {
+        let picture = |g: [f64; 2]| [(g[0] * self.scale[0]) as f32, (g[1] * self.scale[1]) as f32];
+        let earlier = self.prior.unwrap_or_default();
+        let ratio = self.picture_ratio(&earlier);
+        let rescale = |g: [f32; 2]| {
             [
-                (gain[0] * self.scale[0]) as f32,
-                (gain[1] * self.scale[1]) as f32,
+                (f64::from(g[0]) * ratio[0]) as f32,
+                (f64::from(g[1]) * ratio[1]) as f32,
             ]
         };
-        let earlier = self.prior.unwrap_or_default();
         Some(Prior {
-            mouse_gain: mouse.map(|f| picture(f.gain)).or(earlier.mouse_gain),
+            mouse_gain: mouse
+                .map(|f| picture(f.gain))
+                .or_else(|| earlier.mouse_gain.map(rescale)),
             mouse_lag_us: mouse.map(|f| f.lag_us).or(earlier.mouse_lag_us),
-            stick_gain: stick.map(|f| picture(f.gain)).or(earlier.stick_gain),
+            stick_gain: stick
+                .map(|f| picture(f.gain))
+                .or_else(|| earlier.stick_gain.map(rescale)),
             stick_lag_us: stick.map(|f| f.lag_us).or(earlier.stick_lag_us),
             stick_deadzone: stick.map(|f| f.deadzone).or(earlier.stick_deadzone),
             stick_exponent: stick.map(|f| f.exponent).or(earlier.stick_exponent),
@@ -577,31 +591,20 @@ impl Calibrator {
 
     /// The model for generation `generation`.
     pub fn model(&self, generation: u16) -> Model {
-        let picture = |gain: [f64; 2]| {
-            [
-                (gain[0] * self.scale[0]) as f32,
-                (gain[1] * self.scale[1]) as f32,
-            ]
+        let picture = |g: [f64; 2]| [(g[0] * self.scale[0]) as f32, (g[1] * self.scale[1]) as f32];
+        let zero_fit = |lag_us, deadzone| Fit {
+            gain: [0.0; 2],
+            lag_us,
+            fit: 0.0,
+            deadzone,
+            exponent: 1.0,
         };
-        let mouse = self.mouse.unwrap_or(Fit {
-            gain: [0.0; 2],
-            lag_us: DEFAULT_LAG_US,
-            fit: 0.0,
-            deadzone: 0.0,
-            exponent: 1.0,
-        });
-        let stick = self.stick.unwrap_or(Fit {
-            gain: [0.0; 2],
-            lag_us: mouse.lag_us,
-            fit: 0.0,
-            deadzone: 0.15,
-            exponent: 1.0,
-        });
+        let mouse = self.mouse.unwrap_or_else(|| zero_fit(DEFAULT_LAG_US, 0.0));
+        let stick = self.stick.unwrap_or_else(|| zero_fit(mouse.lag_us, 0.15));
         let confidence = match (self.mouse_locked, self.stick_locked) {
-            (true, true) => mouse.fit.max(stick.fit),
             (true, false) => mouse.fit,
             (false, true) => stick.fit,
-            (false, false) => mouse.fit.max(stick.fit),
+            _ => mouse.fit.max(stick.fit),
         };
         // In picture pixels, which the game's part of the picture shares.
         let focal = self

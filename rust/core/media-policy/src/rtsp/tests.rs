@@ -490,6 +490,15 @@ fn fractional_negotiation_does_not_use_stale_display_refresh() {
             .fps_millihz(),
         119880
     );
+    // T2-24: `maxFPS` in 1001..=4000 uses the same >1000 millihz threshold for both `fps`
+    // and `rate_millihz`, and explicit millihz is not overwritten by `clientRefreshRateX100`.
+    let low_millihz = Negotiated::from_sdp(b"a=x-nv-video[0].maxFPS:2000\n").unwrap();
+    assert_eq!((low_millihz.fps, low_millihz.fps_millihz()), (2, 2000));
+    let explicit = Negotiated::from_sdp(
+        b"a=x-nv-video[0].maxFPS:59940\na=x-nv-video[0].clientRefreshRateX100:6000\n",
+    )
+    .unwrap();
+    assert_eq!((explicit.fps, explicit.fps_millihz()), (60, 59_940));
 }
 #[test]
 fn a_host_cap_keeps_the_display_size_and_codes_a_smaller_picture() {

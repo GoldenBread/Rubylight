@@ -109,7 +109,7 @@ impl VideoPacketizer {
             (1..=255)
                 .rev()
                 .find(|&n| n + block_parity(n, percentage, minimum).0 <= 255)
-                .unwrap_or(1)
+                .unwrap_or(0)
         };
         Ok(StreamedFrame {
             sealer: self.sealer(),
@@ -355,7 +355,13 @@ impl StreamedFrame {
             let later = self.blocks - self.next_block - 1;
             let complete = stream_len / self.slice - self.first_shard;
             // Keep a complete shard for each later block.
-            let data = complete.saturating_sub(later).min(self.max_data);
+            let mut data = complete.saturating_sub(later).min(self.max_data);
+            while self.percentage > 0
+                && data > 0
+                && data + block_parity(data, self.percentage, self.minimum).0 > 255
+            {
+                data -= 1;
+            }
             if data == 0 {
                 break;
             }

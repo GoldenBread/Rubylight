@@ -308,6 +308,7 @@ fn restore_settings(
         tracing::warn!(error=%format!("{e:#}"),"display rotation restoration failed");
     }
     if let Some((previous, applied)) = settings.mode
+        && present
         && let Err(e) = restore_mode(previous, applied)
     {
         restored = false;
@@ -323,19 +324,19 @@ fn restore_settings(
     restored
 }
 /// Set the previous mode back if the display still has the one applied.
-fn restore_mode_rate(
-    output: &str,
-    identity: &str,
-    previous: Timing,
-    applied: Timing,
-) -> Result<()> {
-    if mode(output).is_ok_and(|m| (m.dmPelsWidth, m.dmPelsHeight) == (applied.0, applied.1))
-        && Topology::query()
-            .and_then(|t| t.refresh(identity))
-            .is_ok_and(|r| r.0 == applied.2)
+fn restore_mode_rate(identity: &str, previous: Timing, applied: Timing) -> Result<()> {
+    let current_monitors = monitors()?;
+    let monitor = current_monitors
+        .iter()
+        .find(|m| m.device_id == identity)
+        .context("display is unavailable for its mode")?;
+    let current = mode(&monitor.display_name)?;
+    let refresh = Topology::query()?.refresh(identity)?;
+    if (current.dmPelsWidth, current.dmPelsHeight) == (applied.0, applied.1)
+        && refresh.0 == applied.2
     {
         Topology::set_mode_rate(
-            output,
+            identity,
             previous.0,
             previous.1,
             butterpollo_media_policy::framegen::Rate(previous.2),

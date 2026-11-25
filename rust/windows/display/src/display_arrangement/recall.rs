@@ -27,13 +27,18 @@ pub(super) fn persist(arrangement: Arrangement, virtual_target: bool) -> bool {
 /// (60 Hz on a 120 Hz monitor), and every later stream that keeps it on is handed
 /// that entry.
 pub(super) fn forget_saved_layout(before: &Snapshot, target: &str, saves: bool) -> Result<()> {
+    let primary = before
+        .nodes
+        .iter()
+        .find(|n| n.active && n.primary)
+        .map(|n| n.device_id.as_str());
     put_entry_back(
         before,
         target,
         connected,
         |ids| {
             crate::display::end_trace::phase("entry, displays on");
-            Topology::set_active(ids)
+            Topology::set_active_preferred(ids, &before.sources, primary)
         },
         || Ok(Snapshot::capture()?.nodes),
         |layout| {
@@ -225,6 +230,7 @@ pub(super) fn after_departure(applied: &[Node], before: Option<&Snapshot>) -> Sn
         clone_groups: before.map_or_else(Vec::new, |before| before.clone_groups.clone()),
         scale: Default::default(),
         rotation: Default::default(),
+        sources: before.map_or_else(Default::default, |before| before.sources.clone()),
     }
 }
 /// What putting back the layout a display left takes.

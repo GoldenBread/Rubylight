@@ -34,10 +34,22 @@ pub(crate) fn pace(
     peer: SocketAddr,
     route: Link,
 ) -> Pace {
+    // Use the session's steady-state FEC percentage instead of the per-frame
+    // mutated `packetizer.fec_percent` (recovery IDRs / statistical FEC) so
+    // per-frame parity swings do not churn `AdaptivePacing`'s wire floor.
+    let steady = VideoPacketizer {
+        sequence: packetizer.sequence,
+        iv_counter: packetizer.iv_counter,
+        frame: packetizer.frame,
+        packet_size: packetizer.packet_size,
+        fec_percent: session.fec_percent(),
+        min_fec: packetizer.min_fec,
+        key: packetizer.key,
+    };
     select(
         session,
         config,
-        packetizer,
+        &steady,
         period,
         peer,
         route,

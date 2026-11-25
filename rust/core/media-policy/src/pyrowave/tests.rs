@@ -635,3 +635,17 @@ fn a_plan_reusing_parity_results_is_the_plan_the_parities_decide() {
         }
     }
 }
+
+#[test]
+fn cached_row_steps_reuses_table_across_rotating_frame_sequence_numbers() {
+    let mut frame0 = [0u8; 8];
+    let geometry = 1919u32 | (1079u32 << 14);
+    frame0[..4].copy_from_slice(&(geometry | (1u32 << 28)).to_le_bytes());
+    let first = super::cached_row_steps(&frame0);
+    for seq in 0u32..8 {
+        let mut next = [0u8; 8];
+        next[..4].copy_from_slice(&(geometry | (seq << 28)).to_le_bytes());
+        let cached = super::cached_row_steps(&next);
+        assert!(std::sync::Arc::ptr_eq(&first, &cached), "seq {seq}");
+    }
+}

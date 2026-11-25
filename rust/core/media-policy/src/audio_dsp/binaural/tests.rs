@@ -300,3 +300,63 @@ fn noise_through_the_hrirs_is_as_loud_as_the_downmix() {
         assert!(db.abs() < 0.5, "{channels} {mask:x}: {db} dB");
     }
 }
+
+#[test]
+fn height_channel_7_1_4_downmix_and_binaural_level_preserve_balance_and_loudness() {
+    const SEVEN_ONE_FOUR: u32 = 0x2d63f;
+    let layout = Layout::new(12, SEVEN_ONE_FOUR).unwrap();
+    let stereo = crate::audio::mix_matrix(12, SEVEN_ONE_FOUR, 2).unwrap();
+    let eight = crate::audio::mix_matrix(12, SEVEN_ONE_FOUR, 8).unwrap();
+    // Bed channels (FL, FR, FC, LFE, BL, BR, SL, SR) must match 2-channel capture
+    // without double-attenuating or skewing center dialogue relative to L/R.
+    for bed in 0..8 {
+        let mut source = vec![0.0f32; 12];
+        source[bed] = 1.0;
+        let capture: Vec<f32> = eight
+            .iter()
+            .map(|row| row.iter().zip(&source).map(|(a, b)| a * b).sum())
+            .collect();
+        let mut output = [0.; 2];
+        downmix(&layout.downmix, &capture, &mut output);
+        let want_l: f32 = stereo[0].iter().zip(&source).map(|(a, b)| a * b).sum();
+        let want_r: f32 = stereo[1].iter().zip(&source).map(|(a, b)| a * b).sum();
+        assert!(
+            (output[0] - want_l).abs() < 0.15 && (output[1] - want_r).abs() < 0.15,
+            "bed channel {bed}: got {output:?}, want [{want_l}, {want_r}]"
+        );
+    }
+    // Center dialogue must match stereo downmix exactly (FC row has no height folded in).
+    let mut center_src = vec![0.0f32; 12];
+    center_src[2] = 1.0;
+    let center_cap: Vec<f32> = eight
+        .iter()
+        .map(|row| row.iter().zip(&center_src).map(|(a, b)| a * b).sum())
+        .collect();
+    let mut center_out = [0.; 2];
+    downmix(&layout.downmix, &center_cap, &mut center_out);
+    assert!((center_out[0] - stereo[0][2]).abs() < 1e-5);
+    assert!((center_out[1] - stereo[1][2]).abs() < 1e-5);
+    // Uncorrelated 12-channel noise through 8ch capture: binaural loudness matches downmix.
+    let frames = 48_000;
+    let mut state = 0x1234_5678_9abc_def0u64;
+    let mut capture = vec![0.0f32; frames * 8];
+    for frame in capture.as_chunks_mut::<8>().0 {
+        let mut src = [0.0f32; 12];
+        for sample in &mut src {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            *sample = ((state >> 40) as f32 / (1u64 << 24) as f32) - 0.5;
+        }
+        for (slot, row) in eight.iter().enumerate() {
+            frame[slot] = row.iter().zip(&src).map(|(a, b)| a * b).sum();
+        }
+    }
+    let mut binaural = Binaural::new(&layout, layout.level());
+    let surround = render(&mut binaural, &capture);
+    let mut down = vec![0.; surround.len()];
+    downmix(&layout.downmix, &capture, &mut down);
+    let power = |s: &[f32]| s.iter().map(|v| (*v as f64).powi(2)).sum::<f64>();
+    let db = 10. * (power(&surround) / power(&down)).log10();
+    assert!(db.abs() < 0.5, "7.1.4 loudness mismatch: {db} dB");
+}

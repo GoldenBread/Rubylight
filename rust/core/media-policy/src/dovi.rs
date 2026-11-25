@@ -76,7 +76,7 @@ const P84_SOURCE_MAX_PQ: u16 = 3079;
 /// stay byte for byte HDR10.
 pub fn negotiated(stream: &crate::rtsp::Negotiated) -> Option<Profile> {
     use rubylight_protocol::hdr;
-    if !stream.hdr {
+    if !stream.hdr || stream.full_range() {
         return None;
     }
     match (stream.codec, stream.hdr_format) {

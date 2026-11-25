@@ -50,6 +50,50 @@ pub(super) fn extended_paths(
     }
     Ok(chosen.into_iter().flatten().collect())
 }
+/// Assign independent desktop sources while preserving each display's saved
+/// source ID (and source 0 for the saved primary when no source ID was saved).
+/// Higher-priority targets run last in the augmenting-path matching so they
+/// reclaim their preferred source from unpreferred targets that have an
+/// alternative, without ever blocking a valid assignment.
+pub(super) fn extended_paths_preferred(
+    targets: &[(Vec<DISPLAYCONFIG_PATH_INFO>, Option<u32>, bool)],
+) -> Result<Vec<DISPLAYCONFIG_PATH_INFO>> {
+    let mut sorted: Vec<Vec<DISPLAYCONFIG_PATH_INFO>> = targets
+        .iter()
+        .map(|(candidates, preferred, is_primary)| {
+            let mut list = candidates.clone();
+            list.sort_by_key(|p| {
+                (
+                    preferred.is_some_and(|s| p.sourceInfo.id != s),
+                    !(preferred.is_none() && *is_primary && p.sourceInfo.id == 0),
+                    p.flags & DISPLAYCONFIG_PATH_ACTIVE == 0,
+                    p.sourceInfo.id,
+                )
+            });
+            list
+        })
+        .collect();
+    let mut order: Vec<usize> = (0..targets.len()).collect();
+    order.sort_by_key(|&i| {
+        let (_, preferred, is_primary) = &targets[i];
+        match (preferred.is_some(), *is_primary) {
+            (false, false) => 0u8,
+            (false, true) => 1,
+            (true, false) => 2,
+            (true, true) => 3,
+        }
+    });
+    let reordered: Vec<_> = order
+        .iter()
+        .map(|&i| std::mem::take(&mut sorted[i]))
+        .collect();
+    let assigned = extended_paths(&reordered)?;
+    let mut restored = vec![None; targets.len()];
+    for (pos, path) in order.into_iter().zip(assigned) {
+        restored[pos] = Some(path);
+    }
+    Ok(restored.into_iter().flatten().collect())
+}
 /// An inactive route from QDC_ALL_PATHS made fit to switch on: Windows
 /// chooses its modes, refresh and position. Such routes carry a zero
 /// rotation and scaling and a stale refresh, which SetDisplayConfig refuses
@@ -203,8 +247,11 @@ pub(in super::super) fn activate_target(routes: &[Route]) -> Result<Option<bool>
         return Ok(None);
     };
     let flags = SDC_APPLY | SDC_USE_SUPPLIED_DISPLAY_CONFIG | SDC_ALLOW_CHANGES;
-    // SAFETY: The path and mode slices remain valid for this synchronous display configuration call.
-    let kept = unsafe { SetDisplayConfig(Some(&paths), Some(&active.modes), flags) };
+    let (compacted_paths, compacted_modes) =
+        super::super::hotplug::referenced_modes(&paths, &active.modes)?;
+    let supplied_modes = (!compacted_modes.is_empty()).then_some(compacted_modes.as_slice());
+    // SAFETY: The compacted path and mode slices remain valid for this synchronous display configuration call.
+    let kept = unsafe { SetDisplayConfig(Some(&compacted_paths), supplied_modes, flags) };
     if kept == 0 {
         return Ok(Some(true));
     }
@@ -322,16 +369,31 @@ impl Topology {
         Ok(())
     }
     pub fn set_active(ids: &[String]) -> Result<()> {
-        Self::set_active_once(ids, true)
+        Self::set_active_preferred(ids, &std::collections::BTreeMap::new(), None)
     }
-    fn set_active_once(ids: &[String], may_move: bool) -> Result<()> {
+    /// Activate `ids`, preferring each display's saved CCD desktop source ID
+    /// (and source 0 for `primary` when no source ID was saved) so Windows
+    /// restores the original GDI display names and per-display DPI scale.
+    pub fn set_active_preferred(
+        ids: &[String],
+        preferred_sources: &std::collections::BTreeMap<String, u32>,
+        primary: Option<&str>,
+    ) -> Result<()> {
+        Self::set_active_once(ids, preferred_sources, primary, true)
+    }
+    fn set_active_once(
+        ids: &[String],
+        preferred_sources: &std::collections::BTreeMap<String, u32>,
+        primary: Option<&str>,
+        may_move: bool,
+    ) -> Result<()> {
         if ids.is_empty() {
             bail!("display topology cannot be empty");
         }
         let topology = Self::query_all()?;
         let mut candidates_by_target = Vec::new();
         for id in ids {
-            let mut candidates = topology
+            let candidates = topology
                 .paths
                 .iter()
                 // SAFETY: The initialized target-name structure has the matching header type and size and lives through the query.
@@ -352,12 +414,13 @@ impl Topology {
                 })
                 .copied()
                 .collect::<Vec<_>>();
-            candidates.sort_by_key(|p| p.flags & DISPLAYCONFIG_PATH_ACTIVE == 0);
             if !candidates.is_empty() {
-                candidates_by_target.push(candidates);
+                let preferred = preferred_sources.get(id).copied();
+                let is_primary = primary.is_some_and(|p| p.eq_ignore_ascii_case(id));
+                candidates_by_target.push((candidates, preferred, is_primary));
             }
         }
-        let paths = extended_paths(&candidates_by_target)?;
+        let paths = extended_paths_preferred(&candidates_by_target)?;
         if paths.is_empty() {
             bail!("no saved display targets are currently connected");
         }
@@ -372,8 +435,12 @@ impl Topology {
         let kept = if paths.iter().any(|p| unsafe { p.sourceInfo.Anonymous.modeInfoIdx }
             != DISPLAYCONFIG_PATH_MODE_IDX_INVALID)
         {
-            // SAFETY: The path and mode slices remain valid for this synchronous display configuration call.
-            unsafe { SetDisplayConfig(Some(&paths), Some(&topology.modes), flags) }
+            let (compacted_paths, compacted_modes) =
+                super::super::hotplug::referenced_modes(&paths, &topology.modes)?;
+            let supplied_modes =
+                (!compacted_modes.is_empty()).then_some(compacted_modes.as_slice());
+            // SAFETY: The compacted path and mode slices remain valid for this synchronous display configuration call.
+            unsafe { SetDisplayConfig(Some(&compacted_paths), supplied_modes, flags) }
         } else {
             -1
         };
@@ -391,11 +458,14 @@ impl Topology {
                 .filter(|(_, moving)| !**moving)
                 .map(|(path, _)| *path)
                 .collect();
-            // SAFETY: The retained paths and queried modes remain valid for the synchronous call.
-            check(unsafe { SetDisplayConfig(Some(&staying), Some(&topology.modes), flags) })
+            let (staying_paths, staying_modes) =
+                super::super::hotplug::referenced_modes(&staying, &topology.modes)?;
+            let supplied_modes = (!staying_modes.is_empty()).then_some(staying_modes.as_slice());
+            // SAFETY: The compacted staying paths and modes remain valid for the synchronous call.
+            check(unsafe { SetDisplayConfig(Some(&staying_paths), supplied_modes, flags) })
                 .context("cannot switch off the displays that change desktop source")?;
             super::super::end_trace::committed("switch off the displays that change source", false);
-            return Self::set_active_once(ids, false);
+            return Self::set_active_once(ids, preferred_sources, primary, false);
         }
         let supplied = describe_paths(&paths);
         for path in &mut paths {

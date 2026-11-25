@@ -404,3 +404,19 @@ fn an_unreported_full_frame_level_keeps_the_reference_white_average() {
     assert_eq!(unknown.avg_pq, reported.avg_pq);
     assert!(unknown.avg_pq > 819, "{unknown:?}");
 }
+
+#[test]
+fn full_range_streams_do_not_negotiate_limited_range_dovi_rpus() {
+    use rubylight_protocol::hdr;
+    for (codec, hdr_format) in [(1, hdr::DV_81), (1, hdr::DV_84), (2, hdr::DV_101)] {
+        let full = crate::rtsp::Negotiated {
+            codec,
+            hdr: true,
+            hdr_format,
+            csc_mode: 5, // BT.2020 full range
+            ..Default::default()
+        };
+        assert!(full.full_range());
+        assert_eq!(negotiated(&full), None, "{codec} {hdr_format}");
+    }
+}

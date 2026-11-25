@@ -185,6 +185,13 @@ impl Trendline {
         self.accumulated += delta;
         self.smoothed = SMOOTHING * self.smoothed + (1. - SMOOTHING) * self.accumulated;
         let arrival_ms = d.group.last_arrival as f64 / 1000.;
+        if self
+            .first_arrival_ms
+            .is_some_and(|first| arrival_ms < first)
+        {
+            self.first_arrival_ms = Some(arrival_ms);
+            self.window.clear();
+        }
         let first = *self.first_arrival_ms.get_or_insert(arrival_ms);
         self.window.push_back((arrival_ms - first, self.smoothed));
         if self.window.len() > TRENDLINE_WINDOW {
@@ -318,7 +325,7 @@ impl BaseDelay {
         while self
             .segments
             .front()
-            .is_some_and(|(at, _)| at + keep < segment)
+            .is_some_and(|(at, _)| at.saturating_add(keep) < segment)
         {
             self.segments.pop_front();
         }

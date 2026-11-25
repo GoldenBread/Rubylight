@@ -284,15 +284,29 @@ impl Prepared {
         };
         let ((width, height), rate, display_hdr) =
             display_ask(joined_mode, (width, height), own_rate, request.hdr);
-        let retained = if launch.role == Role::RemoteMonitor {
-            Some(crate::remote_display::activate(
-                h,
-                &launch.client.uuid,
-                stream,
-                &launch.warnings,
-            )?)
+        struct RemoteMonitorRollback<'a> {
+            host: &'a Shared,
+            client: &'a str,
+            armed: bool,
+        }
+        impl Drop for RemoteMonitorRollback<'_> {
+            fn drop(&mut self) {
+                if self.armed {
+                    crate::remote_display::disconnect(self.host, Some(self.client));
+                }
+            }
+        }
+        let (retained, created_remote) = if launch.role == Role::RemoteMonitor {
+            let (lease, created) =
+                crate::remote_display::activate(h, &launch.client.uuid, stream, &launch.warnings)?;
+            (Some(lease), created)
         } else {
-            None
+            (None, false)
+        };
+        let mut remote_rollback = RemoteMonitorRollback {
+            host: h,
+            client: &launch.client.uuid,
+            armed: created_remote,
         };
         let activation = if !virtual_mode
             && retained.is_none()
@@ -328,7 +342,7 @@ impl Prepared {
                 ..Default::default()
             }
         };
-        if request.prefer_highest && !virtual_mode {
+        if request.prefer_highest && physical {
             request.refresh = Some(display::highest_refresh(output, turn.before)?.0);
         }
         let virtual_options = display::VirtualOptions {
@@ -483,10 +497,6 @@ impl Prepared {
             );
         }
         mode_report.publish(applied);
-        let profile = recovery_profile
-            .as_ref()
-            .map(|p| hdr_profile::Lease::acquire(&output, p))
-            .transpose()?;
         let revision = retained.as_ref().map_or(0, |r| r.capture_target().1);
         let owns_display = display.is_some();
         let hold_layout_while_paused = holds_layout_while_paused(
@@ -496,59 +506,66 @@ impl Prepared {
                 .as_ref()
                 .is_some_and(display_arrangement::Lease::exclusive),
         );
-        Ok((
-            Self {
-                display,
-                output,
-                framegen,
-                _arrangement: layout.arrangement,
-                _activation: activation,
-                _profile: profile,
-                _retained: retained,
-                _vulkan: vulkan,
-                _golden: golden,
-                mode: stream_mode(stream),
-                layout_owner: layout_owner(
-                    launch,
-                    virtual_mode && !background && client_display.is_none() && layout.layout_took,
-                    layout.monitors_kept,
-                    layout.parsed,
-                    in_force,
-                ),
-                client_display,
-                virtual_layout: virtual_layout.then(|| layout.selection.to_owned()),
-                inherited_layout: virtual_layout
-                    .then(|| inherited_layout(config, app.as_ref()).to_owned()),
-                resolution_owner: (remember && owns_display).then(|| launch.client.uuid.clone()),
-                scale_baseline,
-                follow,
-                identity: (virtual_mode && owns_display).then(|| shared_id.clone()),
-                joined: joined_mode.is_some(),
-                #[cfg(any(test, feature = "test-support"))]
-                layout_snapshot: None,
-                #[cfg(test)]
-                size_snapshot: None,
-                #[cfg(test)]
-                scale_snapshot: None,
-                #[cfg(test)]
-                scales_set: std::sync::Mutex::new(Vec::new()),
-                revision,
-                machine: DisplaySessionMachine::launch(
-                    std::time::Instant::now(),
-                    display_arrangement::departures(),
-                    display_arrangement::wake_layouts(),
-                    layout.start_primary_mismatch,
-                    hold_layout_while_paused,
-                ),
-                mode_report,
-                recovery_scale: scale,
-                recovery_dimensions: (width, height),
-                recovery_profile,
-                virtual_mode,
-                profile_choice: profile_choice(launch),
-                host: Arc::downgrade(h),
-            },
-            limiter,
-        ))
+        // Assemble `Prepared` before acquiring the HDR profile so an ICC failure
+        // runs `Prepared::drop` (`lease.end((display, activation, golden))`)
+        // instead of unwinding locals in reverse declaration order (T2-1).
+        let mut prepared = Self {
+            display,
+            output,
+            framegen,
+            _arrangement: layout.arrangement,
+            _activation: activation,
+            _profile: None,
+            _retained: retained,
+            _vulkan: vulkan,
+            _golden: golden,
+            mode: stream_mode(stream),
+            layout_owner: layout_owner(
+                launch,
+                virtual_mode && !background && client_display.is_none() && layout.layout_took,
+                layout.monitors_kept,
+                layout.parsed,
+                in_force,
+            ),
+            client_display,
+            virtual_layout: virtual_layout.then(|| layout.selection.to_owned()),
+            inherited_layout: virtual_layout
+                .then(|| inherited_layout(config, app.as_ref()).to_owned()),
+            resolution_owner: (remember && owns_display).then(|| launch.client.uuid.clone()),
+            scale_baseline,
+            follow,
+            identity: (virtual_mode && owns_display).then(|| shared_id.clone()),
+            joined: joined_mode.is_some(),
+            #[cfg(any(test, feature = "test-support"))]
+            layout_snapshot: None,
+            #[cfg(test)]
+            size_snapshot: None,
+            #[cfg(test)]
+            scale_snapshot: None,
+            #[cfg(test)]
+            scales_set: std::sync::Mutex::new(Vec::new()),
+            revision,
+            machine: DisplaySessionMachine::launch(
+                std::time::Instant::now(),
+                display_arrangement::departures(),
+                display_arrangement::wake_layouts(),
+                layout.start_primary_mismatch,
+                hold_layout_while_paused,
+            ),
+            mode_report,
+            recovery_scale: scale,
+            recovery_dimensions: (width, height),
+            recovery_profile,
+            virtual_mode,
+            profile_choice: profile_choice(launch),
+            host: Arc::downgrade(h),
+        };
+        prepared._profile = prepared
+            .recovery_profile
+            .as_ref()
+            .map(|p| hdr_profile::Lease::acquire(&prepared.output, p))
+            .transpose()?;
+        remote_rollback.armed = false;
+        Ok((prepared, limiter))
     }
 }

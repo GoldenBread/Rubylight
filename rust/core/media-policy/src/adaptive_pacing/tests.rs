@@ -475,6 +475,21 @@ fn disabled_pacing_preserves_the_callers_rate_despite_reports() {
     }
 }
 
+#[test]
+fn floor_changes_below_the_current_rate_do_not_drop_loss_cuts_or_reset_samples() {
+    let mut stream = Stream::new(true);
+    // Prime a baseline sample and then vary `needed` well below FAST (800M) without changing
+    // the effective rate. Loss reports arriving meanwhile must still trigger a cut.
+    assert_eq!(stream.healthy(), None);
+    let end = stream.last + 30;
+    stream.report(end - 1, end, Block::Unrecoverable);
+    assert_eq!(stream.pacing.rate(FAST, DEMAND + 5_000_000, 40_000), FAST);
+    stream.report(end, end, Block::Unrecoverable);
+    assert_eq!(stream.pacing.rate(FAST, DEMAND - 5_000_000, 40_000), FAST);
+    assert!(!stream.pacing.awaiting_fence);
+    assert_eq!(stream.healthy(), Some((FAST, FAST / 2)));
+}
+
 mod loss_and_recovery;
 mod path_sim;
 mod wireless;

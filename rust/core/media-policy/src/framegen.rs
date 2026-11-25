@@ -123,6 +123,8 @@ pub enum VirtualRefresh {
     Legacy,
     /// Four times the stream rate.
     Enabled,
+    /// A fixed 480 Hz.
+    Hz480,
     /// A fixed 1000 Hz.
     Vrr,
     Disabled,
@@ -137,6 +139,7 @@ pub fn virtual_refresh(config: &Config) -> VirtualRefresh {
     let value = config.get("virtual_display_refresh", "legacy");
     match normalize(value).as_str() {
         "" | "legacy" | "2x" | "fixed2x" => VirtualRefresh::Legacy,
+        "480hz" | "480" | "fixed480hz" | "8x" => VirtualRefresh::Hz480,
         "vrr" | "1000hz" | "1000" | "fixed1000hz" => VirtualRefresh::Vrr,
         "false" | "no" | "disable" | "disabled" | "off" | "0" => VirtualRefresh::Disabled,
         "enabled" | "enable" | "true" | "yes" | "on" | "1" | "smooth" | "smoother" => {
@@ -158,6 +161,7 @@ pub fn display_rate(rate: Rate, virtual_display: bool, mode: VirtualRefresh) -> 
     match (virtual_display, mode) {
         (true, VirtualRefresh::Legacy) => Rate(rate.0.saturating_mul(2).min(FASTEST_REFRESH)),
         (true, VirtualRefresh::Enabled) => Rate(rate.0.saturating_mul(4).min(FASTEST_REFRESH)),
+        (true, VirtualRefresh::Hz480) => Rate(480_000),
         (true, VirtualRefresh::Vrr) => Rate(FASTEST_REFRESH),
         _ => rate,
     }

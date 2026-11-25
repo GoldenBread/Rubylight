@@ -32,6 +32,7 @@ fn snapshot(nodes: Vec<Node>) -> Snapshot {
         hdr: nodes.iter().map(|n| (n.device_id.clone(), true)).collect(),
         scale: nodes.iter().map(|n| (n.device_id.clone(), 125)).collect(),
         rotation: Default::default(),
+        sources: Default::default(),
         clone_groups: vec![],
         nodes,
     }

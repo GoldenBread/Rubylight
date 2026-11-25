@@ -217,6 +217,8 @@ pub struct Counters {
 /// One report's share of the acked window.
 #[derive(Clone, Copy, Debug)]
 struct Acked {
+    /// When the host processed the report, host µs.
+    host_us: u64,
     /// When its last packet arrived, client µs.
     arrival: u64,
     /// The wire bytes the client received.
@@ -355,9 +357,10 @@ impl Congestion {
             received_bytes += u64::from(p.wire_bytes) * stride;
             last_arrival = Some(last_arrival.map_or(arrival, |a: u64| a.max(arrival)));
             // Queueing delay: one-way delay over the window's lowest.
-            let owd = arrival as i64 - p.sent_us as i64;
+            let owd = (i128::from(arrival) - i128::from(p.sent_us))
+                .clamp(i128::from(i64::MIN), i128::from(i64::MAX)) as i64;
             let base = self.base_delay.add(now_us, owd);
-            let queued = (owd - base).max(0) as u64;
+            let queued = owd.saturating_sub(base).max(0) as u64;
             least_queue = least_queue.min(queued);
             self.window_delay.add(queued);
             self.stream_delay.add(queued);
@@ -373,32 +376,35 @@ impl Congestion {
         while self
             .losses
             .front()
-            .is_some_and(|(at, ..)| at + LOSS_WINDOW_US < now_us)
+            .is_some_and(|(at, ..)| at.saturating_add(LOSS_WINDOW_US) < now_us)
         {
             self.losses.pop_front();
         }
         // Skipped packets have no record here: they count at the report's mean size.
         let listed = feedback.packets.len() as u64 * stride;
         if let Some(mean) = sent_bytes.checked_div(listed) {
-            sent_bytes += skipped * mean;
+            sent_bytes = sent_bytes.saturating_add(skipped.saturating_mul(mean));
         }
         let Some(arrival) = last_arrival else {
-            self.sent_unacked += sent_bytes;
+            self.sent_unacked = self.sent_unacked.saturating_add(sent_bytes);
             return;
         };
+        if self.last_arrival.is_some_and(|prev| arrival < prev) {
+            self.acked.clear();
+        }
         self.last_arrival = Some(arrival);
         self.acked.push_back(Acked {
+            host_us: now_us,
             arrival,
             received: received_bytes,
             last_send,
-            sent: sent_bytes + std::mem::take(&mut self.sent_unacked),
+            sent: sent_bytes.saturating_add(std::mem::take(&mut self.sent_unacked)),
             least_queue,
         });
-        while self
-            .acked
-            .front()
-            .is_some_and(|report| report.arrival + ACKED_WINDOW_US < arrival)
-        {
+        while self.acked.front().is_some_and(|report| {
+            report.arrival.saturating_add(ACKED_WINDOW_US) < arrival
+                || report.host_us.saturating_add(ACKED_WINDOW_US * 2) < now_us
+        }) {
             self.acked.pop_front();
         }
     }
@@ -453,7 +459,7 @@ impl Congestion {
         while self
             .bottleneck
             .front()
-            .is_some_and(|(at, _)| at + PACE_WINDOW_US < now_us)
+            .is_some_and(|(at, _)| at.saturating_add(PACE_WINDOW_US) < now_us)
         {
             self.bottleneck.pop_front();
         }
@@ -469,13 +475,12 @@ impl Congestion {
         let first = self.acked.front()?.arrival;
         let span = last.saturating_sub(first).max(ACKED_WINDOW_US / 5);
         // The first report's bytes arrived before the window's start.
-        let bytes: u64 = self
-            .acked
-            .iter()
-            .skip(1)
-            .map(|report| report.received)
-            .sum();
-        (self.acked.len() > 1).then(|| bytes * 8 * 1_000_000 / span)
+        let bytes = self.acked.iter().skip(1).fold(0u128, |sum, report| {
+            sum.saturating_add(u128::from(report.received))
+        });
+        (self.acked.len() > 1).then(|| {
+            (bytes.saturating_mul(8_000_000) / u128::from(span)).min(u128::from(u64::MAX)) as u64
+        })
     }
 
     /// What the host sent for the same reports, bps: their packets' wire bytes, lost ones
@@ -484,8 +489,12 @@ impl Congestion {
         let first = self.acked.front()?.last_send;
         let last = self.acked.back()?.last_send;
         let span = last.saturating_sub(first).max(ACKED_WINDOW_US / 5);
-        let bytes: u64 = self.acked.iter().skip(1).map(|report| report.sent).sum();
-        (self.acked.len() > 1).then(|| bytes * 8 * 1_000_000 / span)
+        let bytes = self.acked.iter().skip(1).fold(0u128, |sum, report| {
+            sum.saturating_add(u128::from(report.sent))
+        });
+        (self.acked.len() > 1).then(|| {
+            (bytes.saturating_mul(8_000_000) / u128::from(span)).min(u128::from(u64::MAX)) as u64
+        })
     }
 
     /// The queueing delay no packet of the window got under, µs, once its reports span half

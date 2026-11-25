@@ -62,3 +62,32 @@ fn monitors_being_made_count_against_the_capacity_and_a_disconnect_cancels_one()
     assert!(matches!(reserve(h, "e", mode), Ok(Reserved::Slot(_))));
     assert!(h.monitors_creating.locked().is_empty());
 }
+
+#[test]
+fn disconnecting_published_monitor_removes_entry_for_post_publish_check() {
+    let f = crate::state::test_support::Fixture::new();
+    let h = &f.host;
+    let mode = (1920, 1080, 60_000, false);
+    let Reserved::Slot(slot) = reserve(h, "c1", mode).unwrap() else {
+        panic!("expected new slot");
+    };
+    let mut made = Retained::inert("c1");
+    made.mode = mode;
+    let lease = publish(slot, Arc::new(made)).unwrap();
+    assert!(
+        h.monitors
+            .lock()
+            .unwrap()
+            .get("c1")
+            .is_some_and(|m| Arc::ptr_eq(m, &lease))
+    );
+    // Simulate a concurrent disconnect removing `c1` before `activate` calls retain(..., true).
+    h.monitors.lock().unwrap().remove("c1");
+    assert!(
+        !h.monitors
+            .lock()
+            .unwrap()
+            .get("c1")
+            .is_some_and(|m| Arc::ptr_eq(m, &lease))
+    );
+}

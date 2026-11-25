@@ -278,7 +278,10 @@ impl LinkRate {
     /// Under a latch watch or an unconfirmed probe step every request counts,
     /// as keyframe requests do: there repeats are the evidence.
     pub fn on_invalidation(&mut self, first: u64, last: u64, network: bool, now: Instant) {
-        if first == 0 || first > last {
+        if !network || !self.is_active() {
+            return;
+        }
+        if first == 0 || first > last || !self.admits(None, now) {
             self.on_keyframe_request(network, now);
             return;
         }
@@ -376,6 +379,7 @@ impl LinkRate {
             frame: self.last_sent.map(|f| f.wrapping_add(1 + PIPELINE_FRAMES)),
             at: now + wait,
         });
+        self.incident = None;
         self.events.clear();
     }
 

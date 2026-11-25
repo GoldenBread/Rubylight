@@ -403,3 +403,46 @@ fn learns_a_stick_gain_with_a_dead_zone() {
     assert!((model.stick_gain[0] + 60.0 * 7.5).abs() < 15.0, "{model:?}");
     assert!(model.lag_us.abs_diff(34_000) <= 4_000, "{model:?}");
 }
+
+#[test]
+fn set_sizes_and_prior_preserve_cross_resolution_gains() {
+    // 1080p prior loaded at 1080p, then reconfigured mid-stream to 4K with the
+    // same 256x144 thumbnail: camera gain in picture pixels must double (not stay 1x/0.5x).
+    let mut cal = Calibrator::new((1920, 1080), (256, 144));
+    cal.set_prior(Prior {
+        mouse_gain: Some([15.0, 15.0]),
+        mouse_lag_us: Some(20_000),
+        stick_gain: Some([300.0, 300.0]),
+        stick_lag_us: Some(30_000),
+        picture_width: 1920,
+        picture_height: 1080,
+        ..Default::default()
+    });
+    cal.set_sizes((3840, 2160), (3840, 2160), (256, 144));
+    let model = cal.model(1);
+    assert!((model.mouse_gain[0] - 30.0).abs() < 1e-4, "{model:?}");
+    assert!((model.stick_gain[0] - 600.0).abs() < 1e-3, "{model:?}");
+
+    // Changing thumbnail size scales thumbnail-space fit proportionally without changing picture gain.
+    cal.set_sizes((3840, 2160), (3840, 2160), (128, 72));
+    let model = cal.model(2);
+    assert!((model.mouse_gain[0] - 30.0).abs() < 1e-4, "{model:?}");
+
+    // Locking only mouse at 4K must rescale an unlocked 1080p stick prior into 4K pixels.
+    let mut mixed = Calibrator::new((3840, 2160), (256, 144));
+    mixed.set_prior(Prior {
+        mouse_gain: Some([15.0, 15.0]),
+        mouse_lag_us: Some(20_000),
+        stick_gain: Some([300.0, 150.0]),
+        stick_lag_us: Some(30_000),
+        picture_width: 1920,
+        picture_height: 1080,
+        ..Default::default()
+    });
+    mixed.mouse_locked = true;
+    let saved = mixed.prior().unwrap();
+    assert_eq!((saved.picture_width, saved.picture_height), (3840, 2160));
+    assert!((saved.mouse_gain.unwrap()[0] - 30.0).abs() < 1e-4);
+    assert!((saved.stick_gain.unwrap()[0] - 600.0).abs() < 1e-3);
+    assert!((saved.stick_gain.unwrap()[1] - 300.0).abs() < 1e-3);
+}

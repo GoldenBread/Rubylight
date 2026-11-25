@@ -261,7 +261,7 @@ fn a_displays_sole_stream_turns_and_scales_it_and_teardown_turns_it_back_first()
     ));
     // The mode was recorded in the shape the display had before it turned.
     assert_eq!(order.take(), ["rotation 1", "mode 2560x1440", "scale 100"]);
-    // Gone at the end: nothing is turned and the journal entry stays.
+    // Gone at the end: nothing is turned, scaled, or re-moded and the journal entry stays.
     assert!(!restore_settings(
         &settings,
         "tv",
@@ -269,9 +269,21 @@ fn a_displays_sole_stream_turns_and_scales_it_and_teardown_turns_it_back_first()
         false,
         Some(&[]),
         |_, _| panic!("HDR untouched"),
-        |_, _| Ok(()),
+        |_, _| panic!("a display that is gone must not restore mode"),
         |_, _| panic!("a display that is gone is not turned"),
         |_, _| panic!("a display that is gone is not scaled"),
+    ));
+    // A failed mode read/restore keeps the journal entry for recovery too.
+    assert!(!restore_settings(
+        &settings,
+        "tv",
+        "TV",
+        false,
+        Some(&present),
+        |_, _| panic!("HDR untouched"),
+        |_, _| bail!("mode query failed"),
+        |_, _| Ok(()),
+        |_, _| Ok(()),
     ));
     // A failed turn back keeps the entry for recovery too.
     assert!(!restore_settings(

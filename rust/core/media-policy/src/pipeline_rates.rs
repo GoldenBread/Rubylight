@@ -452,17 +452,23 @@ pub fn below_message(pushed: bool, game: bool, source_mhz: u32, limit_mhz: u32) 
 /// Whether a low source rate on idd-push shows Rubylight's virtual display
 /// itself delivering fewer frames than the stream can show.
 ///
-/// When capture_mhz keeps up with limit_mhz, or exceeds source_mhz by
-/// more than 20% (paired frames arriving less than 2 ms apart that
-/// source_fps groups together), blaming the virtual display's delivery rate
-/// contradicts capture_fps.
+/// On event-driven `idd-push`, Windows only invokes the swapchain push when a
+/// game or desktop presents a frame, so a 60 fps game on a 1000 Hz (or
+/// `>= limit_mhz`) virtual display yields `capture_mhz ~= source_mhz ~= 60`
+/// without the virtual display limiting anything. Also returns `false` when
+/// `capture_mhz` keeps up with `limit_mhz`, or exceeds `source_mhz` by more
+/// than 20% (paired frames arriving less than 2 ms apart).
 pub fn virtual_display_limited(
     pushed: bool,
     capture_mhz: Option<u32>,
+    display_mhz: Option<u32>,
     source_mhz: u32,
     limit_mhz: u32,
 ) -> bool {
     if !pushed || limit_mhz == 0 {
+        return false;
+    }
+    if display_mhz.is_some_and(|display| display >= limit_mhz) {
         return false;
     }
     match capture_mhz {

@@ -108,7 +108,7 @@ fn protected_paths(
 
 /// The modes the kept paths use, renumbered. Modes left behind by a pruned
 /// path make Windows refuse the supplied layout (ERROR_INVALID_PARAMETER).
-fn referenced_modes(
+pub(super) fn referenced_modes(
     paths: &[DISPLAYCONFIG_PATH_INFO],
     modes: &[DISPLAYCONFIG_MODE_INFO],
 ) -> Result<(Vec<DISPLAYCONFIG_PATH_INFO>, Vec<DISPLAYCONFIG_MODE_INFO>)> {

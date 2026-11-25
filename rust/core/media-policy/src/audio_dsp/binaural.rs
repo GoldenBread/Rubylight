@@ -26,6 +26,10 @@ pub struct Layout {
     /// Today's stereo downmix of the source, as weights of the 8 slots:
     /// applied to the 8-channel capture it gives what 2-channel capture gives.
     pub downmix: [[f32; 8]; 2],
+    /// Squared Euclidean norm of each 8-channel capture row (`||row||^2`),
+    /// weighting uncorrelated source energy per slot when height channels are
+    /// folded and attenuated into the 8-channel capture matrix.
+    slot_energy: [f32; 8],
 }
 
 impl Layout {
@@ -35,11 +39,16 @@ impl Layout {
         let mut layout = Self {
             present: [false; 8],
             downmix: [[0.; 8]; 2],
+            slot_energy: [0.; 8],
         };
         for (slot, row) in eight.iter().enumerate() {
-            layout.present[slot] = row.iter().any(|v| *v != 0.);
-            for (downmix, ear) in layout.downmix.iter_mut().zip(&stereo) {
-                downmix[slot] = row.iter().zip(ear).map(|(a, b)| a * b).sum();
+            let norm2: f32 = row.iter().map(|v| v * v).sum();
+            layout.present[slot] = norm2 > 0.;
+            layout.slot_energy[slot] = norm2;
+            if norm2 > 0. {
+                for (downmix, ear) in layout.downmix.iter_mut().zip(&stereo) {
+                    downmix[slot] = row.iter().zip(ear).map(|(a, b)| a * b).sum::<f32>() / norm2;
+                }
             }
         }
         Ok(layout)
@@ -77,17 +86,26 @@ impl Layout {
     pub fn level(&self) -> f32 {
         let downmix: f32 = (0..8)
             .filter(|slot| self.present[*slot])
-            .map(|slot| self.downmix[0][slot].powi(2) + self.downmix[1][slot].powi(2))
+            .map(|slot| {
+                (self.downmix[0][slot].powi(2) + self.downmix[1][slot].powi(2))
+                    * self.slot_energy[slot]
+            })
             .sum();
         let mut binaural: f32 = self
             .directions()
             .iter()
-            .flatten()
-            .flat_map(|azimuth| hrir::pair(*azimuth))
-            .map(|h| h.iter().map(|v| v * v).sum::<f32>())
+            .enumerate()
+            .filter_map(|(slot, azimuth)| {
+                let azimuth = (*azimuth)?;
+                let energy: f32 = hrir::pair(azimuth)
+                    .iter()
+                    .map(|h| h.iter().map(|v| v * v).sum::<f32>())
+                    .sum();
+                Some(energy * self.slot_energy[slot])
+            })
             .sum();
         if self.present[LFE] {
-            binaural += 2. * LFE_GAIN * LFE_GAIN;
+            binaural += 2. * LFE_GAIN * LFE_GAIN * self.slot_energy[LFE];
         }
         if binaural == 0. {
             return 1.;

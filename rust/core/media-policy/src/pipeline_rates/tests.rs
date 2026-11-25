@@ -493,29 +493,67 @@ fn wording_matches_the_capture_backend_and_exact_stream_rate() {
 /// pushing full-rate or paired frames (`#146`).
 #[test]
 fn virtual_display_limited_distinguishes_true_low_delivery_from_paired_frames() {
-    // True half-rate / 60 fps delivery on idd-push: virtual display warning applies.
-    assert!(virtual_display_limited(true, Some(72_000), 72_000, 144_000));
-    assert!(virtual_display_limited(true, Some(81_000), 72_000, 144_000));
-    assert!(virtual_display_limited(true, Some(60_000), 60_000, 144_000));
-    assert!(virtual_display_limited(true, None, 72_000, 144_000));
+    // True half-rate / 60 fps delivery on idd-push when display mode itself is low or unknown.
+    assert!(virtual_display_limited(
+        true,
+        Some(72_000),
+        Some(72_000),
+        72_000,
+        144_000
+    ));
+    assert!(virtual_display_limited(
+        true,
+        Some(81_000),
+        Some(72_000),
+        72_000,
+        144_000
+    ));
+    assert!(virtual_display_limited(
+        true,
+        Some(60_000),
+        Some(60_000),
+        60_000,
+        144_000
+    ));
+    assert!(virtual_display_limited(true, None, None, 72_000, 144_000));
+
+    // Issue #146: on event-driven idd-push with a virtual display mode >= limit
+    // (e.g. 1000 Hz VRR or 240/288 Hz), a 60 fps game is game-limited, not display-limited.
+    assert!(!virtual_display_limited(
+        true,
+        Some(60_000),
+        Some(1_000_000),
+        60_000,
+        144_000
+    ));
+    assert!(!virtual_display_limited(
+        true,
+        Some(72_000),
+        Some(144_000),
+        72_000,
+        144_000
+    ));
 
     // Full-rate or near-full-rate paired frames (< 2 ms apart): capture_fps is
     // 138-143 while source_fps reads 73-111, so do not blame the virtual display.
     assert!(!virtual_display_limited(
         true,
         Some(143_300),
+        None,
         76_500,
         144_000
     ));
     assert!(!virtual_display_limited(
         true,
         Some(138_900),
+        None,
         73_500,
         144_000
     ));
     assert!(!virtual_display_limited(
         true,
         Some(138_400),
+        None,
         110_900,
         144_000
     ));
@@ -524,10 +562,17 @@ fn virtual_display_limited_distinguishes_true_low_delivery_from_paired_frames() 
     assert!(!virtual_display_limited(
         false,
         Some(72_000),
+        None,
         72_000,
         144_000
     ));
-    assert!(!virtual_display_limited(true, Some(72_000), 72_000, 0));
+    assert!(!virtual_display_limited(
+        true,
+        Some(72_000),
+        None,
+        72_000,
+        0
+    ));
 }
 
 #[test]

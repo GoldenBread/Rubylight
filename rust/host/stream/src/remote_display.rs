@@ -223,7 +223,7 @@ pub fn activate(
     client: &str,
     config: &Negotiated,
     warnings: &Warnings,
-) -> Result<Arc<Retained>> {
+) -> Result<(Arc<Retained>, bool)> {
     let (display_width, display_height) = config.display_size();
     let mode = (
         display_width,
@@ -232,7 +232,7 @@ pub fn activate(
         config.hdr,
     );
     let slot = match reserve(h, client, mode)? {
-        Reserved::Existing(existing) => return Ok(existing),
+        Reserved::Existing(existing) => return Ok((existing, false)),
         Reserved::Slot(slot) => slot,
     };
     let identity = h
@@ -298,12 +298,27 @@ pub fn activate(
         disconnect(h, Some(client));
         return Err(error);
     }
+    let still_registered = || {
+        h.monitors
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(client)
+            .is_some_and(|m| Arc::ptr_eq(m, &lease))
+    };
+    if !still_registered() {
+        anyhow::bail!("remote monitor disconnected during activation");
+    }
     // A stream holding a display layout must count this display as part of
     // it, or its end leaves the physical displays off.
     if let Err(error) = display_arrangement::retain(&lease.current_output(), true) {
         tracing::warn!(error = %format!("{error:#}"), "remote monitor is not part of the stream's display layout");
     }
-    Ok(lease)
+    // Re-check in case disconnect raced with retain(..., true).
+    if !still_registered() {
+        let _ = display_arrangement::retain(&lease.current_output(), false);
+        anyhow::bail!("remote monitor disconnected during activation");
+    }
+    Ok((lease, true))
 }
 /// One display layout at a time, each from the monitors there at that moment: a monitor ending,
 /// one arriving and a feeder's recovery each run on a thread of their own, and would otherwise
