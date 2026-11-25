@@ -198,28 +198,45 @@ fn non_terminating_switch_enforces_owner_webrtc_exclusivity_and_preserves_nucleu
     let f = Fixture::new();
     running_app(&f, "owner");
 
-    // Active RemoteMonitor blocks another device's non-terminating switch (`stop_app = false`).
+    // Terminating switch (`stop_app = true`) is refused when `RemoteMonitor` is active and owned by another device.
     let mut owner_client = f.client(u32::MAX);
     owner_client.uuid = "owner".into();
     let owner_stream = f.session(owner_client.clone(), Role::Stream);
     let monitor = f.session(owner_client.clone(), Role::RemoteMonitor);
     assert_eq!(
-        stop_streams_for(&f.host, "other", false),
+        stop_streams_for(&f.host, "other", true),
         StopStreams::Refused
     );
     assert!(!owner_stream.stopping());
+    assert!(!monitor.stopping());
+
+    // Non-terminating resume/takeover (`stop_app = false`) is allowed despite `RemoteMonitor`
+    // when no active WebRTC `Role::Stream` holds exclusivity, leaving the app and `RemoteMonitor` running.
+    let host = f.host.clone();
+    let owner_id = owner_stream.launch.id.clone();
+    let owner_worker = std::thread::spawn({
+        let s = owner_stream.clone();
+        move || {
+            while !s.stopping() {
+                std::thread::sleep(std::time::Duration::from_millis(2));
+            }
+            host.sessions.lock().unwrap().active.remove(&owner_id);
+        }
+    });
+    assert_eq!(
+        stop_streams_for(&f.host, "other", false),
+        StopStreams::Stopped
+    );
+    owner_worker.join().unwrap();
+    assert!(owner_stream.stopping());
+    assert!(!monitor.stopping());
+    assert!(f.host.current_app.lock().unwrap().is_some());
     f.host
         .sessions
         .lock()
         .unwrap()
         .active
         .remove(&monitor.launch.id);
-    f.host
-        .sessions
-        .lock()
-        .unwrap()
-        .active
-        .remove(&owner_stream.launch.id);
 
     // Active WebRTC stream owned by `owner` blocks another device's non-terminating switch.
     let mut webrtc_launch = f.launch(owner_client.clone(), Role::Stream);

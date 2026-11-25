@@ -5,6 +5,8 @@ use super::super::*;
 
 /// State for the 5-second timing/stutter window and source frame-rate warnings.
 pub(super) struct TimingsWindow {
+    session: Arc<Session>,
+    stream_period: Duration,
     timing_due: Instant,
     pipeline_log: butterpollo_media_policy::pipeline_rates::Sampler,
     source_rate: butterpollo_media_policy::pipeline_rates::SourceRate,
@@ -17,7 +19,7 @@ pub(super) struct TimingsWindow {
 }
 
 impl TimingsWindow {
-    pub(super) fn new(s: &Session) -> Self {
+    pub(super) fn new(s: &Arc<Session>, stream_period: Duration) -> Self {
         let timing_due = Instant::now() + Duration::from_secs(5);
         let mut pipeline_log = butterpollo_media_policy::pipeline_rates::Sampler::default();
         // Baseline the rate sampler at the instant the first window starts,
@@ -30,6 +32,8 @@ impl TimingsWindow {
             Duration::from_secs(5),
         );
         Self {
+            session: s.clone(),
+            stream_period,
             timing_due,
             pipeline_log,
             source_rate: butterpollo_media_policy::pipeline_rates::SourceRate::default(),
@@ -43,6 +47,20 @@ impl TimingsWindow {
             // lost time. With logging below information, skip collecting
             // its samples and computing its percentiles.
             timings_logged: tracing::enabled!(tracing::Level::INFO),
+        }
+    }
+
+    pub(super) fn flush_stutter(&mut self) {
+        let pictures = self
+            .session
+            .stats
+            .performance
+            .lock()
+            .unwrap()
+            .advance_stutter();
+        if let Some(pictures) = pictures {
+            self.stutter_totals.add(&pictures, self.stream_period);
+            self.session.stats.publish_stutter(&self.stutter_totals);
         }
     }
 
@@ -111,15 +129,8 @@ impl TimingsWindow {
         }
         let now = Instant::now();
         self.timing_due = now + Duration::from_secs(5);
-        // The stage samples of these five seconds into the
-        // stream's stutter report, whatever the log level. They
-        // are copied out under the sender's lock and the
-        // medians run after it is released.
-        let pictures = s.stats.performance.lock().unwrap().advance_stutter();
-        if let Some(pictures) = pictures {
-            self.stutter_totals.add(&pictures, stream_period);
-            s.stats.publish_stutter(&self.stutter_totals);
-        }
+        self.stream_period = stream_period;
+        self.flush_stutter();
         // Pipeline frame rates since the last summary; the
         // sampler was baselined at stream start. The
         // source-rate warning is not a logging concern: it
@@ -440,6 +451,7 @@ impl TimingsWindow {
         if let Some(pictures) = pictures {
             self.stutter_totals.add(&pictures, from.period());
         }
+        self.stream_period = butterpollo_media_policy::reconfigure::Mode::of(stream).period();
         self.stutter_totals.forget_usual();
         s.stats.publish_stutter(&self.stutter_totals);
         s.rate_changes.switched(
@@ -541,4 +553,63 @@ pub(super) fn emit_claim_trace(
         "claim"
     );
     *admission = AdmissionTrace::default();
+}
+
+impl Drop for TimingsWindow {
+    fn drop(&mut self) {
+        self.flush_stutter();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state::test_support::Fixture;
+    use butterpollo_media_policy::performance::Claim;
+    use butterpollo_session::session::Role;
+
+    #[test]
+    fn dropping_timings_window_flushes_final_partial_stutter_window() {
+        let f = Fixture::new();
+        let s = f.session(f.client(u32::MAX), Role::Stream);
+        let period = Duration::from_micros(16_667);
+        let base = Instant::now();
+        let at = |us: u64| base + Duration::from_micros(us);
+        let stamps = Claim {
+            key: at(0),
+            presented: at(0),
+            acquired: at(100),
+            published: at(150),
+            claimed: at(200),
+            submitted: at(700),
+        }
+        .sent(at(1000), at(1100), at(1500), at(2000));
+        {
+            let _timings = TimingsWindow::new(&s, period);
+            let mut perf = s.stats.performance.lock().unwrap();
+            let count = butterpollo_media_policy::stutter_report::MIN_PICTURES;
+            for _ in 0..count {
+                perf.record_stages(&stamps, 1_000);
+            }
+            assert_eq!(perf.uncounted_stutter().count(), count);
+            drop(perf);
+            assert_eq!(s.stats.stutter_window().report(period).windows(), 1);
+        }
+        assert_eq!(
+            s.stats
+                .performance
+                .lock()
+                .unwrap()
+                .uncounted_stutter()
+                .count(),
+            0,
+            "dropping TimingsWindow must flush the final partial stutter window"
+        );
+        let report = s.stats.stutter_window().report(period);
+        assert_eq!(report.windows(), 1);
+        assert_eq!(
+            report.pictures(),
+            butterpollo_media_policy::stutter_report::MIN_PICTURES as u64
+        );
+    }
 }

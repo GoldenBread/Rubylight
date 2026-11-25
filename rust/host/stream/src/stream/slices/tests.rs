@@ -297,6 +297,13 @@ fn the_stream_does_not_hand_off_while_a_streamed_frame_is_open() {
     // A frame being joined sent nothing, so a hand-off may happen.
     route.route(slice(0, b"a"), |_| false);
     assert!(!open(&route, &None));
+    // Starting a new frame while joining drops the incomplete joined frame as interrupted.
+    let interrupted_join = route.route(slice(0, b"b"), |_| false);
+    assert!(interrupted_join.interrupted);
+    let mut whole = slice(0, b"c");
+    whole.unit = Unit::Whole;
+    let interrupted_whole = route.route(whole, |_| false);
+    assert!(interrupted_whole.interrupted);
 }
 
 #[test]

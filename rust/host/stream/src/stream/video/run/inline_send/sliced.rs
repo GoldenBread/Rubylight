@@ -175,6 +175,7 @@ impl InlineSender {
                                 self.batch_kb * 1024,
                             );
                         let count = butterpollo_win_io::net::Batch::count(remaining, budget);
+                        let send_started = Instant::now();
                         let refused = self.batch.dropped;
                         let result = match self
                             .send_outage
@@ -222,6 +223,7 @@ impl InlineSender {
                             (bytes, sent_count),
                             ipv6,
                             bps,
+                            send_started,
                             now,
                         );
                         sent.first_sent.get_or_insert(now);
@@ -343,7 +345,11 @@ impl InlineSender {
         ctx.s.stats.frames.fetch_add(1, Ordering::Relaxed);
         let packet_bytes =
             self.packetizer.packet_size + 16 + if self.packetizer.key.is_some() { 32 } else { 0 };
-        let frame_bytes = (sent.packets * packet_bytes) as u64;
+        let (frame_bytes, wire_bytes) = super::attempted_wire_bytes(
+            sent.packets,
+            packet_bytes,
+            peer.ip().to_canonical().is_ipv6(),
+        );
         let finished = Instant::now();
         crate::video_send::recovery::report(
             ctx.s,
@@ -357,12 +363,7 @@ impl InlineSender {
                 cap_target_bytes: frame.frame_cap_target,
                 reencoded: frame.reencoded,
                 fec_limited: streamed.fec_limited() || self.packetizer.fec_limited(payload_bytes),
-                wire_bytes: frame_bytes.saturating_add(
-                    (sent.packets
-                        * butterpollo_media_policy::network_pacing::overhead(
-                            peer.ip().to_canonical().is_ipv6(),
-                        )) as u64,
-                ),
+                wire_bytes,
                 pace_bps: bps,
                 elapsed: finished.saturating_duration_since(started),
                 lost: unrecoverable,

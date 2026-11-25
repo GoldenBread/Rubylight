@@ -30,6 +30,37 @@ async fn port_forwarding_sleeps_until_its_renewal_or_the_hosts_stop() {
     until_renewal_or_stop(&stop, start).await;
     assert!(start.elapsed() < Duration::from_secs(30));
 }
+
+#[tokio::test]
+async fn wait_stop_observes_flag_before_await_and_concurrent_notification() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    let flag = Arc::new(AtomicBool::new(true));
+    let notify = Arc::new(tokio::sync::Notify::new());
+    tokio::time::timeout(
+        Duration::from_secs(1),
+        forward_loop::wait_stop(&flag, &notify),
+    )
+    .await
+    .expect("pre-set stop_flag must wake wait_stop immediately");
+
+    let flag2 = Arc::new(AtomicBool::new(false));
+    let notify2 = Arc::new(tokio::sync::Notify::new());
+    let flag2_bg = flag2.clone();
+    let notify2_bg = notify2.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(15)).await;
+        flag2_bg.store(true, Ordering::Release);
+        notify2_bg.notify_waiters();
+    });
+    tokio::time::timeout(
+        Duration::from_secs(1),
+        forward_loop::wait_stop(&flag2, &notify2),
+    )
+    .await
+    .expect("concurrent stop notification must wake wait_stop promptly");
+}
 #[test]
 fn peers_are_classified_like_vibepollo() {
     for (address, expected) in [

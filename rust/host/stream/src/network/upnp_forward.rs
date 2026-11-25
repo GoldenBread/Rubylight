@@ -338,6 +338,7 @@ pub(super) async fn upnp_gateway(bind: IpAddr) -> Result<(Gateway<upnp::Bounded>
 /// already forwards here. A map request the router did not answer is in neither: unknown.
 #[derive(Default)]
 pub(super) struct Applied {
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(super) held: Vec<Mapping>,
     pub(super) forwarded: Vec<Mapping>,
     /// Whether the router answered any request of the round, if only with a refusal.
@@ -388,7 +389,7 @@ pub(super) async fn apply_round<P: Provider>(
     wanted: &[Mapping],
     description: &str,
     reported: &mut Vec<Mapping>,
-    previous: &[Mapping],
+    applied: &mut Vec<Mapping>,
     record: &std::sync::Mutex<LeaseRecord>,
     guest: &[Mapping],
     trial: bool,
@@ -419,7 +420,7 @@ pub(super) async fn apply_round<P: Provider>(
     }
     // The stable host description lets a restarted host reclaim its own
     // permanent leases, including ports removed from a later configuration.
-    let mut applied: Vec<_> = entries
+    let found: Vec<_> = entries
         .iter()
         .filter(|entry| owned(entry, local, description))
         .map(|entry| Mapping {
@@ -428,14 +429,16 @@ pub(super) async fn apply_round<P: Provider>(
         })
         .collect();
     // A guest port the table shows under this host's description is still this host's.
-    record_held(record, guest, &applied);
+    record_held(record, guest, &found);
     let mut forwarded = Vec::new();
     // A table read to the end shows which of them are still this host's; an unreadable one
     // can't, so they stay this host's, as `remove` takes them at shutdown.
-    if !complete {
-        for mapping in previous {
-            if !applied.contains(mapping) {
-                applied.push(*mapping);
+    if complete {
+        *applied = found;
+    } else {
+        for mapping in found {
+            if !applied.contains(&mapping) {
+                applied.push(mapping);
             }
         }
     }
@@ -584,7 +587,7 @@ pub(super) async fn apply_round<P: Provider>(
         }
     }
     Applied {
-        held: applied,
+        held: applied.clone(),
         forwarded,
         answered,
         unanswered,

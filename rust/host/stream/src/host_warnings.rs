@@ -65,11 +65,20 @@ fn cache_store(path: &Path, saved: &Saved) {
 /// path, size, or modification timestamp changes.
 fn load_cached(directory: &Path) -> Result<Saved> {
     let path = directory.join(FILE);
-    let stamp = match file_stamp(&path) {
-        Some(Ok(stamp)) => stamp,
-        Some(Err(error)) => return Err(error).with_context(|| format!("{}", path.display())),
-        None => None,
+    let read_stamp = || match file_stamp(&path) {
+        Some(Ok(stamp)) => Ok(stamp),
+        Some(Err(error)) => Err(error).with_context(|| format!("{}", path.display())),
+        None => Ok(None),
     };
+    let stamp = read_stamp()?;
+    if let Some(cached) = SAVED_CACHE.lock().unwrap().as_ref()
+        && cached.path == path
+        && cached.stamp == stamp
+    {
+        return Ok(cached.saved.clone());
+    }
+    let _file = FILE_LOCK.lock().unwrap();
+    let stamp = read_stamp()?;
     if let Some(cached) = SAVED_CACHE.lock().unwrap().as_ref()
         && cached.path == path
         && cached.stamp == stamp

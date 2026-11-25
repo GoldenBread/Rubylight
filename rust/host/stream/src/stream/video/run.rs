@@ -222,7 +222,7 @@ impl SessionThread<'_> {
         // Pipeline frame rates: the capture slot's counts this stream
         // has taken, and the 5 s timing log's own window.
         let mut pipeline_follow = butterpollo_media_policy::pipeline_rates::Follow::default();
-        let mut timings = TimingsWindow::new(&s);
+        let mut timings = TimingsWindow::new(&s, stream_period);
         // Identity only: a weak reference releases the previous capture's
         // texture and ring slot once it is encoded, while the live `Weak`
         // still pins the allocation so its address can't be reused by a new

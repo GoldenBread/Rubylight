@@ -170,7 +170,7 @@ fn has_active_nucleus_stream(h: &Shared, client: &str) -> bool {
 }
 
 fn switch_refused(h: &Shared, client: &str, stop_app: bool) -> bool {
-    terminate_refused(h, client)
+    (stop_app && terminate_refused(h, client))
         || (!stop_app
             && h.sessions.lock().unwrap().held_by_other(
                 Role::Stream,

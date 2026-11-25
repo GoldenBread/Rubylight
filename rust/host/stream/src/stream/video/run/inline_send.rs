@@ -336,9 +336,22 @@ impl InlineSender {
     }
 }
 
+/// Returns `(frame_bytes, wire_bytes)` for the `sent_packets` actually
+/// attempted (excluding unreached abandoned blocks), matching `sliced` and `whole`.
+pub(super) fn attempted_wire_bytes(
+    sent_packets: usize,
+    packet_bytes: usize,
+    ipv6: bool,
+) -> (u64, u64) {
+    let frame_bytes = (sent_packets * packet_bytes) as u64;
+    let overhead = (sent_packets * butterpollo_media_policy::network_pacing::overhead(ipv6)) as u64;
+    (frame_bytes, frame_bytes.saturating_add(overhead))
+}
+
 /// Records only the `sent_count` packets that actually reached the socket
-/// (clamped to `packets.len()`) into congestion tracking and network pacing,
-/// matching `video_send::transport`.
+/// (clamped to `packets.len()`) into congestion tracking (at pre-send `send_at`)
+/// and network pacing (at post-send `finished`), matching `video_send::transport`.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn record_inline_sent(
     session: &Session,
     pacer: &mut butterpollo_media_policy::network_pacing::Pacer,
@@ -346,16 +359,18 @@ pub(super) fn record_inline_sent(
     (sent_bytes, sent_count): (usize, usize),
     ipv6: bool,
     bps: u64,
-    now: Instant,
+    send_at: Instant,
+    finished: Instant,
 ) {
     let sent = sent_count.min(packets.len());
-    if sent > 0 {
-        session.record_transport_sent(
+    if sent > 0 && session.transport_sent.live() {
+        session.transport_sent.record(
             &packets[..sent],
             butterpollo_media_policy::network_pacing::overhead(ipv6),
+            send_at,
         );
     }
-    pacer.sent(now, sent_bytes, sent, ipv6, bps);
+    pacer.sent(finished, sent_bytes, sent, ipv6, bps);
 }
 
 #[cfg(test)]
@@ -388,6 +403,7 @@ mod tests {
             false,
             80_000_000,
             now,
+            now,
         );
         // Pacer due time must reflect 2 packets' overhead, not 4.
         let expected_wire = 2048 + 2 * butterpollo_media_policy::network_pacing::overhead(false);
@@ -407,7 +423,16 @@ mod tests {
             false,
             80_000_000,
             now,
+            now,
         );
         assert_eq!(pacer.due(), due_before);
+    }
+
+    #[test]
+    fn attempted_wire_bytes_excludes_abandoned_tail_packets() {
+        let overhead_v4 = butterpollo_media_policy::network_pacing::overhead(false) as u64;
+        let (frame_bytes, wire_bytes) = attempted_wire_bytes(3, 1040, false);
+        assert_eq!(frame_bytes, 3 * 1040);
+        assert_eq!(wire_bytes, 3 * (1040 + overhead_v4));
     }
 }

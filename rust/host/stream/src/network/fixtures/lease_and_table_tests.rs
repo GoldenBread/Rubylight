@@ -558,3 +558,67 @@ async fn browser_guest_ports_are_forwarded_while_a_link_needs_them_and_removed_a
         server.abort();
     }
 }
+
+#[tokio::test]
+async fn aborted_apply_round_retains_mappings_added_before_cancellation() {
+    let owner = "Butterpollo Rust fixture-host";
+    let local = "192.0.2.10".parse().unwrap();
+    let state = Arc::new(Mutex::new(RouterState::default()));
+    let (gateway, server) = serve(state.clone()).await;
+    let (record, directory) = guest_record();
+    let first = Mapping {
+        protocol: Protocol::TCP,
+        port: 48126,
+    };
+    let second = Mapping {
+        protocol: Protocol::UDP,
+        port: 48127,
+    };
+    let mut held = Vec::new();
+
+    // First mapping completes quickly; then enable a long delay on the second mapping and abort mid-round.
+    apply_round(
+        &gateway,
+        local,
+        &[first],
+        owner,
+        &mut Vec::new(),
+        &mut held,
+        &record,
+        &[first],
+        false,
+    )
+    .await;
+    assert_eq!(held, [first]);
+
+    state.lock().unwrap().add_delay = Some(std::time::Duration::from_secs(10));
+    let mut reported = Vec::new();
+    let wanted = [first, second];
+    {
+        let mut fut = std::pin::pin!(apply_round(
+            &gateway,
+            local,
+            &wanted,
+            owner,
+            &mut reported,
+            &mut held,
+            &record,
+            &wanted,
+            false,
+        ));
+        let stop = tokio::time::sleep(std::time::Duration::from_millis(30));
+        tokio::select! {
+            _ = &mut fut => panic!("delayed round should not finish before stop"),
+            _ = stop => {}
+        }
+    }
+    assert_eq!(
+        held,
+        [first],
+        "held mappings completed before cancellation remain tracked for release"
+    );
+    let _ = remove(&gateway, local, &held, owner).await;
+    assert!(state.lock().unwrap().rows.is_empty());
+    let _ = std::fs::remove_dir_all(directory);
+    server.abort();
+}

@@ -269,9 +269,14 @@ fn the_watch_sends_only_the_pcs_new_copies() {
     fake.copy("copied on the PC");
     let frame = watch.poll().unwrap().unwrap();
     assert_eq!(
-        (frame.kind, frame.token, frame.payload.as_slice()),
-        (KIND_TEXT, 2, &b"copied on the PC"[..])
+        (frame.kind, frame.payload.as_slice()),
+        (KIND_TEXT, &b"copied on the PC"[..])
     );
+    assert_ne!(frame.token, 2, "frame token must be salted per watch");
+    fake.copy("second copy on the PC");
+    let second = watch.poll().unwrap().unwrap();
+    assert_ne!(second.token, 3);
+    assert_ne!(second.token, frame.token);
     assert_eq!(watch.poll().unwrap(), None);
     // The device's copy goes on the clipboard and is not sent back.
     watch.write(Item::Text("from the device".into())).unwrap();
@@ -410,4 +415,48 @@ fn last_is_cleared_when_clipboard_changes_to_unsynced_content() {
     fake.copy("repeat me");
     let third = watch.poll().unwrap().unwrap();
     assert_eq!(third.payload, b"repeat me");
+}
+
+#[test]
+fn transient_clipboard_read_failure_does_not_skip_sequence() {
+    #[derive(Clone, Default)]
+    struct FlakyClipboard {
+        inner: Fake,
+        fail_read: Arc<AtomicBool>,
+    }
+    impl Clipboard for FlakyClipboard {
+        fn sequence(&self) -> u32 {
+            self.inner.sequence()
+        }
+        fn read(&self) -> Result<String> {
+            if self.fail_read.swap(false, Ordering::AcqRel) {
+                anyhow::bail!("clipboard busy");
+            }
+            self.inner.read()
+        }
+        fn write(&self, text: &str) -> Result<()> {
+            self.inner.write(text)
+        }
+        fn read_png(&self, max_bytes: usize) -> Result<Option<Vec<u8>>> {
+            self.inner.read_png(max_bytes)
+        }
+        fn write_png(&self, png: &[u8]) -> Result<()> {
+            self.inner.write_png(png)
+        }
+    }
+
+    let clip = FlakyClipboard::default();
+    let mut watch = Watch::new(
+        clip.clone(),
+        Allowed {
+            write: true,
+            read: true,
+            png: None,
+        },
+    );
+    clip.fail_read.store(true, Ordering::Release);
+    clip.inner.copy("retry me");
+    assert!(watch.poll().is_err());
+    let retried = watch.poll().unwrap().unwrap();
+    assert_eq!(retried.payload, b"retry me");
 }

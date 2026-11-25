@@ -201,7 +201,7 @@ impl Route {
     pub fn route(&mut self, frame: Encoded, stream: impl FnOnce(&Encoded) -> bool) -> Routed {
         let (index, last) = match frame.unit {
             Unit::Whole => {
-                let interrupted = self.mode == Mode::Stream;
+                let interrupted = self.mode != Mode::Idle;
                 self.mode = Mode::Idle;
                 frame_pool::give(std::mem::take(&mut self.joined));
                 return Routed {
@@ -214,7 +214,7 @@ impl Route {
         };
         let mut interrupted = false;
         if index == 0 {
-            interrupted = self.mode == Mode::Stream;
+            interrupted = self.mode != Mode::Idle;
             frame_pool::give(std::mem::take(&mut self.joined));
             self.mode = if stream(&frame) {
                 Mode::Stream

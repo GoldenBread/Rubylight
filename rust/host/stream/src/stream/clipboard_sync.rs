@@ -434,6 +434,8 @@ struct Watch<C> {
     allowed: Allowed,
     /// The change count last seen; the clipboard's content then is not sent.
     seen: u32,
+    /// Per-session random mask XORed into sequence tokens on outgoing frames.
+    token_salt: u32,
     /// The item last synced either way, which is not synced again.
     last: Option<Item>,
     /// Whether an item too large to send was warned about.
@@ -445,10 +447,17 @@ impl<C: Clipboard> Watch<C> {
     /// From the clipboard as it is now, which stays on this PC.
     fn new(clipboard: C, allowed: Allowed) -> Self {
         let seen = clipboard.sequence();
+        let token_salt = loop {
+            let candidate = rand::random::<u32>();
+            if candidate != 0 {
+                break candidate;
+            }
+        };
         Self {
             clipboard,
             allowed,
             seen,
+            token_salt,
             last: None,
             warned_large: false,
             warned_unread: false,
@@ -477,33 +486,45 @@ impl<C: Clipboard> Watch<C> {
         if sequence == self.seen {
             return Ok(None);
         }
-        self.seen = sequence;
-        let previous = self.last.take();
         if !self.allowed.read {
+            self.seen = sequence;
+            self.last = None;
             bail!(Unread);
         }
         let text = self.clipboard.read()?;
         let item = if !text.is_empty() {
             if text.len() > MAX_PAYLOAD_BYTES {
+                self.seen = sequence;
+                self.last = None;
                 bail!(Large(text.len()));
             }
             Item::Text(text)
         } else if let Some(max) = self.allowed.png {
             match self.clipboard.read_png(max) {
                 Ok(Some(png)) => Item::Png(png),
-                Ok(None) => return Ok(None),
-                Err(e) if e.downcast_ref().is_some_and(ImageError::too_large) => bail!(Large(max)),
+                Ok(None) => {
+                    self.seen = sequence;
+                    self.last = None;
+                    return Ok(None);
+                }
+                Err(e) if e.downcast_ref().is_some_and(ImageError::too_large) => {
+                    self.seen = sequence;
+                    self.last = None;
+                    bail!(Large(max));
+                }
                 Err(e) => return Err(e),
             }
         } else {
+            self.seen = sequence;
+            self.last = None;
             return Ok(None);
         };
-        if previous.as_ref() == Some(&item) {
-            self.last = previous;
+        self.seen = sequence;
+        if self.last.as_ref() == Some(&item) {
             return Ok(None);
         }
         self.last = Some(item.clone());
-        Ok(Some(item.frame(sequence)))
+        Ok(Some(item.frame(sequence ^ self.token_salt)))
     }
 }
 

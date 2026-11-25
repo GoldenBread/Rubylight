@@ -141,7 +141,6 @@ impl InlineSender {
             self.fec_reported = Some(Instant::now());
             ctx.s.launch.warnings.event("network_fec", "FEC was reduced or omitted for large video frames because they exceed Moonlight's four-block limit. Packet loss in those frames is harder to recover; lower bitrate or resolution to keep full FEC protection.", butterpollo_session::session::EVENT_PERIOD);
         }
-        let frame_bytes = (packet_count * packet_bytes) as u64;
         let dropped = self.batch.dropped;
         let oversized = self.batch.oversized;
         let waits_before = self.batch.waits;
@@ -242,6 +241,7 @@ impl InlineSender {
                     (bytes, sent_count),
                     ipv6,
                     bps,
+                    send_started,
                     finished,
                 );
                 first_sent.get_or_insert(finished);
@@ -300,6 +300,11 @@ impl InlineSender {
         if refused {
             ctx.s.launch.warnings.event("network_send", "The PC could not send the video fast enough (its CPU or network adapter fell behind), so video packets were dropped. You may see stutter or recovery frames; close other work on the PC, or lower the bitrate, resolution or frame rate. The log includes the socket error code.", butterpollo_session::session::EVENT_PERIOD);
         }
+        let (frame_bytes, wire_bytes) = super::attempted_wire_bytes(
+            sent_packets,
+            packet_bytes,
+            peer.ip().to_canonical().is_ipv6(),
+        );
         crate::video_send::report_oversized(ctx.s, &self.batch, oversized);
         ctx.s.stats.frames.fetch_add(1, Ordering::Relaxed);
         let sent = Instant::now();
@@ -315,12 +320,7 @@ impl InlineSender {
                 cap_target_bytes: frame.frame_cap_target,
                 reencoded: frame.reencoded,
                 fec_limited,
-                wire_bytes: frame_bytes.saturating_add(
-                    (packet_count
-                        * butterpollo_media_policy::network_pacing::overhead(
-                            peer.ip().to_canonical().is_ipv6(),
-                        )) as u64,
-                ),
+                wire_bytes,
                 pace_bps: bps,
                 elapsed: sent.saturating_duration_since(frame_started),
                 lost: lost.unrecoverable(),
@@ -332,7 +332,7 @@ impl InlineSender {
             tracing::trace!(
                 target: "pacing",
                 frame = self.packetizer.frame.wrapping_sub(1),
-                packets = packet_count,
+                packets = sent_packets,
                 batches,
                 pacing_wait_us = micros(pacing_wait),
                 send_us = micros(send_time),
@@ -384,7 +384,7 @@ impl InlineSender {
                 packetize_ms = ms(packetize_time),
                 timings_ms = ms(record_time),
                 link_ms = ms(link_time),
-                packets = packet_count,
+                packets = sent_packets,
                 bytes = frame_bytes,
                 pacing_bps = bps,
                 idr = frame.idr,
