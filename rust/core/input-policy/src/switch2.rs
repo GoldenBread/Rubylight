@@ -487,6 +487,10 @@ impl Switch2Pro {
             }
             _ => {}
         }
+        const MAX_BULK_REPLIES: usize = 64;
+        if self.bulk.len() >= MAX_BULK_REPLIES {
+            self.bulk.pop_front();
+        }
         self.bulk.push_back(reply);
     }
     /// A 64-byte flash block: the serial number, and stick calibration that

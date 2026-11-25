@@ -37,6 +37,12 @@ fn fields_are_classified_from_uia() {
         Some(InputType::Search)
     );
     assert_eq!(kind(&edit("Phone")), Some(InputType::Phone));
+    assert_eq!(kind(&edit("PhoneNumber")), Some(InputType::Phone));
+    assert_eq!(kind(&edit("Telephone")), Some(InputType::Phone));
+    assert_eq!(kind(&edit("Telefonnummer")), Some(InputType::Phone));
+    assert_eq!(kind(&edit("Microphone")), Some(InputType::Text));
+    assert_eq!(kind(&edit("Headphone")), Some(InputType::Text));
+    assert_eq!(kind(&edit("Bluetooth Headphones")), Some(InputType::Text));
     assert_eq!(
         kind(&FocusedElement {
             control_type: control_type::SPINNER,

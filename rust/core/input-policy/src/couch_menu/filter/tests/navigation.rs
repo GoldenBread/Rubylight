@@ -335,3 +335,39 @@ fn couch_menu_filter_custom_corner_hold() {
     let (_, out) = run(&mut filter, t0 + 500 * MS, &[]);
     assert!(out.release_game && filter.is_open());
 }
+
+#[test]
+fn couch_menu_filter_scroll_accumulates_to_detent() {
+    let t0 = Instant::now();
+    let (_, mut filter) = setup();
+    let open = open_by_pad(&mut filter, t0);
+    run(&mut filter, open, &[pad(0, 0)]);
+
+    let scroll = |amount| Input::Scroll {
+        amount,
+        horizontal: false,
+    };
+    let (_, out) = run(&mut filter, open, &[scroll(-30), scroll(-40)]);
+    assert!(out.nav.is_empty());
+    let (_, out) = run(&mut filter, open, &[scroll(-50)]);
+    assert_eq!(out.nav, [Nav::Down]);
+
+    // Remainder carries across detents, and direction flip resets it cleanly.
+    let (_, out) = run(&mut filter, open, &[scroll(-200)]);
+    assert_eq!(out.nav, [Nav::Down]);
+    let (_, out) = run(&mut filter, open, &[scroll(120)]);
+    assert_eq!(out.nav, [Nav::Up]);
+
+    // Closing resets any leftover partial scroll.
+    let (_, out) = run(&mut filter, open, &[scroll(-100)]);
+    assert!(out.nav.is_empty());
+    run(&mut filter, open, &[pad(0, PAD_CHORD)]);
+    let (_, out) = run(&mut filter, open + 1000 * MS, &[]);
+    assert_eq!(out.nav, [Nav::Closed]);
+    assert!(!filter.is_open());
+    run(&mut filter, open + 1100 * MS, &[pad(0, 0)]);
+    let reopen = open_by_pad(&mut filter, open + 1100 * MS);
+    run(&mut filter, reopen, &[pad(0, 0)]);
+    let (_, out) = run(&mut filter, reopen, &[scroll(-40)]);
+    assert!(out.nav.is_empty());
+}
