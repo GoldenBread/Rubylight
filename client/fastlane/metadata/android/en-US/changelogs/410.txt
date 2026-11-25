@@ -1,0 +1,3 @@
+• 5.1, 7.1 and 7.1.4 surround sound now plays through low-latency AAudio on Android 12L and newer.
+• Keeps pinned high refresh rates active on phones, preserves fractional FPS, and adds Custom (10–500) FPS and Reverse landscape orientation.
+• Adds 0% per-control on-screen opacity, cleaner Steam trackpad taps, automatic USB controller handoff, Tailscale/CGNAT discovery, and Android TV UI and jumbo-packet settings fixes.
