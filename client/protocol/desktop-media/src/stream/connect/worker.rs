@@ -150,15 +150,19 @@ impl Connecting {
         let (host_id, pacing, settings) = (plan.host_id, plan.pacing, plan.settings.clone());
         let worker_shared = shared.clone();
         let worker_interrupt = interrupt.clone();
-        let mut worker_plan = plan.clone();
+        let worker_plan = plan.clone();
         let stopping = Arc::new(std::sync::Mutex::new(previous));
         let worker_stopping = stopping.clone();
         let worker = std::thread::Builder::new()
             .name("connect".into())
             .spawn(move || {
                 let previous = std::mem::take(&mut *lock(&worker_stopping));
+                drop(worker_stopping);
                 wait_for_previous(previous, &worker_shared, &worker_interrupt);
-                let result: Result<(Session, Facts, LaunchPlan), ConnectError> =
+                // Scope `worker_plan` (and any `DeviceRef` / `Arc<Shared>`) so they are dropped
+                // strictly before `sender.send(result)` can unblock teardown on the UI thread.
+                let result: Result<(Session, Facts, LaunchPlan), ConnectError> = {
+                    let mut worker_plan = worker_plan;
                     match connect_with_recovery(&mut worker_plan, worker_shared, &worker_interrupt)
                     {
                         Ok((session, _)) if worker_interrupt.is_interrupted() => {
@@ -167,7 +171,8 @@ impl Connecting {
                         }
                         Ok((session, facts)) => Ok((session, facts, worker_plan)),
                         Err(e) => Err(e),
-                    };
+                    }
+                };
                 let _ = sender.send(result);
                 waker();
             })

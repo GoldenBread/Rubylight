@@ -282,32 +282,22 @@ impl GpuStream {
     }
 
     /// The stream starts over on this decoder (a reconnect that reuses it): drops the packets and
-    /// any slice of a frame still in flight, and any plane set they pinned, so no picture of the
-    /// last stream can come out.
+    /// any slice of a frame still in flight, any plane set they pinned, and beam-race state so a
+    /// cached decoder reused without beam racing (e.g. wired to Wi-Fi) never keeps pushing slices.
     pub fn flush(&mut self) {
         self.gpu.clear();
         let config = self.gpu.config();
-        // A fresh recovery cache: no block of the last stream's frames can stand in for one the
-        // new stream loses.
-        self.records = Records::with_geometry(config.width, config.height, config.chroma444);
-        self.early = Early::Off;
-        self.missed_start = false;
-        self.early_bytes = 0;
-        self.first_block_us = 0;
-        self.pushed.clear();
-        self.source = Source::Frame;
-        if let Some(race) = &mut self.race {
-            race.lease = None;
-            race.events.clear();
-            race.header_pushed = false;
-            race.bands.clear();
-            race.failure = None;
-            race.no_plane = false;
-            // A new stream's first frames are sliced as a fresh decoder's are, whatever order the
-            // last stream's frames arrived in.
-            race.ordered_run = ORDERED_FRAMES_TO_RESUME;
-            race.slicing = true;
-        }
+        reset_flush_state(
+            &mut self.records,
+            config,
+            &mut self.early,
+            &mut self.missed_start,
+            &mut self.early_bytes,
+            &mut self.first_block_us,
+            &mut self.pushed,
+            &mut self.source,
+            &mut self.race,
+        );
     }
 
     pub fn chunk(&mut self, first: bool, flags: u32, payload: &[u8]) {
@@ -533,5 +523,80 @@ impl GpuStream {
     /// The stage times; the slices stage only when the beam race is on.
     pub fn stage_summary(&self) -> Option<String> {
         self.stages.summary_of(if self.race.is_some() { GPU_STAGE_NAMES.len() } else { GPU_SLICES })
+    }
+}
+
+/// Resets per-stream state on [`GpuStream::flush`], clearing `race` completely so a reused
+/// decoder only re-enables beam-race slicing when the new session explicitly calls `set_slices`.
+#[allow(clippy::too_many_arguments)]
+fn reset_flush_state(
+    records: &mut Records,
+    config: GpuConfig,
+    early: &mut Early,
+    missed_start: &mut bool,
+    early_bytes: &mut usize,
+    first_block_us: &mut u64,
+    pushed: &mut BlockSet,
+    source: &mut Source,
+    race: &mut Option<Race>,
+) {
+    // A fresh recovery cache: no block of the last stream's frames can stand in for one the
+    // new stream loses.
+    *records = Records::with_geometry(config.width, config.height, config.chroma444);
+    *early = Early::Off;
+    *missed_start = false;
+    *early_bytes = 0;
+    *first_block_us = 0;
+    pushed.clear();
+    *source = Source::Frame;
+    *race = None;
+}
+
+#[cfg(test)]
+mod flush_tests {
+    use super::*;
+
+    #[test]
+    fn flush_disables_beam_race_slicing_and_resets_stream_state() {
+        let config = GpuConfig { width: 1920, height: 1080, chroma444: false, ten_bit: false, slots: 4 };
+        let mut records = Records::with_geometry(config.width, config.height, config.chroma444);
+        let mut early = Early::Active;
+        let mut missed_start = true;
+        let mut early_bytes = 4096;
+        let mut first_block_us = 123_456;
+        let mut pushed = BlockSet::default();
+        pushed.insert(7);
+        let mut source = Source::Early;
+        let mut race = Some(Race {
+            plan: SlicePlan::new(config.width, config.height, config.chroma444, 4),
+            header_pushed: true,
+            lease: None,
+            bands: vec![BandReady { slice: 0, first_row: 0, end_row: 270, fence_value: 1, ready_us: 10 }],
+            failure: Some("old".into()),
+            no_plane: true,
+            ordered_run: ORDERED_FRAMES_TO_RESUME,
+            slicing: true,
+            seq: 42,
+            events: Vec::new(),
+        });
+
+        reset_flush_state(
+            &mut records,
+            config,
+            &mut early,
+            &mut missed_start,
+            &mut early_bytes,
+            &mut first_block_us,
+            &mut pushed,
+            &mut source,
+            &mut race,
+        );
+
+        assert!(race.is_none(), "flush must disable beam-race slicing for cached decoder reuse");
+        assert!(early == Early::Off);
+        assert!(!missed_start);
+        assert_eq!((early_bytes, first_block_us), (0, 0));
+        assert!(pushed.is_empty());
+        assert_eq!(source, Source::Frame);
     }
 }

@@ -22,6 +22,7 @@
 //! none overtakes it. Linux reads keys and clicks on the main thread: there only controllers
 //! gain.
 
+use std::collections::{HashMap, HashSet};
 use std::ffi::c_void;
 use std::ops::{Deref, DerefMut};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
@@ -53,6 +54,35 @@ const ACTIONS: [Action; 4] = [Action::Quit, Action::Menu, Action::Mouse(false), 
 const POLL_ACTIVE_NS: u64 = 2_000_000;
 const POLL_IDLE_NS: u64 = 8_000_000;
 const POLL_ACTIVE_HOLD_US: u64 = 1_000_000;
+const AXIS_JITTER_THRESHOLD: i32 = 1024;
+
+#[derive(Default)]
+struct PadActivity {
+    last_axis: HashMap<(u32, u8), i16>,
+}
+
+impl PadActivity {
+    fn note_axis(&mut self, pad: u32, axis: u8, value: i16) -> bool {
+        let prev = self.last_axis.get(&(pad, axis)).copied().unwrap_or(0);
+        if (i32::from(value) - i32::from(prev)).abs() < AXIS_JITTER_THRESHOLD { return false; }
+        if self.last_axis.len() >= 256 && !self.last_axis.contains_key(&(pad, axis)) { self.last_axis.clear(); }
+        self.last_axis.insert((pad, axis), value);
+        true
+    }
+    fn remove_pad(&mut self, pad: u32) { self.last_axis.retain(|&(id, _), _| id != pad); }
+    fn is_active(&mut self, event: &SDL_Event) -> bool {
+        // SAFETY: union members read by event type.
+        unsafe {
+            match SDL_EventType(event.r#type) {
+                SDL_EVENT_GAMEPAD_BUTTON_DOWN | SDL_EVENT_GAMEPAD_BUTTON_UP
+                | SDL_EVENT_GAMEPAD_TOUCHPAD_DOWN | SDL_EVENT_GAMEPAD_TOUCHPAD_MOTION
+                | SDL_EVENT_GAMEPAD_TOUCHPAD_UP => true,
+                SDL_EVENT_GAMEPAD_AXIS_MOTION => self.note_axis(event.gaxis.which.0, event.gaxis.axis, event.gaxis.value),
+                _ => false,
+            }
+        }
+    }
+}
 
 /// Sleep duration (ns) for the controller poller thread between `SDL_UpdateJoysticks` calls.
 fn poller_sleep_ns(now_us: u64, last_pad_us: u64) -> u64 {
@@ -109,6 +139,9 @@ struct Frozen {
     rules: Option<Rules>,
     /// The loop's controllers, from before its present until after it.
     pads: Option<Lent>,
+    /// Keys and mouse buttons sent DOWN from the filter and not yet released.
+    sent_keys: HashSet<u16>,
+    sent_buttons: HashSet<u8>,
 }
 
 /// The main loop's controllers on loan.
@@ -143,8 +176,9 @@ struct Shared {
     sent_queued: AtomicU64,
     /// Keys, clicks, wheel turns and controller events that left from the filter.
     sent_input: AtomicU64,
-    /// Monotonic session timestamp (µs) of the most recent controller event seen by the filter.
+    /// Monotonic session timestamp (µs) of the most recent active controller input seen by the filter.
     last_pad_activity_us: Arc<AtomicU64>,
+    pad_activity: Mutex<PadActivity>,
 }
 
 impl Shared {
@@ -160,10 +194,10 @@ impl Shared {
     /// Runs `send` with what the main loop lent for its present; None while it lends nothing or
     /// holds the lock. Never waits: the filter may run under SDL's joystick lock, which the main
     /// loop may take while it holds this one.
-    fn direct<R>(&self, send: impl FnOnce(Rules, &mut Option<Lent>) -> Option<R>) -> Option<R> {
+    fn direct<R>(&self, send: impl FnOnce(Rules, &mut Frozen) -> Option<R>) -> Option<R> {
         let mut frozen = self.frozen.try_lock().ok()?;
-        let frozen = &mut *frozen;
-        send(frozen.rules?, &mut frozen.pads)
+        let rules = frozen.rules?;
+        send(rules, &mut frozen)
     }
 }
 
@@ -263,12 +297,13 @@ unsafe fn route(shared: &Shared, event: &mut SDL_Event) -> bool {
             Verdict::Ordered => {
                 let own = !touchpad
                     && !(kind != SDL_EVENT_MOUSE_WHEEL && shared.touch && matches!(event.button.which, SDL_TOUCH_MOUSEID | SDL_PEN_MOUSEID));
-                let sent = shared.direct(|rules, _| {
+                let sent = shared.direct(|rules, frozen| {
                     let clicks = direct_click(Some(rules), held, own)?;
                     shared.input.input(|q| match kind {
                         SDL_EVENT_MOUSE_WHEEL => send_wheel(&event.wheel, q),
                         // A button the PC doesn't get: the main loop drops it too.
                         _ => if let Some(button) = mouse_button_code(event.button.button, clicks.nav_buttons) {
+                            if event.button.down { frozen.sent_buttons.insert(button); } else { frozen.sent_buttons.remove(&button); }
                             let _ = q.send_mouse_button(button, event.button.down);
                         },
                     });
@@ -288,8 +323,9 @@ unsafe fn route(shared: &Shared, event: &mut SDL_Event) -> bool {
             SDL_EVENT_KEY_DOWN | SDL_EVENT_KEY_UP if event.key.repeat => mark(event, 0, None),
             SDL_EVENT_KEY_DOWN | SDL_EVENT_KEY_UP => {
                 let k = event.key;
-                let sent = shared.direct(|rules, _| {
+                let sent = shared.direct(|rules, frozen| {
                     let key = direct_key(Some(rules), held, k.scancode, k.r#mod, k.down)?;
+                    if k.down { frozen.sent_keys.insert(key.code); } else { frozen.sent_keys.remove(&key.code); }
                     shared.input.input(|q| {
                         let _ = q.send_keyboard(0x8000 | key.code, k.down, key.modifiers, key.flags);
                     });
@@ -303,10 +339,12 @@ unsafe fn route(shared: &Shared, event: &mut SDL_Event) -> bool {
                 }
             }
             kind if applies_to_pads(kind) => {
-                shared.last_pad_activity_us.store(nightjar_core::session::now_us(), Ordering::Relaxed);
+                if lock(&shared.pad_activity).is_active(event) {
+                    shared.last_pad_activity_us.store(nightjar_core::session::now_us(), Ordering::Relaxed);
+                }
                 let view: &SDL_Event = event;
-                let applied = shared.direct(|rules, pads| {
-                    let Lent(pads) = pads.as_mut().filter(|_| direct_pad(Some(rules), held))?;
+                let applied = shared.direct(|rules, frozen| {
+                    let Lent(pads) = frozen.pads.as_mut().filter(|_| direct_pad(Some(rules), held))?;
                     Some(shared.input.input(|q| pads.handle(view, q)))
                 });
                 match applied {
@@ -319,7 +357,11 @@ unsafe fn route(shared: &Shared, event: &mut SDL_Event) -> bool {
                 }
             }
             // A controller's later events wait until the main loop has opened or closed it.
-            SDL_EVENT_GAMEPAD_ADDED | SDL_EVENT_GAMEPAD_REMOVED => mark(event, QUEUED, Some(&shared.queued)),
+            SDL_EVENT_GAMEPAD_ADDED => mark(event, QUEUED, Some(&shared.queued)),
+            SDL_EVENT_GAMEPAD_REMOVED => {
+                lock(&shared.pad_activity).remove_pad(event.gdevice.which.0);
+                mark(event, QUEUED, Some(&shared.queued));
+            }
             kind if is_barrier(kind) => mark_barrier(event, &shared.ordered, &shared.queued),
             _ => mark(event, 0, None),
         }
@@ -562,6 +604,7 @@ impl DirectMotion {
             sent_queued: AtomicU64::new(0),
             sent_input: AtomicU64::new(0),
             last_pad_activity_us: Arc::new(AtomicU64::new(0)),
+            pad_activity: Mutex::new(PadActivity::default()),
         });
         let installed = std::env::var("NIGHTJAR_DIRECT_MOTION").map_or(true, |v| v.trim() != "0");
         let direct_input = installed && std::env::var("NIGHTJAR_DIRECT_INPUT").map_or(true, |v| v.trim() != "0");
@@ -684,10 +727,20 @@ impl DirectMotion {
         self.shared.sent_input.load(Ordering::Relaxed)
     }
 
-    /// Monotonic session timestamp (µs) of the last controller event seen by the filter (0 if none).
+    /// Monotonic session timestamp (µs) of the last active controller input seen by the filter (0 if none).
     pub fn last_pad_activity_us(&self) -> u64 {
         self.shared.last_pad_activity_us.load(Ordering::Relaxed)
     }
+
+    /// Takes keys and mouse buttons sent DOWN directly by the filter so `raise_all_keys()` releases them.
+    pub fn take_sent_down(&self) -> (HashSet<u16>, HashSet<u8>) {
+        let mut f = lock(&self.shared.frozen);
+        (std::mem::take(&mut f.sent_keys), std::mem::take(&mut f.sent_buttons))
+    }
+    pub fn is_sent_key_down(&self, code: u16) -> bool { lock(&self.shared.frozen).sent_keys.contains(&code) }
+    pub fn is_sent_button_down(&self, button: u8) -> bool { lock(&self.shared.frozen).sent_buttons.contains(&button) }
+    pub fn clear_sent_key(&self, code: u16) { lock(&self.shared.frozen).sent_keys.remove(&code); }
+    pub fn clear_sent_button(&self, button: u8) { lock(&self.shared.frozen).sent_buttons.remove(&button); }
 }
 
 impl Drop for DirectMotion {
@@ -707,3 +760,34 @@ impl Drop for DirectMotion {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod pad_jitter_tests {
+    use super::*;
+
+    fn ev(kind: SDL_EventType) -> SDL_Event {
+        let mut e: SDL_Event = unsafe { std::mem::zeroed() };
+        e.r#type = kind.0;
+        e
+    }
+
+    fn axis_ev(pad: u32, axis: u8, value: i16) -> SDL_Event {
+        let mut e = ev(SDL_EVENT_GAMEPAD_AXIS_MOTION);
+        (e.gaxis.which, e.gaxis.axis, e.gaxis.value) = (SDL_JoystickID(pad), axis, value);
+        e
+    }
+
+    #[test]
+    fn sub_threshold_stick_drift_and_sensors_do_not_keep_poller_hot() {
+        let mut act = PadActivity::default();
+        for drift in [1, -1, 64, -128, 256, -256, 0] { assert!(!act.is_active(&axis_ev(1, 0, drift))); }
+        assert!(!act.is_active(&ev(SDL_EVENT_GAMEPAD_SENSOR_UPDATE)));
+        assert!(!act.is_active(&ev(SDL_EVENT_JOYSTICK_BATTERY_UPDATED)));
+        assert!(act.is_active(&axis_ev(1, 0, 4000)));
+        for drift in [3900, 4150, 3750, 4250] { assert!(!act.is_active(&axis_ev(1, 0, drift))); }
+        assert!(act.is_active(&axis_ev(1, 0, 0)));
+        assert!(act.is_active(&ev(SDL_EVENT_GAMEPAD_BUTTON_DOWN)));
+        act.remove_pad(1);
+        assert!(act.last_axis.is_empty());
+    }
+}

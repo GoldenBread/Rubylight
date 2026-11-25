@@ -92,37 +92,34 @@ impl Streaming {
                 }
                 Notice::NetworkLost => self.network_lost(away),
                 Notice::AdaptiveBitrate(result) => {
-                    self.bitrate_busy = false;
-                    match result {
-                        Ok((ceiling, current)) => {
-                            self.facts.bitrate_kbps = i32::try_from(current).unwrap_or(i32::MAX);
-                            self.bitrate_kbps = current;
-                            if let Some(rates) = &mut self.rate_change { rates.bitrate_set(current, self.started.elapsed().as_millis() as u64); }
-                            self.bitrate_policy = Some(bitrate::Bitrate::new(self.facts.format, ceiling, current, self.facts.fps.max(1) as u32,
-                                (u32::from(self.requested_mode.width), u32::from(self.requested_mode.height)),
-                                self.started.elapsed().as_millis() as u64));
-                        }
-                        Err(error) => {
-                            self.adaptive_bitrate = false;
-                            self.show_toast(error);
-                        }
+                    if let Some(error) = apply_adaptive_bitrate_notice(
+                        result,
+                        &mut self.bitrate_busy,
+                        &mut self.adaptive_bitrate,
+                        &mut self.facts.bitrate_kbps,
+                        &mut self.bitrate_kbps,
+                        &mut self.rate_change,
+                        &mut self.bitrate_policy,
+                        self.facts.format,
+                        self.facts.fps.max(1) as u32,
+                        (u32::from(self.requested_mode.width), u32::from(self.requested_mode.height)),
+                        self.started.elapsed().as_millis() as u64,
+                    ) {
+                        self.show_toast(error);
                     }
                 }
                 Notice::HostAbr(result) => {
-                    self.bitrate_busy = false;
-                    match result {
-                        Ok(Some(configured)) => {
-                            let abr = host_abr::HostAbr::new(&configured, self.facts.bitrate_kbps.max(0) as u32,
-                                self.started.elapsed().as_millis() as u64);
-                            eprintln!("nightjar: the PC's automatic bitrate is on: {} kbps, at most {} kbps",
-                                abr.current_kbps, configured.max_bitrate);
-                            self.facts.bitrate_kbps = i32::try_from(abr.current_kbps).unwrap_or(i32::MAX);
-                            self.bitrate_kbps = abr.current_kbps;
-                            self.host_abr = Some(abr);
-                            self.adaptive_bitrate = true;
-                        }
-                        Ok(None) => eprintln!("nightjar: the PC has no automatic bitrate"),
-                        Err(error) => self.show_toast(error),
+                    if let Some(error) = apply_host_abr_notice(
+                        result,
+                        &mut self.bitrate_busy,
+                        &mut self.adaptive_bitrate,
+                        &mut self.facts.bitrate_kbps,
+                        &mut self.bitrate_kbps,
+                        &mut self.host_abr,
+                        &mut self.host_abr_start,
+                        self.started.elapsed().as_millis() as u64,
+                    ) {
+                        self.show_toast(error);
                     }
                 }
                 Notice::HostAbrAction(action) => {
@@ -326,5 +323,187 @@ impl Streaming {
             self.cursor_warning = true;
             self.show_toast(tr("The PC’s cursor could not be drawn; using the default pointer."));
         }
+    }
+}
+
+/// Applies a completed `Notice::AdaptiveBitrate` result. Always clears `bitrate_busy`; if adaptive
+/// bitrate was disabled while the request was in flight, ignores the stale result.
+#[allow(clippy::too_many_arguments)]
+fn apply_adaptive_bitrate_notice(
+    result: Result<(u32, u32), String>,
+    bitrate_busy: &mut bool,
+    adaptive_bitrate: &mut bool,
+    facts_bitrate_kbps: &mut i32,
+    bitrate_kbps: &mut u32,
+    rate_change: &mut Option<rate_change::RateChange>,
+    bitrate_policy: &mut Option<bitrate::Bitrate>,
+    format: u32,
+    fps: u32,
+    mode: (u32, u32),
+    now_ms: u64,
+) -> Option<String> {
+    *bitrate_busy = false;
+    if !*adaptive_bitrate {
+        return None;
+    }
+    match result {
+        Ok((ceiling, current)) => {
+            *facts_bitrate_kbps = i32::try_from(current).unwrap_or(i32::MAX);
+            *bitrate_kbps = current;
+            if let Some(rates) = rate_change { rates.bitrate_set(current, now_ms); }
+            *bitrate_policy = Some(bitrate::Bitrate::new(format, ceiling, current, fps, mode, now_ms));
+            None
+        }
+        Err(error) => {
+            *adaptive_bitrate = false;
+            Some(error)
+        }
+    }
+}
+
+/// Applies a completed `Notice::HostAbr` result. Always clears `bitrate_busy`; if host ABR was
+/// cancelled (`host_abr_start` already taken by `stop_host_abr`), ignores the stale result.
+#[allow(clippy::too_many_arguments)]
+fn apply_host_abr_notice(
+    result: Result<Option<nightjar_core::http::foundation::AbrConfigured>, String>,
+    bitrate_busy: &mut bool,
+    adaptive_bitrate: &mut bool,
+    facts_bitrate_kbps: &mut i32,
+    bitrate_kbps: &mut u32,
+    host_abr: &mut Option<host_abr::HostAbr>,
+    host_abr_start: &mut Option<host_abr::AbrStart>,
+    now_ms: u64,
+) -> Option<String> {
+    *bitrate_busy = false;
+    if host_abr_start.is_none() {
+        return None;
+    }
+    match result {
+        Ok(Some(configured)) => {
+            let abr = host_abr::HostAbr::new(&configured, (*facts_bitrate_kbps).max(0) as u32, now_ms);
+            eprintln!("nightjar: the PC's automatic bitrate is on: {} kbps, at most {} kbps",
+                abr.current_kbps, configured.max_bitrate);
+            *facts_bitrate_kbps = i32::try_from(abr.current_kbps).unwrap_or(i32::MAX);
+            *bitrate_kbps = abr.current_kbps;
+            *host_abr = Some(abr);
+            *adaptive_bitrate = true;
+            None
+        }
+        Ok(None) => {
+            *host_abr_start = None;
+            eprintln!("nightjar: the PC has no automatic bitrate");
+            None
+        }
+        Err(error) => {
+            *host_abr_start = None;
+            Some(error)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nightjar_core::http::foundation::AbrConfigured;
+
+    #[test]
+    fn late_adaptive_bitrate_completion_after_disable_is_ignored_and_clears_busy() {
+        let mut busy = true;
+        let mut adaptive = false;
+        let mut facts_kbps = 25_000;
+        let mut kbps = 25_000;
+        let mut rates = Some(rate_change::RateChange::new(25_000, 60_000, false, 0, 0));
+        let mut policy = None;
+
+        // Stale Ok completion after user disabled ABR: busy clears, policy stays None, bitrate unchanged.
+        let toast = apply_adaptive_bitrate_notice(
+            Ok((25_000, 12_000)),
+            &mut busy,
+            &mut adaptive,
+            &mut facts_kbps,
+            &mut kbps,
+            &mut rates,
+            &mut policy,
+            VIDEO_FORMAT_H265,
+            60,
+            (1920, 1080),
+            1_000,
+        );
+        assert!(toast.is_none());
+        assert!(!busy);
+        assert!(!adaptive);
+        assert!(policy.is_none());
+        assert_eq!((facts_kbps, kbps), (25_000, 25_000));
+
+        // Stale Err completion after disable: no spurious error toast.
+        busy = true;
+        let toast = apply_adaptive_bitrate_notice(
+            Err("stale failure".into()),
+            &mut busy,
+            &mut adaptive,
+            &mut facts_kbps,
+            &mut kbps,
+            &mut rates,
+            &mut policy,
+            VIDEO_FORMAT_H265,
+            60,
+            (1920, 1080),
+            2_000,
+        );
+        assert!(toast.is_none());
+        assert!(!busy);
+    }
+
+    #[test]
+    fn late_host_abr_completion_after_disable_is_ignored_while_active_start_succeeds() {
+        let configured = AbrConfigured {
+            success: true,
+            enabled: true,
+            initial_bitrate: 15_000,
+            max_bitrate: 30_000,
+            ..Default::default()
+        };
+        let mut busy = true;
+        let mut adaptive = false;
+        let mut facts_kbps = 30_000;
+        let mut kbps = 30_000;
+        let mut host_abr = None;
+        // `stop_host_abr()` already took `host_abr_start` when ABR was disabled.
+        let mut host_abr_start = None;
+
+        let toast = apply_host_abr_notice(
+            Ok(Some(configured.clone())),
+            &mut busy,
+            &mut adaptive,
+            &mut facts_kbps,
+            &mut kbps,
+            &mut host_abr,
+            &mut host_abr_start,
+            1_000,
+        );
+        assert!(toast.is_none());
+        assert!(!busy);
+        assert!(!adaptive, "stale HostAbr must not re-enable adaptive_bitrate");
+        assert!(host_abr.is_none());
+        assert_eq!((facts_kbps, kbps), (30_000, 30_000));
+
+        // Normal (non-cancelled) Foundation start: `host_abr_start` is Some while `adaptive` starts false.
+        busy = true;
+        host_abr_start = Some(host_abr::AbrStart::default());
+        let toast = apply_host_abr_notice(
+            Ok(Some(configured)),
+            &mut busy,
+            &mut adaptive,
+            &mut facts_kbps,
+            &mut kbps,
+            &mut host_abr,
+            &mut host_abr_start,
+            2_000,
+        );
+        assert!(toast.is_none());
+        assert!(!busy);
+        assert!(adaptive);
+        assert!(host_abr.is_some());
+        assert_eq!((facts_kbps, kbps), (15_000, 15_000));
     }
 }

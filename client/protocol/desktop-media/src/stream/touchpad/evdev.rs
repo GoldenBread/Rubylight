@@ -181,6 +181,11 @@ impl State {
         Frame { device: self.device, contacts: Some(contacts), button: self.button, width_mm: self.size_mm.0, height_mm: self.size_mm.1 }
     }
 
+    /// Sets the active MT slot from `EVIOCGABS(ABS_MT_SLOT).value`, clamped to the valid slot range.
+    pub fn set_slot(&mut self, value: i32) {
+        self.slot = usize::try_from(value).map_or(0, |s| s.min(self.slots.len().saturating_sub(1)));
+    }
+
     /// Puts the slots read from the device in place, as after `SYN_DROPPED` or at the start.
     fn set_slots(&mut self, tracking: &[i32], x: &[i32], y: &[i32]) {
         for (i, slot) in self.slots.iter_mut().enumerate() {
@@ -213,7 +218,7 @@ impl Pad {
         let size_mm = (length_mm(x.minimum, x.maximum, x.resolution as f32), length_mm(y.minimum, y.maximum, y.resolution as f32));
         let slots = usize::try_from(slot.maximum).map_or(1, |max| max + 1);
         let mut state = State::new(device, slots, (x.minimum, x.maximum), (y.minimum, y.maximum), pressure, size_mm);
-        state.slot = usize::try_from(slot.value).unwrap_or(0);
+        state.set_slot(slot.value);
         let mut pad = Pad { file, path: path.to_owned(), state };
         pad.resync();
         Ok(Some(pad))
@@ -221,6 +226,9 @@ impl Pad {
 
     /// Reads which fingers are down now: at the start, or after the kernel dropped events.
     fn resync(&mut self) {
+        if let Some(slot) = absinfo(&self.file, ABS_MT_SLOT) {
+            self.state.set_slot(slot.value);
+        }
         let n = self.state.slots.len();
         if let (Some(tracking), Some(x), Some(y)) = (
             slot_values(&self.file, ABS_MT_TRACKING_ID, n),
@@ -378,6 +386,36 @@ mod tests {
         // A slot past the device's is ignored.
         s.event(EV_ABS, ABS_MT_SLOT, 99);
         assert_eq!(s.event(EV_ABS, ABS_MT_POSITION_X, 5), None);
+    }
+
+    #[test]
+    fn resync_updates_active_slot_and_clamps_out_of_range_values() {
+        let mut s = state();
+        // Finger 7 starts in slot 0.
+        s.event(EV_ABS, ABS_MT_SLOT, 0);
+        s.event(EV_ABS, ABS_MT_TRACKING_ID, 7);
+        s.event(EV_ABS, ABS_MT_POSITION_X, 100);
+        s.event(EV_ABS, ABS_MT_POSITION_Y, 100);
+        s.event(EV_SYN, SYN_REPORT, 0).unwrap();
+
+        // Kernel drops events (including a switch to slot 1) and recovers at SYN_REPORT.
+        s.event(EV_SYN, SYN_DROPPED, 0);
+        assert_eq!(s.event(EV_SYN, SYN_REPORT, 0), None);
+        assert!(!s.dropped);
+
+        // Resync queries ABS_MT_SLOT (now 1) and the slot arrays.
+        s.set_slot(1);
+        s.set_slots(&[7, 9], &[100, 250], &[100, 125]);
+        // Subsequent coordinate updates without an ABS_MT_SLOT prefix must target slot 1.
+        s.event(EV_ABS, ABS_MT_POSITION_X, 500);
+        let f = s.event(EV_SYN, SYN_REPORT, 0).unwrap();
+        assert_eq!(ids(&f), [(7, 0.1, 0.2, true), (9, 0.5, 0.25, true)]);
+
+        // Out-of-range kernel slot values are clamped to 0..slots.len().
+        s.set_slot(-3);
+        assert_eq!(s.slot, 0);
+        s.set_slot(99);
+        assert_eq!(s.slot, 4);
     }
 
     #[test]

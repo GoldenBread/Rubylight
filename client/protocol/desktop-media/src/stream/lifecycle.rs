@@ -344,6 +344,10 @@ impl Streaming {
         // SAFETY: a live window.
         unsafe { SDL_ShowCursor() };
         pads.reset();
+        self.skipped_picture = None;
+        self.taken_frames.clear();
+        self.taken_slices.clear();
+        clear_shared_pictures(&self.shared);
         self.upscaler = None;
         #[cfg(target_os = "macos")]
         { self.metalfx = None; }
@@ -408,5 +412,46 @@ impl Streaming {
         // timeout or a decoder call: a reaper thread stops it while the launcher comes back.
         let session = self.session;
         (self.host_abr_stop.take(), spawn_background(move || session.stop()))
+    }
+}
+
+/// Drains pictures and slice pins held inside [`Shared`] so detached threads holding
+/// `Arc<Shared>` (such as `start_host_abr`) can never drop GPU frames or plane-set pins
+/// after teardown or renderer destruction.
+fn clear_shared_pictures(shared: &Shared) {
+    lock(&shared.frames).clear();
+    lock(&shared.pacer_backlog).clear();
+    lock(&shared.slices).clear();
+}
+
+#[cfg(test)]
+mod pipeline_finish_cleanup_tests {
+    use super::*;
+
+    #[test]
+    fn clear_shared_pictures_drains_frames_pacer_backlog_and_slices_with_detached_arc() {
+        let shared = Shared::new(Arc::new(|| {}), 4);
+        let detached = shared.clone();
+        lock(&shared.frames).push_back(present::tests::decoded(1));
+        lock(&shared.pacer_backlog).push_back(present::Pending {
+            decoded: present::tests::decoded(2),
+            present_us: 2,
+            hold_us: 0,
+            late: false,
+        });
+        // Unix (Linux and macOS): gpu_planes::Pin is a unit struct without a live D3D11 device.
+        #[cfg(unix)]
+        lock(&shared.slices).push_back(pyrowave::SliceReady {
+            seq: 1,
+            band: pyrowave::BandReady { slice: 0, first_row: 0, end_row: 64, fence_value: 1, ready_us: 1 },
+            pin: gpu_planes::Pin,
+        });
+
+        clear_shared_pictures(&shared);
+        drop(shared);
+
+        assert!(lock(&detached.frames).is_empty());
+        assert!(lock(&detached.pacer_backlog).is_empty());
+        assert!(lock(&detached.slices).is_empty());
     }
 }

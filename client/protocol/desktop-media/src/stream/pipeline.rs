@@ -403,6 +403,7 @@ fn say_cuda_fallback(shared: &Shared, decoder: &mut media::VideoDecoder) {
 
 impl VideoDecoder for Decoder {
     fn setup(&mut self, setup: &VideoSetup) -> Result<(), i32> {
+        lock(&self.shared.slices).clear();
         self.setup = Some(*setup);
         self.generation = super::decoder_cache::generation();
         self.shared.fps_millihz.store(setup.fps.max(1) as u32 * 1000, Ordering::Relaxed);
@@ -446,6 +447,10 @@ impl VideoDecoder for Decoder {
                 Ok((mut decoder, name)) => {
                     if self.slices > 0
                         && let Err(error) = decoder.set_beam_race(self.slices) { eprintln!("nightjar: beam race: {error}"); }
+                    #[cfg(windows)]
+                    if self.slices == 0 && let super::pyrowave::Pyrowave::Gpu(stream) = &mut decoder {
+                        stream.set_slices(0);
+                    }
                     self.pyrowave = Some(decoder);
                     if !reused && name == MAC_CPU_INSTEAD {
                         self.shared.notify(Notice::DecoderFallback(crate::strings::tr("PyroWave GPU decoding did not start on this Mac, so the processor decodes this stream.").to_owned()));
@@ -562,6 +567,8 @@ impl VideoDecoder for Decoder {
 
     fn cleanup(&mut self) {
         lock(&self.shared.frames).clear();
+        lock(&self.shared.pacer_backlog).clear();
+        lock(&self.shared.slices).clear();
         self.in_flight.clear();
         if let Some(summary) = self.pyrowave.as_ref().and_then(|decoder| decoder.stage_summary()) {
             eprintln!("nightjar: PyroWave decode stages {summary}");
@@ -622,3 +629,58 @@ impl VideoDecoder for Decoder {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod cleanup_tests {
+    use super::*;
+
+    #[test]
+    fn decoder_cleanup_and_setup_drain_pacer_backlog_and_slices() {
+        let shared = Shared::new(Arc::new(|| {}), 8);
+        let detached = shared.clone();
+        let mut decoder = Decoder::new(shared.clone(), Hardware::None);
+        let setup = VideoSetup {
+            format: nightjar_core::sdp::VIDEO_FORMAT_H264,
+            width: 96,
+            height: 64,
+            fps: 60,
+            chroma_packing: 0,
+            logical_width: 96,
+            logical_height: 64,
+            color_space: 1,
+            color_range: 0,
+        };
+        // Unix (Linux and macOS): gpu_planes::Pin is a unit struct without a live D3D11 device.
+        #[cfg(unix)]
+        lock(&shared.slices).push_back(super::super::pyrowave::SliceReady {
+            seq: 1,
+            band: super::super::pyrowave::BandReady { slice: 0, first_row: 0, end_row: 64, fence_value: 1, ready_us: 1 },
+            pin: super::super::gpu_planes::Pin,
+        });
+        decoder.setup(&setup).unwrap();
+        assert!(lock(&shared.slices).is_empty(), "setup clears stale slices");
+
+        lock(&shared.frames).push_back(super::super::present::tests::decoded(1));
+        lock(&shared.pacer_backlog).push_back(super::super::present::Pending {
+            decoded: super::super::present::tests::decoded(2),
+            present_us: 2,
+            hold_us: 0,
+            late: false,
+        });
+        // Unix (Linux and macOS): gpu_planes::Pin is a unit struct without a live D3D11 device.
+        #[cfg(unix)]
+        lock(&shared.slices).push_back(super::super::pyrowave::SliceReady {
+            seq: 2,
+            band: super::super::pyrowave::BandReady { slice: 0, first_row: 0, end_row: 64, fence_value: 2, ready_us: 2 },
+            pin: super::super::gpu_planes::Pin,
+        });
+
+        decoder.cleanup();
+        drop(decoder);
+        drop(shared);
+
+        assert!(lock(&detached.frames).is_empty(), "frames drained on cleanup");
+        assert!(lock(&detached.pacer_backlog).is_empty(), "pacer_backlog drained on cleanup");
+        assert!(lock(&detached.slices).is_empty(), "slices drained on cleanup");
+    }
+}

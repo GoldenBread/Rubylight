@@ -32,19 +32,35 @@ pub(super) fn open_device(
     }
     let configuration = handle.active_configuration()?;
     let config = device.active_config_descriptor()?;
+    let active_alt = AltConfig::from_descriptor(&config);
     let mut configs = HashMap::new();
+    let mut alt_configs = HashMap::new();
     for index in 0..descriptor.num_configurations() {
         match device.config_descriptor(index) {
             Ok(c) => {
+                let alt = AltConfig::from_descriptor(&c);
                 configs.insert(
                     c.number(),
-                    Config { interfaces: c.interfaces().map(|i| i.number()).collect(), endpoints: endpoints(&c) },
+                    Config { interfaces: c.interfaces().map(|i| i.number()).collect(), endpoints: alt.initial_endpoints() },
                 );
+                alt_configs.insert(c.number(), alt);
             }
             Err(e) => eprintln!("nightjar: USB {busid}: configuration descriptor {index} could not be read, so the host can't set it: {e}"),
         }
     }
-    let state = State { configuration, active: configuration, claimed: Vec::new(), endpoints: endpoints(&config), configs, closed: false };
+    alt_configs.entry(configuration).or_insert_with(|| active_alt.clone());
+    let state = DeviceState {
+        inner: State {
+            configuration,
+            active: configuration,
+            claimed: Vec::new(),
+            endpoints: active_alt.initial_endpoints(),
+            configs,
+            closed: false,
+        },
+        alt_configs,
+        active_alts: HashMap::new(),
+    };
     let class = match descriptor.class_code() {
         0 => config.interfaces().next().and_then(|i| i.descriptors().next()).map_or(0, |s| s.class_code()),
         class => class,
@@ -69,7 +85,7 @@ pub(super) fn open_device(
     };
     let opened = Libusb { handle, described, class, state: Mutex::new(state), warned_iso: AtomicBool::new(false) };
     let interfaces: Vec<u8> = config.interfaces().map(|i| i.number()).collect();
-    claim(&opened.handle, &mut opened.state(), &interfaces)?;
+    claim(&opened.handle, &mut opened.state().inner, &interfaces)?;
     Ok(Arc::new(Blocking::new(opened)))
 }
 
@@ -85,17 +101,55 @@ fn speed(speed: rusb::Speed) -> u32 {
     }
 }
 
-/// Every endpoint of a configuration, any alternate setting: its type and maximum packet size.
-fn endpoints(config: &rusb::ConfigDescriptor) -> HashMap<u8, (TransferType, u16)> {
-    let mut out = HashMap::new();
-    for interface in config.interfaces() {
-        for setting in interface.descriptors() {
-            for endpoint in setting.endpoint_descriptors() {
-                out.insert(endpoint.address(), (endpoint.transfer_type(), endpoint.max_packet_size() & 0x7ff));
+/// Endpoints indexed by `(interface, alt_setting)` so alternate settings never overwrite each other.
+#[derive(Clone, Default)]
+struct AltConfig {
+    /// `(interface, alt_setting)` -> endpoint address -> `(TransferType, max_packet_size)`.
+    settings: HashMap<(u8, u8), HashMap<u8, (TransferType, u16)>>,
+    /// Default alternate setting per interface (0 when present, else lowest setting number).
+    defaults: HashMap<u8, u8>,
+}
+
+impl AltConfig {
+    fn from_descriptor(config: &rusb::ConfigDescriptor) -> Self {
+        let mut out = Self::default();
+        for interface in config.interfaces() {
+            let iface = interface.number();
+            for setting in interface.descriptors() {
+                let alt = setting.setting_number();
+                out.add_setting(
+                    iface,
+                    alt,
+                    setting.endpoint_descriptors().map(|ep| (ep.address(), (ep.transfer_type(), ep.max_packet_size() & 0x7ff))),
+                );
             }
         }
+        out
     }
-    out
+
+    fn add_setting(&mut self, interface: u8, alt_setting: u8, endpoints: impl IntoIterator<Item = (u8, (TransferType, u16))>) {
+        let default = self.defaults.entry(interface).or_insert(alt_setting);
+        if alt_setting < *default { *default = alt_setting; }
+        let entry = self.settings.entry((interface, alt_setting)).or_default();
+        entry.extend(endpoints);
+    }
+
+    /// Active endpoints for every interface under its selected (or default alt 0) setting.
+    fn active_endpoints(&self, active_alts: &HashMap<u8, u8>) -> HashMap<u8, (TransferType, u16)> {
+        let mut out = HashMap::new();
+        for (&iface, &default_alt) in &self.defaults {
+            let alt = active_alts.get(&iface).copied().unwrap_or(default_alt);
+            if let Some(eps) = self.settings.get(&(iface, alt)) {
+                out.extend(eps.iter().map(|(&addr, &info)| (addr, info)));
+            }
+        }
+        out
+    }
+
+    /// Endpoints for the initial default alternate settings (alt 0 on each interface).
+    fn initial_endpoints(&self) -> HashMap<u8, (TransferType, u16)> {
+        self.active_endpoints(&HashMap::new())
+    }
 }
 
 /// A standard request the driver sends that changes the device's state, which libusb has to
@@ -320,17 +374,60 @@ pub(super) fn reset_port(handle: &impl Configure, state: &mut State, busid: &str
     }
 }
 
+/// Full libusb device state: base configuration/claims plus per-`(interface, alt_setting)` endpoints.
+struct DeviceState {
+    inner: State,
+    alt_configs: HashMap<u8, AltConfig>,
+    active_alts: HashMap<u8, u8>,
+}
+
+/// Alternate-setting selection on a libusb handle (kept separate from [`Configure`] for test fakes).
+trait SetInterface {
+    fn set_alternate_setting(&self, interface: u8, setting: u8) -> rusb::Result<()>;
+}
+
+impl SetInterface for rusb::DeviceHandle<rusb::Context> {
+    fn set_alternate_setting(&self, interface: u8, setting: u8) -> rusb::Result<()> {
+        rusb::DeviceHandle::set_alternate_setting(self, interface, setting)
+    }
+}
+
+/// SET_INTERFACE from the host: switches `interface` to `setting` and refreshes `state.inner.endpoints`
+/// on success so transfers use the newly selected alternate setting's transfer type and packet size.
+fn set_interface(handle: &impl SetInterface, state: &mut DeviceState, interface: u8, setting: u8) -> Reply {
+    if let Err(e) = handle.set_alternate_setting(interface, setting) {
+        return Reply::failed(rusb_errno(e));
+    }
+    state.active_alts.insert(interface, setting);
+    let cfg = state.inner.configuration;
+    if let Some(alt_config) = state.alt_configs.get(&cfg) {
+        state.inner.endpoints = alt_config.active_endpoints(&state.active_alts);
+    }
+    Reply::sent(0)
+}
+
+/// Marks the device closed and releases all claimed interfaces once (idempotent across `close` and `Drop`).
+fn close_state(handle: &impl Configure, state: &mut State, busid: &str) {
+    state.closed = true;
+    release(handle, state, busid);
+}
+
 struct Libusb {
     handle: rusb::DeviceHandle<rusb::Context>,
     described: wire::Device,
     class: u8,
-    state: Mutex<State>,
+    state: Mutex<DeviceState>,
     warned_iso: AtomicBool,
 }
 
 impl Libusb {
-    fn state(&self) -> MutexGuard<'_, State> {
+    fn state(&self) -> MutexGuard<'_, DeviceState> {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn close_inner(&self) {
+        let mut state = self.state();
+        close_state(&self.handle, &mut state.inner, &self.described.busid);
     }
 
     fn control(&self, transfer: &Transfer) -> Reply {
@@ -338,9 +435,30 @@ impl Libusb {
         let done = |result: rusb::Result<()>| result.map_or_else(|e| Reply::failed(rusb_errno(e)), |()| Reply::sent(0));
         let busid = &self.described.busid;
         match standard(setup) {
-            Some(Standard::SetConfiguration(value)) => return set_configuration(&self.handle, &mut self.state(), value, busid),
-            Some(Standard::PortReset) => return reset_port(&self.handle, &mut self.state(), busid),
-            Some(Standard::SetInterface { interface, setting }) => return done(self.handle.set_alternate_setting(interface, setting)),
+            Some(Standard::SetConfiguration(value)) => {
+                let mut state = self.state();
+                let prev = state.inner.configuration;
+                let reply = set_configuration(&self.handle, &mut state.inner, value, busid);
+                if reply.status == 0 && value != prev {
+                    state.active_alts.clear();
+                }
+                return reply;
+            }
+            Some(Standard::PortReset) => {
+                let mut state = self.state();
+                let reply = reset_port(&self.handle, &mut state.inner, busid);
+                if reply.status == 0 {
+                    state.active_alts.clear();
+                    let cfg = state.inner.configuration;
+                    if let Some(alt_config) = state.alt_configs.get(&cfg) {
+                        state.inner.endpoints = alt_config.initial_endpoints();
+                    }
+                }
+                return reply;
+            }
+            Some(Standard::SetInterface { interface, setting }) => {
+                return set_interface(&self.handle, &mut self.state(), interface, setting);
+            }
             Some(Standard::ClearHalt(endpoint)) => return done(self.handle.clear_halt(endpoint)),
             None => {}
         }
@@ -377,9 +495,17 @@ impl Libusb {
     }
 }
 
+impl Drop for Libusb {
+    /// Releases all claimed interfaces before `self.handle` drops (`libusb_close`), so Linux's
+    /// auto-detached kernel drivers reattach even when dropped without an explicit `close()`.
+    fn drop(&mut self) {
+        self.close_inner();
+    }
+}
+
 impl BlockingDevice for Libusb {
     fn describe(&self) -> wire::Device {
-        wire::Device { configuration: self.state().configuration, ..self.described.clone() }
+        wire::Device { configuration: self.state().inner.configuration, ..self.described.clone() }
     }
 
     fn class(&self) -> u8 {
@@ -387,7 +513,7 @@ impl BlockingDevice for Libusb {
     }
 
     fn transfer(&self, transfer: &Transfer, cancelled: &AtomicBool) -> Reply {
-        if self.state().closed { return Reply::failed(wire::ESHUTDOWN); }
+        if self.state().inner.closed { return Reply::failed(wire::ESHUTDOWN); }
         if transfer.is_control() { return self.control(transfer); }
         if transfer.is_isochronous() {
             if !self.warned_iso.swap(true, Ordering::SeqCst) {
@@ -396,7 +522,7 @@ impl BlockingDevice for Libusb {
             return Reply::failed(wire::EPROTO);
         }
         let address = transfer.endpoint | if transfer.direction == Direction::In { 0x80 } else { 0 };
-        let Some((kind, max_packet)) = self.state().endpoints.get(&address).copied() else { return Reply::failed(wire::EPIPE) };
+        let Some((kind, max_packet)) = self.state().inner.endpoints.get(&address).copied() else { return Reply::failed(wire::EPIPE) };
         match transfer.direction {
             Direction::In => read_sliced(transfer.length as usize, cancelled, |buffer| self.call(address, kind, buffer.as_mut_ptr(), buffer.len())),
             Direction::Out => {
@@ -408,8 +534,105 @@ impl BlockingDevice for Libusb {
     }
 
     fn close(&self) {
-        let mut state = self.state();
-        state.closed = true;
-        release(&self.handle, &mut state, &self.described.busid);
+        self.close_inner();
+    }
+}
+
+#[cfg(test)]
+mod unit_tests {
+    use super::*;
+
+    struct FakeAltHandle {
+        result: rusb::Result<()>,
+    }
+
+    impl SetInterface for FakeAltHandle {
+        fn set_alternate_setting(&self, _interface: u8, _setting: u8) -> rusb::Result<()> {
+            self.result
+        }
+    }
+
+    #[derive(Default)]
+    struct ReleaseLog(std::cell::RefCell<Vec<u8>>);
+
+    impl Configure for ReleaseLog {
+        fn claim_interface(&self, _interface: u8) -> rusb::Result<()> { Ok(()) }
+        fn release_interface(&self, interface: u8) -> rusb::Result<()> { self.0.borrow_mut().push(interface); Ok(()) }
+        fn set_auto_detach_kernel_driver(&self, _on: bool) -> rusb::Result<()> { Ok(()) }
+        fn set_active_configuration(&self, _value: u8) -> rusb::Result<()> { Ok(()) }
+        fn reset(&self) -> rusb::Result<()> { Ok(()) }
+    }
+
+    #[test]
+    fn multi_alt_setting_initializes_from_alt_0_and_refreshes_on_set_interface() {
+        let mut alt = AltConfig::default();
+        // Interface 0: alt 0 has EP 0x81 Interrupt(8); alt 1 changes EP 0x81 to Bulk(512) and adds EP 0x02 Bulk(512).
+        alt.add_setting(0, 0, [(0x81, (TransferType::Interrupt, 8))]);
+        alt.add_setting(0, 1, [(0x81, (TransferType::Bulk, 512)), (0x02, (TransferType::Bulk, 512))]);
+        // Interface 1: alt 0 has no endpoints (zero-bandwidth), alt 1 adds EP 0x83 Interrupt(64).
+        alt.add_setting(1, 0, []);
+        alt.add_setting(1, 1, [(0x83, (TransferType::Interrupt, 64))]);
+
+        let initial = alt.initial_endpoints();
+        assert_eq!(initial.get(&0x81), Some(&(TransferType::Interrupt, 8)), "alt 1 must not overwrite alt 0");
+        assert!(!initial.contains_key(&0x02));
+        assert!(!initial.contains_key(&0x83));
+
+        let config = Config { interfaces: vec![0, 1], endpoints: initial.clone() };
+        let mut dev = DeviceState {
+            inner: State {
+                configuration: 1,
+                active: 1,
+                claimed: vec![0, 1],
+                endpoints: initial,
+                configs: HashMap::from([(1, config)]),
+                closed: false,
+            },
+            alt_configs: HashMap::from([(1, alt)]),
+            active_alts: HashMap::new(),
+        };
+
+        // Switch interface 0 to alt 1: EP 0x81 becomes Bulk(512) and EP 0x02 appears.
+        let ok = FakeAltHandle { result: Ok(()) };
+        assert_eq!(set_interface(&ok, &mut dev, 0, 1).status, 0);
+        assert_eq!(dev.inner.endpoints.get(&0x81), Some(&(TransferType::Bulk, 512)));
+        assert_eq!(dev.inner.endpoints.get(&0x02), Some(&(TransferType::Bulk, 512)));
+        assert!(!dev.inner.endpoints.contains_key(&0x83));
+
+        // Switch interface 1 to alt 1: EP 0x83 appears while interface 0 stays on alt 1.
+        assert_eq!(set_interface(&ok, &mut dev, 1, 1).status, 0);
+        assert_eq!(dev.inner.endpoints.get(&0x81), Some(&(TransferType::Bulk, 512)));
+        assert_eq!(dev.inner.endpoints.get(&0x83), Some(&(TransferType::Interrupt, 64)));
+
+        // Failed SetInterface must leave active endpoints unchanged.
+        let fail = FakeAltHandle { result: Err(rusb::Error::Pipe) };
+        assert_eq!(set_interface(&fail, &mut dev, 0, 0).status, wire::EPIPE);
+        assert_eq!(dev.inner.endpoints.get(&0x81), Some(&(TransferType::Bulk, 512)));
+
+        // Switching interface 0 back to alt 0 restores Interrupt(8) and drops EP 0x02.
+        assert_eq!(set_interface(&ok, &mut dev, 0, 0).status, 0);
+        assert_eq!(dev.inner.endpoints.get(&0x81), Some(&(TransferType::Interrupt, 8)));
+        assert!(!dev.inner.endpoints.contains_key(&0x02));
+        assert_eq!(dev.inner.endpoints.get(&0x83), Some(&(TransferType::Interrupt, 64)));
+    }
+
+    #[test]
+    fn close_state_releases_claimed_interfaces_once_for_close_and_drop() {
+        let log = ReleaseLog::default();
+        let mut state = State {
+            configuration: 1,
+            active: 1,
+            claimed: vec![0, 1, 2],
+            endpoints: HashMap::new(),
+            configs: HashMap::new(),
+            closed: false,
+        };
+        close_state(&log, &mut state, "1-2");
+        assert!(state.closed);
+        assert!(state.claimed.is_empty());
+        assert_eq!(*log.0.borrow(), [0, 1, 2]);
+        // Second call (e.g. Drop after close()) must be a no-op.
+        close_state(&log, &mut state, "1-2");
+        assert_eq!(*log.0.borrow(), [0, 1, 2]);
     }
 }

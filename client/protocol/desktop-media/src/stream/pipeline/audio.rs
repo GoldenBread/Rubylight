@@ -213,6 +213,7 @@ unsafe extern "C" fn conceal(userdata: *mut c_void, stream: *mut SDL_AudioStream
 
 impl AudioRenderer for Audio {
     fn init(&mut self, setup: &AudioSetup) -> Result<(), i32> {
+        self.cleanup();
         use rubylight_protocol::audio_ext::{CODEC_OPUS, CODEC_PCM};
         let opus = &setup.opus;
         let channels = setup.configuration.channel_count;
@@ -359,5 +360,51 @@ impl AudioRenderer for Audio {
             self.callback = std::ptr::null();
         }
         self.playout = None;
+    }
+}
+
+impl Drop for Audio {
+    fn drop(&mut self) {
+        self.cleanup();
+    }
+}
+
+#[cfg(test)]
+mod drop_tests {
+    use super::*;
+
+    #[test]
+    fn drop_reclaims_leaked_callback_playout_when_cleanup_was_never_called() {
+        let shared = Shared::new(Arc::new(|| {}), 4);
+        let playout = Arc::new(Mutex::new(Playout::new(AudioDecoder::Pcm { channels: 2 }, 5, 0)));
+        let weak = Arc::downgrade(&playout);
+        let mut audio = Audio::new(shared, 0);
+        audio.playout = Some(playout.clone());
+        audio.callback = Arc::into_raw(playout);
+        assert_eq!(weak.strong_count(), 2, "playout plus leaked callback reference");
+
+        drop(audio);
+        assert_eq!(weak.strong_count(), 0, "Drop must release callback Arc::into_raw");
+    }
+
+    #[test]
+    fn cleanup_and_drop_are_idempotent() {
+        let shared = Shared::new(Arc::new(|| {}), 4);
+        let playout = Arc::new(Mutex::new(Playout::new(AudioDecoder::Pcm { channels: 2 }, 5, 0)));
+        let weak = Arc::downgrade(&playout);
+        let mut audio = Audio::new(shared, 0);
+        audio.playout = Some(playout.clone());
+        audio.callback = Arc::into_raw(playout);
+
+        audio.cleanup();
+        assert_eq!(weak.strong_count(), 0);
+        assert!(audio.callback.is_null());
+        assert!(audio.stream.is_null());
+        assert!(audio.playout.is_none());
+
+        // Calling cleanup again and then dropping must not double-free.
+        audio.cleanup();
+        drop(audio);
+        assert_eq!(weak.strong_count(), 0);
     }
 }

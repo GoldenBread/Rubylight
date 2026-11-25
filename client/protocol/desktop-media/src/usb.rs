@@ -168,6 +168,33 @@ struct Opening {
     failed: Option<String>,
 }
 
+impl Opening {
+    /// Marks `busid` as currently opening; returns `false` if already in flight.
+    fn try_start(&mut self, busid: &str) -> bool {
+        if self.busids.iter().any(|b| b == busid) {
+            return false;
+        }
+        self.busids.push(busid.to_owned());
+        true
+    }
+
+    fn finish(&mut self, busid: &str) {
+        self.busids.retain(|b| b != busid);
+    }
+}
+
+/// Ensures `busid` is removed from `Opening::busids` even if `open`/`attach` panics.
+struct OpeningGuard<'a> {
+    opening: &'a Mutex<Opening>,
+    busid: String,
+}
+
+impl Drop for OpeningGuard<'_> {
+    fn drop(&mut self) {
+        self.opening.lock().unwrap_or_else(PoisonError::into_inner).finish(&self.busid);
+    }
+}
+
 /// How often the automatic attach looks for newly plugged-in devices.
 const AUTO_POLL: Duration = Duration::from_secs(2);
 
@@ -193,11 +220,11 @@ fn auto_due(local: &[Local], auto: &[String], busy: impl Fn(&str) -> bool, tried
 
 /// Opens and attaches `local`, which the caller marked as being opened; a failure shows on the panel.
 fn attach_tracked(forwarder: &Forwarder, opening: &Mutex<Opening>, local: &Local) {
-    let lock = || opening.lock().unwrap_or_else(PoisonError::into_inner);
+    let _guard = OpeningGuard { opening, busid: local.busid.clone() };
     let attached = attach_now(forwarder, local);
-    let mut opening = lock();
-    opening.busids.retain(|b| *b != local.busid);
-    if let Err(e) = attached { opening.failed = Some(e); }
+    if let Err(e) = attached {
+        opening.lock().unwrap_or_else(PoisonError::into_inner).failed = Some(e);
+    }
 }
 
 impl Panel {
@@ -253,8 +280,10 @@ impl Panel {
                                 || forwarder.list().iter().any(|a| a.is_active() && a.busid == busid)
                         };
                         for device in auto_due(&local, &wanted, busy, &mut tried) {
+                            if !opening.lock().unwrap_or_else(PoisonError::into_inner).try_start(&device.busid) {
+                                continue;
+                            }
                             eprintln!("nightjar: USB {}: attaching {} automatically", device.busid, device.name);
-                            opening.lock().unwrap_or_else(PoisonError::into_inner).busids.push(device.busid.clone());
                             attach_tracked(&forwarder, &opening, &device);
                         }
                     }
@@ -327,18 +356,18 @@ impl Panel {
 
     pub fn attach(&mut self, local: &Local) {
         self.error = None;
+        if !self.opening().try_start(&local.busid) { return; }
         if !local.kernel {
+            let _guard = OpeningGuard { opening: &self.opening, busid: local.busid.clone() };
             if let Err(e) = attach_now(&self.forwarder, local) { self.error = Some(e); }
             return;
         }
         // Binding waits for the password: off the drawing thread.
-        if self.is_opening(local) { return; }
-        self.opening().busids.push(local.busid.clone());
         let busid = local.busid.clone();
         let (forwarder, opening, local) = (self.forwarder.clone(), self.opening.clone(), local.clone());
         let spawned = std::thread::Builder::new().name("usb-open".into()).spawn(move || attach_tracked(&forwarder, &opening, &local));
         if let Err(e) = spawned {
-            self.opening().busids.retain(|b| *b != busid);
+            self.opening().finish(&busid);
             self.error = Some(trf("The device could not be opened: {}", &[&e]));
         }
     }
@@ -437,3 +466,25 @@ pub fn phase_failed(phase: &Phase) -> bool {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod opening_tests {
+    use super::*;
+
+    #[test]
+    fn opening_dedups_concurrent_opens_and_guard_releases_busid() {
+        let opening = Mutex::new(Opening::default());
+        assert!(opening.lock().unwrap().try_start("1-2"));
+        assert!(!opening.lock().unwrap().try_start("1-2"), "concurrent open for same busid rejected");
+        assert!(opening.lock().unwrap().try_start("1-3"), "distinct busid allowed");
+        {
+            let _guard = OpeningGuard { opening: &opening, busid: "1-2".into() };
+            assert!(opening.lock().unwrap().busids.contains(&"1-2".to_owned()));
+        }
+        assert!(!opening.lock().unwrap().busids.contains(&"1-2".to_owned()), "guard releases busid on drop");
+        assert!(opening.lock().unwrap().try_start("1-2"), "busid can be opened again after release");
+        opening.lock().unwrap().finish("1-2");
+        opening.lock().unwrap().finish("1-3");
+        assert!(opening.lock().unwrap().busids.is_empty());
+    }
+}

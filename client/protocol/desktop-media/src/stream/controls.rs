@@ -296,16 +296,9 @@ impl Streaming {
 
     pub fn raise_all_keys(&mut self) {
         self.release_shortcut();
-        let keys: Vec<u16> = self.keys_down.drain().collect();
-        let buttons: Vec<u8> = self.mouse_down.drain().collect();
+        let (direct_keys, direct_buttons) = self.direct_motion.take_sent_down();
         self.session.input(|q| {
-            self.touch.release(q);
-            for key in keys {
-                let _ = q.send_keyboard(0x8000 | key, false, 0, 0);
-            }
-            for button in buttons {
-                let _ = q.send_mouse_button(button, false);
-            }
+            release_held_inputs(&mut self.keys_down, &mut self.mouse_down, direct_keys, direct_buttons, &mut self.touch, q);
         });
     }
 
@@ -596,4 +589,75 @@ impl Streaming {
     pub fn device_removed(&self) -> bool { self.plan.device.is_removed() }
     pub fn note_render_device_lost(&mut self, reason: String) { self.retry_now = true; self.exit.get_or_insert(Exit::RenderDeviceLost(reason)); }
     pub fn check_render_device_lost(&mut self) -> bool { let lost = crate::render_device::event_pending() || self.device_removed(); if lost { self.note_render_device_lost(crate::render_device::lost_reason().into()); } lost }
+}
+
+/// Releases every key, mouse button and touch point currently held by either the main loop or
+/// `DirectMotion` (before SDL's queue has been drained).
+fn release_held_inputs(
+    keys_down: &mut HashSet<u16>,
+    mouse_down: &mut HashSet<u8>,
+    direct_keys: HashSet<u16>,
+    direct_buttons: HashSet<u8>,
+    touch: &mut touch::Touch,
+    q: &mut nightjar_core::input::InputQueue,
+) {
+    keys_down.extend(direct_keys);
+    mouse_down.extend(direct_buttons);
+    touch.release(q);
+    for key in keys_down.drain() {
+        let _ = q.send_keyboard(0x8000 | key, false, 0, 0);
+    }
+    for button in mouse_down.drain() {
+        let _ = q.send_mouse_button(button, false);
+    }
+}
+
+#[cfg(test)]
+mod direct_motion_raise_keys_tests {
+    use super::*;
+    use nightjar_core::control::HostCapabilities;
+    use nightjar_core::input::packets::magic;
+    use nightjar_core::input::InputQueue;
+
+    #[test]
+    fn raise_all_keys_releases_direct_motion_sent_key_and_mouse_before_sdl_poll() {
+        let mut queue = InputQueue::new(&HostCapabilities::default());
+        // Simulate DirectMotion sending W (0x57) and Left Mouse Button (1) DOWN during present,
+        // followed immediately by open_guide_menu()/follow_fullscreen() -> raise_all_keys()
+        // before wait_stream_events() drains the SDL queue (`keys_down` and `mouse_down` are empty).
+        let mut keys_down = HashSet::new();
+        let mut mouse_down = HashSet::new();
+        let direct_keys = HashSet::from([0x57u16]);
+        let direct_buttons = HashSet::from([mouse_button::LEFT]);
+        let mut touch = touch::Touch::default();
+
+        release_held_inputs(&mut keys_down, &mut mouse_down, direct_keys, direct_buttons, &mut touch, &mut queue);
+
+        assert!(keys_down.is_empty());
+        assert!(mouse_down.is_empty());
+        let mut packets = Vec::new();
+        queue.drain(Instant::now(), false, &mut packets);
+        let magics: Vec<u32> = packets
+            .iter()
+            .filter(|p| p.data.len() >= 8)
+            .map(|p| u32::from_le_bytes(p.data[4..8].try_into().unwrap()))
+            .collect();
+        assert!(magics.contains(&magic::KEY_UP), "expected KEY_UP in {magics:#x?}");
+        assert!(magics.contains(&magic::MOUSE_BUTTON_UP), "expected MOUSE_BUTTON_UP in {magics:#x?}");
+
+        // Also verify deduplication when a key/button is in both sets.
+        let mut keys_down = HashSet::from([0x57u16]);
+        let mut mouse_down = HashSet::from([mouse_button::LEFT]);
+        release_held_inputs(
+            &mut keys_down,
+            &mut mouse_down,
+            HashSet::from([0x57u16]),
+            HashSet::from([mouse_button::LEFT]),
+            &mut touch,
+            &mut queue,
+        );
+        let mut dedup_packets = Vec::new();
+        queue.drain(Instant::now(), false, &mut dedup_packets);
+        assert_eq!(dedup_packets.len(), 2, "each held key/button is released once");
+    }
 }

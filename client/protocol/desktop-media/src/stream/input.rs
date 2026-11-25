@@ -82,6 +82,26 @@ pub(super) fn mouse_button_goes_out(captured: bool, focused: bool, down: bool, w
     if down { pointer_goes_out(captured, focused) } else { pointer_goes_out(captured, focused) || was_down }
 }
 
+/// Reconciles a key or mouse button event that `DirectMotion` already sent to the host.
+/// Returns `true` when the press was recorded as currently held (i.e. not already released
+/// by `raise_all_keys()` or a subsequent `SENT` release).
+fn reconcile_sent_press<T: Eq + std::hash::Hash>(
+    held: &mut HashSet<T>,
+    item: T,
+    down: bool,
+    still_down_in_filter: bool,
+) -> bool {
+    if down {
+        if still_down_in_filter {
+            held.insert(item);
+            return true;
+        }
+    } else {
+        held.remove(&item);
+    }
+    false
+}
+
 /// Whether a key event goes to the PC: presses require capture and focus, while releases also
 /// pass if the key is currently held in `keys_down` so none stays stuck.
 pub(super) fn key_goes_out(captured: bool, focused: bool, down: bool, was_down: bool) -> bool {
@@ -190,6 +210,17 @@ impl Streaming {
                 }
                 SDL_EVENT_MOUSE_BUTTON_DOWN | SDL_EVENT_MOUSE_BUTTON_UP => {
                     let b = event.button;
+                    if direct_motion::sent(event) {
+                        if let Some(button) = mouse_button_code(b.button, self.settings.mouse_nav_buttons) {
+                            reconcile_sent_press(
+                                &mut self.mouse_down,
+                                button,
+                                b.down,
+                                self.direct_motion.is_sent_button_down(button),
+                            );
+                        }
+                        return;
+                    }
                     if self.facts.touch && self.captured && matches!(b.which, SDL_TOUCH_MOUSEID | SDL_PEN_MOUSEID) { return; }
                     if !self.captured {
                         // The first click only takes the pointer.
@@ -209,10 +240,7 @@ impl Streaming {
                         self.mouse_down.insert(button);
                     } else {
                         self.mouse_down.remove(&button);
-                    }
-                    // The input filter sent it while the loop waited in the present.
-                    if direct_motion::sent(event) {
-                        return;
+                        self.direct_motion.clear_sent_button(button);
                     }
                     self.session.input(|q| {
                         let _ = q.send_mouse_button(button, b.down);
@@ -331,6 +359,17 @@ impl Streaming {
             }
             return;
         }
+        if sent {
+            if let Some(KeyInput { code, .. }) =
+                key_input(k.scancode, k.r#mod, self.system_keys(), self.settings.right_alt_as_meta)
+                && reconcile_sent_press(&mut self.keys_down, code, k.down, self.direct_motion.is_sent_key_down(code))
+                && self.captured
+                && self.focused
+            {
+                self.text_field.key_down(text_field::types(k.key, k.r#mod));
+            }
+            return;
+        }
         if self.plan.mic_only
             && !(k.down && mic_only_chord(crate::shortcuts_runtime::key_action(crate::shortcuts::Scope::Stream, k.scancode, k.r#mod)))
         {
@@ -422,9 +461,7 @@ impl Streaming {
             self.text_field.key_down(text_field::types(k.key, k.r#mod));
         } else {
             self.keys_down.remove(&code);
-        }
-        if sent {
-            return;
+            self.direct_motion.clear_sent_key(code);
         }
         self.session.input(|q| {
             let _ = q.send_keyboard(0x8000 | code, k.down, modifiers, flags);
@@ -474,5 +511,19 @@ mod mic_only_tests {
         assert!(!mouse_button_goes_out(true, false, true, false), "unfocused click must not reach host");
         assert!(mouse_button_goes_out(true, false, false, true), "held mouse button release still goes out");
         assert!(!mouse_button_goes_out(true, false, false, false), "unheld mouse button release while unfocused is dropped");
+    }
+
+    #[test]
+    fn direct_motion_sent_presses_reconcile_before_early_returns_and_after_raise_all_keys() {
+        let mut held = HashSet::new();
+        // Press sent by DirectMotion and still down in filter: recorded even if capture later dropped.
+        assert!(reconcile_sent_press(&mut held, mouse_button::LEFT, true, true));
+        assert!(held.contains(&mouse_button::LEFT));
+        // Matching release removes it.
+        assert!(!reconcile_sent_press(&mut held, mouse_button::LEFT, false, false));
+        assert!(held.is_empty());
+        // Press already released by raise_all_keys() before SDL_PollEvent drained it: not re-added.
+        assert!(!reconcile_sent_press(&mut held, mouse_button::LEFT, true, false));
+        assert!(held.is_empty());
     }
 }

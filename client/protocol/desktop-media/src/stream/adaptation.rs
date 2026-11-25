@@ -247,7 +247,7 @@ impl Streaming {
         let now = self.started.elapsed().as_millis() as u64;
         if keep {
             let request = self.rate_change.as_mut().and_then(|rates| rates.keep_now(now));
-            if self.adaptive_bitrate { self.enable_adaptive_bitrate(false); }
+            if self.adaptive_bitrate || self.host_abr_start.is_some() { self.enable_adaptive_bitrate(false); }
             if let Some(request) = request { self.send_rate_change(request); }
         } else {
             if let Some(rates) = &mut self.rate_change { rates.release(); }
@@ -273,18 +273,27 @@ impl Streaming {
     }
 
     pub fn enable_adaptive_bitrate(&mut self, enabled: bool) {
-        if self.bitrate_busy { return; }
+        if enabled && self.bitrate_busy { return; }
         if enabled && self.client_hint_active() {
             eprintln!("nightjar: client-hint bitrate adapts this stream; the PC's adaptive bitrate stays off");
             return;
         }
-        self.bitrate_policy = None;
-        self.stop_host_abr();
-        if enabled { self.forget_manual_bitrate(); }
-        self.adaptive_bitrate = enabled && self.facts.runtime_bitrate && self.facts.role == AppRole::Stream;
+        if disable_abr_state(
+            &mut self.bitrate_policy,
+            &mut self.adaptive_bitrate,
+            &mut self.host_abr,
+            &mut self.host_abr_start,
+        ) {
+            self.spawn_host_abr_stop();
+        }
+        if !enabled {
+            return;
+        }
+        self.forget_manual_bitrate();
+        self.adaptive_bitrate = self.facts.runtime_bitrate && self.facts.role == AppRole::Stream;
         if !self.adaptive_bitrate {
             // A PC without Rubylight's runtime bitrate may run its own controller (Foundation).
-            if enabled && self.facts.role == AppRole::Stream { self.start_host_abr(); }
+            if self.facts.role == AppRole::Stream { self.start_host_abr(); }
             return;
         }
         self.doctor.trial.clear();
@@ -333,10 +342,12 @@ impl Streaming {
                 Err(e) => Err(trf(MSG_HOST_ABR_START_FAILED, &[&e])),
             };
             if matches!(result, Ok(Some(_))) && !start.turned_on() {
-                // The stream ended while the PC turned it on: nobody else will turn it off.
+                // The stream ended or ABR was turned off while the PC turned it on: nobody else will turn it off.
                 if let Err(e) = client.configure_abr(&AbrRequest::off()) {
                     eprintln!("nightjar: the PC's automatic bitrate did not stop: {e}");
                 }
+                // Still clear `bitrate_busy` on the stream if it is running.
+                shared.notify(Notice::HostAbr(Ok(None)));
                 return;
             }
             shared.notify(Notice::HostAbr(result));
@@ -356,6 +367,10 @@ impl Streaming {
         if self.host_abr.take().is_some() { self.adaptive_bitrate = false; }
         // On, though its answer may not have come yet; a start still in flight turns it off itself.
         if !self.host_abr_start.take().is_some_and(|start| start.end()) { return; }
+        self.spawn_host_abr_stop();
+    }
+
+    fn spawn_host_abr_stop(&mut self) {
         let Some(client) = lock(&self.shared.host_client).as_ref().map(|c| c.detached()) else { return };
         self.host_abr_stop = Some(host_abr::AbrStop::spawn(move || {
             if let Err(e) = client.configure_abr(&AbrRequest::off()) {
@@ -435,5 +450,68 @@ impl Streaming {
         doctor::summary(&report, hide_connection).map(|summary| {
             [packed, buffer].into_iter().flatten().fold(summary, |text, hint| format!("{text}\n\n{hint}"))
         })
+    }
+}
+
+/// Clears client and host adaptive-bitrate state; returns `true` if a Foundation host ABR
+/// controller had already turned on and needs an asynchronous `AbrRequest::off()` stop.
+fn disable_abr_state(
+    bitrate_policy: &mut Option<bitrate::Bitrate>,
+    adaptive_bitrate: &mut bool,
+    host_abr: &mut Option<host_abr::HostAbr>,
+    host_abr_start: &mut Option<host_abr::AbrStart>,
+) -> bool {
+    *bitrate_policy = None;
+    *host_abr = None;
+    *adaptive_bitrate = false;
+    host_abr_start.take().is_some_and(|start| start.end())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Disabling adaptive bitrate (including from `set_bitrate_kept(true)`) must succeed even
+    /// while a start request is still in flight (`bitrate_busy == true`).
+    #[test]
+    fn disabling_abr_for_keep_bitrate_proceeds_while_bitrate_busy() {
+        let mut rates = rate_change::RateChange::new(20_000, 60_000, false, 0, 0);
+        let mut adaptive_bitrate = true;
+        let mut bitrate_policy = Some(bitrate::Bitrate::new(VIDEO_FORMAT_H265, 20_000, 20_000, 60, (1920, 1080), 0));
+        let mut host_abr = None;
+        let mut host_abr_start: Option<host_abr::AbrStart> = None;
+        let bitrate_busy = true;
+
+        // `set_bitrate_kept(true)` path while `bitrate_busy == true`.
+        let request = rates.keep_now(1_000);
+        assert!(request.is_some(), "keep_now sends takeover request");
+        assert!(bitrate_busy, "in-flight ABR start must not block disabling");
+        if adaptive_bitrate || host_abr_start.is_some() {
+            let needs_stop = disable_abr_state(&mut bitrate_policy, &mut adaptive_bitrate, &mut host_abr, &mut host_abr_start);
+            assert!(!needs_stop);
+        }
+        assert!(!adaptive_bitrate);
+        assert!(bitrate_policy.is_none());
+        assert_eq!(rate_change::keep_switch(Some(&rates), adaptive_bitrate), Some(true));
+    }
+
+    #[test]
+    fn disabling_in_flight_host_abr_cancels_pending_start_or_requests_stop() {
+        // Pending start (not yet turned on): `disable_abr_state` cancels it so the worker turns it off itself.
+        let pending = host_abr::AbrStart::default();
+        let mut adaptive = false;
+        let mut policy = None;
+        let mut host_abr = None;
+        let mut host_start = Some(pending.clone());
+        assert!(!disable_abr_state(&mut policy, &mut adaptive, &mut host_abr, &mut host_start));
+        assert!(host_start.is_none());
+        assert!(!pending.turned_on(), "worker sees cancelled start and sends AbrRequest::off()");
+
+        // Start already turned on on the host (notice queued, not yet drained): `disable_abr_state` requests stop.
+        let active = host_abr::AbrStart::default();
+        assert!(active.turned_on());
+        let mut host_start = Some(active);
+        assert!(disable_abr_state(&mut policy, &mut adaptive, &mut host_abr, &mut host_start));
+        assert!(host_start.is_none());
     }
 }

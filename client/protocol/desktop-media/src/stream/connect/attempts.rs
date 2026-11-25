@@ -13,9 +13,8 @@ impl Connecting {
         connect_overdue(self.progress, now)
     }
 
-    /// Reaps an attempt that left the screen before its worker answered: true once the worker
-    /// ended. A stream it made in the meantime is stopped here, as nobody waits for it.
-    pub fn ended(&mut self) -> bool {
+    /// Drains any late result from the worker channel, stopping a session if one was made.
+    fn reap_late_result(&mut self) -> bool {
         match self.result.try_recv() {
             Ok(Ok((session, _, _))) => {
                 eprintln!("nightjar: a cancelled start made a stream after all; it ends");
@@ -27,6 +26,24 @@ impl Connecting {
             Ok(Err(_)) | Err(std::sync::mpsc::TryRecvError::Disconnected) => true,
             Err(std::sync::mpsc::TryRecvError::Empty) => false,
         }
+    }
+
+    /// Reaps an attempt that left the screen before its worker answered: true once the worker
+    /// thread itself has finished (and been joined). A stream it made in the meantime is stopped
+    /// immediately even if the worker has not returned yet.
+    pub fn ended(&mut self) -> bool {
+        let mut joined_worker = false;
+        if let Some(worker) = self.worker.as_ref() {
+            if !worker.is_finished() {
+                self.reap_late_result();
+                return false;
+            }
+            if let Some(worker) = self.worker.take() && worker.join().is_err() {
+                eprintln!("nightjar: the connect thread panicked");
+            }
+            joined_worker = true;
+        }
+        self.reap_late_result() || joined_worker
     }
 }
 
@@ -143,5 +160,40 @@ impl Attempts {
         let mut all = std::mem::take(&mut self.ending);
         all.extend(self.current.take());
         all
+    }
+}
+
+#[cfg(test)]
+mod ended_tests {
+    use super::*;
+    use super::super::replace_tests::connecting;
+
+    #[test]
+    fn ended_waits_for_worker_to_finish_even_after_result_was_sent() {
+        let (sender, result) = channel();
+        let (sent_tx, sent_rx) = channel::<()>();
+        let (release_tx, release_rx) = channel::<()>();
+        let worker = std::thread::spawn(move || {
+            let _ = sender.send(Err("refused".into()));
+            let _ = sent_tx.send(());
+            let _ = release_rx.recv();
+        });
+        let mut attempts = Attempts::default();
+        attempts.begin(connecting(result, Some(worker)));
+        assert!(attempts.cancel());
+        sent_rx.recv_timeout(Duration::from_secs(5)).expect("worker sent result");
+
+        // Result arrived, but the worker thread has not exited yet: must stay busy.
+        assert!(!attempts.reap(), "ended() stays false while worker is still running");
+        assert!(attempts.is_busy(), "Attempts::is_busy() must remain true while worker runs");
+
+        // Let the worker finish; once exited, ended() joins it and returns true.
+        let _ = release_tx.send(());
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !attempts.reap() {
+            assert!(Instant::now() < deadline, "worker finishes and is reaped");
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert!(!attempts.is_busy());
     }
 }
