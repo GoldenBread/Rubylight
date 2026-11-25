@@ -348,8 +348,12 @@ Nonary/libvirtualdisplay commit 9fc7b61b72c79328654d943b2ad7768021cc7d7f src/dri
 (MIT, Copyright (c) 2026 Chase Payne; terms in third-party/licenses/libvirtualdisplay-LICENSE.txt).
 Its KWin capture of one output (rust/linux/graphics/src/capture/kwin and its permission file)
 follows Vibepollo's src/platform/linux/kwingrab.cpp of the same commit (GPL-3.0), which carries
-the KWin capture of LizardByte Sunshine and Apollo (GPL-3.0). It drives the vibeshine_drm
-module and its broker that Vibepollo installs; Rubylight ships neither.
+the KWin capture of LizardByte Sunshine and Apollo (GPL-3.0). Rubylight's own pool is the
+kernel's stock VKMS driver, made and plugged by rust/linux/vdisplay-broker, whose request
+protocol and connector lease rules follow libvirtualdisplay commit 9fc7b61b
+linux/packaging/vibeshine-vkms (MIT, Copyright (c) 2026 Chase Payne), ported on 2026-11-25.
+The host also drives the vibeshine_drm module and broker Vibepollo installs; Rubylight ships
+no kernel module.
 
 NVIDIA driver settings
 

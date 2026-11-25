@@ -1,0 +1,47 @@
+# One connection to Rubylight's virtual display broker (stdin and stdout are the socket). Runs
+# as root: it writes the pool's VKMS connector files in configfs. Protocol and leases after
+# libvirtualdisplay's vibeshine-vkms broker (Nonary/libvirtualdisplay, MIT, Copyright (c) 2026
+# Chase Payne).
+# No capabilities are kept: root owns every file it writes (configfs attributes, the lease
+# directory), so owner access is enough. ProtectKernelTunables would make configfs read-only,
+# so it is not set.
+[Unit]
+Description=Rubylight virtual display control connection
+Requires=rubylight-vdisplay-pool.service
+After=rubylight-vdisplay-pool.service
+
+[Service]
+Type=exec
+User=root
+ExecStart=/usr/lib/rubylight/rubylight-vdisplay-broker serve
+StandardInput=socket
+StandardOutput=socket
+StandardError=journal
+UMask=0077
+RuntimeMaxSec=10s
+TimeoutStopSec=1s
+KillMode=control-group
+SendSIGKILL=yes
+MemoryMax=32M
+TasksMax=16
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+ProtectHome=yes
+PrivateTmp=yes
+PrivateNetwork=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ReadWritePaths=-/sys/kernel/config -/run/rubylight-vdisplay
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service

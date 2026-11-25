@@ -12,6 +12,11 @@
 #   /usr/share/rubylight/assets/                  --assets' parent: web/ (the console build),
 #                                                 cover images, remote-session/
 #   /usr/lib/systemd/user/rubylight.service       the user unit
+#   /usr/lib/rubylight/rubylight-vdisplay-broker  the root broker of the virtual display pool
+#   /usr/lib/systemd/system/rubylight-vdisplay-pool.service, rubylight-vdisplay.socket and
+#                                                 rubylight-vdisplay@.service: its units
+#                                                 (not enabled by the package)
+#   /usr/lib/sysusers.d/rubylight-vdisplay.conf   the rubylight-vdisplay group
 #   /usr/lib/udev/rules.d/70..72-rubylight-*      the encoder clock, pads and uinput/uhid rules
 #   /usr/lib/modules-load.d/rubylight.conf        uinput and uhid
 #   /usr/share/applications/rubylight-kwin-screencast.desktop
@@ -80,6 +85,7 @@ build() {
   cd "$repo"
   export CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-"$srcdir/target"}
   cargo build --release --locked -p butterpollo --bin butterpollo
+  cargo build --release --locked -p rubylight-vdisplay-broker
   if command -v npm >/dev/null; then
     # Built in a copy: the checkout's node_modules stays untouched.
     rm -rf "$srcdir/web"
@@ -109,6 +115,14 @@ package() {
   fi
   chmod -R u+rwX,go+rX,go-w "$assets"
 
+  install -Dm755 "$target/release/rubylight-vdisplay-broker" \
+    "$pkgdir/usr/lib/rubylight/rubylight-vdisplay-broker"
+  install -Dm644 -t "$pkgdir/usr/lib/systemd/system" \
+    "$packaging/systemd/rubylight-vdisplay-pool.service" \
+    "$packaging/systemd/rubylight-vdisplay.socket" \
+    "$packaging/systemd/rubylight-vdisplay@.service"
+  install -Dm644 "$packaging/sysusers/rubylight-vdisplay.conf" \
+    "$pkgdir/usr/lib/sysusers.d/rubylight-vdisplay.conf"
   install -Dm644 -t "$pkgdir/usr/lib/udev/rules.d" "$packaging"/udev/*.rules
   install -Dm644 "$packaging/systemd/rubylight.service" \
     "$pkgdir/usr/lib/systemd/user/rubylight.service"

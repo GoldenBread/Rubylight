@@ -1,0 +1,26 @@
+# Rubylight's pool of virtual monitors: the kernel's stock VKMS driver with N hot-pluggable
+# connectors, made once at boot, before the display manager, and kept. The broker's protocol
+# and lease rules follow libvirtualdisplay's linux/packaging/vibeshine-vkms broker
+# (Nonary/libvirtualdisplay, MIT, Copyright (c) 2026 Chase Payne), which Vibepollo installs;
+# the pool itself uses the kernel's VKMS configfs.
+#   systemctl enable --now rubylight-vdisplay-pool.service
+# The desktop user plugs and unplugs the monitors over /run/rubylight/vdisplay.sock.
+[Unit]
+Description=Rubylight virtual display pool (VKMS)
+Documentation=https://docs.kernel.org/gpu/vkms.html https://github.com/RamazanKara/Rubylight
+Wants=rubylight-vdisplay.socket
+After=systemd-modules-load.service
+Before=display-manager.service systemd-user-sessions.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+UMask=0022
+ExecStartPre=/usr/bin/modprobe vkms create_default_dev=0
+ExecStart=/usr/lib/rubylight/rubylight-vdisplay-broker pool start
+ExecStop=/usr/lib/rubylight/rubylight-vdisplay-broker pool stop
+TimeoutStartSec=30s
+TimeoutStopSec=30s
+
+[Install]
+WantedBy=multi-user.target

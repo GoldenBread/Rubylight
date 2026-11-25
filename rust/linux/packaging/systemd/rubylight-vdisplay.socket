@@ -1,0 +1,19 @@
+# The socket of Rubylight's virtual display broker: one line in, one line out, per connection.
+# It is open to every user (0666); the broker checks each caller (root, the rubylight-vdisplay
+# group, or a user with an active session on a seat). Protocol after libvirtualdisplay's
+# vibeshine-vkms broker (Nonary/libvirtualdisplay, MIT, Copyright (c) 2026 Chase Payne).
+[Unit]
+Description=Rubylight virtual display control socket
+PartOf=rubylight-vdisplay-pool.service
+
+[Socket]
+ListenStream=/run/rubylight/vdisplay.sock
+SocketMode=0666
+DirectoryMode=0755
+Accept=yes
+RemoveOnStop=yes
+MaxConnections=16
+MaxConnectionsPerSource=4
+
+[Install]
+WantedBy=sockets.target

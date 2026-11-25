@@ -3302,6 +3302,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "rubylight-vdisplay-broker"
+version = "6.3.2"
+dependencies = [
+ "anyhow",
+ "libc",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "rubylight-vdisplay-proto"
 version = "0.1.0"
 

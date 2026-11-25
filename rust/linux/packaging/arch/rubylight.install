@@ -11,6 +11,13 @@ post_install() {
     echo "    seat user; log in again (or run: sudo udevadm trigger --subsystem-match=misc) once."
     echo "    Optional: the PyroWave codec needs libpyrowave-shared.so in /usr/lib (or beside the host);"
     echo "    build it with client/scripts/build-pyrowave-sdk.sh from the source and install the .so there."
+    echo "    Virtual displays (optional, as root): the pool of virtual monitors is not enabled by"
+    echo "    the package; enable it once and it starts at every boot:"
+    echo "      systemctl enable --now rubylight-vdisplay-pool.service"
+    echo "    Users with a session on a seat may plug monitors in; others need the group"
+    echo "    rubylight-vdisplay."
+    systemd-sysusers rubylight-vdisplay.conf >/dev/null 2>&1 || true
+    systemctl daemon-reload >/dev/null 2>&1 || true
     udevadm control --reload 2>/dev/null || true
     udevadm trigger --subsystem-match=misc --subsystem-match=drm --action=change 2>/dev/null || true
     modprobe -a uinput uhid 2>/dev/null || true
@@ -23,5 +30,7 @@ post_upgrade() {
 
 post_remove() {
     echo "==> Rubylight's profile (pairings, settings, logs) stays in ~/.config/rubylight."
+    echo "    The virtual display pool, if it runs, stays until a reboot removes it."
+    systemctl daemon-reload >/dev/null 2>&1 || true
     udevadm control --reload 2>/dev/null || true
 }
