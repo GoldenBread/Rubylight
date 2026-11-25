@@ -558,4 +558,41 @@ public class StreamMenuTest {
         assertFalse(items(StreamMenu.mainPage(monitor)).contains(NIGHT_MODE));
         assertFalse(items(StreamMenu.mainPage(monitor)).contains(HEADPHONE_SURROUND));
     }
+
+    /** T9-18: non-QUICK boolean switches on Page.MORE keep their feature icon visible when OFF and refresh on toggle. */
+    @Test
+    public void morePageBooleanSwitchKeepsFeatureIconVisibleAndRefreshesState() {
+        try (var controller = org.robolectric.Robolectric.buildActivity(StreamGlassTest.Stream.class).setup().visible()) {
+            android.app.Activity activity = controller.get();
+            activity.setTheme(com.limelight.R.style.StreamTheme);
+            StreamMenu.Options opts = options("rubylight-serverinfo.xml", NvApp.Role.STREAM);
+            opts.rateChange = true;
+            opts.rateChangeBitrate = true;
+            opts.automaticBitrateOn = false;
+            StreamMenu menu = new StreamMenu(activity, () -> opts, item -> {
+                if (item == AUTOMATIC_BITRATE) opts.automaticBitrateOn = !opts.automaticBitrateOn;
+            });
+            menu.show();
+            com.google.android.material.button.MaterialButton more = menu.row(MORE);
+            if (more != null) more.performClick();
+            com.google.android.material.button.MaterialButton autoBitrate = menu.row(AUTOMATIC_BITRATE);
+            assertNotNull("Automatic bitrate row shown on More", autoBitrate);
+            assertFalse("starts unselected", autoBitrate.isSelected());
+            android.content.res.ColorStateList tint = autoBitrate.getIconTint();
+            assertNotEquals("feature icon must not be tinted transparent when OFF",
+                    android.graphics.Color.TRANSPARENT, tint == null ? -1 : tint.getDefaultColor());
+            opts.automaticBitrateOn = true;
+            menu.refresh();
+            assertTrue("refresh() updates Page.MORE switch to ON in place", autoBitrate.isSelected());
+            assertEquals(activity.getString(com.limelight.R.string.stream_choice_selected),
+                    androidx.core.view.ViewCompat.getStateDescription(autoBitrate));
+            opts.automaticBitrateOn = false;
+            menu.refresh();
+            assertFalse("refresh() updates Page.MORE switch back to OFF in place", autoBitrate.isSelected());
+            assertEquals(activity.getString(com.limelight.R.string.stream_choice_not_selected),
+                    androidx.core.view.ViewCompat.getStateDescription(autoBitrate));
+            android.app.Dialog shown = org.robolectric.shadows.ShadowDialog.getLatestDialog();
+            if (shown != null) shown.dismiss();
+        }
+    }
 }

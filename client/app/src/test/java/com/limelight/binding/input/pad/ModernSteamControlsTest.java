@@ -183,13 +183,14 @@ public class ModernSteamControlsTest {
         assertFalse(right.state().pressed);
     }
 
-    @Test public void aTrackpadTouchCarriesALightFixedPressureWhateverTheScreenReports() {
-        // Screens with a binary pressure axis report 1.0 on every touch; sent on, Steam reads it as a pad click (#150).
+    @Test public void aTrackpadTouchCarriesZeroPressureWhateverTheScreenReports() {
+        // Screens with a binary pressure axis report 1.0 on every touch, and even 0.1 trips Steam's click on
+        // touch-down (#150); normal touches carry 0 pressure, matching real SC2026 reports.
         ModernController controller = controller();
         PadControlView right = controller.view(PadLayout.Control.RIGHT_PAD);
         float w = right.getWidth(), h = right.getHeight();
         long t = android.os.SystemClock.uptimeMillis();
-        int light = Math.round(SteamControls.PAD_TOUCH_PRESSURE * 1000);
+        int rest = Math.round(SteamControls.PAD_TOUCH_PRESSURE * 1000);
         int[] actions = {MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE, MotionEvent.ACTION_MOVE};
         float[] pressures = {1f, 1f, 0.6f};
         for (int i = 0; i < actions.length; i++) {
@@ -198,9 +199,9 @@ public class ModernSteamControlsTest {
             event.recycle();
             int[] touch = touches.get(touches.size() - 1);
             assertEquals(actions[i] == MotionEvent.ACTION_DOWN ? MoonBridge.LI_TOUCH_EVENT_DOWN : MoonBridge.LI_TOUCH_EVENT_MOVE, touch[0]);
-            assertEquals(light, touch[4]);
+            assertEquals(rest, touch[4]);
         }
-        assertTrue(light > 0 && light < 500);
+        assertEquals(0, rest);
         controller.destroy();
     }
 
@@ -261,20 +262,24 @@ public class ModernSteamControlsTest {
         PadControlView left = controller.view(PadLayout.Control.LEFT_PAD);
         float w = left.getWidth(), h = left.getHeight();
 
-        // A tap: the click presses with the finger still on the pad, holds a moment, releases, and
-        // only then does the touch end.
+        // A tap: a click-pressure MOVE goes out before the click bit with the finger still on the pad,
+        // holds a moment, releases the click bit, and ends the touch at 0 pressure (#150).
         int count = buttons.size();
         left.down(0, w / 2, h / 4, 100);
         assertEquals(count, buttons.size());
+        assertEquals(0, touches.get(touches.size() - 1)[4]);
         events.clear();
         left.up(0, 200);
-        assertEquals("The press goes out with the touch still down",
-                java.util.Arrays.asList("b" + SteamControls.LEFT_PAD_CLICK_FLAG), events);
+        assertEquals("The click-pressure MOVE and click bit go out with the touch still down",
+                java.util.Arrays.asList("t" + MoonBridge.LI_TOUCH_EVENT_MOVE, "b" + SteamControls.LEFT_PAD_CLICK_FLAG), events);
+        assertEquals(Math.round(SteamControls.PAD_CLICK_PRESSURE * 1000), touches.get(touches.size() - 1)[4]);
         ShadowLooper.idleMainLooper(PadControlView.PAD_CLICK_HOLD_MS, TimeUnit.MILLISECONDS);
         // A resend during the hold repeats the held state, which is the same press, not a second one.
-        assertEquals(java.util.Arrays.asList("b" + SteamControls.LEFT_PAD_CLICK_FLAG, "b0",
+        assertEquals(java.util.Arrays.asList("t" + MoonBridge.LI_TOUCH_EVENT_MOVE,
+                "b" + SteamControls.LEFT_PAD_CLICK_FLAG, "b0",
                 "t" + MoonBridge.LI_TOUCH_EVENT_UP), withoutRepeats(events));
         assertEquals(MoonBridge.LI_TOUCH_EVENT_UP, touches.get(touches.size() - 1)[0]);
+        assertEquals(0, touches.get(touches.size() - 1)[4]);
         assertEquals(0, last());
 
         // The right pad clicks its own button.
@@ -306,8 +311,8 @@ public class ModernSteamControlsTest {
         left.up(0, 2550);
         left.down(0, w / 2, h / 2, 2560);
         assertEquals(java.util.Arrays.asList("t" + MoonBridge.LI_TOUCH_EVENT_DOWN,
-                "b" + SteamControls.LEFT_PAD_CLICK_FLAG, "b0", "t" + MoonBridge.LI_TOUCH_EVENT_UP,
-                "t" + MoonBridge.LI_TOUCH_EVENT_DOWN), events);
+                "t" + MoonBridge.LI_TOUCH_EVENT_MOVE, "b" + SteamControls.LEFT_PAD_CLICK_FLAG, "b0",
+                "t" + MoonBridge.LI_TOUCH_EVENT_UP, "t" + MoonBridge.LI_TOUCH_EVENT_DOWN), events);
         left.up(0, 3000 - 10);
         ShadowLooper.idleMainLooper(PadControlView.PAD_CLICK_HOLD_MS, TimeUnit.MILLISECONDS);
         count = buttons.size();

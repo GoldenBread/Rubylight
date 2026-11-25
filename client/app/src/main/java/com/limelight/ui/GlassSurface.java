@@ -289,7 +289,10 @@ public class GlassSurface extends FrameLayout {
             post(invalidator);
             return;
         }
-        if (nodesStale || glassNode == null) {
+        boolean missingDisplayList = glassNode == null || !((RenderNode) glassNode).hasDisplayList()
+                || (tier == GlassTier.LENS && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+                        && lensNode != null && !((RenderNode) lensNode).hasDisplayList());
+        if (nodesStale || missingDisplayList) {
             recordGlass(blur);
             if (tier == GlassTier.LENS && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) recordLens();
             nodesStale = false;

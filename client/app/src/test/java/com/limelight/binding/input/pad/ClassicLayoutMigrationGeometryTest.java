@@ -124,7 +124,7 @@ public class ClassicLayoutMigrationGeometryTest {
     @Test public void eachControlKeepsItsOwnOpacity() {
         Map<Integer, float[]> boxes = classicDefault();
         boxes.put(12, new float[] {60, 40, 260, 260, 40});
-        boxes.put(1, new float[] {40, 410, 300, 300, 5});
+        boxes.put(1, new float[] {40, 410, 300, 300, -5});
         PadLayout layout = ClassicLayoutMigration.migrate(boxes, WIDTH, HEIGHT, DENSITY);
         assertEquals(40, layout.spec(PadLayout.Control.LEFT_STICK).opacity);
         assertEquals("never below this controller's floor", PadLayout.MIN_OPACITY,

@@ -276,4 +276,140 @@ public class StreamGlassTest {
             }
         }
     }
+
+    /** T9-11: destroying the Activity before the 120 ms recompose flash ends closes it cleanly without crashing. */
+    @Test
+    public void recomposingFlashClosesCleanlyWhenActivityDestroysEarly() {
+        var controller = Robolectric.buildActivity(Stream.class).setup().visible();
+        Activity activity = controller.get();
+        GlassTier.force(activity, GlassTier.SOLID);
+        MenuBlurWindow.enabledForTest = true;
+        MenuBlurWindow[] opened = new MenuBlurWindow[1];
+        try {
+            assertTrue(StreamGlass.recompose(activity, 120, blur -> opened[0] = blur));
+            assertNotNull(opened[0]);
+            assertTrue(opened[0].isShowing());
+            controller.pause().stop().destroy();
+            org.robolectric.shadows.ShadowLooper.idleMainLooper(200, java.util.concurrent.TimeUnit.MILLISECONDS);
+            assertFalse("closed without throwing when the host window went away", opened[0].isShowing());
+        } finally {
+            GlassTier.force(activity, null);
+        }
+    }
+
+    /** T9-12: finishing/destroyed Activity never opens a MenuBlurWindow or leaks a WindowManager listener. */
+    @Test
+    public void finishingActivityNeverOpensStreamBlurWindow() {
+        try (var controller = Robolectric.buildActivity(Stream.class).setup().visible()) {
+            Activity activity = controller.get();
+            activity.setTheme(R.style.StreamTheme);
+            GlassTier.force(activity, GlassTier.LENS);
+            MenuBlurWindow.enabledForTest = true;
+            try {
+                activity.finish();
+                assertNull(MenuBlurWindow.openIfAllowed(activity, 40, on -> { }));
+                MenuBlurWindow[] opened = new MenuBlurWindow[1];
+                AlertDialog dialog = new NavigationDialogBuilder(activity).setTitle("Touch mode").create();
+                StreamGlass.show(dialog, blur -> opened[0] = blur);
+                assertNull("no blur window on a finishing activity", opened[0]);
+                assertFalse("dialog not shown on a finishing activity", dialog.isShowing());
+            } finally {
+                GlassTier.force(activity, null);
+            }
+        }
+    }
+
+    /** T9-14: single-pointer ACTION_CANCEL and onDetachedFromWindow release all multi-pointer held touch keys. */
+    @Test
+    public void pcKeyboardViewReleasesAllActivePointersOnSinglePointerCancelAndDetach() {
+        try (var controller = Robolectric.buildActivity(Stream.class).setup().visible()) {
+            Activity activity = controller.get();
+            activity.setTheme(R.style.StreamTheme);
+            PcKeyboardController kb = controller();
+            PcKeyboardView view = new PcKeyboardView(activity, kb);
+            android.widget.FrameLayout host = new android.widget.FrameLayout(activity);
+            host.addView(view, new android.widget.FrameLayout.LayoutParams(900, 300));
+            activity.setContentView(host);
+            view.measure(android.view.View.MeasureSpec.makeMeasureSpec(900, android.view.View.MeasureSpec.EXACTLY),
+                    android.view.View.MeasureSpec.makeMeasureSpec(300, android.view.View.MeasureSpec.EXACTLY));
+            view.layout(0, 0, 900, 300);
+
+            long t = android.os.SystemClock.uptimeMillis();
+            android.view.MotionEvent down0 = android.view.MotionEvent.obtain(t, t, android.view.MotionEvent.ACTION_DOWN, 120f, 150f, 0);
+            view.onTouchEvent(down0);
+            down0.recycle();
+
+            android.view.MotionEvent.PointerProperties[] props = {new android.view.MotionEvent.PointerProperties(), new android.view.MotionEvent.PointerProperties()};
+            props[0].id = 0;
+            props[1].id = 1;
+            android.view.MotionEvent.PointerCoords[] coords = {new android.view.MotionEvent.PointerCoords(), new android.view.MotionEvent.PointerCoords()};
+            coords[0].x = 120f; coords[0].y = 150f;
+            coords[1].x = 420f; coords[1].y = 150f;
+            android.view.MotionEvent down1 = android.view.MotionEvent.obtain(t, t + 10,
+                    android.view.MotionEvent.ACTION_POINTER_DOWN | (1 << android.view.MotionEvent.ACTION_POINTER_INDEX_SHIFT),
+                    2, props, coords, 0, 0, 1f, 1f, 0, 0, 0, 0);
+            view.onTouchEvent(down1);
+            down1.recycle();
+            assertTrue("keys held before cancel", kb.engine().hasHeldKeys());
+
+            // AOSP cancelTouchTarget / GameTouchControls synthesize a single-pointer ACTION_CANCEL with pointer 0 only.
+            android.view.MotionEvent cancel = android.view.MotionEvent.obtain(t, t + 20, android.view.MotionEvent.ACTION_CANCEL, 0f, 0f, 0);
+            view.onTouchEvent(cancel);
+            cancel.recycle();
+            assertFalse("pointer 1 key must not stick after single-pointer cancel", kb.engine().hasHeldKeys());
+            assertFalse("repeat ticker must stop", kb.needsTick());
+
+            // Detaching while a key is held also releases active touches.
+            android.view.MotionEvent downAgain = android.view.MotionEvent.obtain(t + 30, t + 30, android.view.MotionEvent.ACTION_DOWN, 420f, 150f, 0);
+            view.onTouchEvent(downAgain);
+            downAgain.recycle();
+            assertTrue(kb.engine().hasHeldKeys());
+            host.removeView(view);
+            assertFalse("detach must release held touch keys", kb.engine().hasHeldKeys());
+        }
+    }
+
+    /** T9-17: GlassProbe cancels queued step-down verdicts on stop() and refuses to start on finishing activities. */
+    @Test
+    public void glassProbeStopsCleanlyAndRefusesFinishingActivities() {
+        try (var controller = Robolectric.buildActivity(Stream.class).setup().visible()) {
+            Activity activity = controller.get();
+            activity.getApplicationContext().getSharedPreferences("glass_tier", android.content.Context.MODE_PRIVATE)
+                    .edit().clear().commit();
+            java.util.concurrent.atomic.AtomicInteger stepDowns = new java.util.concurrent.atomic.AtomicInteger();
+            GlassProbe probe = GlassProbe.start(activity, GlassTier.LENS, tier -> stepDowns.incrementAndGet());
+            assertNotNull(probe);
+            probe.stop();
+            // Stopping twice is safe and never fires a verdict.
+            probe.stop();
+            org.robolectric.shadows.ShadowLooper.idleMainLooper();
+            assertEquals(0, stepDowns.get());
+
+            activity.finish();
+            assertNull("no probe on finishing activity", GlassProbe.start(activity, GlassTier.LENS, tier -> stepDowns.incrementAndGet()));
+            assertNull("no follow-up probe on finishing activity", GlassProbe.continueAt(activity, GlassTier.LIVE, tier -> stepDowns.incrementAndGet()));
+        }
+    }
+
+    /** #61: scrolling/invalidating child 0 of a live GlassHost invalidates registered GlassSurfaces. */
+    @Test
+    public void liveGlassHostInvalidatesSurfacesWhenContentDescendantInvalidates() {
+        try (var controller = Robolectric.buildActivity(Activity.class).setup().visible()) {
+            Activity activity = controller.get();
+            activity.setTheme(R.style.StreamTheme);
+            GlassHost host = new GlassHost(activity);
+            host.setTier(GlassTier.LIVE);
+            android.widget.FrameLayout content = new android.widget.FrameLayout(activity);
+            android.view.View child = new android.view.View(activity);
+            content.addView(child);
+            GlassSurface dock = new GlassSurface(activity);
+            host.addView(content);
+            host.addView(dock);
+            activity.setContentView(host);
+            org.robolectric.util.ReflectionHelpers.setField(host, "liveReady", true);
+            org.robolectric.Shadows.shadowOf(dock).clearWasInvalidated();
+            host.onDescendantInvalidated(content, child);
+            assertTrue("dock invalidated when content scrolled/invalidated", org.robolectric.Shadows.shadowOf(dock).wasInvalidated());
+        }
+    }
 }

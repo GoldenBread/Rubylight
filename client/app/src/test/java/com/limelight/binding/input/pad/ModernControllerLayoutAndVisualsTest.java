@@ -168,12 +168,24 @@ public class ModernControllerLayoutAndVisualsTest extends ModernControllerHarnes
         assertEquals(.2f * PadLayout.MAX_OPACITY / 100f, button.getAlpha(), 1e-4);
         button.down(0, 5, 5, 100);
         stick.down(2, stick.getWidth() / 2f, stick.getHeight() / 2f, 100);
-        assertEquals("A press raises a faint control", PadControlView.PRESSED_ALPHA, button.getAlpha(), 1e-4);
-        assertEquals(PadControlView.PRESSED_ALPHA, stick.knobLayer().getAlpha(), 1e-4);
+        float expectedPressed = PadControlView.pressedAlpha(.2f);
+        assertEquals("A press lifts a faint control proportionally without flashing to 60% (#171)",
+                expectedPressed, button.getAlpha(), 1e-4);
+        assertTrue(expectedPressed > .2f && expectedPressed < PadControlView.PRESSED_ALPHA);
+        assertEquals(expectedPressed, stick.knobLayer().getAlpha(), 1e-4);
         button.up(0, 200);
-        assertEquals("Let go, it eases back", PadControlView.PRESSED_ALPHA, button.getAlpha(), 1e-4);
+        assertEquals("Let go, it eases back", expectedPressed, button.getAlpha(), 1e-4);
         ShadowLooper.idleMainLooper(PadPainter.RELEASE_MS + 40, java.util.concurrent.TimeUnit.MILLISECONDS);
         assertEquals("and is faint again", .2f, button.getAlpha(), 1e-4);
+        // Per-control 0% opacity stays invisible even when pressed while global opacity is high (#151/#171).
+        prefs.oscOpacity = 80;
+        controller.layout().setOpacity(PadLayout.Control.LB, 0);
+        controller.place();
+        assertEquals(0f, button.getAlpha(), 0f);
+        button.down(0, 5, 5, 300);
+        assertEquals(0f, button.getAlpha(), 0f);
+        assertEquals(ControllerPacket.LB_FLAG, last()[0] & ControllerPacket.LB_FLAG);
+        button.up(0, 350);
         controller.destroy();
     }
 

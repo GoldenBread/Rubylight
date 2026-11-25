@@ -154,8 +154,8 @@ final class GlassControlDrawable extends Drawable {
         for (int s : state) {
             if (s == android.R.attr.state_focused) nowFocused = true;
             else if (s == android.R.attr.state_checked) nowChecked = true;
-            // A key's selection is its modifier held: a button that is not checkable says it so.
-            else if (s == android.R.attr.state_selected && kind == Kind.KEY) nowChecked = true;
+            // A key's or toggle row's selection is its on state: a button with a custom background is not checkable (T9-18).
+            else if (s == android.R.attr.state_selected && (kind == Kind.KEY || kind == Kind.ROW)) nowChecked = true;
             else if (s == android.R.attr.state_pressed || s == android.R.attr.state_hovered) nowActive = true;
         }
         if (nowFocused == focused && nowChecked == checked && nowActive == active) return false;

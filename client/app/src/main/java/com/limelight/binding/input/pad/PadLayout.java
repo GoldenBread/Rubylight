@@ -122,7 +122,7 @@ public final class PadLayout {
      * what a broken or hand-written layout can hold. Layouts saved before free resizing stayed within 0.5 to 2.
      */
     public static final float MIN_SCALE = .5f, MAX_SCALE = 100f;
-    public static final int MIN_OPACITY = 10, MAX_OPACITY = 100;
+    public static final int MIN_OPACITY = 0, MAX_OPACITY = 100;
     /**
      * The longest side of the default unit: a tablet's controls stop growing past a large phone's. It sets the
      * default sizes only; a control resized in the editor can still fill the whole surface.

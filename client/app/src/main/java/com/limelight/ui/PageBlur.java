@@ -154,6 +154,7 @@ final class PageBlur {
             pageHolds.remove(page);
             page.setRenderEffect(null);
             WholeRepaint.stop(page);
+            page.invalidate();
         } else {
             pageHolds.put(page, holds);
             if (holds == 1) {

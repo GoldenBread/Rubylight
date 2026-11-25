@@ -424,6 +424,18 @@ public class UiNavigationTest {
             assertTrue(list.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_F1)));
             assertTrue(list.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_F1)));
             assertEquals(2, helpCount.get());
+            // TV remote INFO and controller X/Y also open the row's explanation (#140).
+            for (int keyCode : new int[] {KeyEvent.KEYCODE_INFO, KeyEvent.KEYCODE_BUTTON_X, KeyEvent.KEYCODE_BUTTON_Y}) {
+                assertTrue(list.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, keyCode)));
+                assertTrue(list.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_UP, keyCode)));
+            }
+            assertEquals(5, helpCount.get());
+            assertEquals(1, toggles.get());
+            // Without an explanation, Y is still swallowed so Android does not turn it into Space (#81).
+            row.setTag(R.id.preference_help, null);
+            assertTrue(list.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_BUTTON_Y)));
+            assertTrue(list.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_BUTTON_Y)));
+            assertEquals(1, toggles.get());
         } finally {
             controller.pause().stop().destroy();
         }

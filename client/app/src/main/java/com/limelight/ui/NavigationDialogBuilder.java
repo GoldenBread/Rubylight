@@ -97,11 +97,22 @@ public final class NavigationDialogBuilder extends MaterialAlertDialogBuilder {
         int edge = res.getDimensionPixelSize(R.dimen.space_l);
         ViewGroup bar = (ViewGroup) positive.getParent();
         bar.setPaddingRelative(edge, res.getDimensionPixelSize(R.dimen.space_m), edge, edge);
+        // Focused buttons scale to 1.025x with a 3dp focus ring; disabling clipping along the bar and its
+        // ScrollView keeps the right-hand button's focus border intact on TV (nightjar#7).
+        bar.setClipChildren(false);
+        bar.setClipToPadding(false);
         // The bar's scroller took the window's first focus and showed the platform's grey highlight over the whole bar.
-        if (bar.getParent() instanceof android.widget.ScrollView) {
-            View scroller = (View) bar.getParent();
-            scroller.setFocusable(false);
-            if (android.os.Build.VERSION.SDK_INT >= 26) scroller.setDefaultFocusHighlightEnabled(false);
+        if (bar.getParent() instanceof ViewGroup) {
+            ViewGroup parent = (ViewGroup) bar.getParent();
+            parent.setClipChildren(false);
+            parent.setClipToPadding(false);
+            if (parent instanceof android.widget.ScrollView) {
+                parent.setFocusable(false);
+                if (android.os.Build.VERSION.SDK_INT >= 26) parent.setDefaultFocusHighlightEnabled(false);
+            }
+            if (parent.getParent() instanceof ViewGroup) {
+                ((ViewGroup) parent.getParent()).setClipChildren(false);
+            }
         }
         // A pad or a remote starts on the moon, the dialog's one way on. A list keeps its first focus on its rows.
         Button negative = dialog.getButton(DialogInterface.BUTTON_NEGATIVE);

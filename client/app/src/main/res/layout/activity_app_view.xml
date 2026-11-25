@@ -15,6 +15,7 @@
         <!-- Offline, nothing to show: one line and what can be done about it, in the middle of the page. -->
         <LinearLayout android:id="@+id/library_status_panel" android:layout_width="match_parent" android:layout_height="wrap_content"
             android:layout_gravity="center" android:orientation="vertical" android:gravity="center_horizontal"
+            android:clipChildren="false" android:clipToPadding="false"
             android:paddingStart="@dimen/space_xl" android:paddingEnd="@dimen/space_xl" android:visibility="gone">
             <TextView android:id="@+id/app_list_status" android:layout_width="wrap_content" android:layout_height="wrap_content"
                 android:gravity="center" android:textAppearance="@style/TextAppearance.Nightjar.Body" android:textColor="?attr/colorOnSurface"
@@ -81,6 +82,7 @@
         <!-- A TV's status while the saved library still fills the grid: above the grid, never over its tiles (nightjar#7). -->
         <LinearLayout android:id="@+id/library_status_banner" android:layout_width="match_parent" android:layout_height="wrap_content"
             android:orientation="horizontal" android:gravity="center_vertical" android:paddingTop="@dimen/space_s"
+            android:clipChildren="false" android:clipToPadding="false"
             android:layout_marginBottom="@dimen/space_s" android:visibility="gone">
             <TextView android:id="@+id/app_list_status_banner" android:layout_width="0dp" android:layout_height="wrap_content"
                 android:layout_weight="1" android:maxLines="2" android:ellipsize="end"

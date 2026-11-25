@@ -11,6 +11,7 @@ import static org.junit.Assert.*;
 public class StreamOrientationTest {
     private static final int ANY = ActivityInfo.SCREEN_ORIENTATION_FULL_USER;
     private static final int LAND = ActivityInfo.SCREEN_ORIENTATION_USER_LANDSCAPE;
+    private static final int REV_LAND = ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE;
     private static final int PORT = ActivityInfo.SCREEN_ORIENTATION_USER_PORTRAIT;
 
     private static int phone(int mode) {
@@ -21,9 +22,10 @@ public class StreamOrientationTest {
     public void unknownOrMissingValuesAreAutomatic() {
         assertEquals(StreamOrientation.AUTO, StreamOrientation.fromValue(null));
         assertEquals(StreamOrientation.AUTO, StreamOrientation.fromValue("sideways"));
-        for (int mode = StreamOrientation.AUTO; mode <= StreamOrientation.ROTATE; mode++) {
+        for (int mode = StreamOrientation.AUTO; mode <= StreamOrientation.REVERSE_LANDSCAPE; mode++) {
             assertEquals(mode, StreamOrientation.fromValue(StreamOrientation.value(mode)));
         }
+        assertEquals(StreamOrientation.REVERSE_LANDSCAPE, StreamOrientation.fromValue("reverse_landscape"));
     }
 
     @Test
@@ -44,12 +46,14 @@ public class StreamOrientationTest {
     @Test
     public void chosenOrientationsApplyToPhonesAndTabletsButNotToFreeWindows() {
         assertEquals(LAND, phone(StreamOrientation.LANDSCAPE));
+        assertEquals(REV_LAND, phone(StreamOrientation.REVERSE_LANDSCAPE));
         assertEquals(PORT, phone(StreamOrientation.PORTRAIT));
         assertEquals(ANY, phone(StreamOrientation.ROTATE));
         assertEquals(PORT, StreamOrientation.requested(StreamOrientation.PORTRAIT, false, true, false, false, true, 2560, 1600));
         assertEquals(LAND, StreamOrientation.requested(StreamOrientation.LANDSCAPE, false, false, true, false, true, 1840, 2208));
+        assertEquals(REV_LAND, StreamOrientation.requested(StreamOrientation.REVERSE_LANDSCAPE, false, true, false, false, true, 2560, 1600));
         // Split screen, desktop windows and video on another display cannot be turned by the app.
-        for (int mode = StreamOrientation.AUTO; mode <= StreamOrientation.ROTATE; mode++) {
+        for (int mode = StreamOrientation.AUTO; mode <= StreamOrientation.REVERSE_LANDSCAPE; mode++) {
             assertEquals(ANY, StreamOrientation.requested(mode, true, false, false, false, true, 2400, 1080));
         }
     }
@@ -62,9 +66,11 @@ public class StreamOrientationTest {
         // Already portrait, or square: unchanged.
         assertArrayEquals(new int[] {1080, 1920}, StreamOrientation.launchSize(StreamOrientation.PORTRAIT, true, false, 1080, 1920));
         assertArrayEquals(new int[] {1440, 1440}, StreamOrientation.launchSize(StreamOrientation.PORTRAIT, true, false, 1440, 1440));
-        // Automatic and Landscape never change the request.
+        // Automatic, Landscape and Reverse landscape never change the request.
         assertArrayEquals(new int[] {2400, 1080}, StreamOrientation.launchSize(StreamOrientation.AUTO, true, true, 2400, 1080));
         assertArrayEquals(new int[] {1080, 2400}, StreamOrientation.launchSize(StreamOrientation.LANDSCAPE, true, true, 1080, 2400));
+        assertArrayEquals(new int[] {2400, 1080}, StreamOrientation.launchSize(StreamOrientation.REVERSE_LANDSCAPE, true, true, 2400, 1080));
+        assertFalse(StreamOrientation.followsRotation(StreamOrientation.REVERSE_LANDSCAPE, true));
     }
 
     @Test

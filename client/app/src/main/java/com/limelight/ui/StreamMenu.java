@@ -645,7 +645,10 @@ public final class StreamMenu {
                 if (entry.destructive) button = sheet.addDestructiveAction(entry.icon, activity.getString(entry.label));
                 else if (entry.opensPage()) button = sheet.addPageAction(entry.icon, activity.getString(entry.label));
                 else button = sheet.addAction(entry.icon, activity.getString(entry.label));
-                if (entry.checked != null) StreamMenuCatalog.markChoice(button, entry.checked);
+                if (entry.checked != null) {
+                    if (entry.icon == R.drawable.ic_check) StreamMenuCatalog.markChoice(button, entry.checked);
+                    else StreamMenuCatalog.markToggleRow(button, entry.checked);
+                }
             }
             section = entry.section;
             rows.put(entry.item, button);
@@ -711,11 +714,19 @@ public final class StreamMenu {
     // A switch changes in place: show its new state without rebuilding the page or moving focus.
     private void refreshToggles() {
         Options o = options.get();
-        for (Entry entry : mainPage(o)) {
+        List<Entry> source = page == Page.MORE ? StreamMenuCatalog.moreEntries(offered(o)) : mainPage(o);
+        for (Entry entry : source) {
             MaterialButton button = rows.get(entry.item);
-            if (entry.checked == null || button == null || !button.isCheckable()) continue;
-            button.setChecked(Boolean.TRUE.equals(entry.checked));
-            button.setIconResource(entry.icon);
+            if (entry.checked == null || button == null) continue;
+            boolean checked = Boolean.TRUE.equals(entry.checked);
+            if (button.isCheckable()) {
+                button.setChecked(checked);
+                button.setIconResource(entry.icon);
+            } else if (entry.section != Section.QUICK && entry.icon != R.drawable.ic_check) {
+                StreamMenuCatalog.markToggleRow(button, checked);
+                button.setIconResource(entry.icon);
+                button.setText(entry.label);
+            }
         }
     }
 

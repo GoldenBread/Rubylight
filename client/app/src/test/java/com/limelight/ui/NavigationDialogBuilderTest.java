@@ -241,6 +241,28 @@ public class NavigationDialogBuilderTest {
         }
     }
 
+    /** TV UI #4 (#7): dialog button bar and its ScrollView must not clip focused button borders. */
+    @Test public void dialogButtonBarAndScrollerDoNotClipFocusBorder() {
+        ActivityController<UiNavigationTest.Screen> activity = Robolectric.buildActivity(UiNavigationTest.Screen.class).setup();
+        AlertDialog dialog = new NavigationDialogBuilder(activity.get()).setTitle("Confirm")
+                .setPositiveButton(android.R.string.ok, null)
+                .setNegativeButton(android.R.string.cancel, null).show();
+        try {
+            android.widget.Button positive = dialog.getButton(AlertDialog.BUTTON_POSITIVE);
+            android.view.ViewGroup bar = (android.view.ViewGroup) positive.getParent();
+            assertFalse("button bar must not clip focused button border", bar.getClipChildren());
+            assertFalse("button bar padding must not clip focused button border", bar.getClipToPadding());
+            if (bar.getParent() instanceof android.view.ViewGroup) {
+                android.view.ViewGroup parent = (android.view.ViewGroup) bar.getParent();
+                assertFalse("button panel scroller must not clip focused button border", parent.getClipChildren());
+                assertFalse("button panel scroller padding must not clip focused button border", parent.getClipToPadding());
+            }
+        } finally {
+            dialog.dismiss();
+            activity.destroy();
+        }
+    }
+
     private static void layOut(android.view.View bar, int width) {
         bar.measure(android.view.View.MeasureSpec.makeMeasureSpec(width, android.view.View.MeasureSpec.EXACTLY),
                 android.view.View.MeasureSpec.makeMeasureSpec(0, android.view.View.MeasureSpec.UNSPECIFIED));

@@ -32,6 +32,10 @@ final class MenuBlurWindow {
     private int shownRadius;
     private boolean placed;
     private ValueAnimator rise;
+    private boolean listenerRegistered;
+    private android.view.View autoCloseHost;
+    private Runnable autoClose;
+    private android.view.View.OnAttachStateChangeListener hostDetach;
     private boolean closed;
 
     /** The rule: an Android that has the call, a tier that can afford live glass, and the system's switch on right now. */
@@ -46,20 +50,35 @@ final class MenuBlurWindow {
 
     /** The window, shown and still empty, or null when this device cannot blur now. {@code onSwitch} hears the system turn it off and on. */
     static MenuBlurWindow openIfAllowed(Activity owner, int radius, Consumer<Boolean> onSwitch) {
+        if (owner.isFinishing() || owner.isDestroyed()) return null;
         if (!allowed(Build.VERSION.SDK_INT, GlassTier.land(owner), systemSwitch(owner))) return null;
         return new MenuBlurWindow(owner, radius, onSwitch);
     }
 
     /**
-     * Opens the window at its first size, one pixel in the corner, and removes it after {@code durationMs}: while it stands, the
-     * system composes the stream under it on the GPU, as it does the moment the stream menu opens. Any tier: one blurred pixel
-     * costs nothing. Null when this Android has no blur or the system's switch is off now.
+     * Opens the window at its first size, one pixel in the corner, and removes it after {@code durationMs}: while it stands,
+     * the system composes the stream under it on the GPU, as it does the moment the stream menu opens. Any tier: one blurred
+     * pixel costs nothing. Null when this Android has no blur or the system's switch is off now.
      */
     static MenuBlurWindow flash(Activity owner, long durationMs) {
+        if (owner.isFinishing() || owner.isDestroyed()) return null;
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S || !systemSwitch(owner)) return null;
         MenuBlurWindow blur = new MenuBlurWindow(owner, 1, null);
-        owner.getWindow().getDecorView().postDelayed(blur::close, durationMs);
+        blur.closeAfter(owner.getWindow().getDecorView(), durationMs);
         return blur;
+    }
+
+    private void closeAfter(android.view.View host, long durationMs) {
+        autoCloseHost = host;
+        autoClose = this::close;
+        hostDetach = new android.view.View.OnAttachStateChangeListener() {
+            @Override public void onViewAttachedToWindow(android.view.View v) { }
+            @Override public void onViewDetachedFromWindow(android.view.View v) {
+                close();
+            }
+        };
+        host.addOnAttachStateChangeListener(hostDetach);
+        host.postDelayed(autoClose, durationMs);
     }
 
     private MenuBlurWindow(Activity owner, int radius, Consumer<Boolean> onSwitch) {
@@ -94,9 +113,13 @@ final class MenuBlurWindow {
             // The window keeps its radius on its decor view, which exists only once asked for.
             w.getDecorView();
             setRadius(riseMs > 0 ? 1 : radius);
-            if (listener != null) manager.addCrossWindowBlurEnabledListener(listener);
         }
+        // Register the WindowManager listener only after show() succeeds so a BadTokenException never leaks it (T9-12).
         window.show();
+        if (listener != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            manager.addCrossWindowBlurEnabledListener(listener);
+            listenerRegistered = true;
+        }
     }
 
     private void setRadius(int value) {
@@ -147,9 +170,25 @@ final class MenuBlurWindow {
     void close() {
         if (closed) return;
         closed = true;
+        if (autoCloseHost != null) {
+            if (autoClose != null) autoCloseHost.removeCallbacks(autoClose);
+            if (hostDetach != null) autoCloseHost.removeOnAttachStateChangeListener(hostDetach);
+            autoCloseHost = null;
+            autoClose = null;
+            hostDetach = null;
+        }
         if (rise != null) rise.cancel();
-        if (listener != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) manager.removeCrossWindowBlurEnabledListener(listener);
-        window.dismiss();
+        if (listenerRegistered && listener != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            listenerRegistered = false;
+            manager.removeCrossWindowBlurEnabledListener(listener);
+        }
+        if (window.isShowing()) {
+            try {
+                window.dismiss();
+            } catch (IllegalArgumentException ignored) {
+                // Owner window already detached during teardown (T9-11).
+            }
+        }
     }
 
     boolean isShowing() {

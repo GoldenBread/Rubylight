@@ -23,12 +23,13 @@ public final class StreamOrientation {
     public static final int LANDSCAPE = 1;
     public static final int PORTRAIT = 2;
     public static final int ROTATE = 3;
+    public static final int REVERSE_LANDSCAPE = 4;
 
     // A turn waits longer than a fold or window change before the host is asked for a new size, so
     // the rotation animation, or a phone turned over and straight back, sends nothing.
     public static final long ROTATION_SETTLE_MS = 1000;
 
-    private static final String[] VALUES = {"auto", "landscape", "portrait", "rotate"};
+    private static final String[] VALUES = {"auto", "landscape", "portrait", "rotate", "reverse_landscape"};
 
     private StreamOrientation() {}
 
@@ -63,6 +64,8 @@ public final class StreamOrientation {
         switch (mode) {
             case LANDSCAPE:
                 return ActivityInfo.SCREEN_ORIENTATION_USER_LANDSCAPE;
+            case REVERSE_LANDSCAPE:
+                return ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE;
             case PORTRAIT:
                 return ActivityInfo.SCREEN_ORIENTATION_USER_PORTRAIT;
             case ROTATE:

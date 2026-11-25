@@ -80,12 +80,20 @@ public final class SteamControls {
     }
 
     /**
-     * The pressure every on-screen trackpad touch carries. Many screens report a constant 1.0 (a binary
-     * pressure axis), and the host passes it on as the pad's full-scale pressure, which Steam reads as a pad
-     * click on touch-down (#150). A light fixed pressure keeps a touch a touch; the click comes only from a
-     * tap's click bit.
+     * The pressure every normal on-screen trackpad touch carries. Many screens report a constant 1.0 (a
+     * binary pressure axis), and real Steam Controller (2026) hardware reports 0 pressure during normal
+     * touches, drags, and holds: even a light non-zero pressure (0.1) on touch-down still triggers a
+     * Steam Input pad click (#150). Clicks are sent only on confirmed taps with {@link #PAD_CLICK_PRESSURE}.
      */
-    public static final float PAD_TOUCH_PRESSURE = 0.1f;
+    public static final float PAD_TOUCH_PRESSURE = 0.0f;
+    /**
+     * Pressure carried alongside a synthesized tap-click ({@link #LEFT_PAD_CLICK_FLAG} /
+     * {@link #RIGHT_PAD_CLICK_FLAG}), above real SC2026 click threshold (~0.125) so Steam Input accepts
+     * the click transition on a tap while ignoring drags and holds at {@link #PAD_TOUCH_PRESSURE}.
+     */
+    public static final float PAD_CLICK_PRESSURE = 0.25f;
+    /** Tiny normalized X nudge applied on a tap-click MOVE so Steam Input sees an active pressure update. */
+    public static final float PAD_CLICK_NUDGE = 0.002f;
 
     /**
      * A physical pad's Touchpad button as the click of the pad its finger is on: the left pad's

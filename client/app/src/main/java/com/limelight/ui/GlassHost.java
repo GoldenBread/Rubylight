@@ -179,6 +179,18 @@ public class GlassHost extends FrameLayout {
     }
 
     @Override
+    public void onDescendantInvalidated(View child, View target) {
+        super.onDescendantInvalidated(child, target);
+        // On Android 14+ HWUI partial-damage frames, scrolling child 0 does not always mark sibling
+        // GlassSurfaces dirty, leaving the bottom dock stale or blank (#61).
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && liveReady && isLive()
+                && getChildCount() > 0 && child == getChildAt(0)) {
+            if (live != null && !live.content.hasDisplayList()) invalidate();
+            invalidateSurfaces();
+        }
+    }
+
+    @Override
     protected boolean drawChild(Canvas canvas, View child, long drawingTime) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && liveReady && isLive()
                 && child == getChildAt(0) && canvas.isHardwareAccelerated()) {
@@ -249,7 +261,10 @@ public class GlassHost extends FrameLayout {
 
         RenderNode blur(GlassSpec spec) {
             RenderNode node = blurs.get(spec);
-            if (node != null) return node;
+            if (node != null) {
+                if (!node.hasDisplayList()) record(node);
+                return node;
+            }
             node = new RenderNode("glass-blur");
             float sigma = spec.blur / SCALE;
             node.setRenderEffect(RenderEffect.createChainEffect(

@@ -469,4 +469,11 @@ final class StreamMenuCatalog {
         ViewCompat.setStateDescription(button, button.getContext().getString(chosen ?
                 R.string.stream_choice_selected : R.string.stream_choice_not_selected));
     }
+
+    // A non-QUICK boolean switch row keeps its own feature icon visible while exposing selected state (T9-18).
+    static void markToggleRow(MaterialButton button, boolean checked) {
+        button.setSelected(checked);
+        ViewCompat.setStateDescription(button, button.getContext().getString(checked ?
+                R.string.stream_choice_selected : R.string.stream_choice_not_selected));
+    }
 }

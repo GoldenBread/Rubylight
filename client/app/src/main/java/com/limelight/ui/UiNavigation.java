@@ -99,11 +99,15 @@ public final class UiNavigation {
         list.setOnKeyListener((view, key, event) -> {
             int helpDirection = ViewCompat.getLayoutDirection(list) == ViewCompat.LAYOUT_DIRECTION_RTL ?
                     KeyEvent.KEYCODE_DPAD_LEFT : KeyEvent.KEYCODE_DPAD_RIGHT;
-            if (key != helpDirection && key != KeyEvent.KEYCODE_F1) return false;
+            boolean helpKey = key == helpDirection || key == KeyEvent.KEYCODE_F1
+                    || key == KeyEvent.KEYCODE_INFO || key == KeyEvent.KEYCODE_BUTTON_X
+                    || key == KeyEvent.KEYCODE_BUTTON_Y;
+            if (!helpKey) return false;
             View row = list.getSelectedView();
             Object explanation = row == null ? null : row.getTag(R.id.preference_help);
             // A disabled row's explanation says why it is unavailable, so it opens there too.
-            if (!(explanation instanceof Runnable)) return false;
+            // Without an explanation, still swallow pad Y so Android never synthesizes Space (#81).
+            if (!(explanation instanceof Runnable)) return swallowsPadY(key, list);
             if (event.getAction() == KeyEvent.ACTION_DOWN) {
                 pressed[0] = true;
             } else if (event.getAction() == KeyEvent.ACTION_UP) {

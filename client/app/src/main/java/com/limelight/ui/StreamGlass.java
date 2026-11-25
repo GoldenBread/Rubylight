@@ -91,7 +91,7 @@ public final class StreamGlass {
         GlassPanelDrawable glass = window != null ? glassOf(window.getDecorView().getBackground()) : null;
         Activity owner = activityOf(dialog.getContext());
         MenuBlurWindow blur = null;
-        if (glass != null && owner != null && !dialog.isShowing()) {
+        if (glass != null && owner != null && !owner.isFinishing() && !owner.isDestroyed() && !dialog.isShowing()) {
             int radius = Math.round(GlassSpec.menuWindow(dialog.getContext()).blur);
             // Shown first, so it stands under the dialog: it blurs the stream, not the panel.
             blur = MenuBlurWindow.openIfAllowed(owner, radius, glass::setOverBlur);
@@ -99,6 +99,7 @@ public final class StreamGlass {
             if (blur != null) follow(window.getDecorView(), window.getDecorView().getBackground(), blur);
         }
         if (opened != null) opened.accept(blur);
+        if (owner != null && (owner.isFinishing() || owner.isDestroyed())) return;
         try {
             dialog.show();
         } catch (RuntimeException e) {
@@ -111,14 +112,21 @@ public final class StreamGlass {
     private static void follow(View decor, Drawable background, MenuBlurWindow blur) {
         int[] at = new int[2];
         Rect insets = new Rect();
-        View.OnLayoutChangeListener place = (view, l, t, r, b, ol, ot, or, ob) -> {
+        Runnable sync = () -> {
             decor.getLocationOnScreen(at);
             // The panel is the window less the background's insets; its bounds are set only when it draws.
             background.getPadding(insets);
             blur.cover(at[0] + insets.left, at[1] + insets.top,
                     decor.getWidth() - insets.left - insets.right, decor.getHeight() - insets.top - insets.bottom);
         };
+        View.OnLayoutChangeListener place = (view, l, t, r, b, ol, ot, or, ob) -> sync.run();
+        // A dialog window can move on screen (centering or system-bar hiding) without its (l,t,r,b) changing (#61).
+        android.view.ViewTreeObserver.OnPreDrawListener preDraw = () -> {
+            sync.run();
+            return true;
+        };
         decor.addOnLayoutChangeListener(place);
+        decor.getViewTreeObserver().addOnPreDrawListener(preDraw);
         decor.addOnAttachStateChangeListener(new View.OnAttachStateChangeListener() {
             @Override public void onViewAttachedToWindow(View view) {
             }
@@ -126,6 +134,8 @@ public final class StreamGlass {
             @Override public void onViewDetachedFromWindow(View view) {
                 blur.close();
                 decor.removeOnLayoutChangeListener(place);
+                android.view.ViewTreeObserver observer = decor.getViewTreeObserver();
+                if (observer.isAlive()) observer.removeOnPreDrawListener(preDraw);
                 decor.removeOnAttachStateChangeListener(this);
             }
         });

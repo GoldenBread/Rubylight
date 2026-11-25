@@ -297,13 +297,19 @@ final class PadControlView extends View {
         animator.setRestingAlpha(alpha);
     }
 
+    /** The peak alpha a press lifts a faint control to, proportional to resting opacity (#171). */
+    static float pressedAlpha(float resting) {
+        if (resting <= 0) return 0;
+        return Math.max(resting, Math.min(PRESSED_ALPHA, resting * 1.75f));
+    }
+
     /**
      * The alpha for a control at rest at {@code resting}, pressed in by {@code level}: 1 while held, easing back to 0
      * once let go, so a faint control fades back with its press.
      */
     static float alpha(float resting, float level) {
         if (resting <= 0) return 0;
-        return resting + (Math.max(resting, PRESSED_ALPHA) - resting) * Math.max(0, Math.min(1, level));
+        return resting + (pressedAlpha(resting) - resting) * Math.max(0, Math.min(1, level));
     }
 
     void applyAlpha() {

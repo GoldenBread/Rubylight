@@ -67,6 +67,9 @@ final class PadTrackpadHandler {
             padClickX = state.touchX;
             padClickY = state.touchY;
             padClickPending = true;
+            // Ramp pressure on a tiny MOVE inside the pad before setting the click flag so Steam Input sees a
+            // real click transition (0 -> click pressure) rather than touch-down pressure (#150).
+            padClickTouch(padClickX, padClickY);
             view.gamepad().setButtons(view.slot(), PadInput.padClickFlag(view.control));
             view.clickHaptic();
             view.changed();
@@ -122,6 +125,18 @@ final class PadTrackpadHandler {
         int pad = PadInput.steamPad(view.control);
         touchSink.touch(type, SteamControls.pointerId(pad), SteamControls.touchX(pad, fraction(x, view.getWidth())),
                 SteamControls.touchY(fraction(y, view.getHeight())), SteamControls.PAD_TOUCH_PRESSURE);
+    }
+
+    /** Sends the click-pressure MOVE for a confirmed tap, nudged slightly inside the pad so Steam Input updates. */
+    private void padClickTouch(float x, float y) {
+        if (touchSink == null) return;
+        int pad = PadInput.steamPad(view.control);
+        float across = Math.max(0f, Math.min(1f, fraction(x, view.getWidth())));
+        float nudged = across + SteamControls.PAD_CLICK_NUDGE <= 1f
+                ? across + SteamControls.PAD_CLICK_NUDGE : Math.max(0f, across - SteamControls.PAD_CLICK_NUDGE);
+        touchSink.touch(MoonBridge.LI_TOUCH_EVENT_MOVE, SteamControls.pointerId(pad),
+                SteamControls.touchX(pad, nudged), SteamControls.touchY(fraction(y, view.getHeight())),
+                SteamControls.PAD_CLICK_PRESSURE);
     }
 
     private static float fraction(float position, int size) {

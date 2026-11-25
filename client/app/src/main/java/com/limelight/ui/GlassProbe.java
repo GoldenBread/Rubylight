@@ -48,6 +48,8 @@ public final class GlassProbe implements Window.OnFrameMetricsAvailableListener 
     private int count;
     private int slow;
     private boolean done;
+    private boolean cancelled;
+    private boolean listenerRemoved;
 
     private GlassProbe(Activity activity, GlassTier tier, Verdict verdict) {
         this.activity = activity;
@@ -62,6 +64,7 @@ public final class GlassProbe implements Window.OnFrameMetricsAvailableListener 
 
     /** Starts watching, unless this tier has nothing to probe or this app version already has its verdict. */
     public static GlassProbe start(Activity activity, GlassTier tier, Verdict verdict) {
+        if (activity.isFinishing() || activity.isDestroyed()) return null;
         if ((tier != GlassTier.LENS && tier != GlassTier.LIVE) || GlassTier.probed(activity)) return null;
         GlassProbe probe = new GlassProbe(activity, tier, verdict);
         activity.getWindow().addOnFrameMetricsAvailableListener(probe, new Handler(Looper.getMainLooper()));
@@ -70,17 +73,29 @@ public final class GlassProbe implements Window.OnFrameMetricsAvailableListener 
 
     /** After a step down: the lower tier is watched too, though a verdict is already kept. */
     public static GlassProbe continueAt(Activity activity, GlassTier tier, Verdict verdict) {
+        if (activity.isFinishing() || activity.isDestroyed()) return null;
         if (tier != GlassTier.LIVE) return null;
         GlassProbe probe = new GlassProbe(activity, tier, verdict);
         activity.getWindow().addOnFrameMetricsAvailableListener(probe, new Handler(Looper.getMainLooper()));
         return probe;
     }
 
-    /** Stops watching; what was seen so far is dropped. */
+    /** Stops watching; what was seen so far is dropped and any queued verdict is cancelled (T9-17). */
     public void stop() {
-        if (done) return;
         done = true;
-        activity.getWindow().removeOnFrameMetricsAvailableListener(this);
+        cancelled = true;
+        main.removeCallbacksAndMessages(null);
+        removeListener();
+    }
+
+    private void removeListener() {
+        if (listenerRemoved) return;
+        listenerRemoved = true;
+        try {
+            activity.getWindow().removeOnFrameMetricsAvailableListener(this);
+        } catch (IllegalArgumentException ignored) {
+            // Already removed or window detached.
+        }
     }
 
     @Override
@@ -91,10 +106,12 @@ public final class GlassProbe implements Window.OnFrameMetricsAvailableListener 
         count++;
         boolean fail = slow >= slowFramesToFail(frames);
         if (!fail && count < frames) return;
-        stop();
+        done = true;
         com.limelight.LimeLog.info("Glass probe at " + tier + ": " + (fail ? "steps down" : "keeps it") + " after " + count + " frames, " + slow + " slow");
         // Removing the listener during its own callback is not allowed on every version: finish on the next turn.
         main.post(() -> {
+            removeListener();
+            if (cancelled || activity.isFinishing() || activity.isDestroyed()) return;
             GlassTier next = fail ? tier.stepDown() : tier;
             GlassTier.remember(activity, next);
             if (fail) verdict.stepDownTo(next);

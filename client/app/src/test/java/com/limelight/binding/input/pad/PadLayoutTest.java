@@ -37,6 +37,7 @@ public class PadLayoutTest {
         layout.moveTo(PadLayout.Control.FACE, 1700, 600, 2400, 1080, DENSITY);
         layout.setScale(PadLayout.Control.FACE, 1.3f);
         layout.setOpacity(PadLayout.Control.LB, 40);
+        layout.setOpacity(PadLayout.Control.RB, 0);
         layout.spec(PadLayout.Control.HOME).hidden = true;
         PadLayout back = PadLayout.parse(layout.serialize());
         PadLayout.Spec face = back.spec(PadLayout.Control.FACE);
@@ -44,6 +45,7 @@ public class PadLayoutTest {
         assertEquals(layout.spec(PadLayout.Control.FACE).cy, face.cy, 1e-4);
         assertEquals(1.3f, face.scale(), 1e-3);
         assertEquals(40, back.spec(PadLayout.Control.LB).opacity);
+        assertEquals(0, back.spec(PadLayout.Control.RB).opacity);
         assertTrue(back.spec(PadLayout.Control.HOME).hidden);
         // Only edited controls are written; the rest follow the default for the screen.
         assertFalse(back.spec(PadLayout.Control.LEFT_STICK).placed());
