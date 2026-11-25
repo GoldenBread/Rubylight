@@ -155,7 +155,7 @@ impl Pairing {
         if salt.len() < 16 {
             bail!("salt is too short");
         }
-        crypto::public_key(&certificate)?;
+        crypto::verify_pairing_certificate(&certificate)?;
         Ok(Self {
             unique_id,
             name,
@@ -211,6 +211,7 @@ impl Pairing {
         if secret.len() != 16 + 256 {
             bail!("invalid RSA pairing secret length");
         }
+        crypto::verify_pairing_certificate(&self.certificate)?;
         let mut data = self.server_challenge.to_vec();
         data.extend_from_slice(&crypto::certificate_signature(&self.certificate)?);
         data.extend_from_slice(&secret[..16]);
@@ -379,5 +380,293 @@ mod tests {
         secret.extend_from_slice(&client.sign(&client_secret));
         p.finish(&secret).unwrap();
         assert!(p.finish(&secret).is_err());
+    }
+
+    fn der_len(len: usize) -> Vec<u8> {
+        if len < 0x80 {
+            vec![len as u8]
+        } else {
+            let bytes = len.to_be_bytes();
+            let skip = bytes.iter().take_while(|&&b| b == 0).count();
+            let mut out = vec![0x80 | (bytes.len() - skip) as u8];
+            out.extend_from_slice(&bytes[skip..]);
+            out
+        }
+    }
+    fn der_tlv(tag: u8, content: &[u8]) -> Vec<u8> {
+        let mut out = vec![tag];
+        out.extend_from_slice(&der_len(content.len()));
+        out.extend_from_slice(content);
+        out
+    }
+    fn der_seq(parts: &[&[u8]]) -> Vec<u8> {
+        der_tlv(0x30, &parts.concat())
+    }
+    fn der_bit_string(bytes: &[u8]) -> Vec<u8> {
+        let mut content = Vec::with_capacity(1 + bytes.len());
+        content.push(0);
+        content.extend_from_slice(bytes);
+        der_tlv(0x03, &content)
+    }
+    fn der_cn(cn: &str) -> Vec<u8> {
+        let oid_cn = [0x06, 0x03, 0x55, 0x04, 0x03];
+        let value = der_tlv(0x0c, cn.as_bytes());
+        let atv = der_seq(&[&oid_cn, &value]);
+        let rdn = der_tlv(0x31, &atv);
+        der_seq(&[&rdn])
+    }
+    fn build_self_signed_der(
+        key: &rsa::RsaPrivateKey,
+        cn: &str,
+        version: Option<u8>,
+        sig_alg_oid: &[u8],
+    ) -> Vec<u8> {
+        use rsa::pkcs8::EncodePublicKey;
+        use rsa::signature::{RandomizedSigner, SignatureEncoding};
+        let alg_id = der_seq(&[sig_alg_oid, &[0x05, 0x00]]);
+        let name = der_cn(cn);
+        let not_before = der_tlv(0x17, b"250101000000Z");
+        let not_after = der_tlv(0x17, b"450101000000Z");
+        let validity = der_seq(&[&not_before, &not_after]);
+        let spki = rsa::RsaPublicKey::from(key)
+            .to_public_key_der()
+            .unwrap()
+            .into_vec();
+        let serial = [0x02, 0x01, 0x01];
+        let mut tbs_parts: Vec<Vec<u8>> = Vec::new();
+        if let Some(v) = version {
+            tbs_parts.push(der_tlv(0xa0, &[0x02, 0x01, v]));
+        }
+        tbs_parts.push(serial.to_vec());
+        tbs_parts.push(alg_id.clone());
+        tbs_parts.push(name.clone());
+        tbs_parts.push(validity);
+        tbs_parts.push(name);
+        tbs_parts.push(spki);
+        let tbs_refs: Vec<&[u8]> = tbs_parts.iter().map(Vec::as_slice).collect();
+        let tbs = der_seq(&tbs_refs);
+        let sig_bytes = match sig_alg_oid {
+            [
+                0x06,
+                0x09,
+                0x2a,
+                0x86,
+                0x48,
+                0x86,
+                0xf7,
+                0x0d,
+                0x01,
+                0x01,
+                0x0b,
+            ] => rsa::pkcs1v15::SigningKey::<sha2::Sha256>::new(key.clone())
+                .sign_with_rng(&mut rand::rngs::OsRng, &tbs)
+                .to_vec(),
+            [
+                0x06,
+                0x09,
+                0x2a,
+                0x86,
+                0x48,
+                0x86,
+                0xf7,
+                0x0d,
+                0x01,
+                0x01,
+                0x0c,
+            ] => rsa::pkcs1v15::SigningKey::<sha2::Sha384>::new(key.clone())
+                .sign_with_rng(&mut rand::rngs::OsRng, &tbs)
+                .to_vec(),
+            [
+                0x06,
+                0x09,
+                0x2a,
+                0x86,
+                0x48,
+                0x86,
+                0xf7,
+                0x0d,
+                0x01,
+                0x01,
+                0x0d,
+            ] => rsa::pkcs1v15::SigningKey::<sha2::Sha512>::new(key.clone())
+                .sign_with_rng(&mut rand::rngs::OsRng, &tbs)
+                .to_vec(),
+            _ => unreachable!(),
+        };
+        let sig = der_bit_string(&sig_bytes);
+        der_seq(&[&tbs, &alg_id, &sig])
+    }
+    fn to_cert_pem(der: &[u8]) -> String {
+        pem::encode(&pem::Pem::new("CERTIFICATE", der.to_vec()))
+    }
+    fn run_full_handshake(client: &crypto::Identity) -> Result<()> {
+        let server = crypto::Identity::generate()?;
+        let salt = [5; 16];
+        let key = crypto::pin_key(&salt, "1234");
+        let mut p = Pairing::new(
+            "client-1".into(),
+            "Client".into(),
+            client.certificate.clone(),
+            &salt,
+            "1234",
+        )?;
+        let challenge = [7; 16];
+        let response = p.client_challenge(&server, &crypto::ecb(&key, &challenge, true)?)?;
+        let response = crypto::ecb(&key, &response, false)?;
+        let client_secret = [9; 16];
+        let mut proof = response[32..].to_vec();
+        proof.extend_from_slice(&client.signature);
+        proof.extend_from_slice(&client_secret);
+        let _reply =
+            p.server_response(&server, &crypto::ecb(&key, &crypto::hash(&proof), true)?)?;
+        let mut secret = client_secret.to_vec();
+        secret.extend_from_slice(&client.sign(&client_secret));
+        p.finish(&secret)
+    }
+    const OID_SHA256_WITH_RSA: [u8; 11] = [
+        0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x0b,
+    ];
+    const OID_SHA384_WITH_RSA: [u8; 11] = [
+        0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x0c,
+    ];
+    const OID_SHA512_WITH_RSA: [u8; 11] = [
+        0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x0d,
+    ];
+
+    #[test]
+    fn real_rsa_client_and_host_certificates_verify_and_pair() {
+        use rsa::pkcs8::EncodePrivateKey;
+        // webOS v2 (moonlight-tv X.509 v2 certificate).
+        let webos = crypto::Identity::from_pem(
+            include_str!("../testdata/moonlight-tv-client.pem").into(),
+            include_str!("../testdata/moonlight-tv-client.key").into(),
+        )
+        .unwrap();
+        crypto::verify_pairing_certificate(&webos.certificate).unwrap();
+        run_full_handshake(&webos).unwrap();
+
+        // Sunshine / Rubylight (X.509 v3, CN=Sunshine).
+        let sunshine = crypto::Identity::generate().unwrap();
+        crypto::verify_pairing_certificate(&sunshine.certificate).unwrap();
+        run_full_handshake(&sunshine).unwrap();
+
+        // Moonlight (X.509 v3, CN=NVIDIA GameStream Client) & GFE (X.509 v1, no version tag).
+        let rsa_key = rsa::RsaPrivateKey::new(&mut rand::rngs::OsRng, 2048).unwrap();
+        let priv_pem = rsa_key
+            .to_pkcs8_pem(rsa::pkcs8::LineEnding::LF)
+            .unwrap()
+            .to_string();
+        for (version, alg) in [
+            (None, &OID_SHA256_WITH_RSA),
+            (Some(2), &OID_SHA256_WITH_RSA),
+            (Some(2), &OID_SHA384_WITH_RSA),
+            (Some(2), &OID_SHA512_WITH_RSA),
+        ] {
+            let der = build_self_signed_der(&rsa_key, "NVIDIA GameStream Client", version, alg);
+            let id = crypto::Identity::from_pem(to_cert_pem(&der), priv_pem.clone()).unwrap();
+            crypto::verify_pairing_certificate(&id.certificate).unwrap();
+            run_full_handshake(&id).unwrap();
+        }
+    }
+
+    #[test]
+    fn rejects_substituted_certificate_signature_and_tampered_fields() {
+        use rsa::pkcs8::EncodePrivateKey;
+        let victim = crypto::Identity::generate().unwrap();
+        let attacker_key = rsa::RsaPrivateKey::new(&mut rand::rngs::OsRng, 2048).unwrap();
+        let attacker_priv = attacker_key
+            .to_pkcs8_pem(rsa::pkcs8::LineEnding::LF)
+            .unwrap()
+            .to_string();
+        let valid_der = build_self_signed_der(
+            &attacker_key,
+            "NVIDIA GameStream Client",
+            Some(2),
+            &OID_SHA256_WITH_RSA,
+        );
+        let (_, parsed) = x509_parser::parse_x509_certificate(&valid_der).unwrap();
+        let tbs = parsed.tbs_certificate.as_ref();
+        let alg = der_seq(&[&OID_SHA256_WITH_RSA, &[0x05, 0x00]]);
+        let forged_der = der_seq(&[tbs, &alg, &der_bit_string(&victim.signature)]);
+        let forged_pem = to_cert_pem(&forged_der);
+        let forged = crypto::Identity::from_pem(forged_pem.clone(), attacker_priv).unwrap();
+        assert_eq!(forged.signature, victim.signature);
+
+        assert!(crypto::verify_pairing_certificate(&forged_pem).is_err());
+        assert!(
+            Pairing::new(
+                "client-1".into(),
+                "Attacker".into(),
+                forged_pem.clone(),
+                &[5; 16],
+                "1234",
+            )
+            .is_err()
+        );
+
+        // Even if checked directly during finish(), forged self-signature fails.
+        let client_secret = [9; 16];
+        let server_challenge = [7; 16];
+        let mut proof_data = server_challenge.to_vec();
+        proof_data.extend_from_slice(&victim.signature);
+        proof_data.extend_from_slice(&client_secret);
+        let mut pairing = Pairing {
+            unique_id: "client-1".into(),
+            name: "Attacker".into(),
+            certificate: forged_pem,
+            created: Instant::now(),
+            peer: None,
+            permission: None,
+            approver: None,
+            invite: None,
+            phase: Phase::Response,
+            key: [0; 16],
+            server_secret: [0; 16],
+            server_challenge,
+            client_hash: crypto::hash(&proof_data).to_vec(),
+        };
+        let mut secret = client_secret.to_vec();
+        secret.extend_from_slice(&forged.sign(&client_secret));
+        assert!(pairing.finish(&secret).is_err());
+
+        // Single-byte modification in tbsCertificate invalidates self-signature.
+        let mut tampered_der = valid_der.clone();
+        let pos = tampered_der
+            .windows(6)
+            .position(|w| w == b"NVIDIA")
+            .unwrap();
+        tampered_der[pos] = b'X';
+        assert!(crypto::verify_pairing_certificate(&to_cert_pem(&tampered_der)).is_err());
+
+        // Algorithm mismatch between outer signatureAlgorithm and inner tbs.signature fails.
+        let outer_sha512 = der_seq(&[&OID_SHA512_WITH_RSA, &[0x05, 0x00]]);
+        let mismatched = der_seq(&[
+            tbs,
+            &outer_sha512,
+            &der_bit_string(parsed.signature_value.as_ref()),
+        ]);
+        assert!(crypto::verify_pairing_certificate(&to_cert_pem(&mismatched)).is_err());
+    }
+
+    #[test]
+    fn rejects_non_65537_rsa_exponent_and_short_keys() {
+        let e3_key = rsa::RsaPrivateKey::new_with_exp(
+            &mut rand::rngs::OsRng,
+            2048,
+            &rsa::BigUint::from(3u32),
+        )
+        .unwrap();
+        let e3_der =
+            build_self_signed_der(&e3_key, "CustomExponent", Some(2), &OID_SHA256_WITH_RSA);
+        let e3_pem = to_cert_pem(&e3_der);
+        assert!(crypto::verify_pairing_certificate(&e3_pem).is_err());
+        assert!(
+            Pairing::new("client-1".into(), "Client".into(), e3_pem, &[5; 16], "1234",).is_err()
+        );
+
+        let short_key = rsa::RsaPrivateKey::new(&mut rand::rngs::OsRng, 1024).unwrap();
+        let short_der =
+            build_self_signed_der(&short_key, "ShortKey", Some(2), &OID_SHA256_WITH_RSA);
+        assert!(crypto::verify_pairing_certificate(&to_cert_pem(&short_der)).is_err());
     }
 }

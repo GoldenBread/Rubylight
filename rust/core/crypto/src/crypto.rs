@@ -13,6 +13,7 @@ use rsa::{
     pkcs1v15::{Signature, SigningKey, VerifyingKey},
     pkcs8::{DecodePrivateKey, DecodePublicKey, EncodePrivateKey},
     signature::{RandomizedSigner, SignatureEncoding, Verifier},
+    traits::PublicKeyParts,
 };
 use sha2::{Digest, Sha256};
 use std::path::Path;
@@ -383,6 +384,56 @@ pub fn public_key(pem_text: &str) -> Result<RsaPublicKey> {
         .map_err(|_| anyhow::anyhow!("invalid X.509 certificate"))?;
     RsaPublicKey::from_public_key_der(cert.tbs_certificate.subject_pki.raw)
         .context("pairing certificate must contain an RSA key")
+}
+/// Verifies that `pem_text` is a self-signed X.509 RSA certificate with
+/// public exponent 65537 and a valid signature over its `tbsCertificate`.
+pub fn verify_pairing_certificate(pem_text: &str) -> Result<RsaPublicKey> {
+    let der = certificate_der(pem_text)?;
+    let (rest, cert) = x509_parser::parse_x509_certificate(&der)
+        .map_err(|_| anyhow::anyhow!("invalid X.509 certificate"))?;
+    if !rest.is_empty() {
+        bail!("trailing bytes in X.509 certificate");
+    }
+    if cert.signature_algorithm != cert.tbs_certificate.signature {
+        bail!("certificate signature algorithm mismatch");
+    }
+    if cert.issuer() != cert.subject() {
+        bail!("pairing certificate must be self-signed");
+    }
+    if cert.signature_value.unused_bits != 0 {
+        bail!("invalid X.509 signature bit string");
+    }
+    if cert
+        .tbs_certificate
+        .subject_pki
+        .subject_public_key
+        .unused_bits
+        != 0
+    {
+        bail!("invalid X.509 public key bit string");
+    }
+    let key = RsaPublicKey::from_public_key_der(cert.tbs_certificate.subject_pki.raw)
+        .context("pairing certificate must contain an RSA key")?;
+    if key.e().to_bytes_be() != [0x01, 0x00, 0x01] {
+        bail!("pairing certificate must use RSA exponent 65537");
+    }
+    if key.size() < 256 {
+        bail!("pairing certificate RSA key must be at least 2048 bits");
+    }
+    let algorithm: &dyn ring::signature::VerificationAlgorithm =
+        match cert.signature_algorithm.algorithm.to_id_string().as_str() {
+            "1.2.840.113549.1.1.11" => &ring::signature::RSA_PKCS1_2048_8192_SHA256,
+            "1.2.840.113549.1.1.12" => &ring::signature::RSA_PKCS1_2048_8192_SHA384,
+            "1.2.840.113549.1.1.13" => &ring::signature::RSA_PKCS1_2048_8192_SHA512,
+            other => bail!("unsupported pairing certificate signature algorithm: {other}"),
+        };
+    ring::signature::UnparsedPublicKey::new(
+        algorithm,
+        cert.tbs_certificate.subject_pki.subject_public_key.as_ref(),
+    )
+    .verify(cert.tbs_certificate.as_ref(), cert.signature_value.as_ref())
+    .map_err(|_| anyhow::anyhow!("pairing certificate self-signature verification failed"))?;
+    Ok(key)
 }
 pub fn certificate_signature(pem_text: &str) -> Result<Vec<u8>> {
     let der = certificate_der(pem_text)?;
