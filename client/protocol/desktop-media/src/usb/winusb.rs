@@ -9,6 +9,7 @@
 #[path = "winusb_ffi.rs"]
 mod ffi;
 
+#[cfg(test)]
 pub(super) use ffi::{
     control_target_endpoint, control_target_interface, pack_winusb_iso_in, pack_winusb_iso_out,
     usbd_status_to_errno, win32_error_to_errno, UsbdIsoPacketDescriptor,
@@ -140,6 +141,25 @@ mod platform {
             let info = *state.endpoints.get(&address)?;
             let entry = *state.handles.interfaces.get(&info.interface)?;
             Some((entry, info))
+        }
+
+        /// Finishes an overlapped WinUSB request synchronously and checks its result.
+        fn complete_overlapped(
+            &self,
+            entry: InterfaceEntry,
+            overlapped: &mut OVERLAPPED,
+        ) -> Result<u32, i32> {
+            let mut transferred = 0u32;
+            // SAFETY: `entry.winusb` is open and `overlapped` belongs to this in-flight request.
+            let ok = unsafe {
+                (self.api.get_overlapped_result)(entry.winusb, overlapped, &mut transferred, 1)
+            };
+            if ok != 0 {
+                Ok(transferred)
+            } else {
+                let err = unsafe { GetLastError().0 };
+                Err(win32_error_to_errno(err))
+            }
         }
 
         /// Waits for an overlapped WinUSB call to complete, cancelling via `CancelIoEx` and
@@ -326,21 +346,21 @@ mod platform {
                 Err(status) => return Reply::failed(status),
             };
             let mut overlapped = OVERLAPPED { hEvent: event.0, ..Default::default() };
-            let mut transferred = 0u32;
             let buf_ptr = if buffer.is_empty() { std::ptr::null_mut() } else { buffer.as_mut_ptr() };
-            // SAFETY: `buffer` and `overlapped` remain pinned until `wait_overlapped` returns.
+            // SAFETY: `buffer` and `overlapped` remain pinned until overlapped completion returns.
+            // Per WinUSB docs, `LengthTransferred` must be NULL when `Overlapped` is non-NULL.
             let ok = unsafe {
                 (self.api.control_transfer)(
                     entry.winusb,
                     packet,
                     buf_ptr,
                     buffer.len() as u32,
-                    &mut transferred,
+                    std::ptr::null_mut(),
                     &mut overlapped,
                 )
             };
             let moved = if ok != 0 {
-                Ok(transferred)
+                self.complete_overlapped(entry, &mut overlapped)
             } else {
                 let err = unsafe { GetLastError().0 };
                 if err == ERROR_IO_PENDING.0 {
@@ -370,14 +390,14 @@ mod platform {
             let submit = |buf: *mut u8, len: u32, is_in: bool| -> Result<u32, i32> {
                 let event = OwnedEvent::new()?;
                 let mut overlapped = OVERLAPPED { hEvent: event.0, ..Default::default() };
-                let mut transferred = 0u32;
                 let call = if is_in { self.api.read_pipe } else { self.api.write_pipe };
-                // SAFETY: caller keeps `buf` alive until `wait_overlapped` finishes.
+                // SAFETY: caller keeps `buf` alive until overlapped completion returns.
+                // Per WinUSB docs, `LengthTransferred` must be NULL when `Overlapped` is non-NULL.
                 let ok = unsafe {
-                    call(entry.winusb, address, buf, len, &mut transferred, &mut overlapped)
+                    call(entry.winusb, address, buf, len, std::ptr::null_mut(), &mut overlapped)
                 };
                 if ok != 0 {
-                    Ok(transferred)
+                    self.complete_overlapped(entry, &mut overlapped)
                 } else {
                     let err = unsafe { GetLastError().0 };
                     if err == ERROR_IO_PENDING.0 {
@@ -512,11 +532,7 @@ mod platform {
                 let event = OwnedEvent::new()?;
                 let mut overlapped = OVERLAPPED { hEvent: event.0, ..Default::default() };
                 if issue(try_continue, &mut overlapped) != 0 {
-                    let mut transferred = 0u32;
-                    let _ = unsafe {
-                        (self.api.get_overlapped_result)(entry.winusb, &mut overlapped, &mut transferred, 1)
-                    };
-                    return Ok(transferred);
+                    return self.complete_overlapped(entry, &mut overlapped);
                 }
                 let err = unsafe { GetLastError().0 };
                 if err == ERROR_IO_PENDING.0 {
@@ -645,10 +661,15 @@ mod platform {
                 if handles.interfaces.is_empty() {
                     handles.default_interface = base_num;
                 }
-                handles.interfaces.insert(
-                    base_num,
-                    InterfaceEntry { winusb: base, file, associated: false },
-                );
+                if let std::collections::hash_map::Entry::Vacant(slot) = handles.interfaces.entry(base_num) {
+                    slot.insert(InterfaceEntry { winusb: base, file, associated: false });
+                } else {
+                    // SAFETY: duplicate interface handle not stored in `handles.interfaces`.
+                    unsafe {
+                        let _ = (api.free)(base);
+                    }
+                    continue;
+                }
 
                 // Claim every associated interface exposed under the same WinUSB device handle.
                 for idx in 0u8..=254 {
@@ -662,10 +683,14 @@ mod platform {
                     } else {
                         base_num.saturating_add(idx + 1)
                     };
-                    handles.interfaces.insert(
-                        num,
-                        InterfaceEntry { winusb: assoc, file, associated: true },
-                    );
+                    if let std::collections::hash_map::Entry::Vacant(slot) = handles.interfaces.entry(num) {
+                        slot.insert(InterfaceEntry { winusb: assoc, file, associated: true });
+                    } else {
+                        // SAFETY: duplicate associated handle not stored in `handles.interfaces`.
+                        unsafe {
+                            let _ = (api.free)(assoc);
+                        }
+                    }
                 }
             }
             Ok(())

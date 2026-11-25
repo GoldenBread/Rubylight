@@ -283,8 +283,9 @@ fn iso_plan_validates_packet_counts_lengths_and_out_payloads() {
     };
     let pkt = |offset, length| IsoPacket { offset, length, actual_length: 0, status: 0 };
 
-    // Empty and over-cap packet lists are rejected.
+    // Empty, zero-total-length, and over-cap packet lists are rejected.
     assert_eq!(super::iso::iso_plan(&make(Direction::In, 64, vec![], vec![])), Err(wire::EINVAL));
+    assert_eq!(super::iso::iso_plan(&make(Direction::In, 64, vec![pkt(0, 0)], vec![])), Err(wire::EINVAL));
     let too_many: Vec<IsoPacket> = (0..super::iso::MAX_ISO_PACKETS + 1).map(|i| pkt(i as u32, 1)).collect();
     assert_eq!(super::iso::iso_plan(&make(Direction::In, 2048, too_many, vec![])), Err(wire::EINVAL));
 

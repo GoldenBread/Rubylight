@@ -6,6 +6,8 @@
 
 use std::ffi::{c_int, c_uint, c_void};
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+// Windows (non-unix): POLL_SLICE uses Duration.
+#[cfg(not(unix))]
 use std::time::Duration;
 
 use nightjar_core::usb::{wire, Direction, IsoPacket, Reply, Transfer};
@@ -50,7 +52,7 @@ pub(super) fn iso_plan(transfer: &Transfer) -> Result<usize, i32> {
     for packet in &transfer.iso {
         total = total.checked_add(packet.length as usize).ok_or(wire::EINVAL)?;
     }
-    if total > transfer.length as usize || c_int::try_from(total).is_err() {
+    if total == 0 || total > transfer.length as usize || c_int::try_from(total).is_err() {
         return Err(wire::EINVAL);
     }
     if transfer.direction == Direction::Out && transfer.data.len() < total {

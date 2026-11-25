@@ -262,7 +262,7 @@ pub fn interface_paths(vid: u16, pid: u16, ports: &[u8]) -> Result<Vec<String>, 
                 let _ = SetupDiGetDeviceInterfaceDetailW(if_set, &if_data, None, 0, Some(&mut required), None);
                 let min_size = std::mem::size_of::<SP_DEVICE_INTERFACE_DETAIL_DATA_W>();
                 if (required as usize) >= min_size {
-                    let mut detail_buf = vec![0u8; required as usize];
+                    let mut detail_buf = vec![0u32; (required as usize).div_ceil(4)];
                     let detail_ptr = detail_buf.as_mut_ptr().cast::<SP_DEVICE_INTERFACE_DETAIL_DATA_W>();
                     (*detail_ptr).cbSize = min_size as u32;
                     if SetupDiGetDeviceInterfaceDetailW(
@@ -276,7 +276,11 @@ pub fn interface_paths(vid: u16, pid: u16, ports: &[u8]) -> Result<Vec<String>, 
                     .is_ok()
                     {
                         let offset = std::mem::offset_of!(SP_DEVICE_INTERFACE_DETAIL_DATA_W, DevicePath);
-                        if let Some(path) = wide_strings(&detail_buf[offset..]).into_iter().next() {
+                        let bytes = std::slice::from_raw_parts(
+                            detail_buf.as_ptr().cast::<u8>(),
+                            required as usize,
+                        );
+                        if let Some(path) = wide_strings(&bytes[offset..]).into_iter().next() {
                             result = Some(path);
                         }
                     }
