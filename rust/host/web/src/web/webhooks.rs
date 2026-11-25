@@ -111,35 +111,69 @@ fn stored_hooks(stored: Option<&str>, directory: &std::path::Path) -> anyhow::Re
     Ok(hooks)
 }
 
-/// Applies `edit` to the stored hooks, writes secret-free metadata to `sunshine.conf`, and
-/// saves webhook secrets in the protected secret store.
+/// Applies `edit` to the stored hooks, keeping secrets in the protected store synchronized
+/// with `sunshine.conf` under `config_save` and rolling back if writing config fails.
 fn save_webhooks(
     h: &Shared,
     edit: impl FnOnce(&mut Vec<Webhook>) -> anyhow::Result<()>,
 ) -> anyhow::Result<()> {
-    let mut secrets_to_save = None;
-    let mut edit = Some(edit);
-    super::config::save_setting(h, "webhooks", |stored| {
-        let mut hooks = stored_hooks(stored, &h.directory)?;
-        edit.take().unwrap()(&mut hooks)?;
-        for hook in &hooks {
-            if hook.secret.is_empty() {
-                anyhow::bail!(
-                    "webhook for {} has no signing secret; replace or rotate its secret first",
-                    butterpollo_stream::webhooks::origin(&hook.url)
-                );
+    let secrets_path = webhook::secrets_path(&h.directory);
+    super::config::save_setting_tx(
+        h,
+        "webhooks",
+        |stored| {
+            let mut hooks = stored_hooks(stored, &h.directory)?;
+            edit(&mut hooks)?;
+            for hook in &hooks {
+                if hook.secret.is_empty() {
+                    anyhow::bail!(
+                        "webhook for {} has no signing secret; replace or rotate its secret first",
+                        butterpollo_stream::webhooks::origin(&hook.url)
+                    );
+                }
             }
-        }
-        let (text, secrets) = webhook::split_for_storage(&hooks)?;
-        // Run the same event/URL validation the host uses when reading the setting.
-        webhook::parse_webhooks_allow_empty_secrets(&text)?;
-        secrets_to_save = Some(secrets);
-        Ok(text)
-    })?;
-    if let Some(secrets) = secrets_to_save {
-        webhook::save_secrets(&webhook::secrets_path(&h.directory), &secrets)?;
-    }
-    Ok(())
+            let (text, secrets) = webhook::split_for_storage(&hooks)?;
+            // Run the same event/URL validation the host uses when reading the setting.
+            webhook::parse_webhooks_allow_empty_secrets(&text)?;
+            Ok((text, secrets))
+        },
+        |secrets| {
+            let prior = match std::fs::read(&secrets_path) {
+                Ok(bytes) => Some(bytes),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+                Err(error) => {
+                    return Err(anyhow::Error::from(error).context("reading webhook secrets"));
+                }
+            };
+            // Keep existing URLs' secrets present until `h.config` flips so a concurrent reader
+            // never sees an active URL without a secret.
+            let mut staged = webhook::load_secrets(&secrets_path)?;
+            for (url, secret) in &secrets {
+                staged.insert(url.clone(), secret.clone());
+            }
+            let needs_prune = staged != secrets;
+            webhook::save_secrets(&secrets_path, &staged)?;
+            Ok((prior, secrets, needs_prune))
+        },
+        |(prior, _, _)| {
+            let restore = match prior {
+                Some(bytes) => butterpollo_session::state::atomic_write(&secrets_path, &bytes),
+                None => match std::fs::remove_file(&secrets_path) {
+                    Ok(()) => Ok(()),
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                    Err(error) => Err(error.into()),
+                },
+            };
+            if let Err(error) = restore {
+                tracing::warn!(%error, "could not roll back webhook secrets after config save failure");
+            }
+        },
+        |(_, secrets, needs_prune)| {
+            if needs_prune && let Err(error) = webhook::save_secrets(&secrets_path, &secrets) {
+                tracing::warn!(%error, "could not prune superseded webhook secrets");
+            }
+        },
+    )
 }
 
 /// Whether `host` is this PC or a link-local address: services there (the
@@ -209,7 +243,7 @@ fn save(
             Some(at) => {
                 let hook = &mut hooks[at];
                 // Comparing scheme, host and effective port ensures switching scheme or port
-                // rotates the signing secret rather than sharing it across different endpoints (`HS-L28`).
+                // rotates the signing secret rather than sharing it across different endpoints.
                 let moved = !url::Url::parse(&hook.url).is_ok_and(|before| {
                     before.scheme() == parsed.scheme()
                         && before.host() == parsed.host()

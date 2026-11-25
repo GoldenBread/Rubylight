@@ -60,7 +60,7 @@ impl SignIns {
             other => other,
         }
     }
-    /// Whether `peer` may attempt sign-in without counting against the limit (`R1-HN3`).
+    /// Whether `peer` may attempt sign-in without counting against the limit.
     pub(super) fn allowed(&mut self, peer: std::net::IpAddr, now: Instant) -> bool {
         let key = Self::key(peer);
         self.attempts

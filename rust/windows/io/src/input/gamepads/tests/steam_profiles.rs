@@ -579,7 +579,7 @@ fn usbip_attach_offloads_off_calling_thread_and_strands_unpluggable_temporary_pa
     assert!(pads.deck_failed.contains(&0));
     pads.active.clear();
 
-    // HW-L17: when a temporary VHF pad cannot be unplugged while switching to USB/IP,
+    // When a temporary VHF pad cannot be unplugged while switching to USB/IP,
     // `retire_vhf_for_usbip` retires it from `active` and strands its slot instead of failing.
     let _stranded = stranded_slots();
     let slot = Slot::reserve().unwrap();

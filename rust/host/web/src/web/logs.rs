@@ -87,7 +87,7 @@ pub(super) fn tail(h: &Shared, uri: &axum::http::Uri) -> Response {
             String::new()
         };
         // A negative offset asks for the tail; an offset past the end or a
-        // changed file prefix (`head`) means the log was rotated (`HS-L29`).
+        // changed file prefix (`head`) means the log was rotated.
         let rotated = !head.is_empty()
             && query
                 .get("head")

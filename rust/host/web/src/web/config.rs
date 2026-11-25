@@ -99,7 +99,7 @@ pub(super) fn handle(h: &Shared, method: &str, path: &str, data: &Value) -> anyh
                 );
             }
             // Apply the Nucleus folder change together with (or only if) writing
-            // the config succeeds (`R1-HS3`), never mutating the folder before save.
+            // the config succeeds, never mutating the folder before save.
             if let Some(folder) = &nucleus_folder {
                 let path = &h.config_path;
                 let text = next.text();
@@ -232,13 +232,26 @@ pub(super) fn save_setting(
     key: &str,
     next: impl FnOnce(Option<&str>) -> anyhow::Result<String>,
 ) -> anyhow::Result<()> {
+    save_setting_tx(h, key, |s| Ok((next(s)?, ())), |()| Ok(()), |_| (), |_| ())
+}
+
+/// Like [`save_setting`], holding `config_save` across paired sidecar file preparation,
+/// rollback if writing `sunshine.conf` fails, and post-commit cleanup.
+pub(super) fn save_setting_tx<P, T>(
+    h: &Shared,
+    key: &str,
+    next: impl FnOnce(Option<&str>) -> anyhow::Result<(String, P)>,
+    prepare: impl FnOnce(P) -> anyhow::Result<T>,
+    rollback: impl FnOnce(T),
+    after_commit: impl FnOnce(T),
+) -> anyhow::Result<()> {
     let _save = h.config_save.lock().unwrap();
     let mut config = if h.port_override.is_some() {
         butterpollo_config::config::Config::load(&h.config_path)?
     } else {
         h.config.read().unwrap().clone()
     };
-    let value = next(config.values.get(key).map(String::as_str))?;
+    let (value, prepared_arg) = next(config.values.get(key).map(String::as_str))?;
     // The configuration file has no empty value: the key goes instead.
     if value.trim().is_empty() {
         config.values.remove(key);
@@ -246,7 +259,11 @@ pub(super) fn save_setting(
         config.values.insert(key.to_owned(), value);
         config.check_saved([&key.to_owned()])?;
     }
-    state::atomic_write(&h.config_path, config.text().as_bytes())?;
+    let staged = prepare(prepared_arg)?;
+    if let Err(error) = state::atomic_write(&h.config_path, config.text().as_bytes()) {
+        rollback(staged);
+        return Err(error);
+    }
     if let Some(port) = h.port_override {
         config.values.insert("port".into(), port.to_string());
     }
@@ -258,6 +275,7 @@ pub(super) fn save_setting(
     // The idle loop follows some settings by their own deadlines (the update
     // interval, the restore hotkey): a save wakes it to look at once.
     h.wake_maintenance();
+    after_commit(staged);
     Ok(())
 }
 

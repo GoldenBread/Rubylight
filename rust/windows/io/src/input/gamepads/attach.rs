@@ -62,7 +62,7 @@ impl Gamepads {
 
     /// Removes controller `id`'s temporary VHF pad before switching to a USB/IP pad.
     /// A failed non-driver-lost unplug strands the VHF slot rather than failing
-    /// and leaving the controller stuck in an attach/detach loop (`HW-L17`).
+    /// and leaving the controller stuck in an attach/detach loop.
     pub(super) fn retire_vhf_for_usbip(&mut self, id: u16) {
         let Some(global) = self.active.get(&id).copied() else {
             return;
