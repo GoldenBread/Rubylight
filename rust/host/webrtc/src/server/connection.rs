@@ -106,6 +106,7 @@ impl Connection {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn connection(
     h: Shared,
     clients: Arc<Registry>,
@@ -113,6 +114,8 @@ pub(super) async fn connection(
     media: Option<Arc<Media>>,
     peer: Peer,
     console: Option<(ConsoleSignIn, Duration)>,
+    server_check: Option<Duration>,
+    mut stopped: Option<tokio::sync::watch::Receiver<bool>>,
     mut socket: WebSocket,
 ) {
     let ip = peer.address.ip().to_canonical();
@@ -136,8 +139,13 @@ pub(super) async fn connection(
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut out = Vec::new();
     // A console connection is signed in already; its sign-in and the WebRTC server setting are
-    // checked every few seconds.
+    // checked every few seconds. A play connection checks only the WebRTC server setting.
     let mut signed_in = None;
+    let mut play_check = server_check.map(|every| {
+        let mut check = tokio::time::interval(every);
+        check.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        check
+    });
     match console {
         Some((sign_in, every)) => {
             tracing::info!(device = %sign_in.name, peer = %peer.address, "WebRTC console connection opened");
@@ -187,8 +195,36 @@ pub(super) async fn connection(
                     Close::TooManyUnauthenticated => flow = Flow::Close,
                 }
             }
+            () = server_stopped(&mut stopped) => {
+                tracing::debug!(peer = %peer.address, id, "WebRTC connection closed: server stopped");
+                drop(state);
+                let _ = send(&mut socket, &mut out).await;
+                close_socket(
+                    socket,
+                    Some(CloseFrame {
+                        code: 1001,
+                        reason: "The host stopped the WebRTC server".into(),
+                    }),
+                )
+                .await;
+                return;
+            }
             reason = console_revoked(&h, &mut signed_in) => {
                 tracing::info!(peer = %peer.address, id, reason, "WebRTC console connection closed");
+                drop(state);
+                let _ = send(&mut socket, &mut out).await;
+                close_socket(
+                    socket,
+                    Some(CloseFrame {
+                        code: close_code::POLICY,
+                        reason: reason.into(),
+                    }),
+                )
+                .await;
+                return;
+            }
+            reason = webrtc_server_off(&h, &mut play_check) => {
+                tracing::info!(peer = %peer.address, id, reason, "WebRTC play connection closed");
                 drop(state);
                 let _ = send(&mut socket, &mut out).await;
                 close_socket(
@@ -244,6 +280,32 @@ async fn console_revoked(
         }
         if !h.config.read().unwrap().webrtc_server() {
             return "the WebRTC server is off";
+        }
+    }
+}
+
+async fn webrtc_server_off(h: &Shared, check: &mut Option<tokio::time::Interval>) -> &'static str {
+    let Some(every) = check else {
+        return std::future::pending().await;
+    };
+    loop {
+        every.tick().await;
+        if !h.config.read().unwrap().webrtc_server() {
+            return "the WebRTC server is off";
+        }
+    }
+}
+
+async fn server_stopped(stopped: &mut Option<tokio::sync::watch::Receiver<bool>>) {
+    let Some(rx) = stopped.as_mut() else {
+        return std::future::pending().await;
+    };
+    loop {
+        if *rx.borrow_and_update() {
+            return;
+        }
+        if rx.changed().await.is_err() {
+            return;
         }
     }
 }

@@ -20,6 +20,12 @@ pub const PORT: u16 = 8000;
 
 /// A datagram longer than this is not a `discover` message.
 const MAX_DATAGRAM: usize = 512;
+const CONSECUTIVE_ERROR_THRESHOLD: u32 = 4;
+const ERROR_BACKOFF: Duration = Duration::from_millis(20);
+
+fn error_backoff_due(consecutive: u32) -> bool {
+    consecutive >= CONSECUTIVE_ERROR_THRESHOLD
+}
 
 /// Whether `datagram` from `peer` is a `discover` message from the local
 /// network, which gets a reply.
@@ -151,12 +157,20 @@ pub async fn serve(h: Shared, socket: UdpSocket, port: u16) {
     };
     let mut buffer = [0u8; MAX_DATAGRAM + 1];
     let mut answers = Answers::default();
+    let mut consecutive_errors = 0u32;
     loop {
         let (length, peer) = match socket.recv_from(&mut buffer).await {
-            Ok(received) => received,
+            Ok(received) => {
+                consecutive_errors = 0;
+                received
+            }
             Err(error) => {
                 // A reply to an unreachable peer comes back as a reset on Windows.
                 tracing::debug!(%error, "WebRTC discovery read failed");
+                consecutive_errors = consecutive_errors.saturating_add(1);
+                if error_backoff_due(consecutive_errors) {
+                    tokio::time::sleep(ERROR_BACKOFF).await;
+                }
                 continue;
             }
         };
@@ -420,5 +434,14 @@ mod tests {
             other => panic!("{other:?}"),
         }
         task.abort();
+    }
+
+    #[test]
+    fn discovery_error_backoff_triggers_after_consecutive_failures() {
+        for count in 0..CONSECUTIVE_ERROR_THRESHOLD {
+            assert!(!error_backoff_due(count));
+        }
+        assert!(error_backoff_due(CONSECUTIVE_ERROR_THRESHOLD));
+        assert!(error_backoff_due(u32::MAX));
     }
 }

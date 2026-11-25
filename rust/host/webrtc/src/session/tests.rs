@@ -63,6 +63,20 @@ fn session(f: &Fixture) -> Arc<Session> {
     session
 }
 
+fn test_media(f: &Fixture) -> Arc<butterpollo_stream::stream::Media> {
+    (25000u16..55000)
+        .step_by(20)
+        .find_map(|base| {
+            *f.host.config.write().unwrap() = butterpollo_config::config::Config::parse(&format!(
+                "port = {base}\nstream_mic = false\n"
+            ))
+            .unwrap();
+            butterpollo_stream::stream::Media::new(f.host.clone(), "127.0.0.1".parse().unwrap())
+                .ok()
+        })
+        .expect("available ephemeral base port for Media::new")
+}
+
 fn requested(session: &Session) -> (bool, u64) {
     (
         session.idr.load(Ordering::Acquire),
@@ -268,21 +282,7 @@ async fn switch_session_is_refused_when_another_device_owns_remote_session() {
         .unwrap();
     let client_id = intruder.webrtc().unwrap().0.to_owned();
 
-    let base_port = (25000u16..55000)
-        .step_by(20)
-        .find(|&base| {
-            let ports = butterpollo_config::config::Ports::from_base(base);
-            std::net::UdpSocket::bind(("127.0.0.1", ports.video)).is_ok()
-                && std::net::UdpSocket::bind(("127.0.0.1", ports.audio)).is_ok()
-        })
-        .unwrap();
-    *f.host.config.write().unwrap() = butterpollo_config::config::Config::parse(&format!(
-        "port = {base_port}\nstream_mic = false\n"
-    ))
-    .unwrap();
-    let media =
-        butterpollo_stream::stream::Media::new(f.host.clone(), "127.0.0.1".parse().unwrap())
-            .unwrap();
+    let media = test_media(&f);
     let (out_tx, mut out_rx) = tokio::sync::mpsc::channel(8);
     let commands = spawn(
         f.host.clone(),
@@ -325,6 +325,130 @@ async fn switch_session_is_refused_when_another_device_owns_remote_session() {
     );
     assert!(f.host.current_app.lock().unwrap().is_some());
     assert!(!monitor.stopping());
+    drop(commands);
+    f.host.stop.store(true, Ordering::Release);
+}
+
+#[tokio::test]
+async fn same_app_switch_allows_resume_alongside_remote_monitor_and_enforces_webrtc_exclusivity() {
+    use butterpollo_session::{
+        session::Transport,
+        webrtc::protocol::{
+            AudioSettings, ErrorCode, HostSessionState, ServerMessage, VideoSettings,
+        },
+    };
+    let f = Fixture::new();
+    let app0 = f.host.apps.read().unwrap()[0].clone();
+    let app_id = app0.id();
+    let mut running =
+        butterpollo_stream::process::RunningApp::with_environment(&app0, Default::default())
+            .unwrap();
+    running.owner = "owner".into();
+    *f.host.current_app.lock().unwrap() = Some(running);
+
+    let mut owner_client = f.client(u32::MAX);
+    owner_client.uuid = "owner".into();
+    let monitor = f.session(owner_client.clone(), Role::RemoteMonitor);
+    let mut webrtc_launch = f.launch(owner_client, Role::Stream);
+    webrtc_launch.transport = Transport::WebRtc;
+    let webrtc_stream = butterpollo_stream::state::Session::new(webrtc_launch, Default::default());
+    f.host
+        .sessions
+        .lock()
+        .unwrap()
+        .active
+        .insert(webrtc_stream.launch.id.clone(), webrtc_stream.clone());
+
+    let intruder = crate::WebRtcRuntime::for_host(&f.host)
+        .clients
+        .console_device(&f.host, "intruder")
+        .unwrap();
+    let client_id = intruder.webrtc().unwrap().0.to_owned();
+    let media = test_media(&f);
+    let (out_tx, mut out_rx) = tokio::sync::mpsc::channel(16);
+    let commands = spawn(
+        f.host.clone(),
+        media,
+        client_id,
+        "127.0.0.1:5000".parse().unwrap(),
+        "127.0.0.1".parse().unwrap(),
+        false,
+        out_tx,
+    );
+    let req = move || Request {
+        app_id: app_id.to_string(),
+        video: VideoSettings {
+            width: 1920,
+            height: 1080,
+            fps: 60,
+            codec: "hevc".into(),
+            bitrate_kbps: 20_000,
+            hdr: false,
+        },
+        audio: AudioSettings {
+            channels: 2,
+            sample_rate: None,
+        },
+    };
+
+    // 1. Active WebRTC stream owned by another device still blocks same-app takeover.
+    assert!(commands.send(Command::Switch(req())));
+    let reply = tokio::time::timeout(Duration::from_secs(2), out_rx.recv())
+        .await
+        .expect("timed out waiting for webrtc exclusivity refusal")
+        .expect("actor exited");
+    assert!(
+        matches!(
+            reply,
+            ServerMessage::Error {
+                ref request_type,
+                code: ErrorCode::SessionActive,
+                ..
+            } if request_type == "switch-session"
+        ),
+        "expected SessionActive on WebRTC held_by_other, got {reply:?}"
+    );
+    assert!(!webrtc_stream.stopping());
+
+    // 2. Remove the WebRTC stream while keeping `RemoteMonitor` alive; non-terminating resume succeeds.
+    f.host
+        .sessions
+        .lock()
+        .unwrap()
+        .active
+        .remove(&webrtc_stream.launch.id);
+    assert!(commands.send(Command::Switch(req())));
+    let first = tokio::time::timeout(Duration::from_secs(2), out_rx.recv())
+        .await
+        .expect("timed out waiting for resuming state")
+        .expect("actor exited");
+    assert!(
+        matches!(
+            first,
+            ServerMessage::HostSessionStatus {
+                state: HostSessionState::Resuming,
+                ..
+            }
+        ),
+        "expected Resuming status, got {first:?}"
+    );
+    let second = tokio::time::timeout(Duration::from_secs(2), out_rx.recv())
+        .await
+        .expect("timed out waiting for starting state after stop_streams_for")
+        .expect("actor exited");
+    assert!(
+        matches!(
+            second,
+            ServerMessage::HostSessionStatus {
+                state: HostSessionState::Starting,
+                ..
+            }
+        ),
+        "same-app switch must proceed past stop_streams_for instead of returning NotOwner: {second:?}"
+    );
+    assert!(!monitor.stopping());
+    assert!(f.host.current_app.lock().unwrap().is_some());
+    assert!(commands.send(Command::Stop));
     drop(commands);
     f.host.stop.store(true, Ordering::Release);
 }

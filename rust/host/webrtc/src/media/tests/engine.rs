@@ -579,3 +579,26 @@ fn multi_frame_drain_reports_each_emitted_frames_wire_bytes_to_the_pacer() {
         "expected F2's large wire-byte count to be reported on its own advance() turn"
     );
 }
+
+#[test]
+fn same_rtp_timestamp_video_frames_are_measured_independently() {
+    let mut link = Link::connected(spec(VideoCodec::H264, false));
+    // Two multi-packet video frames queued back-to-back with identical RTP timestamp `0`:
+    // RTP marker bit resets `emitting_rtp_ts` so frame bytes are not accumulated across both.
+    let frame_a = h264_frame(false, 1_800);
+    let frame_b = h264_frame(false, 1_800);
+    link.video(frame_a, 0, false);
+    link.video(frame_b, 0, false);
+
+    let mut max_frame_wire = 0;
+    for _ in 0..5 {
+        let _ = link.host.advance(link.now).unwrap();
+        max_frame_wire = max_frame_wire.max(link.host.take_frame_wire_bytes());
+        let _ = link.host.drain_outgoing();
+        link.now += Duration::from_millis(1);
+    }
+    assert!(
+        max_frame_wire > 1_800 && max_frame_wire < 2_500,
+        "expected single-frame wire size despite equal RTP timestamps, got {max_frame_wire}"
+    );
+}
