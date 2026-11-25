@@ -121,6 +121,7 @@ pub struct Host {
     pub invites: crate::invites::HostInvites,
     pub otp: Mutex<OneTimePins>,
     pub web_sessions: Mutex<HashMap<String, WebSession>>,
+    pub(crate) rotated_web_sessions: Mutex<HashMap<String, RotatedWebSession>>,
     pub stop: std::sync::atomic::AtomicBool,
     pub restart: std::sync::atomic::AtomicBool,
     stop_reason: Mutex<Option<&'static str>>,
@@ -237,6 +238,17 @@ pub struct Host {
 pub struct LastFailure {
     since: Instant,
     reason: Option<String>,
+}
+
+/// Recently rotated web refresh token kept briefly so concurrent tab refreshes
+/// receive the newly issued tokens instead of signing the user out.
+pub(crate) struct RotatedWebSession {
+    pub rotated_at: Instant,
+    pub access: String,
+    pub refresh: String,
+    pub csrf: String,
+    pub refresh_deadline: u64,
+    pub access_hash: String,
 }
 
 impl Host {

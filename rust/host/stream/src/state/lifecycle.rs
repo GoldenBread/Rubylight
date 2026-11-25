@@ -442,6 +442,7 @@ impl Host {
             invites: Default::default(),
             otp: Mutex::new(OneTimePins::default()),
             web_sessions: Mutex::new(web_sessions),
+            rotated_web_sessions: Mutex::new(HashMap::new()),
             stop: std::sync::atomic::AtomicBool::new(false),
             restart: std::sync::atomic::AtomicBool::new(false),
             stop_reason: Mutex::new(None),

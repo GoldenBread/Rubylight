@@ -80,6 +80,7 @@ pub fn start(h: Shared, connection: Connection, args: Args, resume: bool) -> Res
         && !resume
         && requested != 0
         && active.as_ref().is_some_and(|game| game.app.id == requested);
+    let mut invited_view = false;
     let authorized = validate_launch_client(&h, &connection, control, resume).or_else(|error| {
         // A device paired from an invite may not launch: it joins the game being played with
         // View streams alone, as a resume of it would.
@@ -87,7 +88,10 @@ pub fn start(h: Shared, connection: Connection, args: Args, resume: bool) -> Res
             return Err(error);
         }
         match validate_launch_client(&h, &connection, control, true) {
-            Ok(client) if crate::invites::invited_live(&client) => Ok(client),
+            Ok(client) if crate::invites::invited_live(&client) => {
+                invited_view = true;
+                Ok(client)
+            }
             _ => Err(error),
         }
     });
@@ -168,6 +172,14 @@ pub fn start(h: Shared, connection: Connection, args: Args, resume: bool) -> Res
         ControlFlow::Break(response) => return response,
     };
     // A guest streams the running game, also when it named the game in a `/launch`.
+    let required_permission = Some(
+        if resume || invited_view || matches!(control, Some(Control::Resume | Control::RunningGame))
+        {
+            1 << 25
+        } else {
+            1 << 26
+        },
+    );
     let resume = resume
         || matches!(control, Some(Control::Resume | Control::RunningGame))
         || (control == Some(Control::Monitor) && owner == remote::Owner::Monitor)
@@ -243,7 +255,16 @@ pub fn start(h: Shared, connection: Connection, args: Args, resume: bool) -> Res
         } else {
             "rtsp"
         };
-        let launch = launch_back_half(&h, &args, launch, app, coop, resume, owner)?;
+        let launch = launch_back_half(
+            &h,
+            &args,
+            launch,
+            app,
+            coop,
+            resume,
+            owner,
+            required_permission,
+        )?;
         if let Some(id) = guest
             && (!h.device_guests.guest_live(&h, id) || !h.device_guests.joined(id, &launch))
         {
@@ -302,6 +323,7 @@ fn launch_back_half(
     coop: Option<crate::nucleus::CoopApp>,
     resume: bool,
     owner: remote::Owner,
+    required_permission: Option<u32>,
 ) -> Result<Launch> {
     // The app as this device streams it: the device's block in its `device-overrides` on top,
     // for its Radeon profile and its managed game files.
@@ -418,7 +440,23 @@ fn launch_back_half(
         .preparing
         .store(true, std::sync::atomic::Ordering::Release);
     let preparing = Preparing(launch.preparing.clone());
-    let canceled = h.sessions.lock().unwrap().queue(launch.clone())?;
+    let canceled = {
+        let paired = required_permission.map(|_| h.paired.read().unwrap());
+        let mut sessions = h.sessions.lock().unwrap();
+        if let (Some(permission), Some(paired)) = (required_permission, paired.as_ref()) {
+            let uuid = butterpollo_session::state::device_uuid(&launch.client.uuid);
+            let valid = paired.clients.iter().any(|c| {
+                c.uuid == uuid
+                    && c.enabled
+                    && c.allows(permission)
+                    && crypto::equal(c.cert.as_bytes(), launch.client.cert.as_bytes())
+            });
+            if !valid {
+                anyhow::bail!("client is not paired or is disabled");
+            }
+        }
+        sessions.queue(launch.clone())?
+    };
     drop(canceled);
     if role != Role::InputOnly {
         #[cfg(any(test, feature = "test-support"))]
@@ -665,7 +703,7 @@ pub fn launch_webrtc(
             );
         }
         launch.background = Some(coop.is_none() && validate_background_launch(h, &launch)?);
-        launch_back_half(h, &args, launch, app, coop, false, owner)
+        launch_back_half(h, &args, launch, app, coop, false, owner, None)
     })();
     if outcome.is_ok() {
         attempt.succeeded();

@@ -722,3 +722,57 @@ fn unreadable_power_capabilities_make_sleep_unavailable() {
         Some("could not read this PC's power capabilities: denied")
     );
 }
+
+#[tokio::test]
+async fn nucleus_session_in_reconnect_grace_refuses_sleep() {
+    use butterpollo_session::state::App;
+    use std::collections::BTreeMap;
+
+    let f = Fixture::new();
+    let fake = fake(&f);
+    let client = device(&f, true);
+    let token = capabilities(&f).await.field("SleepToken");
+    let pc = Arc::new(crate::nucleus::fake::Pc::installed());
+    f.host.nucleus.use_pc(pc);
+    let apps = vec![App {
+        name: "Portal 2".into(),
+        cmd: format!("\"{}\" -novid", crate::nucleus::fake::EXE),
+        working_dir: String::new(),
+        prep: Vec::new(),
+        computed_id: None,
+        aliases: Vec::new(),
+        extra: BTreeMap::new(),
+    }];
+    *f.host.apps.write().unwrap() = apps.clone();
+    let coop = f.host.nucleus.entries(&apps, "").remove(0);
+    let seat = f
+        .host
+        .nucleus
+        .admit(crate::nucleus::Admission {
+            launch: "grace-launch",
+            client: &client,
+            game: crate::nucleus::Game::Coop(&coop),
+            size: (1920, 1080),
+            config: &f.host.config_snapshot(),
+            warnings: Default::default(),
+            release_parked: &|| Ok(()),
+            instances: None,
+        })
+        .unwrap();
+    // Leave the stream so no active sessions exist, leaving only the Nucleus reconnect grace.
+    f.host.nucleus.leave(seat, "grace-launch");
+
+    assert_eq!(capabilities(&f).await.field("SleepAvailable"), "0");
+    let blocked = sleep(&f, &token).await;
+    assert_eq!(
+        blocked.message(),
+        "End all applications and sessions before requesting sleep"
+    );
+    assert_eq!(fake.suspends.load(Ordering::SeqCst), 0);
+
+    // Once the Nucleus session itself ends, sleep proceeds.
+    f.host.nucleus.end(seat.session);
+    assert_eq!(sleep(&f, &token).await.status, StatusCode::ACCEPTED);
+    wait_for_gate(&f);
+    assert_eq!(fake.suspends.load(Ordering::SeqCst), 1);
+}

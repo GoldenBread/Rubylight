@@ -23,13 +23,10 @@ impl Host {
         }
         // The saves' lock order: apps, then the stamp.
         let mut apps = self.apps.write().unwrap();
-        let mut stamp = self.apps_stamp.lock().unwrap();
         let current = file_stamp(&self.apps_path);
-        if *stamp == current {
+        if *self.apps_stamp.lock().unwrap() == current {
             return;
         }
-        *stamp = current;
-        drop(stamp);
         let loaded = (|| -> Result<(Value, Vec<App>)> {
             let bytes = std::fs::read(&self.apps_path)?;
             let json = butterpollo_session::state::json_bytes(&bytes)
@@ -45,6 +42,7 @@ impl Host {
         })();
         match loaded {
             Ok((document, next)) => {
+                *self.apps_stamp.lock().unwrap() = file_stamp(&self.apps_path);
                 *apps = next;
                 *self.app_document.write().unwrap() = document;
                 self.config_version
@@ -107,9 +105,11 @@ impl Host {
             if *seen == current {
                 return;
             }
-            *seen = current;
             let loaded = match Credentials::load(&self.credentials_path) {
-                Ok(loaded) => loaded,
+                Ok(loaded) => {
+                    *seen = current;
+                    loaded
+                }
                 Err(error) => {
                     tracing::warn!(
                         error = %format!("{error:#}"),
@@ -143,6 +143,7 @@ impl Host {
             tracing::warn!(error = %format!("{error:#}"), "browser sessions and API tokens could not be cleared");
         }
         sessions.clear();
+        self.rotated_web_sessions.lock().unwrap().clear();
     }
 
     pub fn save_web_sessions(&self, sessions: &HashMap<String, WebSession>) -> Result<()> {
@@ -160,6 +161,7 @@ impl Host {
         );
         butterpollo_session::state::write_json(&self.aliases_path, &document)?;
         *aliases = document;
+        self.rotated_web_sessions.lock().unwrap().clear();
         Ok(())
     }
 
@@ -176,6 +178,7 @@ impl Host {
         document["root"]["api_tokens"] = json!([]);
         butterpollo_session::state::write_json(&self.aliases_path, &document)?;
         *aliases = document;
+        self.rotated_web_sessions.lock().unwrap().clear();
         Ok(())
     }
 
@@ -220,6 +223,7 @@ impl Host {
             "rotation_id".into(),
             hex::encode(butterpollo_crypto::crypto::random::<12>()).into(),
         );
+        const REFRESH_ROTATION_GRACE: Duration = Duration::from_secs(15);
         let mut sessions = self.web_sessions.lock().unwrap();
         let live = previous.as_ref().map(|previous| {
             sessions
@@ -227,6 +231,22 @@ impl Host {
                 .find(|s| s.refresh == previous.refresh && s.refresh_expires > Instant::now())
         });
         if let Some(None) = live {
+            if let Some(prev) = previous.as_ref() {
+                let mut rotated = self.rotated_web_sessions.lock().unwrap();
+                rotated.retain(|_, entry| entry.rotated_at.elapsed() < REFRESH_ROTATION_GRACE);
+                if let Some(entry) = rotated.get(&prev.refresh)
+                    && sessions
+                        .get(&entry.access_hash)
+                        .is_some_and(|s| s.refresh_expires > Instant::now())
+                {
+                    return Ok((
+                        entry.access.clone(),
+                        entry.refresh.clone(),
+                        entry.csrf.clone(),
+                        entry.refresh_deadline.saturating_sub(wall),
+                    ));
+                }
+            }
             return Err(web_sessions::Rotated.into());
         }
         // A refresh keeps the sign-in. It is read under the lock: the console's stream socket may
@@ -249,8 +269,9 @@ impl Host {
         {
             next.remove(&key);
         }
+        let access_hash = web_sessions::hash(&access);
         next.insert(
-            web_sessions::hash(&access),
+            access_hash.clone(),
             WebSession {
                 created: wall,
                 last_seen: wall,
@@ -270,6 +291,21 @@ impl Host {
         );
         self.save_web_sessions(&next)?;
         *sessions = next;
+        if let Some(prev) = previous.as_ref() {
+            let mut rotated = self.rotated_web_sessions.lock().unwrap();
+            rotated.retain(|_, entry| entry.rotated_at.elapsed() < REFRESH_ROTATION_GRACE);
+            rotated.insert(
+                prev.refresh.clone(),
+                crate::state::RotatedWebSession {
+                    rotated_at: Instant::now(),
+                    access: access.clone(),
+                    refresh: refresh.clone(),
+                    csrf: csrf.clone(),
+                    refresh_deadline,
+                    access_hash,
+                },
+            );
+        }
         Ok((access, refresh, csrf, refresh_deadline.saturating_sub(wall)))
     }
 }

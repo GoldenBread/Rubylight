@@ -36,33 +36,51 @@ fn options(h: &Host, client: &str) -> Result<(Duration, Vec<String>), Error> {
     Ok(options)
 }
 
+fn spawn_worker(h: &Shared) -> Result<mpsc::SyncSender<Request>, Error> {
+    let (sender, receiver) = mpsc::sync_channel(4);
+    let host = Arc::downgrade(h);
+    std::thread::Builder::new()
+        .name("hardware-metrics".into())
+        .spawn(move || run(host, receiver))
+        .map_err(|_| {
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Hardware metrics are unavailable",
+            )
+        })?;
+    Ok(sender)
+}
+
 pub async fn sample(h: &Shared, client: String) -> Result<Value, Error> {
     let (_, selected) = options(h, &client)?;
     let (reply, response) = tokio::sync::oneshot::channel();
     {
         let mut worker = h.hardware_metrics.lock().unwrap();
-        if worker.is_none() {
-            let (sender, receiver) = mpsc::sync_channel(4);
-            let host = Arc::downgrade(h);
-            std::thread::Builder::new()
-                .name("hardware-metrics".into())
-                .spawn(move || run(host, receiver))
-                .map_err(|_| {
-                    (
-                        StatusCode::SERVICE_UNAVAILABLE,
-                        "Hardware metrics are unavailable",
-                    )
-                })?;
-            *worker = Some(sender);
+        let request = Request {
+            client: client.clone(),
+            reply,
+        };
+        let send = if let Some(sender) = worker.as_ref() {
+            sender.try_send(request)
+        } else {
+            let sender = spawn_worker(h)?;
+            *worker = Some(sender.clone());
+            sender.try_send(request)
+        };
+        match send {
+            Ok(()) => {}
+            Err(mpsc::TrySendError::Disconnected(request)) => {
+                *worker = None;
+                let sender = spawn_worker(h)?;
+                *worker = Some(sender.clone());
+                sender
+                    .try_send(request)
+                    .map_err(|_| (StatusCode::SERVICE_UNAVAILABLE, "Hardware metrics are busy"))?;
+            }
+            Err(mpsc::TrySendError::Full(_)) => {
+                return Err((StatusCode::SERVICE_UNAVAILABLE, "Hardware metrics are busy"));
+            }
         }
-        worker
-            .as_ref()
-            .unwrap()
-            .try_send(Request {
-                client: client.clone(),
-                reply,
-            })
-            .map_err(|_| (StatusCode::SERVICE_UNAVAILABLE, "Hardware metrics are busy"))?;
     }
     let value = tokio::time::timeout(Duration::from_secs(2), response)
         .await

@@ -531,3 +531,77 @@ fn a_profile_with_earlier_setting_names_loads_under_the_current_ones() {
     assert!(saved["apps"][0].get("frame-gen-limiter-fix").is_none());
     std::fs::remove_dir_all(&directory).ok();
 }
+
+#[test]
+fn concurrent_web_session_refresh_uses_short_rotation_grace_until_revoked() {
+    let f = super::super::test_support::Fixture::new();
+    let h = &f.host;
+    let (_, initial_refresh, _, _) = h
+        .new_web_session(
+            "apollo".into(),
+            false,
+            String::new(),
+            "127.0.0.1".into(),
+            None,
+        )
+        .unwrap();
+    let previous = {
+        let sessions = h.web_sessions.lock().unwrap();
+        sessions
+            .values()
+            .find(|s| crate::web_sessions::hash(&initial_refresh) == s.refresh)
+            .cloned()
+            .unwrap()
+    };
+
+    let first = h
+        .new_web_session(
+            "apollo".into(),
+            false,
+            String::new(),
+            "127.0.0.1".into(),
+            Some(previous.clone()),
+        )
+        .unwrap();
+    // Concurrent second tab arriving with the pre-rotation snapshot gets the same replacement.
+    let second = h
+        .new_web_session(
+            "apollo".into(),
+            false,
+            String::new(),
+            "127.0.0.1".into(),
+            Some(previous.clone()),
+        )
+        .unwrap();
+    assert_eq!(first.0, second.0);
+    assert_eq!(first.1, second.1);
+    assert_eq!(first.2, second.2);
+
+    // Revoking or signing out invalidates the grace entry.
+    h.web_sessions.lock().unwrap().clear();
+    assert!(
+        h.new_web_session(
+            "apollo".into(),
+            false,
+            String::new(),
+            "127.0.0.1".into(),
+            Some(previous),
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn reload_apps_retries_after_transient_read_error() {
+    let f = super::super::test_support::Fixture::new();
+    let h = &f.host;
+    // Truncated/invalid JSON does not burn the stamp, so a later valid read succeeds
+    // even if mtime/size check sees the updated write or retry.
+    let before = h.apps.read().unwrap().len();
+    std::fs::write(&h.apps_path, b"{").unwrap();
+    h.reload_apps();
+    assert_eq!(h.apps.read().unwrap().len(), before);
+    // Keep same size & clear cached stamp? Instead ensure file_stamp only updated on success:
+    let failed_stamp = file_stamp(&h.apps_path);
+    assert_ne!(*h.apps_stamp.lock().unwrap(), failed_stamp);
+}
