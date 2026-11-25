@@ -488,6 +488,10 @@ def claim_slot(lock, root=ROOT):
     target = lock.with_suffix('')
     owner_file.write_text(os.path.normpath(str(pathlib.Path(root).resolve())), encoding='utf-8')
     claim_target(target, root, previous, since)
+    try:
+        build_lock.prune_pool(lock.parent, keep=lock)
+    except OSError:
+        pass
     return target
 
 

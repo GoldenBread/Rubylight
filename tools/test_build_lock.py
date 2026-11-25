@@ -219,7 +219,7 @@ class Lanes(unittest.TestCase):
         self.environment.start()
         self.addCleanup(self.environment.stop)
         for name in (build_lock.OWNER_ENV, build_lock.PATH_ENV, build_lock.LANES_ENV, build_lock.POOL_ENV,
-                     build_lock.GRADLE_ENV, 'RUBYLIGHT_LOCK_DIRECTORY'):
+                     build_lock.GRADLE_ENV, build_lock.MIN_FREE_GB_ENV, 'RUBYLIGHT_LOCK_DIRECTORY'):
             os.environ.pop(name, None)
         self.children = []
 
@@ -553,6 +553,100 @@ try { 'acquired' } finally { Exit-CheckLocks $held -NoPause }
             stop[0] = True
             copier.result()
         self.assertEqual(errors, [])
+
+    def _make_pool_slot(self, pool, name, mtime):
+        slot_dir = pool / name
+        slot_dir.mkdir(parents=True, exist_ok=True)
+        (slot_dir / 'artifact.bin').write_bytes(b'x')
+        owner = pool / f'{name}.owner'
+        owner.write_text('C:\\src\\checkout', encoding='utf-8')
+        os.utime(owner, (mtime, mtime))
+        os.utime(slot_dir, (mtime, mtime))
+        return slot_dir
+
+    def test_prune_pool_evicts_oldest_idle_slots_until_free_floor_met(self):
+        pool = self.root / 'target-pool'
+        oldest = self._make_pool_slot(pool, '1', 1000)
+        middle = self._make_pool_slot(pool, 'client-1', 2000)
+        newest = self._make_pool_slot(pool, '2', 3000)
+        gb = 2 ** 30
+        usage = [
+            shutil._ntuple_diskusage(500 * gb, 480 * gb, 20 * gb),  # initial check: below 40 GB
+            shutil._ntuple_diskusage(500 * gb, 465 * gb, 35 * gb),  # after slot 1: still below 40 GB
+            shutil._ntuple_diskusage(500 * gb, 455 * gb, 45 * gb),  # after client-1: floor met -> stop
+        ]
+        notes = []
+        with mock.patch.object(shutil, 'disk_usage', side_effect=usage):
+            pruned = build_lock.prune_pool(pool=pool, min_free_gb=40, say=notes.append)
+        self.assertEqual(pruned, [oldest.resolve(), middle.resolve()])
+        self.assertFalse(oldest.exists())
+        self.assertFalse((pool / '1.owner').exists())
+        self.assertFalse(middle.exists())
+        self.assertFalse((pool / 'client-1.owner').exists())
+        self.assertTrue(newest.exists())
+        self.assertTrue((pool / '2.owner').exists())
+        self.assertEqual(len(notes), 2)
+
+    def test_prune_pool_never_deletes_busy_or_kept_slots(self):
+        pool = self.root / 'target-pool'
+        busy_dir = self._make_pool_slot(pool, '1', 1000)
+        kept_lock_dir = self._make_pool_slot(pool, '2', 1500)
+        kept_dir = self._make_pool_slot(pool, 'client-1', 2000)
+        idle_dir = self._make_pool_slot(pool, 'client-2', 2500)
+        busy_slot = build_lock.HandleSlot(pool / '1.lock')
+        self.assertTrue(busy_slot.try_take('live-build'))
+        try:
+            pruned = build_lock.prune_pool(
+                pool=pool,
+                all_idle=True,
+                keep=[pool / '2.lock', kept_dir],
+            )
+            self.assertEqual(pruned, [idle_dir.resolve()])
+            self.assertTrue(busy_dir.exists())
+            self.assertTrue(kept_lock_dir.exists())
+            self.assertTrue(kept_dir.exists())
+            self.assertFalse(idle_dir.exists())
+        finally:
+            busy_slot.release()
+
+    def test_prune_pool_cli_prunes_all_idle_and_preserves_busy(self):
+        pool = self.root / 'target-pool'
+        busy_dir = self._make_pool_slot(pool, '1', 1000)
+        idle_a = self._make_pool_slot(pool, '2', 2000)
+        idle_b = self._make_pool_slot(pool, 'custom-slot', 3000)
+        (pool / 'custom-slot.lock').touch()
+        busy_slot = build_lock.HandleSlot(pool / '1.lock')
+        self.assertTrue(busy_slot.try_take('live-build'))
+        try:
+            rc = build_lock.main(['--prune', '--lock-directory', str(self.root)])
+            self.assertEqual(rc, 0)
+            self.assertTrue(busy_dir.exists())
+            self.assertFalse(idle_a.exists())
+            self.assertFalse(idle_b.exists())
+        finally:
+            busy_slot.release()
+
+    def test_stage_lease_auto_prunes_on_cargo_and_respects_zero_env_disable(self):
+        pool = self.root / 'target-pool'
+        idle_a = self._make_pool_slot(pool, '1', 1000)
+        idle_b = self._make_pool_slot(pool, '2', 2000)
+        gb = 2 ** 30
+        low = shutil._ntuple_diskusage(500 * gb, 490 * gb, 10 * gb)
+        os.environ[build_lock.MIN_FREE_GB_ENV] = '0'
+        with mock.patch.object(shutil, 'disk_usage', return_value=low):
+            with self.lease('cargo'):
+                pass
+        self.assertTrue(idle_a.exists())
+        self.assertTrue(idle_b.exists())
+        os.environ[build_lock.MIN_FREE_GB_ENV] = '40'
+        groups = build_lock.LANE_GROUPS['cargo'](self.root) + [
+            ('host target', lambda: [build_lock.HandleSlot(pool / '1.lock')]),
+        ]
+        with mock.patch.object(shutil, 'disk_usage', return_value=low):
+            with build_lock.StageLease(groups, self.root, 'test', 0, poll=.05, say=lambda *a, **k: None):
+                pass
+        self.assertTrue(idle_a.exists())
+        self.assertFalse(idle_b.exists())
 
 if __name__ == '__main__':
     unittest.main()

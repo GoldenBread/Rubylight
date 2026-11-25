@@ -2,7 +2,7 @@
 
 python tools/build_lock.py [--timeout SECONDS] -- <command> [arguments ...]
 python tools/build_lock.py --lane cargo|gradle|web -- <command> [arguments ...]
-python tools/build_lock.py --status | --drain
+python tools/build_lock.py --status | --drain | --prune [--min-free-gb N] [--pool DIR]
 
 BUILD-LOCK is exclusive: rust\\build.ps1, the release checks and this wrapper
 without --lane take it, then wait until every lane is idle. A lane is one
@@ -19,7 +19,7 @@ owner exits, so a crashed stage never leaves a lane taken and no lane file is
 ever removed. Cargo and Gradle lock their own target and cache folders against
 a surviving child.
 """
-import argparse, collections, ctypes, datetime, os, pathlib, re, subprocess, sys, threading, time, uuid
+import argparse, collections, ctypes, datetime, os, pathlib, re, shutil, subprocess, sys, threading, time, uuid
 
 DEFAULT_DIRECTORY = pathlib.Path(r'C:\src\butterpollo-release') if os.name == 'nt' else pathlib.Path('/tmp/rubylight-build')
 
@@ -45,6 +45,8 @@ POOL_ENV = 'RUBYLIGHT_TARGET_POOL'
 DEFAULT_POOL = pathlib.Path(r'C:\src\rl-target-pool')
 HOST_SLOTS = 4
 CLIENT_SLOTS = 2
+MIN_FREE_GB_ENV = 'RUBYLIGHT_POOL_MIN_FREE_GB'
+DEFAULT_MIN_FREE_GB = 40.0
 # Gradle runs outside the dev check take this lane through
 # `build_lock.py --lock-directory <it> -- gradlew ...`; the app stage takes the same.
 GRADLE_ENV = 'RUBYLIGHT_GRADLE_LANE'
@@ -459,6 +461,62 @@ def client_slots(directory=None, pool=None):
     return [HandleSlot(pool / f'client-{n}.lock') for n in range(1, CLIENT_SLOTS + 1)]
 
 
+def _min_free_gb(value=None):
+    raw = os.environ.get(MIN_FREE_GB_ENV, '').strip() if value is None else value
+    try:
+        return DEFAULT_MIN_FREE_GB if raw == '' else float(raw)
+    except ValueError:
+        return DEFAULT_MIN_FREE_GB
+
+
+def prune_pool(pool=None, min_free_gb=None, all_idle=False, directory=None, keep=None, say=None):
+    """Remove idle target-pool slots oldest-first until free space meets the floor (or all idle when all_idle)."""
+    pool = pathlib.Path(pool).resolve() if pool else pool_directory(directory)
+    if not pool.is_dir():
+        return []
+    floor = 0
+    if not all_idle:
+        threshold = _min_free_gb(min_free_gb)
+        floor = int(threshold * (2 ** 30))
+        if threshold <= 0 or shutil.disk_usage(pool).free >= floor:
+            return []
+    keep_paths = {pathlib.Path(k).resolve()
+                  for k in (() if keep is None else ([keep] if isinstance(keep, (str, os.PathLike)) else keep))}
+    names = ({str(n) for n in range(1, HOST_SLOTS + 1)} | {f'client-{n}' for n in range(1, CLIENT_SLOTS + 1)}
+             | {p.stem for p in pool.glob('*.lock')})
+    candidates = []
+    for name in names:
+        target, lock_path = pool / name, pool / f'{name}.lock'
+        if not target.is_dir() or target.resolve() in keep_paths or lock_path.resolve() in keep_paths:
+            continue
+        mtime = 0.0
+        for probe in (pool / f'{name}.owner', pool / f'{name}.holder', target):
+            try:
+                mtime = probe.stat().st_mtime
+                break
+            except OSError:
+                continue
+        candidates.append((mtime, name, target, lock_path))
+    candidates.sort()
+    pruned = []
+    for _, name, target, lock_path in candidates:
+        slot = HandleSlot(lock_path)
+        if not slot.try_take('prune'):
+            continue
+        try:
+            shutil.rmtree(target, ignore_errors=True)
+            if not target.exists():
+                (pool / f'{name}.owner').unlink(missing_ok=True)
+                pruned.append(target)
+                if say:
+                    say(f'pruned idle target slot {target}')
+        finally:
+            slot.release()
+        if not all_idle and shutil.disk_usage(pool).free >= floor:
+            break
+    return pruned
+
+
 def all_lanes(directory=None, pool=None):
     """Every lane an exclusive owner waits for, including Cargo slots past this machine's
     current count and pool slots another tool made."""
@@ -570,6 +628,14 @@ class StageLease:
                 _ACTIVE_LANES[path] += 1
             self._held = held
             _sync_lanes_env()
+        default_pool = pool_directory(self.build.parent)
+        pool_slots = [s.path for k, s in self.taken.items()
+                      if k in ('host target', 'client target') or s.path.parent.resolve() == default_pool]
+        if pool_slots or 'cargo' in self.taken:
+            try:
+                prune_pool(pool_slots[0].parent if pool_slots else default_pool, directory=self.build.parent, keep=pool_slots, say=self.say)
+            except OSError:
+                pass
         return self
 
     def __exit__(self, *_):
@@ -681,11 +747,16 @@ def main(argv=None):
     parser.add_argument('--status', action='store_true', help='print who holds which lock')
     parser.add_argument('--drain', action='store_true',
                         help='wait until no stage lane is held (for an owner of BUILD-LOCK, as check_streams.ps1)')
+    parser.add_argument('--prune', action='store_true', help='remove idle target-pool slot directories')
+    parser.add_argument('--min-free-gb', type=float, help='with --prune, keep at least N GB free')
+    parser.add_argument('--pool', help='target pool directory for --prune')
     parser.add_argument('command', nargs=argparse.REMAINDER)
     args = parser.parse_args(argv)
     command = args.command[1:] if args.command[:1] == ['--'] else args.command
     if args.timeout < 0:
         parser.error('the timeout must be nonnegative')
+    if args.min_free_gb is not None and args.min_free_gb < 0:
+        parser.error('min-free-gb must be nonnegative')
     if args.status:
         print(status(args.lock_directory))
         return 0
@@ -696,6 +767,10 @@ def main(argv=None):
         except TimeoutError as error:
             print(str(error), file=sys.stderr)
             return 1
+    if args.prune:
+        if not prune_pool(args.pool, args.min_free_gb, args.min_free_gb is None, args.lock_directory, say=print):
+            print('target pool: nothing to prune')
+        return 0
     if not command:
         parser.error('provide a command after --')
     try:
