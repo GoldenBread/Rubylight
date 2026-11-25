@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
-"""Antigravity PostToolUse hook that detects AMD encoder hangs (exit code 3).
+"""PostToolUse hook that detects AMD encoder hangs (exit code 3).
+
+Supports BOTH Claude Code (`tool_name` in `Bash|PowerShell`, `tool_input`, `tool_response`,
+`transcript_path`) and legacy Antigravity (`toolCall`, `toolResult`, `transcriptPath`) payloads.
 
 Watches all hardware / stream / soak runners (`e2e.py`, `check.ps1`, `tools/hw/run*`,
 `tools/hw/laptop-host.ps1`, `soak.ps1`, `soak.py`, `focus_ab.py`, `wave1_verify.py`).
-Checks direct PostToolUse error/exit fields AND falls back to reading `stepIdx` from
-`payload['transcriptPath']` because normal non-zero command completions may record the
-exit code only in the transcript step output.
+Checks direct PostToolUse error/exit/response fields AND falls back to reading the matching
+tool entry from `transcript_path` / `transcriptPath`.
 
 When exit code 3 is detected, writes `.agents/GPU_HANG_HALT` in `default_agents_dir`
-AND every `.agents` directory resolved from `workspacePaths` and `cwd`. Always prints
-`{}` on stdout per Antigravity's PostToolUse contract.
+AND every `.agents` directory resolved from `workspacePaths`, `cwd`, and enclosing git
+checkouts (so an `isolation: worktree` subagent inside `.claude/worktrees/<name>` also halts
+the main repo checkout immediately). Always prints `{}` on stdout.
 """
 from __future__ import annotations
 
@@ -22,6 +25,7 @@ import sys
 from typing import Any
 
 GPU_HANG_SENTINEL = "GPU_HANG_HALT"
+SHELL_TOOLS = frozenset({"run_command", "Bash", "PowerShell"})
 WATCHED_CMD_RE = re.compile(
     r"(?:(?:^|[\s\"'`/\\])(?:e2e\.py|check\.ps1|(?:[A-Za-z0-9_-]*_)?soak\.(?:ps1|py)|focus_ab\.py|wave1_verify\.py)\b|\btools[\\/]+hw[\\/]+(?:run(?:\.py|\.ps1)?|laptop-host\.ps1)\b)",
     re.IGNORECASE,
@@ -33,19 +37,19 @@ EXIT_CODE_3_RE = re.compile(
 
 
 def _check_transcript_exit_3(payload: dict[str, Any]) -> bool:
-    transcript_raw = payload.get("transcriptPath")
+    transcript_raw = payload.get("transcript_path") or payload.get("transcriptPath")
     if not isinstance(transcript_raw, str) or not transcript_raw:
         return False
     transcript_path = pathlib.Path(transcript_raw)
     if not transcript_path.is_file():
         return False
     target_step = payload.get("stepIdx")
-    tool_id = (payload.get("toolCall") or {}).get("id")
+    tool_id = payload.get("tool_use_id") or (payload.get("toolCall") or {}).get("id")
     try:
         lines = transcript_path.read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError:
         return False
-    # Scan from the tail for matching stepIdx or toolCall id.
+    # Scan from the tail for matching stepIdx or tool_use_id / toolCall id.
     for raw_line in reversed(lines[-200:]):
         if not raw_line.strip():
             continue
@@ -68,10 +72,12 @@ def _check_transcript_exit_3(payload: dict[str, Any]) -> bool:
         for key in ("exitCode", "exit_code", "returnCode", "returncode"):
             if entry.get(key) in (3, "3"):
                 return True
-        for text_key in ("content", "error", "output", "result"):
+        for text_key in ("content", "error", "output", "result", "stderr", "stdout"):
             val = entry.get(text_key)
             if isinstance(val, str) and EXIT_CODE_3_RE.search(val):
                 return True
+        if EXIT_CODE_3_RE.search(raw_line):
+            return True
         if step_match:
             return False
     return False
@@ -82,18 +88,20 @@ def _is_exit_code_3(payload: dict[str, Any]) -> bool:
         val = payload.get(key)
         if val == 3 or val == "3":
             return True
-    tool_result = payload.get("toolResult")
-    if isinstance(tool_result, dict):
-        for key in ("exitCode", "exit_code", "returnCode", "returncode"):
-            val = tool_result.get(key)
-            if val == 3 or val == "3":
-                return True
-    for text_field in (
-        payload.get("error"),
-        payload.get("output"),
-        tool_result.get("error") if isinstance(tool_result, dict) else None,
-        tool_result.get("output") if isinstance(tool_result, dict) else None,
-    ):
+    response_objs = [payload.get("toolResult"), payload.get("tool_response")]
+    for resp in response_objs:
+        if isinstance(resp, dict):
+            for key in ("exitCode", "exit_code", "returnCode", "returncode"):
+                val = resp.get(key)
+                if val == 3 or val == "3":
+                    return True
+            for text_key in ("error", "output", "stdout", "stderr", "content", "result"):
+                val = resp.get(text_key)
+                if isinstance(val, str) and EXIT_CODE_3_RE.search(val):
+                    return True
+        elif isinstance(resp, str) and EXIT_CODE_3_RE.search(resp):
+            return True
+    for text_field in (payload.get("error"), payload.get("output")):
         if isinstance(text_field, str) and EXIT_CODE_3_RE.search(text_field):
             return True
     return _check_transcript_exit_3(payload)
@@ -104,7 +112,7 @@ def _resolve_target_agents_dirs(
     payload: dict[str, Any],
 ) -> list[pathlib.Path]:
     targets = [agents_dir.resolve()]
-    roots: list[str] = []
+    roots: list[str] = [str(agents_dir.resolve().parent)]
     cwd = payload.get("cwd")
     if isinstance(cwd, str) and cwd:
         roots.append(cwd)
@@ -113,6 +121,11 @@ def _resolve_target_agents_dirs(
         roots.extend(p for p in ws if isinstance(p, str) and p)
     for raw in roots:
         cur = pathlib.Path(raw).resolve()
+        # Propagate across nested git worktrees (e.g. `.claude/worktrees/<name>` -> enclosing repo root).
+        for parent in (cur, *cur.parents):
+            cand = parent / ".agents"
+            if cand.is_dir() and (parent / ".git").exists() and cand not in targets:
+                targets.append(cand)
         for parent in (cur, *cur.parents):
             cand = parent / ".agents"
             if cand.is_dir():
@@ -122,16 +135,31 @@ def _resolve_target_agents_dirs(
     return targets
 
 
+def _extract_tool_and_cmd(payload: dict[str, Any]) -> tuple[str | None, str]:
+    if "tool_name" in payload or "tool_input" in payload:
+        tname = payload.get("tool_name")
+        tinput = payload.get("tool_input")
+        if not isinstance(tname, str) or not isinstance(tinput, dict):
+            return None, ""
+        cmd = tinput.get("command") or tinput.get("CommandLine") or tinput.get("commandLine") or ""
+        return tname, cmd if isinstance(cmd, str) else ""
+    tool_call = payload.get("toolCall")
+    if not isinstance(tool_call, dict):
+        return None, ""
+    tname = tool_call.get("name")
+    args = tool_call.get("args")
+    if not isinstance(tname, str) or not isinstance(args, dict):
+        return None, ""
+    cmd = args.get("CommandLine") or args.get("commandLine") or args.get("command") or ""
+    return tname, cmd if isinstance(cmd, str) else ""
+
+
 def process_post_tool(payload: dict[str, Any], *, agents_dir: pathlib.Path) -> bool:
     """Inspect a PostToolUse payload; return True if GPU_HANG_HALT was written."""
-    tool_call = payload.get("toolCall")
-    if not isinstance(tool_call, dict) or tool_call.get("name") != "run_command":
+    tool_name, cmd = _extract_tool_and_cmd(payload)
+    if tool_name not in SHELL_TOOLS:
         return False
-    args = tool_call.get("args")
-    if not isinstance(args, dict):
-        return False
-    cmd = args.get("CommandLine") or args.get("commandLine") or ""
-    if not isinstance(cmd, str) or not WATCHED_CMD_RE.search(cmd):
+    if not cmd or not WATCHED_CMD_RE.search(cmd):
         return False
     if not _is_exit_code_3(payload):
         return False

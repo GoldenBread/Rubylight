@@ -5,14 +5,16 @@ Provides:
 - Fail-closed post-sprint prerequisite check (`arch_check.py`, `size_ratchet.json`, `dev.ps1 -Fast`).
 - Resumable state persistence (`docs/roadmap-state.json`, atomic LF writes).
 - Topological intra-wave scheduling & transitive dependency quarantine propagation.
-- Concurrency capping (`Semaphore(min(max_parallel, 2))`), serialized `hw_lock` & `merge_lock`,
-  and fault-isolated per-item execution inside `parallel()`.
+- Concurrency capping (`Semaphore(min(max_parallel, 3))` for 2 local desktop lanes + 1 remote
+  laptop verification lane), serialized `hw_lock` & `merge_lock`, and fault-isolated per-item
+  execution inside `parallel()`.
 - Deterministic git sub-branch handoffs across Phases 3-7 (`wip/roadmap/<id>-<slug>` so CI
   `on.push: [main, 'wip/**']` triggers cleanly; Phase 3 slices + Phase 5 l10n/docs/notes merge
   gates; Phase 6/7 run against dedicated checkouts of `{branch}`).
-- Phase 8 strictly read-only Carbon (`gemini-4-carbon-high`) post-wave review with corrected
-  `agy --model ... --print` flag order, background task await via `manage_task`, `git rev-parse HEAD`
-  + `git status --porcelain -uall` verification, and up to 2 fix/re-verify/re-review cycles.
+- Phase 8 strictly read-only independent Opus 5.5 (`claude --model opus --effort xhigh`) post-wave
+  review with `--disallowedTools Write Edit MultiEdit NotebookEdit`, `--output-format json`,
+  `--json-schema`, `--no-session-persistence`, `git rev-parse HEAD` + `git status --porcelain -uall`
+  verification, and up to 2 fix/re-verify/re-review cycles.
 - Wave 6 fail-closed Release 7.0.0 gating with deterministic artifact assertions (`Cargo.toml`,
   `build.gradle` `versionName`/`versionCode >= 412`, Play `<=500`-char changelog, filled `**Tested.**`),
   explicit maintainer authorization requirement (`authorize_publish=True`), and `try/finally`
@@ -34,11 +36,12 @@ SCHEMA_VERSION = 1
 RELEASE_TARGET = "7.0.0"
 MIN_NEXT_ANDROID_VERSION_CODE = 412
 INTEGRATION_BRANCH = "roadmap/redesign-and-waves-1-5"
-CARBON_MODEL = "gemini-4-carbon-high"
-MAX_CARBON_FIX_CYCLES = 2
-MAX_CONCURRENCY_CAP = 2
+REVIEWER_MODEL = "opus"
+REVIEWER_EFFORT = "xhigh"
+MAX_REVIEW_FIX_CYCLES = 2
+MAX_CONCURRENCY_CAP = 3
 PLAY_CHANGELOG_LIMIT = 500
-REQUIRED_CARBON_WAVES = (0, 1, 2, 3, 4, 5)
+REQUIRED_REVIEW_WAVES = (0, 1, 2, 3, 4, 5)
 GPU_HANG_SENTINEL = ".agents/GPU_HANG_HALT"
 RELEASE_AUTH_SENTINEL = ".agents/RELEASE_7_0_AUTHORIZED"
 WAVE_REVIEW_SCHEMA_REL = ".agents/schemas/wave_review.json"
@@ -91,8 +94,8 @@ class RoadmapError(RuntimeError):
     """Base error for fail-closed orchestrator halts."""
 
 
-class CarbonReadOnlyViolationError(RoadmapError):
-    """Raised if read-only Carbon review altered git working tree or HEAD state."""
+class ReviewerReadOnlyViolationError(RoadmapError):
+    """Raised if read-only independent wave review altered git working tree or HEAD state."""
 
 
 class ReleaseGateError(RoadmapError):
@@ -147,23 +150,23 @@ def initial_state() -> dict[str, Any]:
             "status": "pending",
             "base_sha": None,
             "head_sha": None,
-            "carbon_review": {
+            "wave_review": {
                 "approved": False,
-                "review_file": f"docs/reviews/wave-{w}-carbon.md",
+                "review_file": f"docs/reviews/wave-{w}-review.md",
                 "attempts": 0,
                 "blocking_count": 0,
                 "summary": "",
             },
         }
-        for w in REQUIRED_CARBON_WAVES
+        for w in REQUIRED_REVIEW_WAVES
     }
     waves["6"] = {
         "status": "pending",
         "base_sha": None,
         "head_sha": None,
-        "carbon_review": {
+        "wave_review": {
             "approved": False,
-            "review_file": "docs/reviews/release-7.0.0-carbon.md",
+            "review_file": "docs/reviews/release-7.0.0-review.md",
             "attempts": 0,
             "blocking_count": 0,
             "summary": "",
@@ -200,7 +203,7 @@ def initial_state() -> dict[str, Any]:
             "nightjar_defender_clean": False,
             "nightjar_tag_pushed": False,
             "sites_published": False,
-            "whole_release_carbon_approved": False,
+            "whole_release_review_approved": False,
             "maintainer_authorized": False,
         },
     }
@@ -302,9 +305,9 @@ def check_wave_entry_gate(state: Mapping[str, Any], wave: int, repo_root: pathli
                     f"Wave {prev} has unmerged items: {', '.join(i['id'] + '(' + i['status'] + ')' for i in prev_unmerged)}"
                 )
             prev_wave = state["waves"].get(str(prev), {})
-            review = prev_wave.get("carbon_review", {})
+            review = prev_wave.get("wave_review", {})
             if not review.get("approved") or review.get("blocking_count", 0) != 0:
-                reasons.append(f"Wave {prev} Carbon review is not approved")
+                reasons.append(f"Wave {prev} independent review is not approved")
     return reasons
 
 
@@ -380,7 +383,7 @@ def evaluate_release_gate(
     *,
     rubylight_remote_tags: Iterable[str] = (),
     nightjar_remote_tags: Iterable[str] = (),
-    require_whole_release_carbon: bool = False,
+    require_whole_release_review: bool = False,
     check_release_artifacts: bool = False,
     authorize_publish: bool = True,
 ) -> list[str]:
@@ -395,14 +398,14 @@ def evaluate_release_gate(
         summary = ", ".join(f"{i['id']}({i['status']})" for i in non_merged)
         errors.append(f"All {len(ITEM_CATALOG)} roadmap items must be merged before 7.0.0; remaining: {summary}")
 
-    for w in REQUIRED_CARBON_WAVES:
+    for w in REQUIRED_REVIEW_WAVES:
         wdata = state["waves"].get(str(w), {})
-        review = wdata.get("carbon_review", {})
+        review = wdata.get("wave_review", {})
         if not review.get("approved") or review.get("blocking_count", 0) != 0:
-            errors.append(f"Wave {w} Carbon review not approved (blocking={review.get('blocking_count')})")
+            errors.append(f"Wave {w} independent review not approved (blocking={review.get('blocking_count')})")
         review_file = review.get("review_file")
         if not review_file or not (repo_root / review_file).is_file():
-            errors.append(f"Wave {w} Carbon review artifact missing: {review_file}")
+            errors.append(f"Wave {w} independent review artifact missing: {review_file}")
 
     target_tag = f"v{RELEASE_TARGET}"
     target_ref = f"refs/tags/{target_tag}"
@@ -414,17 +417,17 @@ def evaluate_release_gate(
     if check_release_artifacts:
         errors.extend(verify_release_artifacts(repo_root))
 
-    if require_whole_release_carbon:
-        rel_review = state["waves"].get("6", {}).get("carbon_review", {})
+    if require_whole_release_review:
+        rel_review = state["waves"].get("6", {}).get("wave_review", {})
         if not rel_review.get("approved") or rel_review.get("blocking_count", 0) != 0:
-            errors.append("Whole-release 7.0.0 Carbon review is not approved")
+            errors.append("Whole-release 7.0.0 independent review is not approved")
         rel_file = rel_review.get("review_file")
         if not rel_file or not (repo_root / rel_file).is_file():
-            errors.append(f"Whole-release Carbon review artifact missing: {rel_file}")
+            errors.append(f"Whole-release independent review artifact missing: {rel_file}")
         if not authorize_publish:
             errors.append(
                 "Maintainer confirmation required (AGENTS.md): re-run Wave 6 with Args={'authorize_publish': True} "
-                "after reviewing docs/reviews/release-7.0.0-carbon.md"
+                "after reviewing docs/reviews/release-7.0.0-review.md"
             )
 
     return errors
@@ -441,33 +444,36 @@ def check_host_idle_serverinfo(xml_text: str) -> tuple[bool, str]:
     return True, "Installed host idle (active=0, pending=0)"
 
 
-def build_carbon_review_command(
+def build_wave_review_command(
     repo_root: pathlib.Path,
     prompt_file: pathlib.Path,
     output_file: pathlib.Path,
     *,
     schema_rel: str = WAVE_REVIEW_SCHEMA_REL,
 ) -> str:
-    """Build strictly read-only Carbon CLI command with `--model` before `--print $prompt`.
+    """Build strictly read-only Claude Code Opus 5.5 (`xhigh`) review CLI command.
 
-    Scopes `--add-dir` exclusively to `repo_root` and writes JSON output to an external
-    temp file so backgrounded execution never loses stdout.
+    Enforces read-only via `--disallowedTools Write Edit MultiEdit NotebookEdit`, scopes
+    `--add-dir` exclusively to `repo_root`, passes schema JSON via `--json-schema`, and writes
+    JSON output to an external temp file so backgrounded execution never loses stdout.
     """
     schema_path = repo_root / schema_rel
     return (
         f'$p = Get-Content -Raw "{prompt_file}"; '
-        f'& agy --model {CARBON_MODEL} --add-dir "{repo_root}" '
-        f'--dangerously-skip-permissions --output-format json --json-schema "{schema_path}" '
-        f'--print $p | Out-File -FilePath "{output_file}" -Encoding utf8; '
+        f'$s = Get-Content -Raw "{schema_path}"; '
+        f'& claude --model {REVIEWER_MODEL} --effort {REVIEWER_EFFORT} --add-dir "{repo_root}" '
+        '--disallowedTools Write Edit MultiEdit NotebookEdit '
+        '--permission-mode bypassPermissions --output-format json --json-schema $s '
+        f'--no-session-persistence -p $p | Out-File -FilePath "{output_file}" -Encoding utf8; '
         'exit $LASTEXITCODE'
     )
 
 
-def parse_carbon_review(raw_stdout: str) -> dict[str, Any]:
-    """Parse and validate Carbon JSON output (direct or wrapped in agy JSON envelope)."""
+def parse_wave_review(raw_stdout: str) -> dict[str, Any]:
+    """Parse and validate reviewer JSON output (direct or wrapped in Claude Code JSON envelope)."""
     text = raw_stdout.lstrip("\ufeff").strip()
     if not text:
-        raise RoadmapError("Carbon CLI returned empty output")
+        raise RoadmapError("Reviewer CLI returned empty output")
     obj = json.loads(text)
     if isinstance(obj, dict) and "approved" not in obj:
         for envelope_key in ("structured_output", "result", "response", "text", "output"):
@@ -485,20 +491,20 @@ def parse_carbon_review(raw_stdout: str) -> dict[str, Any]:
                     break
 
     if not isinstance(obj, dict):
-        raise RoadmapError("Carbon review output is not a JSON object")
+        raise RoadmapError("Wave review output is not a JSON object")
     for req in ("approved", "wave", "summary", "blocking_findings", "non_blocking"):
         if req not in obj:
-            raise RoadmapError(f"Carbon review missing required field: {req}")
+            raise RoadmapError(f"Wave review missing required field: {req}")
     if not isinstance(obj["approved"], bool):
-        raise RoadmapError("Carbon review `approved` must be boolean")
+        raise RoadmapError("Wave review `approved` must be boolean")
     if not isinstance(obj["blocking_findings"], list) or not isinstance(obj["non_blocking"], list):
-        raise RoadmapError("Carbon review findings lists must be arrays")
+        raise RoadmapError("Wave review findings lists must be arrays")
     for finding in obj["blocking_findings"]:
         if not isinstance(finding, dict):
-            raise RoadmapError("Carbon blocking finding must be an object")
+            raise RoadmapError("Wave review blocking finding must be an object")
         for fkey in ("item_id", "severity", "file", "issue", "required_fix"):
             if fkey not in finding or not isinstance(finding[fkey], str):
-                raise RoadmapError(f"Carbon blocking finding missing string field: {fkey}")
+                raise RoadmapError(f"Wave review blocking finding missing string field: {fkey}")
         if finding["severity"] not in VALID_SEVERITIES:
             raise RoadmapError(f"Invalid blocking finding severity: {finding['severity']}")
 
@@ -507,12 +513,12 @@ def parse_carbon_review(raw_stdout: str) -> dict[str, Any]:
     return obj
 
 
-def format_carbon_review_markdown(review: Mapping[str, Any], *, attempt: int, git_range: str) -> str:
+def format_wave_review_markdown(review: Mapping[str, Any], *, attempt: int, git_range: str) -> str:
     verdict = "APPROVED" if review["approved"] else "CHANGES REQUIRED"
     lines = [
-        f"# Carbon Review: {review['wave']}",
+        f"# Independent Wave Review: {review['wave']}",
         "",
-        f"- **Model:** `{CARBON_MODEL}` (strictly read-only)",
+        f"- **Model:** `claude` `{REVIEWER_MODEL}` (Opus 5.5, `--effort {REVIEWER_EFFORT}`, strictly read-only)",
         f"- **Verdict:** **{verdict}**",
         f"- **Attempt:** {attempt}",
         f"- **Range:** `{git_range}`",
@@ -556,8 +562,8 @@ def assert_git_snapshot_unchanged(
     context: str,
 ) -> None:
     if head_before.strip() != head_after.strip() or status_before != status_after:
-        raise CarbonReadOnlyViolationError(
-            f"{context}: repository state changed during strictly read-only Carbon review!\n"
+        raise ReviewerReadOnlyViolationError(
+            f"{context}: repository state changed during strictly read-only independent review!\n"
             f"HEAD before={head_before.strip()} after={head_after.strip()}\n"
             f"Status before:\n{status_before}\nStatus after:\n{status_after}"
         )
@@ -817,7 +823,7 @@ async def run_item_lifecycle(
             if not verify_out.get("passed"):
                 raise RoadmapError(f"Phase 4 verification failed for {item_id}: {verify_out.get('summary')}")
 
-            # Phase 5: 15-locale / docs / notes.d fan-out (`flash`) on dash-delimited sub-branches
+            # Phase 5: 15-locale / docs / notes.d fan-out (`sonnet`) on dash-delimited sub-branches
             async with state_lock:
                 item["phase"] = "phase_5_l10n_docs_notes"
                 save_state(state_path, state)
@@ -854,7 +860,7 @@ async def run_item_lifecycle(
                         role=f"L10n/Docs {item_id}:{kind}",
                         type_name="self",
                         workspace="share",
-                        model="flash",
+                        model="sonnet",
                     )
                     return {"kind": kind, "branch": sub_branch, "ok": True, "commit_sha": out["commit_sha"]}
                 except Exception as exc:
@@ -890,7 +896,7 @@ async def run_item_lifecycle(
                 ("arch-ratchet", "Audit arch_check.py compliance (<=800 LOC, //! or /** headers, 18-file size_ratchet.json including desktop-config/src/strings_70), code-map.md accuracy, target_os='linux', loopback-only test binds (no 0.0.0.0 Firewall prompts), and hot-thread blocking."),
                 ("reconnect-restore", "Audit state machine transitions, reconnect/resume/roam matrix, crash-restore journaling, loud failures (no silent encoder fallback), and plain-English errors."),
                 ("client-parity", "Audit Android+Desktop parity, fewer-settings rule, SettingsKeysTest migrations, 15 Nightjar + 22 host locales, zero mod names, zero Experimental, and dynamic input glyphs."),
-                ("visual-ux", f"Follow `.agents/skills/visual-ux-review/SKILL.md`: verify the ground-up 7.0 console-quality design bar (PS5/tvOS/SteamOS OLED/flagship hardware polish), render screenshots on `{branch}` across every affected user-facing surface (Console, /play, /guest, Couch Menu, Setup/Tray, Nightjar Phone/Handheld/TV/Desktop, Websites/READMEs), and inspect them with `read_file` across light/dark/OLED/HC, 360/768/1440 px, German/CJK stress, resolution scaling (#144/#146), blur stability (#61), and zero stream-time blur."),
+                ("visual-ux", f"Follow `.agents/skills/visual-ux-review/SKILL.md`: verify the ground-up 7.0 console-quality design bar (PS5/tvOS/SteamOS OLED/flagship hardware polish), render screenshots on `{branch}` across every affected user-facing surface (Console, /play, /guest, Couch Menu, Setup/Tray, Nightjar Phone/Handheld/TV/Desktop, Websites/READMEs), and inspect them with `Read` across light/dark/OLED/HC, 360/768/1440 px, German/CJK stress, resolution scaling (#144/#146), blur stability (#61), and zero stream-time blur."),
             ]
 
             async def _run_lens(pair: tuple[str, str]) -> dict[str, Any]:
@@ -997,7 +1003,7 @@ async def run_item_lifecycle(
             return {"id": item_id, "status": "quarantined", "gpu_hang": False, "error": str(exc)}
 
 
-async def run_carbon_review_cycle(
+async def run_wave_review_cycle(
     rt: WorkflowRuntime,
     state: dict[str, Any],
     state_path: pathlib.Path,
@@ -1008,7 +1014,7 @@ async def run_carbon_review_cycle(
     audit_prompt: str,
     dry_run: bool = False,
 ) -> dict[str, Any]:
-    """Run strictly read-only Carbon review with async task await and up to 2 fix/re-review cycles."""
+    """Run strictly read-only Opus 5.5 (`xhigh`) review with async task await and up to 2 fix/re-review cycles."""
     review_path = rt.repo_root / review_rel
     review_path.parent.mkdir(parents=True, exist_ok=True)
     wave_entry = state["waves"][wave_key]
@@ -1017,32 +1023,32 @@ async def run_carbon_review_cycle(
         fake = {
             "approved": True,
             "wave": wave_key,
-            "summary": f"[dry-run] Carbon review approved for {wave_key}.",
+            "summary": f"[dry-run] Independent Opus 5.5 (xhigh) review approved for {wave_key}.",
             "blocking_findings": [],
             "non_blocking": [],
         }
-        review_path.write_text(format_carbon_review_markdown(fake, attempt=1, git_range=git_range), encoding="utf-8", newline="\n")
-        wave_entry["carbon_review"].update(
+        review_path.write_text(format_wave_review_markdown(fake, attempt=1, git_range=git_range), encoding="utf-8", newline="\n")
+        wave_entry["wave_review"].update(
             {"approved": True, "attempts": 1, "blocking_count": 0, "summary": fake["summary"]}
         )
         save_state(state_path, state)
         return fake
 
-    max_attempts = MAX_CARBON_FIX_CYCLES + 1
+    max_attempts = MAX_REVIEW_FIX_CYCLES + 1
     last_review: dict[str, Any] | None = None
     for attempt in range(1, max_attempts + 1):
         check_gpu_hang_halt(rt.repo_root)
         head_before, status_before = await _git_head_and_status(rt)
 
         # Keep prompt and raw JSON outside repo_root so working tree stays untouched.
-        with tempfile.TemporaryDirectory(prefix=f"rl-carbon-{wave_key}-") as tmpdir:
+        with tempfile.TemporaryDirectory(prefix=f"rl-review-{wave_key}-") as tmpdir:
             prompt_file = pathlib.Path(tmpdir) / "prompt.txt"
-            output_file = pathlib.Path(tmpdir) / "carbon.json"
+            output_file = pathlib.Path(tmpdir) / "review.json"
             prompt_file.write_text(audit_prompt + "\n", encoding="utf-8", newline="\n")
-            cmd = build_carbon_review_command(rt.repo_root, prompt_file, output_file)
-            await run_command_and_await(rt, cmd, summary=f"Carbon read-only review {wave_key} attempt {attempt}")
+            cmd = build_wave_review_command(rt.repo_root, prompt_file, output_file)
+            await run_command_and_await(rt, cmd, summary=f"Opus 5.5 xhigh read-only review {wave_key} attempt {attempt}")
             if not output_file.is_file():
-                raise RoadmapError(f"Carbon review {wave_key} attempt {attempt} produced no JSON output file")
+                raise RoadmapError(f"Wave review {wave_key} attempt {attempt} produced no JSON output file")
             raw_out = output_file.read_text(encoding="utf-8")
 
         head_after, status_after = await _git_head_and_status(rt)
@@ -1051,17 +1057,17 @@ async def run_carbon_review_cycle(
             status_before,
             head_after,
             status_after,
-            context=f"Carbon {wave_key} attempt {attempt}",
+            context=f"Wave review {wave_key} attempt {attempt}",
         )
 
-        review = parse_carbon_review(raw_out)
+        review = parse_wave_review(raw_out)
         last_review = review
         review_path.write_text(
-            format_carbon_review_markdown(review, attempt=attempt, git_range=git_range),
+            format_wave_review_markdown(review, attempt=attempt, git_range=git_range),
             encoding="utf-8",
             newline="\n",
         )
-        wave_entry["carbon_review"].update(
+        wave_entry["wave_review"].update(
             {
                 "approved": bool(review["approved"]),
                 "attempts": attempt,
@@ -1074,22 +1080,22 @@ async def run_carbon_review_cycle(
         if review["approved"]:
             return review
         if attempt < max_attempts:
-            rt.log(f"Carbon {wave_key} attempt {attempt} found {len(review['blocking_findings'])} blocking issue(s); fixing...")
+            rt.log(f"Wave review {wave_key} attempt {attempt} found {len(review['blocking_findings'])} blocking issue(s); fixing...")
             await rt.agent(
                 prompt=(
-                    f"Fix EVERY blocking finding from Carbon's `{wave_key}` review in `{review_rel}` on "
+                    f"Fix EVERY blocking finding from the `{wave_key}` independent review in `{review_rel}` on "
                     f"`{INTEGRATION_BRANCH}`, then re-run full verification (`tools\\dev.ps1 check`, "
                     "`python tools/arch_check.py`, `python tools/code_map.py check`, `git diff --check`). "
                     f"Findings: {json.dumps(review['blocking_findings'])}"
                 ),
                 schema={"type": "string"},
-                role=f"Carbon Fix {wave_key} #{attempt}",
+                role=f"Review Fix {wave_key} #{attempt}",
                 type_name="self",
                 workspace="inherit",
             )
 
     raise RoadmapError(
-        f"Carbon review for `{wave_key}` failed after {max_attempts} attempt(s): "
+        f"Independent review for `{wave_key}` failed after {max_attempts} attempt(s): "
         f"{len((last_review or {}).get('blocking_findings', []))} blocking finding(s) remain."
     )
 
@@ -1137,7 +1143,7 @@ async def run_wave_6_release(
         rt.repo_root,
         rubylight_remote_tags=rl_tags,
         nightjar_remote_tags=nj_tags,
-        require_whole_release_carbon=False,
+        require_whole_release_review=False,
         check_release_artifacts=False,
     )
     if gate_errors:
@@ -1161,18 +1167,18 @@ async def run_wave_6_release(
             workspace="inherit",
         )
 
-    rt.phase("Wave 6: Carbon Whole-Release Review")
+    rt.phase("Wave 6: Independent Whole-Release Review (Opus 5.5 xhigh)")
     head_sha = "HEAD"
     if not dry_run:
         head_sha, _ = await _git_head_and_status(rt)
     state["waves"]["6"]["base_sha"] = prev_tag
     state["waves"]["6"]["head_sha"] = head_sha
-    await run_carbon_review_cycle(
+    await run_wave_review_cycle(
         rt,
         state,
         state_path,
         wave_key="6",
-        review_rel="docs/reviews/release-7.0.0-carbon.md",
+        review_rel="docs/reviews/release-7.0.0-review.md",
         git_range=f"{prev_tag}..{head_sha}",
         audit_prompt=(
             f"Perform a strictly read-only WHOLE-RELEASE review across `{prev_tag}..{head_sha}` for "
@@ -1183,7 +1189,7 @@ async def run_wave_6_release(
         ),
         dry_run=dry_run,
     )
-    state["release"]["whole_release_carbon_approved"] = True
+    state["release"]["whole_release_review_approved"] = True
     save_state(state_path, state)
 
     final_errors = evaluate_release_gate(
@@ -1191,7 +1197,7 @@ async def run_wave_6_release(
         rt.repo_root,
         rubylight_remote_tags=rl_tags,
         nightjar_remote_tags=nj_tags,
-        require_whole_release_carbon=True,
+        require_whole_release_review=True,
         check_release_artifacts=not dry_run,
         authorize_publish=authorize_publish,
     )
@@ -1208,7 +1214,7 @@ async def run_wave_6_release(
     try:
         auth_path.parent.mkdir(parents=True, exist_ok=True)
         auth_path.write_text(
-            f"authorized_utc={utc_now()}\nversion={RELEASE_TARGET}\nwhole_release_carbon=approved\nmaintainer_ok=true\n",
+            f"authorized_utc={utc_now()}\nversion={RELEASE_TARGET}\nwhole_release_review=approved\nmaintainer_ok=true\n",
             encoding="utf-8",
             newline="\n",
         )
@@ -1235,9 +1241,8 @@ async def run_wave_6_release(
             check_gpu_hang_halt(rt.repo_root)
             await rt.agent(
                 prompt=(
-                    "Verify installed host is idle (`/serverinfo` session counts 0), then run "
-                    "and `pwsh rust/release/check.ps1 v7.0.0` (after verifying installed-host idle "
-            "`RustHostSessionCount == 0 && RustHostPendingSessionCount == 0` and zero `.agents/GPU_HANG_HALT`). "
+                    "Verify installed host is idle (`/serverinfo` `RustHostSessionCount == 0 && RustHostPendingSessionCount == 0` "
+                    "and zero `.agents/GPU_HANG_HALT`), then run `pwsh rust/release/check.ps1 v7.0.0`. "
                     "Abort immediately on exit code 3."
                 ),
                 schema={"type": "string"},
@@ -1286,7 +1291,7 @@ async def run_roadmap(
     rt: WorkflowRuntime,
     *,
     waves: list[int] | None = None,
-    max_parallel: int = 2,
+    max_parallel: int = 3,
     dry_run: bool = False,
     authorize_publish: bool = False,
 ) -> dict[str, Any]:
@@ -1370,7 +1375,7 @@ async def run_roadmap(
             wstate["status"] = "blocked"
             save_state(state_path, state)
             raise RoadmapError(
-                f"Wave {wave} halted before Phase 8 Carbon review: unmerged/quarantined items: "
+                f"Wave {wave} halted before Phase 8 independent review: unmerged/quarantined items: "
                 + ", ".join(f"{i['id']}({i['status']}: {i.get('quarantine_reason')})" for i in unmerged)
             )
 
@@ -1382,13 +1387,13 @@ async def run_roadmap(
         save_state(state_path, state)
 
         git_range = f"{wstate['base_sha']}..{wstate['head_sha']}"
-        rt.phase(f"Wave {wave}: Phase 8 Carbon Review")
-        await run_carbon_review_cycle(
+        rt.phase(f"Wave {wave}: Phase 8 Independent Review (Opus 5.5 xhigh)")
+        await run_wave_review_cycle(
             rt,
             state,
             state_path,
             wave_key=str(wave),
-            review_rel=f"docs/reviews/wave-{wave}-carbon.md",
+            review_rel=f"docs/reviews/wave-{wave}-review.md",
             git_range=git_range,
             audit_prompt=(
                 f"Perform a strictly read-only post-wave audit of Wave {wave} (`{git_range}` on "

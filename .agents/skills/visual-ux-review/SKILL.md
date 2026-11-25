@@ -4,12 +4,12 @@ description: >-
   Use in Phase 6 (Visual UX & Accessibility lens) and Waves 0, 4, and 5 to render
   and visually inspect screenshots of EVERY user-facing Rubylight 7.0 and Nightjar 7.0
   surface (Console, /play, /guest, Couch Menu, Installer, Tray, Nightjar Phone/Handheld/TV/Desktop,
-  Websites, READMEs) across themes, viewports, and German/CJK stress using read_file.
+  Websites, READMEs) across themes, viewports, and German/CJK stress using Read.
 ---
 
 # Visual UX & Accessibility Review Protocol (7.0 Console-Quality Redesign)
 
-Never approve a visual, UI, demo, site, or README change from code inspection alone — render screenshots and inspect EVERY image directly with `read_file`.
+Never approve a visual, UI, demo, site, or README change from code inspection alone — render screenshots and inspect EVERY image directly with `Read`.
 
 ## 1. Capture Matrix (Every User-Facing Surface)
 
@@ -41,9 +41,9 @@ Never approve a visual, UI, demo, site, or README change from code inspection al
 - **Nightjar site (`client/site/` + `de/`)**: `node client/site/preview.mjs` + `node client/site/check-links.mjs` -> inspect all 8 HTML pages at **360, 768, 1440 px** in **Light and Dark** mode, asserting `< 6 MB` non-video assets.
 - **READMEs**: `client/scripts/demo/readme-preview.ps1` (1440 px and 393 px GitHub markdown render).
 
-## 2. Multimodal Inspection Checklist (via `read_file`)
+## 2. Multimodal Inspection Checklist (via `Read`)
 
-Open each rendered PNG/JPG/WebP with `read_file` and fail the review if ANY of the following occur:
+Open each rendered PNG/JPG/WebP with `Read` and fail the review if ANY of the following occur:
 
 1. **Console-Quality Bar**: Does it look like a flagship cohesive 7.0 console OS (PS5 × Apple tvOS × SteamOS OLED × studio hardware), with strong typography, balanced negative space, and zero legacy/unpolished widgets?
 2. **Contrast & Readability**: text < 4.5:1 or focus/outline < 3.0:1; washed-out text over worst-case white (night) or black (day) cover art; unreadable status badges.

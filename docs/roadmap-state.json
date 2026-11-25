@@ -2,15 +2,15 @@
   "schema_version": 1,
   "release_target": "7.0.0",
   "integration_branch": "roadmap/redesign-and-waves-1-5",
-  "updated_at": "2026-11-25T16:09:27Z",
+  "updated_at": "2026-11-25T23:08:36Z",
   "waves": {
     "0": {
       "status": "pending",
       "base_sha": null,
       "head_sha": null,
-      "carbon_review": {
+      "wave_review": {
         "approved": false,
-        "review_file": "docs/reviews/wave-0-carbon.md",
+        "review_file": "docs/reviews/wave-0-review.md",
         "attempts": 0,
         "blocking_count": 0,
         "summary": ""
@@ -20,9 +20,9 @@
       "status": "pending",
       "base_sha": null,
       "head_sha": null,
-      "carbon_review": {
+      "wave_review": {
         "approved": false,
-        "review_file": "docs/reviews/wave-1-carbon.md",
+        "review_file": "docs/reviews/wave-1-review.md",
         "attempts": 0,
         "blocking_count": 0,
         "summary": ""
@@ -32,9 +32,9 @@
       "status": "pending",
       "base_sha": null,
       "head_sha": null,
-      "carbon_review": {
+      "wave_review": {
         "approved": false,
-        "review_file": "docs/reviews/wave-2-carbon.md",
+        "review_file": "docs/reviews/wave-2-review.md",
         "attempts": 0,
         "blocking_count": 0,
         "summary": ""
@@ -44,9 +44,9 @@
       "status": "pending",
       "base_sha": null,
       "head_sha": null,
-      "carbon_review": {
+      "wave_review": {
         "approved": false,
-        "review_file": "docs/reviews/wave-3-carbon.md",
+        "review_file": "docs/reviews/wave-3-review.md",
         "attempts": 0,
         "blocking_count": 0,
         "summary": ""
@@ -56,9 +56,9 @@
       "status": "pending",
       "base_sha": null,
       "head_sha": null,
-      "carbon_review": {
+      "wave_review": {
         "approved": false,
-        "review_file": "docs/reviews/wave-4-carbon.md",
+        "review_file": "docs/reviews/wave-4-review.md",
         "attempts": 0,
         "blocking_count": 0,
         "summary": ""
@@ -68,9 +68,9 @@
       "status": "pending",
       "base_sha": null,
       "head_sha": null,
-      "carbon_review": {
+      "wave_review": {
         "approved": false,
-        "review_file": "docs/reviews/wave-5-carbon.md",
+        "review_file": "docs/reviews/wave-5-review.md",
         "attempts": 0,
         "blocking_count": 0,
         "summary": ""
@@ -80,9 +80,9 @@
       "status": "pending",
       "base_sha": null,
       "head_sha": null,
-      "carbon_review": {
+      "wave_review": {
         "approved": false,
-        "review_file": "docs/reviews/release-7.0.0-carbon.md",
+        "review_file": "docs/reviews/release-7.0.0-review.md",
         "attempts": 0,
         "blocking_count": 0,
         "summary": ""
@@ -675,7 +675,7 @@
     "nightjar_defender_clean": false,
     "nightjar_tag_pushed": false,
     "sites_published": false,
-    "whole_release_carbon_approved": false,
+    "whole_release_review_approved": false,
     "maintainer_authorized": false
   }
 }

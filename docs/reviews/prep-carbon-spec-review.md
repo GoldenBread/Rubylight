@@ -1,5 +1,7 @@
 # Independent Carbon (`gemini-4-carbon-high`) Roadmap Prep Spec Review
 
+> **Historical Prep Audit Archive (2026-11-22):** Preserves the original 4-round pre-implementation spec audit. Live Waves 0–6 orchestration and post-wave / whole-release reviews were migrated on **2026-11-25** to **Claude Code** (`Opus 5.5` `xhigh`/`high`/`medium`/`low` + `Sonnet` + `Haiku`, with `.claude/agents/wave-reviewer.md` on Opus 5.5 `xhigh`); see `docs/TEAMWORK-HANDOVER.md`.
+
 - **Reviewer Model:** `gemini-4-carbon-high` (strictly read-only CLI invocation via `agy --model gemini-4-carbon-high --output-format json --json-schema .agents/schemas/wave_review.json --print ...`)
 - **Audited Worktree:** `C:\src\rl-roadmap-prep` (branch `roadmap-prep`, base `origin/main` `b3d0c26b9b`, compared read-only against sprint guardrails at `C:\src\rubylight-sprint\tools\{arch_check.py,size_ratchet.json,dev.ps1}`)
 - **Final Verdict (Round 3):** **`approved: true` — `0` blocking findings (`GIT_UNCHANGED=True`, `CARBON_EXIT=0`)**

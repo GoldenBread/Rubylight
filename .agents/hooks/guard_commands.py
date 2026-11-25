@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
-"""Antigravity PreToolUse command & file guardrail for the Rubylight/Nightjar 7.0.0 roadmap.
+"""PreToolUse command & file guardrail for the Rubylight/Nightjar 7.0.0 roadmap.
 
-Guards `run_command`, `write_file`, `edit_file`, and `read_file` against unsafe
-mutations, bypasses, unauthorized releases, and hardware runs after an AMD encoder hang.
+Supports BOTH:
+- Claude Code (`2.1.x+`) PreToolUse hooks via `.claude/settings.json`
+  (snake_case `tool_name` in `Bash|PowerShell|Read|Write|Edit|MultiEdit|NotebookEdit`,
+  `tool_input`, emitting `{}` on allow or `{"hookSpecificOutput": {"hookEventName": "PreToolUse",
+  "permissionDecision": "deny", "permissionDecisionReason": "..."}}` on deny).
+- Legacy Antigravity PreToolUse hooks via `.agents/hooks.json`
+  (camelCase `toolCall`, emitting `{"decision": "allow"}` or `{"decision": "deny", "reason": "..."}`).
 
-Reads camelCase JSON on stdin (Antigravity PreToolUse contract) and prints
-{"decision": "allow"} or {"decision": "deny", "reason": "..."} on stdout.
-Fail-closed on malformed payloads.
+Guards shell and file tools against unsafe mutations, bypasses, unauthorized releases,
+guardrail tampering, and hardware runs after an AMD encoder hang. Fail-closed on malformed payloads.
 """
 from __future__ import annotations
 
@@ -25,6 +29,10 @@ GIT_CMD = r"\bgit(?:\.exe)?\b"
 CARGO_CMD = r"\bcargo(?:\.exe)?\b"
 GH_CMD = r"\bgh(?:\.exe)?\b"
 
+SHELL_TOOLS = frozenset({"run_command", "Bash", "PowerShell"})
+READ_FILE_TOOLS = frozenset({"read_file", "Read"})
+WRITE_FILE_TOOLS = frozenset({"write_file", "edit_file", "Write", "Edit", "MultiEdit", "NotebookEdit"})
+
 # Protected sensitive paths (denied for ANY read/write/edit/command).
 PROGRAMDATA_BP_RE = re.compile(
     r"(?:programdata|%programdata%|\$env:programdata)[\\/]+butterpollo(?![A-Za-z0-9_-])",
@@ -32,17 +40,25 @@ PROGRAMDATA_BP_RE = re.compile(
 )
 KEYSTORE_PROPS_RE = re.compile(r"(?:^|[\s\"'`/\\])keystore\.properties(?:\b|$)", re.IGNORECASE)
 
-# Protected guardrail / sentinel / baseline files (denied for write_file, edit_file, and mutating shell commands).
+# Protected guardrail / sentinel / baseline files (denied for write/edit tools and mutating shell commands).
 PROTECTED_GUARD_PATH_RE = re.compile(
-    r"(?:^|[\\/])(?:\.agents[\\/](?:RELEASE_7_0_AUTHORIZED|GPU_HANG_HALT|hooks\.json|hooks[\\/][^\\/\s]+)|tools[\\/](?:size_ratchet\.json|arch_baselines\.json))(?:\b|$)",
+    r"(?:^|[\\/])(?:"
+    r"\.agents[\\/](?:RELEASE_7_0_AUTHORIZED|GPU_HANG_HALT|hooks\.json|hooks[\\/][^\\/\s]+)"
+    r"|\.claude[\\/](?:settings(?:\.local)?\.json|agents[\\/][^\\/\s]+)"
+    r"|tools[\\/](?:size_ratchet\.json|arch_baselines\.json)"
+    r")(?:\b|$)",
     re.IGNORECASE,
 )
 PROTECTED_SENTINEL_OR_BASELINE_CMD_RE = re.compile(
-    r"(?:\.agents[\\/]+(?:RELEASE_7_0_AUTHORIZED|GPU_HANG_HALT|hooks\.json|hooks[\\/]+(?:guard_commands|watch_gpu_hang)\.py)|tools[\\/]+(?:size_ratchet\.json|arch_baselines\.json))",
+    r"(?:"
+    r"\.agents[\\/]+(?:RELEASE_7_0_AUTHORIZED|GPU_HANG_HALT|hooks\.json|hooks[\\/]+(?:guard_commands|watch_gpu_hang)\.py)"
+    r"|\.claude[\\/]+(?:settings(?:\.local)?\.json|agents[\\/]+[^\\/\s;|&\"']+)"
+    r"|tools[\\/]+(?:size_ratchet\.json|arch_baselines\.json)"
+    r")",
     re.IGNORECASE,
 )
 READ_ONLY_SHELL_RE = re.compile(
-    r"^\s*(?:python(?:\.exe)?\s+-m\s+(?:unittest|py_compile)\b|git(?:\.exe)?\s+(?:-C\s+\S+\s+)?(?:status|diff|log|show|ls-files)\b|Test-Path\b)",
+    r"^\s*(?:python(?:\.exe)?\s+(?:-B\s+)?-m\s+(?:unittest|py_compile)\b|git(?:\.exe)?\s+(?:-C\s+\S+\s+)?(?:status|diff|log|show|ls-files)\b|Test-Path\b|cat\b|head\b|tail\b|ls\b)",
     re.IGNORECASE,
 )
 
@@ -112,8 +128,9 @@ def _candidate_agents_dirs(
     cwd: str | None,
     workspace_paths: list[str] | None = None,
 ) -> list[pathlib.Path]:
+    """Collect `.agents` dirs for the active worktree AND any enclosing git checkout (e.g. `.claude/worktrees/<name>`)."""
     dirs = [agents_dir.resolve()]
-    candidates: list[str] = []
+    candidates: list[str] = [str(agents_dir.resolve().parent)]
     if cwd:
         candidates.append(cwd)
     if workspace_paths:
@@ -122,8 +139,14 @@ def _candidate_agents_dirs(
         cur = pathlib.Path(raw).resolve()
         for parent in (cur, *cur.parents):
             cand = parent / ".agents"
-            if cand.is_dir() and cand not in dirs:
+            if cand.is_dir() and (parent / ".git").exists() and cand not in dirs:
                 dirs.append(cand)
+        # Also honor non-git temp fixtures in unit tests where `cwd` directly contains `.agents/`.
+        for parent in (cur, *cur.parents):
+            cand = parent / ".agents"
+            if cand.is_dir():
+                if cand not in dirs:
+                    dirs.append(cand)
                 break
     return dirs
 
@@ -139,7 +162,7 @@ def _split_segments(command_line: str) -> list[str]:
 
 
 def evaluate_file_tool(tool_name: str, path_value: str) -> dict[str, str]:
-    """Guard `read_file`, `write_file`, and `edit_file`."""
+    """Guard read/write/edit file tools across Claude Code and Antigravity."""
     norm = path_value.replace("\\", "/")
     if PROGRAMDATA_BP_RE.search(path_value) or PROGRAMDATA_BP_RE.search(norm):
         return {
@@ -151,15 +174,16 @@ def evaluate_file_tool(tool_name: str, path_value: str) -> dict[str, str]:
             "decision": "deny",
             "reason": f"Hard-denied ({tool_name}): touching keystore.properties is forbidden.",
         }
-    if tool_name in ("write_file", "edit_file") and (
+    if tool_name in WRITE_FILE_TOOLS and (
         PROTECTED_GUARD_PATH_RE.search(path_value) or PROTECTED_GUARD_PATH_RE.search(norm)
     ):
         return {
             "decision": "deny",
             "reason": (
                 f"Hard-denied ({tool_name}): modifying sentinels (.agents/RELEASE_7_0_AUTHORIZED, "
-                ".agents/GPU_HANG_HALT), hook guards (.agents/hooks*), or architecture baselines "
-                "(tools/size_ratchet.json, tools/arch_baselines.json) is forbidden."
+                ".agents/GPU_HANG_HALT), hook/agent guards (.agents/hooks*, .claude/settings*.json, "
+                ".claude/agents/*), or architecture baselines (tools/size_ratchet.json, "
+                "tools/arch_baselines.json) is forbidden."
             ),
         }
     return {"decision": "allow"}
@@ -201,10 +225,12 @@ def evaluate_command(
         }
 
     for segment in segments:
-        if PROTECTED_SENTINEL_OR_BASELINE_CMD_RE.search(segment) and not READ_ONLY_SHELL_RE.match(segment):
+        if PROTECTED_SENTINEL_OR_BASELINE_CMD_RE.search(segment) and (
+            ">" in segment or not READ_ONLY_SHELL_RE.match(segment)
+        ):
             return {
                 "decision": "deny",
-                "reason": "Hard-denied: shell commands may not create, edit, or delete sentinels, hook guards, or size/arch baseline files.",
+                "reason": "Hard-denied: shell commands may not create, edit, or delete sentinels, hook/agent guards, or size/arch baseline files.",
             }
         if FORCE_PUSH_RE.search(segment):
             return {
@@ -278,32 +304,67 @@ def evaluate_command(
     return {"decision": "allow"}
 
 
+def is_claude_code_payload(payload: Mapping[str, Any]) -> bool:
+    """Detect Claude Code hook payloads (`tool_name` / `tool_input` / `hook_event_name`)."""
+    return "tool_name" in payload or "tool_input" in payload or "hook_event_name" in payload
+
+
+def format_hook_response(decision: Mapping[str, str], *, claude_code: bool) -> dict[str, Any]:
+    """Format decision for Claude Code (`hookSpecificOutput` / `{}`) or Antigravity (`decision`)."""
+    if not claude_code:
+        return dict(decision)
+    if decision.get("decision") == "deny":
+        return {
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "deny",
+                "permissionDecisionReason": decision.get("reason", "Denied by guard_commands.py."),
+            }
+        }
+    return {}
+
+
 def handle_payload(
     payload: dict[str, Any],
     *,
     agents_dir: pathlib.Path,
     env: Mapping[str, str] | None = None,
 ) -> dict[str, str]:
-    tool_call = payload.get("toolCall")
-    if not isinstance(tool_call, dict):
-        return {"decision": "deny", "reason": "guard_commands: missing toolCall object in hook payload."}
-    tool_name = tool_call.get("name")
-    args = tool_call.get("args")
-    if not isinstance(args, dict):
-        return {"decision": "deny", "reason": "guard_commands: missing toolCall.args object."}
+    """Evaluate either a Claude Code or Antigravity PreToolUse payload and return normalized decision."""
+    if is_claude_code_payload(payload):
+        tool_name = payload.get("tool_name")
+        args = payload.get("tool_input")
+        if not isinstance(tool_name, str) or not tool_name:
+            return {"decision": "deny", "reason": "guard_commands: missing tool_name in Claude Code hook payload."}
+        if not isinstance(args, dict):
+            return {"decision": "deny", "reason": "guard_commands: missing tool_input object in Claude Code hook payload."}
+    else:
+        tool_call = payload.get("toolCall")
+        if not isinstance(tool_call, dict):
+            return {"decision": "deny", "reason": "guard_commands: missing toolCall or tool_name in hook payload."}
+        tool_name = tool_call.get("name")
+        args = tool_call.get("args")
+        if not isinstance(args, dict):
+            return {"decision": "deny", "reason": "guard_commands: missing toolCall.args object."}
 
-    if tool_name in ("read_file", "write_file", "edit_file"):
-        path_val = args.get("Path") or args.get("path") or ""
+    if tool_name in READ_FILE_TOOLS or tool_name in WRITE_FILE_TOOLS:
+        path_val = (
+            args.get("file_path")
+            or args.get("notebook_path")
+            or args.get("Path")
+            or args.get("path")
+            or ""
+        )
         if not isinstance(path_val, str):
-            return {"decision": "deny", "reason": f"guard_commands: {tool_name} Path must be a string."}
+            return {"decision": "deny", "reason": f"guard_commands: {tool_name} path must be a string."}
         return evaluate_file_tool(tool_name, path_val)
 
-    if tool_name != "run_command":
+    if tool_name not in SHELL_TOOLS:
         return {"decision": "allow"}
 
-    command_line = args.get("CommandLine") or args.get("commandLine") or ""
+    command_line = args.get("command") or args.get("CommandLine") or args.get("commandLine") or ""
     if not isinstance(command_line, str):
-        return {"decision": "deny", "reason": "guard_commands: CommandLine must be a string."}
+        return {"decision": "deny", "reason": "guard_commands: command must be a string."}
     cwd = payload.get("cwd") if isinstance(payload.get("cwd"), str) else None
     ws = payload.get("workspacePaths") if isinstance(payload.get("workspacePaths"), list) else None
     ws_clean = [w for w in (ws or []) if isinstance(w, str)]
@@ -326,10 +387,25 @@ def main() -> int:
         if not isinstance(payload, dict):
             raise ValueError("payload must be a JSON object")
     except Exception as exc:
-        print(json.dumps({"decision": "deny", "reason": f"guard_commands: invalid JSON payload ({exc})."}))
+        reason = f"guard_commands: invalid JSON payload ({exc})."
+        # Fail closed for both Claude Code and Antigravity callers when payload cannot be parsed.
+        print(
+            json.dumps(
+                {
+                    "decision": "deny",
+                    "reason": reason,
+                    "hookSpecificOutput": {
+                        "hookEventName": "PreToolUse",
+                        "permissionDecision": "deny",
+                        "permissionDecisionReason": reason,
+                    },
+                }
+            )
+        )
         return 0
     decision = handle_payload(payload, agents_dir=default_agents_dir)
-    print(json.dumps(decision))
+    out = format_hook_response(decision, claude_code=is_claude_code_payload(payload))
+    print(json.dumps(out))
     return 0
 
 

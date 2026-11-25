@@ -77,14 +77,18 @@ class OrchestratorCoreTests(unittest.TestCase):
         for item in st["items"]:
             self.assertTrue(item["branch"].startswith("wip/roadmap/"), msg=item["branch"])
 
-    def test_carbon_cli_command_places_model_before_print(self) -> None:
-        cmd = core.build_carbon_review_command(
+    def test_claude_wave_review_cli_command_flags_and_readonly(self) -> None:
+        cmd = core.build_wave_review_command(
             self.root,
             pathlib.Path(r"C:\temp\prompt.txt"),
             pathlib.Path(r"C:\temp\out.json"),
         )
-        self.assertLess(cmd.index("--model"), cmd.index("--print"))
-        self.assertNotIn("--add-dir \"C:\\src\"", cmd)
+        self.assertIn("& claude --model opus --effort xhigh", cmd)
+        self.assertIn("--disallowedTools Write Edit MultiEdit NotebookEdit", cmd)
+        self.assertIn("--output-format json --json-schema $s", cmd)
+        self.assertIn("--no-session-persistence -p $p", cmd)
+        self.assertLess(cmd.index("--model"), cmd.index("-p $p"))
+        self.assertNotIn('--add-dir "C:\\src"', cmd)
         self.assertIn(f'--add-dir "{self.root}"', cmd)
 
     def test_state_load_save_and_resume(self) -> None:
@@ -104,7 +108,9 @@ class OrchestratorCoreTests(unittest.TestCase):
         for dep in ("21", "22", "27", "28", "29"):
             self.assertIn(dep, core.item_by_id(st, "07")["depends_on"])
         for wf_file in ("orchestrator_core.py", "roadmap_orchestrator.py"):
-            self.assertNotIn("flash_lite", (WORKFLOWS_DIR / wf_file).read_text(encoding="utf-8"))
+            txt = (WORKFLOWS_DIR / wf_file).read_text(encoding="utf-8")
+            for forbidden in ("flash_lite", "gemini-4", "agy --model", "carbon_review"):
+                self.assertNotIn(forbidden, txt, msg=f"{forbidden} leaked into {wf_file}")
         core.item_by_id(st, "01")["status"] = "merged"
         core.save_state(state_path, st)
         self.assertNotIn(b"\r\n", state_path.read_bytes())
@@ -128,19 +134,19 @@ class OrchestratorCoreTests(unittest.TestCase):
         st = core.initial_state()
         reasons = core.check_wave_entry_gate(st, 1, self.root)
         self.assertTrue(any("Wave 0 has unmerged items" in r for r in reasons))
-        self.assertTrue(any("Wave 0 Carbon review" in r for r in reasons))
+        self.assertTrue(any("Wave 0 independent review" in r for r in reasons))
 
         core.item_by_id(st, "01")["status"] = "merged"
         core.item_by_id(st, "02")["status"] = "merged"
-        st["waves"]["0"]["carbon_review"]["approved"] = True
+        st["waves"]["0"]["wave_review"]["approved"] = True
         self.assertEqual(core.check_wave_entry_gate(st, 1, self.root), [])
 
     def test_release_gate_artifacts_and_maintainer_approval(self) -> None:
         st = core.initial_state()
         for item in st["items"]:
             item["status"] = "merged"
-        for w in (*core.REQUIRED_CARBON_WAVES, 6):
-            rev = st["waves"][str(w)]["carbon_review"]
+        for w in (*core.REQUIRED_REVIEW_WAVES, 6):
+            rev = st["waves"][str(w)]["wave_review"]
             rev["approved"] = True
             rev["blocking_count"] = 0
             (self.root / rev["review_file"]).write_text("# ok\n", encoding="utf-8", newline="\n")
@@ -149,7 +155,7 @@ class OrchestratorCoreTests(unittest.TestCase):
         errs = core.evaluate_release_gate(
             st,
             self.root,
-            require_whole_release_carbon=True,
+            require_whole_release_review=True,
             check_release_artifacts=True,
             authorize_publish=False,
         )
@@ -161,7 +167,7 @@ class OrchestratorCoreTests(unittest.TestCase):
             core.evaluate_release_gate(
                 st,
                 self.root,
-                require_whole_release_carbon=True,
+                require_whole_release_review=True,
                 check_release_artifacts=True,
                 authorize_publish=True,
             ),
@@ -196,9 +202,6 @@ class OrchestratorCoreTests(unittest.TestCase):
             self.assertFalse(ref.startswith(branch + "/"), msg=f"Git D/F collision: {ref} vs {branch}")
             self.assertTrue(ref.startswith(branch + "-"), msg=ref)
 
-        # Simulate a full non-dry-run item with 2-slice Stage 1 -> 1-slice Stage 2 and verify:
-        # 1) Stage 1 merge branch is created and passed as Stage 2 base;
-        # 2) All 5 Phase 6 lenses use type_name="self", workspace="share", and interpolated `{branch}`.
         st = core.initial_state()
         st_path = self.root / "docs" / "stage-test-state.json"
         core.save_state(st_path, st)
@@ -246,7 +249,7 @@ class OrchestratorCoreTests(unittest.TestCase):
                 st,
                 st_path,
                 core.item_by_id(st, "01"),
-                asyncio.Semaphore(2),
+                asyncio.Semaphore(3),
                 asyncio.Lock(),
                 asyncio.Lock(),
                 asyncio.Lock(),
@@ -267,9 +270,9 @@ class OrchestratorCoreTests(unittest.TestCase):
             self.assertIn("wip/roadmap/01-ui-rubylight-studio", rc["prompt"])
             self.assertNotIn("{branch}", rc["prompt"])
 
-    def test_carbon_parser_and_git_snapshot_assertion(self) -> None:
+    def test_wave_review_parser_and_git_snapshot_assertion(self) -> None:
         wrapped = json.dumps({
-            "response": json.dumps({
+            "structured_output": {
                 "approved": True,
                 "wave": "wave-1",
                 "summary": "Has blocker.",
@@ -281,14 +284,14 @@ class OrchestratorCoreTests(unittest.TestCase):
                     "required_fix": "Release current_app mutex first",
                 }],
                 "non_blocking": [],
-            })
+            }
         })
-        self.assertFalse(core.parse_carbon_review(wrapped)["approved"])
+        self.assertFalse(core.parse_wave_review(wrapped)["approved"])
 
         core.assert_git_snapshot_unchanged("abc", "", "abc", "", context="clean")
-        with self.assertRaises(core.CarbonReadOnlyViolationError):
+        with self.assertRaises(core.ReviewerReadOnlyViolationError):
             core.assert_git_snapshot_unchanged("abc", "", "def", "", context="head moved")
-        with self.assertRaises(core.CarbonReadOnlyViolationError):
+        with self.assertRaises(core.ReviewerReadOnlyViolationError):
             core.assert_git_snapshot_unchanged("abc", "", "abc", "?? evil.txt", context="untracked")
 
     def test_run_command_and_await_handles_background_task(self) -> None:
@@ -332,24 +335,21 @@ class OrchestratorCoreTests(unittest.TestCase):
             log=lambda *a: None,
             call_tool=_unused_tool,
         )
-        # Dry run across Waves 0-6 with authorize_publish=True succeeds.
         summary = asyncio.run(
-            core.run_roadmap(rt, waves=[0, 1, 2, 3, 4, 5, 6], max_parallel=2, dry_run=True, authorize_publish=True)
+            core.run_roadmap(rt, waves=[0, 1, 2, 3, 4, 5, 6], max_parallel=3, dry_run=True, authorize_publish=True)
         )
         self.assertEqual(len(summary["merged_items"]), 29)
 
-        # Dry run without authorize_publish blocks at Wave 6 maintainer gate.
         (self.root / core.STATE_REL).unlink()
         with self.assertRaises(core.ReleaseGateError):
             asyncio.run(
-                core.run_roadmap(rt, waves=[0, 1, 2, 3, 4, 5, 6], max_parallel=2, dry_run=True, authorize_publish=False)
+                core.run_roadmap(rt, waves=[0, 1, 2, 3, 4, 5, 6], max_parallel=3, dry_run=True, authorize_publish=False)
             )
 
-        # Non-dry-run with quarantined item in Wave 0 halts BEFORE Wave 0 Phase 8 / Wave 1!
         (self.root / core.STATE_REL).unlink()
         self._seed_post_sprint_prereqs()
         with self.assertRaises(core.RoadmapError) as ctx:
-            asyncio.run(core.run_roadmap(rt, waves=[0, 1], max_parallel=2, dry_run=False))
+            asyncio.run(core.run_roadmap(rt, waves=[0, 1], max_parallel=3, dry_run=False))
         self.assertIn("Wave 0 halted before Phase 8", str(ctx.exception))
 
     def test_checked_in_roadmap_state_json_matches_catalog(self) -> None:
@@ -359,6 +359,8 @@ class OrchestratorCoreTests(unittest.TestCase):
         self.assertEqual([i["id"] for i in st["items"]], [i["id"] for i in core.ITEM_CATALOG])
         for item in st["items"]:
             self.assertTrue(item["branch"].startswith("wip/roadmap/"), msg=item["branch"])
+        for w in (*core.REQUIRED_REVIEW_WAVES, 6):
+            self.assertIn("wave_review", st["waves"][str(w)])
         self.assertNotIn(b"\r\n", checked_in.read_bytes())
 
 

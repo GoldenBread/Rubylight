@@ -179,7 +179,7 @@ Wave 1 scheduling note: Item 21 depends on `04` and `06` (so `render.rs` and `nv
 3. **Host NVIDIA NVENC Header/Sample Audit & Fake-Driver Suite (`docs/nvenc.md#checking-nvidia-code` — NOT run on NVIDIA GPU hardware):**
    - `cargo test -p butterpollo-core --locked nvenc`
    - `cargo test -p butterpollo-windows --locked nvenc` (runs both existing `nvenc/tests.rs` and new `nvenc/overhaul_tests.rs` across API 11.0, 12.0, 12.1, 12.2, and 13.0!).
-   - Author AND independent reviewer (`carbon-reviewer`) verify every foreign struct/field/flag/version macro against vendored `rust/windows/abi/include/nvEncodeAPI.h` (SDK 13.0), NVIDIA Video Codec SDK samples, and `rtx-video-sdk-1.1.0` headers, recording untested hardware assumptions under `docs/nvenc.md#not-run-on-nvidia-hardware`.
+   - Author AND independent reviewer (`wave-reviewer`, Opus 5.5 `xhigh`) verify every foreign struct/field/flag/version macro against vendored `rust/windows/abi/include/nvEncodeAPI.h` (SDK 13.0), NVIDIA Video Codec SDK samples, and `rtx-video-sdk-1.1.0` headers, recording untested hardware assumptions under `docs/nvenc.md#not-run-on-nvidia-hardware`.
 4. **Architecture & Size-Ratchet Guardrails:**
    - `python tools/arch_check.py` (verifies `nvenc.rs <= 3711` [shrunk], `nvenc/tests.rs <= 3461`, all new files `<= 800` LOC with `//!` headers, zero unannotated `cfg(unix)` breaking macOS, zero `Family::Rubylight` gating).
    - `python tools/code_map.py check` & `cargo fmt -- --check` (without `--all`).

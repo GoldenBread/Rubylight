@@ -1,12 +1,13 @@
-"""Antigravity `run_workflow` entry script for the Rubylight & Nightjar 7.0.0 roadmap.
+"""Optional programmatic workflow runner for the Rubylight & Nightjar 7.0.0 roadmap.
 
-Invoke via `run_workflow`:
-    ScriptPath: <repo>/.agents/workflows/roadmap_orchestrator.py
-    Cwd: <repo>
-    Args: {"waves": [0, 1, 2, 3, 4, 5, 6], "max_parallel": 2, "authorize_publish": false}
+Primary canonical orchestration runs natively in Claude Code (`claude --model opus --effort high`)
+using `.claude/agents/*.md` (`core-builder`, `slice-builder`, `medium-builder`, `polish-l10n`,
+`fast-scout`, `wave-reviewer`) and `.claude/settings.json` hooks (see `docs/TEAMWORK-HANDOVER.md`).
 
-Wave 6 prepares 7.0.0 and runs the Whole-Release Carbon review, then stops cleanly
-until explicitly re-run with `authorize_publish: true` after maintainer sign-off.
+This entry script remains available as a programmatic driver over `orchestrator_core.py`
+for automated state-machine / dry-run verification. Wave 6 prepares 7.0.0 and runs the
+Whole-Release Opus 5.5 (`xhigh`) review, then stops cleanly until explicitly re-run with
+`authorize_publish: true` after maintainer sign-off.
 """
 import importlib.util
 import pathlib
@@ -34,7 +35,7 @@ _runtime = _core.WorkflowRuntime(
 _summary = await _core.run_roadmap(
     _runtime,
     waves=args.get("waves", [0, 1, 2, 3, 4, 5, 6]),
-    max_parallel=args.get("max_parallel", 2),
+    max_parallel=args.get("max_parallel", 3),
     dry_run=bool(args.get("dry_run", False)),
     authorize_publish=bool(args.get("authorize_publish", False)),
 )

@@ -6,7 +6,7 @@ Date: 2026-11-22 (reconciled **2026-11-25** against post-refactoring `origin/mai
 
 ## 0. Post-6.4.1 & Post-Refactoring Reconciliation (2026-11-25)
 
-Between the initial 2026-11-22 audit (`6.3.0`, `995f2540c8`) and **`origin/main` (`955ef39598`, `v6.4.1`, plus 2 CI/release commits on `wip/v6.4.2`)**, **204 commits** landed: the entire multi-wave architecture refactoring completed (`tools/size_ratchet.json` shrunk to **18** files), declarative `settings.toml` codegen + `tools/i18n.py` + `tools/scaffold.py` + 6 official `.agents/skills/*` shipped, and a major wave of `6.3.1`–`6.4.1` performance, pacing, USB, audio, HDR, and security fixes shipped. Every item below was code-verified directly against `origin/main` so the 7.0.0 `/swarm` team **never duplicates finished work or regresses `6.4.1` fixes**:
+Between the initial 2026-11-22 audit (`6.3.0`, `995f2540c8`) and **`origin/main` (`955ef39598`, `v6.4.1`, plus 2 CI/release commits on `wip/v6.4.2`)**, **204 commits** landed: the entire multi-wave architecture refactoring completed (`tools/size_ratchet.json` shrunk to **18** files), declarative `settings.toml` codegen + `tools/i18n.py` + `tools/scaffold.py` + 6 official `.agents/skills/*` shipped, and a major wave of `6.3.1`–`6.4.1` performance, pacing, USB, audio, HDR, and security fixes shipped. Every item below was code-verified directly against `origin/main` so the Claude Code 7.0.0 team **never duplicates finished work or regresses `6.4.1` fixes**:
 
 ### 0.1 Already Shipped in `6.3.1`–`6.4.1` (Pruned from 7.0.0 Scope — Preserve & Do Not Redo!)
 - **Host / Client Architecture Refactoring (100% Complete):** Split `rust/core/{crypto,config,media-policy,input-policy,session}`, `rust/windows/{abi,graphics,display,io}` + `rust/probes/`, `rust/host/{stream,webrtc,web}` + `tests/{host,interop}`, `client/protocol/{core,wire,native-api,traverse,policy,client,desktop-config,desktop-ui,desktop-media,desktop,android}` (Edition 2024, MSRV 1.94), pure-JDK Android JNI (`Nightjar*Jni.java`), and declarative `settings.toml` catalogs. Only 18 files remain in `tools/size_ratchet.json` (`14` `desktop-config/src/strings/*.rs` tables at 1,750 LOC + 4 narrow host/service/driver files).
@@ -42,7 +42,7 @@ Six independent read-only specialist scouts (3× `gemini-4-neon-xhigh`, 3× `gem
 
 ## 1. Where Rubylight & Nightjar Already Lead — And What NOT to Copy
 
-Before adding a single item, the `/teamwork` team MUST protect the architectural advantages where Rubylight + Nightjar already outperform Parsec, Steam Remote Play, Sunshine/Apollo/Vibepollo, Artemis, Glimmer, and Chiaki:
+Before adding a single item, the Claude Code 7.0.0 team MUST protect the architectural advantages where Rubylight + Nightjar already outperform Parsec, Steam Remote Play, Sunshine/Apollo/Vibepollo, Artemis, Glimmer, and Chiaki:
 
 | Area Where We Lead | Hard Invariant to Protect in 7.0.0 |
 | --- | --- |
