@@ -1,4 +1,4 @@
-import concurrent.futures, json, os, pathlib, queue, shutil, subprocess, sys, tempfile, threading, time, unittest
+import concurrent.futures, contextlib, io, json, os, pathlib, queue, shutil, subprocess, sys, tempfile, threading, time, unittest
 from unittest import mock
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
@@ -618,13 +618,86 @@ try { 'acquired' } finally { Exit-CheckLocks $held -NoPause }
         busy_slot = build_lock.HandleSlot(pool / '1.lock')
         self.assertTrue(busy_slot.try_take('live-build'))
         try:
-            rc = build_lock.main(['--prune', '--lock-directory', str(self.root)])
+            rc = build_lock.main(['--prune', '--all', '--lock-directory', str(self.root)])
             self.assertEqual(rc, 0)
             self.assertTrue(busy_dir.exists())
             self.assertFalse(idle_a.exists())
             self.assertFalse(idle_b.exists())
         finally:
             busy_slot.release()
+
+    def test_prune_cli_respects_floor_without_all_and_skips_when_build_lock_held(self):
+        pool = self.root / 'target-pool'
+        idle = self._make_pool_slot(pool, '1', 1000)
+        gb = 2 ** 30
+        enough = shutil._ntuple_diskusage(500 * gb, 400 * gb, 100 * gb)
+        out = io.StringIO()
+        with mock.patch.object(shutil, 'disk_usage', return_value=enough), contextlib.redirect_stdout(out):
+            rc = build_lock.main(['--prune', '--lock-directory', str(self.root)])
+        self.assertEqual(rc, 0)
+        self.assertTrue(idle.exists())
+        self.assertIn('nothing to prune', out.getvalue())
+
+        err = io.StringIO()
+        with build_lock.BuildLock(self.root, 'active-build'):
+            env = dict(os.environ)
+            env.pop(build_lock.OWNER_ENV, None)
+            with mock.patch.dict(os.environ, env, clear=True), contextlib.redirect_stderr(err):
+                rc = build_lock.main(['--prune', '--all', '--lock-directory', str(self.root)])
+        self.assertEqual(rc, 1)
+        self.assertTrue(idle.exists())
+        self.assertIn('BUILD-LOCK held', err.getvalue())
+
+    def test_prune_pool_reports_failed_deletions_and_preserves_owner_marker(self):
+        pool = self.root / 'target-pool'
+        blocked = self._make_pool_slot(pool, '1', 1000)
+        notes = []
+        failed = []
+
+        def fail_rmtree(path, **kwargs):
+            cb = kwargs.get('onexc') or kwargs.get('onerror')
+            if cb is not None:
+                err = PermissionError('locked exe')
+                cb(os.unlink, str(path / 'artifact.bin'), err if 'onexc' in kwargs else (PermissionError, err, None))
+
+        with mock.patch.object(shutil, 'rmtree', side_effect=fail_rmtree):
+            pruned = build_lock.prune_pool(pool=pool, all_idle=True, say=notes.append, errors=failed)
+        self.assertEqual(pruned, [])
+        self.assertTrue(blocked.exists())
+        self.assertTrue((pool / '1.owner').exists())
+        self.assertEqual(len(notes), 1)
+        self.assertEqual(len(failed), 1)
+        self.assertIn('failed to prune idle target slot', notes[0])
+        self.assertIn('locked exe', notes[0])
+
+    def test_build_lock_uses_peek_on_transient_permission_error_and_file_slot_raises_on_release_error(self):
+        with mock.patch.object(build_lock, 'read', side_effect=PermissionError('writing')), \
+                mock.patch.object(build_lock, 'priority_alive', return_value=True):
+            # Both PRIORITY and BUILD-LOCK PermissionError count as busy instead of crashing enter.
+            self.assertEqual(build_lock.peek(self.root / 'PRIORITY'), '(owner is writing PRIORITY)')
+        orig_read = build_lock.read
+        calls = []
+
+        def flaky_read(path):
+            calls.append(path.name)
+            if path.name == 'PRIORITY' and len(calls) == 1:
+                raise PermissionError('powershell writing priority')
+            if path.name == 'BUILD-LOCK' and len(calls) == 2:
+                raise PermissionError('powershell writing lock')
+            return orig_read(path)
+
+        with mock.patch.object(build_lock, 'read', side_effect=flaky_read), \
+                mock.patch.object(build_lock, 'priority_alive', side_effect=lambda txt, *_a: 'PRIORITY' in txt):
+            with build_lock.BuildLock(self.root, 'waiter', timeout=0.2, poll=0.01):
+                self.assertGreaterEqual(len(calls), 2)
+
+        slot = build_lock.FileSlot(self.root / 'gradle')
+        self.assertTrue(slot.try_take('gradle-test'))
+        with mock.patch.object(build_lock, 'read', side_effect=PermissionError('locked')), \
+                mock.patch.object(time, 'sleep'):
+            with self.assertRaises(PermissionError):
+                slot.release()
+        (self.root / 'gradle' / 'BUILD-LOCK').unlink(missing_ok=True)
 
     def test_stage_lease_auto_prunes_on_cargo_and_respects_zero_env_disable(self):
         pool = self.root / 'target-pool'

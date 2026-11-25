@@ -73,6 +73,15 @@ class Git:
         return result
 
 
+def commit_body(git, commit):
+    """Returns preserved commit metadata lines and body bytes starting at \\n\\n."""
+    raw = git.run('cat-file', 'commit', commit).stdout
+    header, sep, message = raw.partition(b'\n\n')
+    keep = [l for l in header.split(b'\n')
+            if l.startswith((b'author ', b'committer ', b'encoding '))]
+    return keep, sep + message
+
+
 def split(git, commit, published, prefix=PREFIX):
     """Returns the split commit of `commit` built on top of `published`."""
     commit = git.out('rev-parse', '--verify', f'{commit}^{{commit}}')
@@ -82,23 +91,52 @@ def split(git, commit, published, prefix=PREFIX):
     nj_tree_of = {c: t for c, t in nj}
     nj_by_tree = {}
     for c, t in nj:  # newest first: keep the newest commit per tree
-        nj_by_tree.setdefault(t, c)
-    nj_fp_by_tree = {}
-    for line in git.lines('log', '--first-parent', '--format=%H %T', published):
-        c, t = line.split()
-        nj_fp_by_tree.setdefault(t, c)
+        nj_by_tree.setdefault(t, []).append(c)
+    nj_fp = [tuple(l.split()) for l in git.lines('log', '--first-parent', '--format=%H %T', published)]
 
-    # Anchor: newest first-parent monorepo commit whose client/ is on nightjar.
-    fp = git.lines('rev-list', '--first-parent', commit)
-    fp_trees = git.trees([f'{c}:{prefix}' for c in fp])
-    anchor = None
-    for c in fp:
-        if c in nj_set:
+    fp_rows = [l.split() for l in git.lines('rev-list', '--first-parent', '--parents', commit)]
+    fp = []
+    fp_parents = {}
+    for row in fp_rows:
+        if row[0] in nj_set:
             break  # walked into nightjar's own history: no anchor in client/
+        fp.append(row[0])
+        fp_parents[row[0]] = row[1:]
+    fp_trees = git.trees([f'{c}:{prefix}' for c in fp])
+    fp_by_tree = {}
+    for c in fp:
         t = fp_trees[f'{c}:{prefix}']
-        if t is not None and t in nj_fp_by_tree:
-            anchor = (c, nj_fp_by_tree[t])
+        if t is not None:
+            fp_by_tree.setdefault(t, []).append(c)
+
+    stamps = {}
+
+    def stamp(c):
+        if c not in stamps:
+            keep, body = commit_body(git, c)
+            stamps[c] = (tuple(keep), body)
+        return stamps[c]
+
+    # Anchor from `published` backwards so reverting a published commit never re-anchors onto
+    # an older Nightjar commit that already shared that reverted tree.
+    anchor = None
+    for nj_c, nj_t in nj_fp:
+        candidates = fp_by_tree.get(nj_t)
+        if not candidates:
+            continue
+        nj_stamp = stamp(nj_c)
+        for c in candidates:
+            if nj_c in fp_parents[c] or stamp(c) == nj_stamp:
+                anchor = (c, nj_c)
+                break
+        if anchor is not None:
             break
+    if anchor is None:
+        for nj_c, nj_t in nj_fp:
+            candidates = fp_by_tree.get(nj_t)
+            if candidates:
+                anchor = (candidates[0], nj_c)
+                break
     if anchor is None:
         raise MirrorError(f'no monorepo commit has a {prefix}/ tree that is on nightjar '
                           f'{published}; was {prefix}/ added with `git subtree add`?')
@@ -110,13 +148,22 @@ def split(git, commit, published, prefix=PREFIX):
     mapped = {mono_anchor: split_anchor}
     tree_of = dict(nj_tree_of)
 
+    def match_nj(c, t):
+        matches = nj_by_tree.get(t)
+        if not matches:
+            return None
+        if len(matches) == 1:
+            return matches[0]
+        target = stamp(c)
+        return next((nj_c for nj_c in matches if stamp(nj_c) == target), matches[0])
+
     def map_parent(p):
         if p in mapped:
             return mapped[p]
         if p in nj_set:
             return p
         t = git.trees([f'{p}:{prefix}'])[f'{p}:{prefix}']
-        mapped[p] = nj_by_tree.get(t) if t else None  # fork points before the anchor
+        mapped[p] = match_nj(p, t) if t else None  # fork points before the anchor
         return mapped[p]
 
     def tree(c):
@@ -146,13 +193,10 @@ def split(git, commit, published, prefix=PREFIX):
 
 
 def rewrite(git, commit, tree, parents):
-    raw = git.run('cat-file', 'commit', commit).stdout
-    header, sep, message = raw.partition(b'\n\n')
-    keep = [l for l in header.split(b'\n')
-            if l.startswith((b'author ', b'committer ', b'encoding '))]
+    keep, body = commit_body(git, commit)
     obj = b'tree ' + tree.encode() + b'\n'
     obj += b''.join(b'parent ' + p.encode() + b'\n' for p in parents)
-    obj += b'\n'.join(keep) + sep + message
+    obj += b'\n'.join(keep) + body
     return git.out('hash-object', '-t', 'commit', '-w', '--stdin', stdin=obj)
 
 
