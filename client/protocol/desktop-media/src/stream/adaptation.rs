@@ -119,13 +119,14 @@ impl Streaming {
     }
 
     pub fn follow_display(&mut self, display: Display) {
-        self.pacer.clock.settings.min_interval_us = display.refresh_interval_us().unwrap_or(0);
+        self.pacer.set_min_interval_us(display.refresh_interval_us().unwrap_or(0));
         if display.refresh_hz != self.plan.display.refresh_hz { self.skipped.restart(); }
         self.plan.display = display;
         if !self.facts.reconfigure || !self.display_change.is_some_and(|at| at.elapsed() >= Duration::from_millis(300)) { return; }
         self.display_change = None;
         let (width, height) = if self.settings.width == 0 || self.settings.height == 0 {
-            ((display.width.clamp(256, 8192) + 1) & !1, (display.height.clamp(256, 8192) + 1) & !1)
+            let (w, h, _, _) = crate::stream::negotiate::stream_mode(&self.settings, display);
+            ((w.clamp(256, 8192) + 1) & !1, (h.clamp(256, 8192) + 1) & !1)
         } else { (u32::from(self.quality_ceiling.width), u32::from(self.quality_ceiling.height)) };
         let fps = if self.settings.fps == 0 { (display.refresh_hz * 1000.0).round() as u32 } else { self.quality_ceiling.fps_millihz };
         let Some(request) = quality::target(width, height, fps) else { return; };

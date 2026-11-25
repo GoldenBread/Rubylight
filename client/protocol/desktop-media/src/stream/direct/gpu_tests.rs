@@ -365,9 +365,12 @@ fn warp_device() -> (ID3D11Device, ID3D11DeviceContext) {
     }
 }
 
-/// A shader-readable NV12 or P010 texture array whose slices can hold distinct pictures.
+/// A shader-readable NV12 or P010 texture array whose slices hold distinct pictures, uploaded
+/// one single-slice texture at a time via `CopySubresourceRegion` (matching `picture_array` and
+/// avoiding driver bugs with multi-slice planar YUV `pInitialData`).
 fn picture_array_per_slice(
     device: &ID3D11Device,
+    context: &ID3D11DeviceContext,
     size: (u32, u32),
     slices: u32,
     ten_bit: bool,
@@ -376,7 +379,17 @@ fn picture_array_per_slice(
     let (w, h) = size;
     let bytes = if ten_bit { 2 } else { 1 };
     let slice_bytes = (w * h * 3 / 2 * bytes) as usize;
-    let mut buffers = Vec::with_capacity(slices as usize);
+    let single_desc = D3D11_TEXTURE2D_DESC {
+        Width: w, Height: h, MipLevels: 1, ArraySize: 1,
+        Format: if ten_bit { DXGI_FORMAT_P010 } else { DXGI_FORMAT_NV12 },
+        SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+        Usage: D3D11_USAGE_DEFAULT, BindFlags: D3D11_BIND_SHADER_RESOURCE.0 as u32, ..Default::default()
+    };
+    let array_desc = D3D11_TEXTURE2D_DESC { ArraySize: slices, ..single_desc };
+    let mut array = None;
+    // SAFETY: Plain D3D11 texture array on the caller's device.
+    unsafe { device.CreateTexture2D(&array_desc, None, Some(&mut array)) }.ok()?;
+    let array = array?;
     for slice in 0..slices {
         let mut data = vec![0u8; slice_bytes];
         let mut put = |at: usize, value: u16| {
@@ -395,36 +408,38 @@ fn picture_array_per_slice(
                 put(at + 1, cr);
             }
         }
-        buffers.push(data);
+        let init = D3D11_SUBRESOURCE_DATA { pSysMem: data.as_ptr().cast(), SysMemPitch: w * bytes, SysMemSlicePitch: 0 };
+        let mut single = None;
+        // SAFETY: `data` holds both planes of one `w x h` NV12/P010 slice.
+        unsafe { device.CreateTexture2D(&single_desc, Some(&init), Some(&mut single)) }.ok()?;
+        let single = single?;
+        // SAFETY: Both textures belong to `device` and `slice < slices`.
+        unsafe { context.CopySubresourceRegion(&array, slice, 0, 0, 0, &single, 0, None) };
     }
-    let subresources: Vec<D3D11_SUBRESOURCE_DATA> = buffers
-        .iter()
-        .map(|data| D3D11_SUBRESOURCE_DATA { pSysMem: data.as_ptr().cast(), SysMemPitch: w * bytes, SysMemSlicePitch: 0 })
-        .collect();
-    let desc = D3D11_TEXTURE2D_DESC {
-        Width: w, Height: h, MipLevels: 1, ArraySize: slices,
-        Format: if ten_bit { DXGI_FORMAT_P010 } else { DXGI_FORMAT_NV12 },
-        SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
-        Usage: D3D11_USAGE_DEFAULT, BindFlags: D3D11_BIND_SHADER_RESOURCE.0 as u32, ..Default::default()
-    };
-    let mut texture = None;
-    // SAFETY: `subresources` holds one entry per slice, each sized for `w x h` NV12/P010.
-    unsafe { device.CreateTexture2D(&desc, Some(subresources.as_ptr()), Some(&mut texture)) }.ok()?;
-    texture
+    Some(array)
 }
 
-/// Picks a WARP device if it creates a 2-slice P010 SRV texture, else falls back to hardware.
+/// Picks a WARP device if it creates a 2-slice P010 SRV texture, else falls back to hardware
+/// (returning `None` on headless machines where neither WARP nor hardware supports P010 SRVs).
 fn p010_array_device(
     size: (u32, u32),
     code: impl Fn(u32, u32, u32) -> [u16; 3],
-) -> (ID3D11Device, ID3D11DeviceContext, ID3D11Texture2D) {
+) -> Option<(ID3D11Device, ID3D11DeviceContext, ID3D11Texture2D)> {
     let (warp, warp_ctx) = warp_device();
-    if let Some(tex) = picture_array_per_slice(&warp, size, 2, true, &code) {
-        return (warp, warp_ctx, tex);
+    if let Some(tex) = picture_array_per_slice(&warp, &warp_ctx, size, 2, true, &code) {
+        return Some((warp, warp_ctx, tex));
     }
-    let (hw, hw_ctx) = device();
-    let tex = picture_array_per_slice(&hw, size, 2, true, code).expect("P010 2-slice texture");
-    (hw, hw_ctx, tex)
+    // SAFETY: Optional hardware device fallback for local machines with a P010-capable GPU.
+    let (mut hw, mut hw_ctx) = (None, None);
+    let ok = unsafe {
+        D3D11CreateDevice(
+            None, D3D_DRIVER_TYPE_HARDWARE, HMODULE::default(), D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+            None, D3D11_SDK_VERSION, Some(&mut hw), None, Some(&mut hw_ctx),
+        )
+    };
+    let (hw, hw_ctx) = (hw.filter(|_| ok.is_ok())?, hw_ctx?);
+    let tex = picture_array_per_slice(&hw, &hw_ctx, size, 2, true, code)?;
+    Some((hw, hw_ctx, tex))
 }
 
 /// T7-5 regression: per-slice SRVs have `FirstArraySlice = slice, ArraySize = 1`, so `direct.hlsl`
@@ -433,7 +448,7 @@ fn p010_array_device(
 #[test]
 fn hdr10_peak_measurement_reads_the_bound_slice_when_slice_is_nonzero() {
     let (dark, grey, bright) = (pq_code(10.0), pq_code(100.0), pq_code(1000.0));
-    let (device, context, texture) = p010_array_device((64, 64), |slice, x, y| {
+    let Some((device, context, texture)) = p010_array_device((64, 64), |slice, x, y| {
         if slice == 0 {
             [dark, 512, 512]
         } else if x < 24 && y < 24 {
@@ -441,7 +456,10 @@ fn hdr10_peak_measurement_reads_the_bound_slice_when_slice_is_nonzero() {
         } else {
             [grey, 512, 512]
         }
-    });
+    }) else {
+        eprintln!("no P010 2-slice SRV device here: skipping slice-1 GPU measurement check");
+        return;
+    };
     let picture = Picture {
         texture: texture.as_raw(), slice: 1, size: (64, 64), ten_bit: true, full_range: false,
         matrix: 2, transfer: Transfer::Pq, centred_chroma: false,
@@ -501,7 +519,10 @@ fn pending_histogram_generation_filtering_and_reset_invalidation() {
 
     // End-to-end Direct::reset() + failed/unexecuted submit check.
     let bright_code = pq_code(1000.0);
-    let (device, context, texture) = p010_array_device((64, 64), |_, _, _| [bright_code, 512, 512]);
+    let Some((device, context, texture)) = p010_array_device((64, 64), |_, _, _| [bright_code, 512, 512]) else {
+        eprintln!("no P010 2-slice SRV device here: skipping end-to-end Direct::reset() GPU check");
+        return;
+    };
     let picture = Picture {
         texture: texture.as_raw(), slice: 0, size: (64, 64), ten_bit: true, full_range: false,
         matrix: 2, transfer: Transfer::Pq, centred_chroma: false,

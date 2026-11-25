@@ -39,7 +39,11 @@ fn a_cancelled_start_that_answers_is_reaped_without_a_message() {
     assert!(!attempts.reap(), "the worker has not answered yet");
     let _ = release.send(());
     answered.recv_timeout(Duration::from_secs(5)).expect("the worker answered");
-    assert!(attempts.reap());
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !attempts.reap() {
+        assert!(Instant::now() < deadline, "the worker thread finishes and is reaped");
+        std::thread::sleep(Duration::from_millis(1));
+    }
     assert!(!attempts.is_busy(), "an ending attempt leaves no screen and no device hold");
 }
 

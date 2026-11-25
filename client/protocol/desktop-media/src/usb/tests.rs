@@ -249,3 +249,156 @@ fn blocked_devices_say_why() {
     assert!(Blocked::NoWinUsb("USBSTOR".into()).message().contains("USBSTOR"));
     assert!(Blocked::Isochronous.message().contains("isochronous"));
 }
+
+#[test]
+fn platform_backend_routing_never_blocks_isochronous_devices() {
+    // Windows: WinUSB iso uses inbox winusb.dll; non-iso and libusbK use libusb.
+    assert_eq!(select_backend(Platform::Windows { uses_winusb: true }, true), Backend::WinUsbIso);
+    assert_eq!(select_backend(Platform::Windows { uses_winusb: true }, false), Backend::Libusb);
+    assert_eq!(select_backend(Platform::Windows { uses_winusb: false }, true), Backend::Libusb);
+    assert_eq!(select_backend(Platform::Windows { uses_winusb: false }, false), Backend::Libusb);
+    // Linux: prefers usbip-host for iso when installed, falls back to libusb iso when missing.
+    assert_eq!(select_backend(Platform::Linux { has_kernel_usbip: true }, true), Backend::LinuxKernel);
+    assert_eq!(select_backend(Platform::Linux { has_kernel_usbip: false }, true), Backend::Libusb);
+    assert_eq!(select_backend(Platform::Linux { has_kernel_usbip: true }, false), Backend::Libusb);
+    // macOS: libusb serves both iso and non-iso.
+    assert_eq!(select_backend(Platform::MacOs, true), Backend::Libusb);
+    assert_eq!(select_backend(Platform::MacOs, false), Backend::Libusb);
+}
+
+#[test]
+fn iso_plan_validates_packet_counts_lengths_and_out_payloads() {
+    use nightjar_core::usb::{Direction, IsoPacket, Transfer};
+    let make = |direction, length, iso: Vec<IsoPacket>, data: Vec<u8>| Transfer {
+        seqnum: 1,
+        endpoint: 1,
+        direction,
+        flags: 0,
+        length,
+        start_frame: 0,
+        interval: 1,
+        setup: [0; 8],
+        data,
+        iso,
+    };
+    let pkt = |offset, length| IsoPacket { offset, length, actual_length: 0, status: 0 };
+
+    // Empty and over-cap packet lists are rejected.
+    assert_eq!(super::iso::iso_plan(&make(Direction::In, 64, vec![], vec![])), Err(wire::EINVAL));
+    let too_many: Vec<IsoPacket> = (0..super::iso::MAX_ISO_PACKETS + 1).map(|i| pkt(i as u32, 1)).collect();
+    assert_eq!(super::iso::iso_plan(&make(Direction::In, 2048, too_many, vec![])), Err(wire::EINVAL));
+
+    // Packet length sum exceeding transfer.length or overflowing is rejected.
+    assert_eq!(
+        super::iso::iso_plan(&make(Direction::In, 100, vec![pkt(0, 64), pkt(64, 64)], vec![])),
+        Err(wire::EINVAL)
+    );
+    assert_eq!(
+        super::iso::iso_plan(&make(Direction::In, u32::MAX, vec![pkt(0, u32::MAX), pkt(0, 1)], vec![])),
+        Err(wire::EINVAL)
+    );
+
+    // Valid IN plan sums packet lengths.
+    assert_eq!(
+        super::iso::iso_plan(&make(Direction::In, 192, vec![pkt(0, 64), pkt(64, 128)], vec![])),
+        Ok(192)
+    );
+
+    // OUT plan rejects truncated data and accepts matching or larger buffer.
+    assert_eq!(
+        super::iso::iso_plan(&make(Direction::Out, 128, vec![pkt(0, 64), pkt(64, 64)], vec![0; 100])),
+        Err(wire::EINVAL)
+    );
+    assert_eq!(
+        super::iso::iso_plan(&make(Direction::Out, 128, vec![pkt(0, 64), pkt(64, 64)], vec![0; 128])),
+        Ok(128)
+    );
+}
+
+#[test]
+fn libusb_and_winusb_status_mappings_match_usbip_errnos() {
+    use rusb::constants::*;
+    assert_eq!(super::iso::libusb_transfer_status(LIBUSB_TRANSFER_COMPLETED), 0);
+    assert_eq!(super::iso::libusb_transfer_status(LIBUSB_TRANSFER_STALL), wire::EPIPE);
+    assert_eq!(super::iso::libusb_transfer_status(LIBUSB_TRANSFER_NO_DEVICE), wire::ENODEV);
+    assert_eq!(super::iso::libusb_transfer_status(LIBUSB_TRANSFER_OVERFLOW), wire::EOVERFLOW);
+    assert_eq!(super::iso::libusb_transfer_status(LIBUSB_TRANSFER_TIMED_OUT), wire::ETIMEDOUT);
+    assert_eq!(super::iso::libusb_transfer_status(LIBUSB_TRANSFER_CANCELLED), wire::ECONNRESET);
+    assert_eq!(super::iso::libusb_transfer_status(LIBUSB_TRANSFER_ERROR), wire::EPROTO);
+
+    assert_eq!(super::winusb::usbd_status_to_errno(0x0000_0000), 0);
+    assert_eq!(super::winusb::usbd_status_to_errno(0xC000_0004), wire::EPIPE);
+    assert_eq!(super::winusb::usbd_status_to_errno(0xC000_0008), wire::EOVERFLOW);
+    assert_eq!(super::winusb::usbd_status_to_errno(0xC000_000C), wire::EOVERFLOW);
+    assert_eq!(super::winusb::usbd_status_to_errno(0xC000_6000), wire::ETIMEDOUT);
+    assert_eq!(super::winusb::usbd_status_to_errno(0xC000_7000), wire::ENODEV);
+    assert_eq!(super::winusb::usbd_status_to_errno(0xC001_0000), wire::ECONNRESET);
+    assert_eq!(super::winusb::usbd_status_to_errno(0xC003_0000), wire::EPROTO);
+
+    assert_eq!(super::winusb::win32_error_to_errno(995), wire::ECONNRESET);
+    assert_eq!(super::winusb::win32_error_to_errno(121), wire::ETIMEDOUT);
+    assert_eq!(super::winusb::win32_error_to_errno(1167), wire::ENODEV);
+    assert_eq!(super::winusb::win32_error_to_errno(234), wire::EOVERFLOW);
+    assert_eq!(super::winusb::win32_error_to_errno(31), wire::EPIPE);
+    assert_eq!(super::winusb::win32_error_to_errno(87), wire::EINVAL);
+    assert_eq!(super::winusb::win32_error_to_errno(5), wire::EPROTO);
+
+    // Control transfer recipient routing for composite WinUSB devices.
+    assert_eq!(super::winusb::control_target_interface(&[0x21, 0x01, 0, 0, 3, 0, 0, 0]), Some(3));
+    assert_eq!(super::winusb::control_target_endpoint(&[0x21, 0x01, 0, 0, 3, 0, 0, 0]), None);
+    assert_eq!(super::winusb::control_target_endpoint(&[0x22, 0x01, 0, 0, 0x81, 0, 0, 0]), Some(0x81));
+    assert_eq!(super::winusb::control_target_interface(&[0x80, 0x06, 0, 1, 0, 0, 18, 0]), None);
+}
+
+#[test]
+fn iso_reply_packing_for_libusb_and_winusb_satisfies_usbip_wire_invariants() {
+    use nightjar_core::usb::{Direction, IsoPacket};
+    use super::iso::{pack_iso_reply, CompletedPacket};
+    use super::winusb::{pack_winusb_iso_in, pack_winusb_iso_out, UsbdIsoPacketDescriptor};
+
+    let asked = [
+        IsoPacket { offset: 0, length: 4, actual_length: 0, status: 0 },
+        IsoPacket { offset: 4, length: 4, actual_length: 0, status: 0 },
+        IsoPacket { offset: 8, length: 4, actual_length: 0, status: 0 },
+    ];
+    let mut buf = vec![0u8; 12];
+    buf[0..3].copy_from_slice(&[10, 11, 12]);
+    // Packet 1 failed with 0 bytes; packet 2 received 2 bytes starting at offset 8.
+    buf[8..10].copy_from_slice(&[20, 21]);
+
+    // 1. libusb IN packing compacts short/failed packets and preserves asked offsets/lengths.
+    let completed = [
+        CompletedPacket { offset: 0, actual_length: 3, status: 0 },
+        CompletedPacket { offset: 4, actual_length: 0, status: wire::EPROTO },
+        CompletedPacket { offset: 8, actual_length: 2, status: 0 },
+    ];
+    let reply = pack_iso_reply(Direction::In, 12, &asked, &completed, &buf);
+    assert_eq!(reply.status, 0);
+    assert_eq!(reply.error_count, 1);
+    assert_eq!(reply.data, [10, 11, 12, 20, 21]);
+    assert!(wire::iso_reply_fits(&asked, reply.iso.iter().copied(), reply.data.len() as u32));
+    assert_eq!(reply.iso[0].actual_length, 3);
+    assert_eq!((reply.iso[1].actual_length, reply.iso[1].status), (0, wire::EPROTO));
+    assert_eq!(reply.iso[2].actual_length, 2);
+
+    // 2. WinUSB IN packing respects driver-provided USBD_ISO_PACKET_DESCRIPTOR offsets and clamps overrun.
+    let descs = [
+        UsbdIsoPacketDescriptor { offset: 0, length: 99, status: 0 },
+        UsbdIsoPacketDescriptor { offset: 4, length: 0, status: 0xC003_0000 },
+        UsbdIsoPacketDescriptor { offset: 8, length: 2, status: 0 },
+    ];
+    let win_in = pack_winusb_iso_in(12, &asked, &descs, &buf);
+    assert_eq!(win_in.error_count, 1);
+    assert_eq!(win_in.data, [10, 11, 12, 0, 20, 21]);
+    assert!(wire::iso_reply_fits(&asked, win_in.iso.iter().copied(), win_in.data.len() as u32));
+
+    // 3. WinUSB OUT packing distributes total transferred bytes across asked packets.
+    let win_out = pack_winusb_iso_out(12, &asked, 10);
+    assert_eq!((win_out.status, win_out.sent, win_out.error_count), (0, 10, 0));
+    assert!(win_out.data.is_empty());
+    assert!(wire::iso_reply_fits(&asked, win_out.iso.iter().copied(), win_out.sent));
+    assert_eq!(
+        win_out.iso.iter().map(|p| p.actual_length).collect::<Vec<_>>(),
+        vec![4, 4, 2]
+    );
+}

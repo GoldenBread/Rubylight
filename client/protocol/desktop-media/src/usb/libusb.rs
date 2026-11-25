@@ -83,7 +83,14 @@ pub(super) fn open_device(
         configurations: descriptor.num_configurations(),
         interfaces: config.num_interfaces(),
     };
-    let opened = Libusb { handle, described, class, state: Mutex::new(state), warned_iso: AtomicBool::new(false) };
+    let opened = Libusb {
+        handle,
+        described,
+        class,
+        state: Mutex::new(state),
+        closed: AtomicBool::new(false),
+        warned_iso: AtomicBool::new(false),
+    };
     let interfaces: Vec<u8> = config.interfaces().map(|i| i.number()).collect();
     claim(&opened.handle, &mut opened.state().inner, &interfaces)?;
     Ok(Arc::new(Blocking::new(opened)))
@@ -417,6 +424,7 @@ struct Libusb {
     described: wire::Device,
     class: u8,
     state: Mutex<DeviceState>,
+    closed: AtomicBool,
     warned_iso: AtomicBool,
 }
 
@@ -426,6 +434,7 @@ impl Libusb {
     }
 
     fn close_inner(&self) {
+        self.closed.store(true, Ordering::SeqCst);
         let mut state = self.state();
         close_state(&self.handle, &mut state.inner, &self.described.busid);
     }
@@ -515,13 +524,21 @@ impl BlockingDevice for Libusb {
     fn transfer(&self, transfer: &Transfer, cancelled: &AtomicBool) -> Reply {
         if self.state().inner.closed { return Reply::failed(wire::ESHUTDOWN); }
         if transfer.is_control() { return self.control(transfer); }
-        if transfer.is_isochronous() {
-            if !self.warned_iso.swap(true, Ordering::SeqCst) {
-                eprintln!("nightjar: USB {}: the host asked for isochronous transfers, which this client doesn't serve", self.described.busid);
-            }
-            return Reply::failed(wire::EPROTO);
-        }
         let address = transfer.endpoint | if transfer.direction == Direction::In { 0x80 } else { 0 };
+        if transfer.is_isochronous() {
+            if !self.state().inner.endpoints.contains_key(&address) {
+                return Reply::failed(wire::EPIPE);
+            }
+            return super::iso::libusb_iso_transfer(
+                &self.handle,
+                &self.described.busid,
+                address,
+                transfer,
+                cancelled,
+                &self.closed,
+                &self.warned_iso,
+            );
+        }
         let Some((kind, max_packet)) = self.state().inner.endpoints.get(&address).copied() else { return Reply::failed(wire::EPIPE) };
         match transfer.direction {
             Direction::In => read_sliced(transfer.length as usize, cancelled, |buffer| self.call(address, kind, buffer.as_mut_ptr(), buffer.len())),

@@ -1,9 +1,10 @@
 //! USB forwarding (Experimental): the devices plugged into this PC, which the user attaches to
-//! the host from the stream controls, served to it through libusb. On Windows libusb opens
-//! only devices that have the WinUSB driver; [`usb_winusb`](crate::usb_winusb) names the
-//! driver of every other one, and the picker says so instead of offering it. On Linux the
-//! devices libusb can't serve (webcams, audio) go through the kernel's own USB/IP server
-//! instead ([`usb_linux`](crate::usb_linux)).
+//! the host from the stream controls. On Windows non-isochronous devices go through libusb and
+//! WinUSB isochronous devices go directly through Microsoft's inbox `winusb.dll` ([`winusb`]),
+//! requiring no driver beyond WinUSB ([`usb_winusb`](crate::usb_winusb) names any other driver so
+//! the picker explains why). On Linux isochronous devices prefer the kernel's USB/IP server
+//! ([`usb_linux`](crate::usb_linux)) when available and fall back to libusb's asynchronous
+//! isochronous transfers ([`iso`]) otherwise; macOS serves all devices through libusb ([`iso`]).
 
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
@@ -11,25 +12,65 @@ use std::time::Duration;
 use nightjar_core::control::SendError;
 use nightjar_core::http::{Availability, Feature, HostCapabilities, NativeCapabilities, Reason};
 use nightjar_core::usb::{AttachError, Attachment, Forwarder, Phase, UsbDevice, UsbReason, UsbState};
-use rusb::{TransferType, UsbContext};
+#[cfg(any(windows, target_os = "linux"))]
+use rusb::TransferType;
+use rusb::UsbContext;
 
 use crate::strings::{en, tr, trf};
 
+mod iso;
 mod libusb;
+mod winusb;
 
 const CLASS_HUB: u8 = 9;
+
+/// Transport backend chosen for an unblocked USB device.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[allow(dead_code)]
+pub(crate) enum Backend {
+    /// libusb (control, bulk, interrupt, and async isochronous transfers via [`iso`]).
+    Libusb,
+    /// Windows inbox `winusb.dll` (control, bulk, interrupt, and isochronous via [`winusb`]).
+    WinUsbIso,
+    /// Linux kernel `usbip-host` server ([`usb_linux`](crate::usb_linux)).
+    LinuxKernel,
+}
+
+/// Platform capabilities relevant to choosing a USB forwarding transport backend.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[allow(dead_code)]
+pub(crate) enum Platform {
+    Windows { uses_winusb: bool },
+    Linux { has_kernel_usbip: bool },
+    MacOs,
+}
+
+/// Selects the USB transport for an unblocked device. Isochronous devices are supported on all
+/// desktop platforms without blocking: Windows inbox WinUSB uses [`Backend::WinUsbIso`], Linux
+/// prefers `usbip-host` when available and falls back to [`Backend::Libusb`], and macOS uses
+/// [`Backend::Libusb`].
+#[allow(dead_code)]
+pub(crate) fn select_backend(platform: Platform, isochronous: bool) -> Backend {
+    match platform {
+        Platform::Windows { uses_winusb } if isochronous && uses_winusb => Backend::WinUsbIso,
+        Platform::Linux { has_kernel_usbip } if isochronous && has_kernel_usbip => Backend::LinuxKernel,
+        _ => Backend::Libusb,
+    }
+}
 
 /// Why a device plugged in here can't be forwarded.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Blocked {
     /// Windows has another driver on it (the driver services, as Windows names them).
     NoWinUsb(String),
-    /// It has isochronous endpoints (audio, video), which this client doesn't serve (Linux
-    /// serves them through usbip-host).
-    #[cfg_attr(target_os = "linux", allow(dead_code))]
+    /// Retained for API and localization compatibility; never returned now that every desktop
+    /// platform forwards isochronous endpoints.
+    #[allow(dead_code)]
     Isochronous,
-    /// It has isochronous endpoints, and this computer lacks what Linux's USB/IP server needs.
+    /// Retained for API and localization compatibility; Linux falls back to libusb isochronous
+    /// transfers when `usbip-host` is unavailable.
     #[cfg(target_os = "linux")]
+    #[allow(dead_code)]
     Kernel(crate::usb_linux::Missing),
 }
 
@@ -62,6 +103,7 @@ pub fn busid(bus: u8, ports: &[u8]) -> String {
     format!("{bus}-{}", ports.join("."))
 }
 
+#[cfg(any(windows, target_os = "linux"))]
 fn has_isochronous(config: &rusb::ConfigDescriptor) -> bool {
     config.interfaces().flat_map(|i| i.descriptors().collect::<Vec<_>>()).any(|setting| setting.endpoint_descriptors().any(|e| e.transfer_type() == TransferType::Isochronous))
 }
@@ -92,23 +134,22 @@ pub fn list() -> Result<Vec<Local>, String> {
         let (vid, pid) = (descriptor.vendor_id(), descriptor.product_id());
         let busid = busid(device.bus_number(), &ports);
         #[cfg(windows)]
-        let (name, mut blocked) = (
+        let (name, blocked) = (
             crate::usb_winusb::description(&nodes, vid, pid, &ports),
             crate::usb_winusb::blocked(&nodes, vid, pid, &ports).map(Blocked::NoWinUsb),
         );
         #[cfg(target_os = "linux")]
-        let (name, mut blocked) = (sysfs_name(&busid), None);
+        let (name, blocked) = (sysfs_name(&busid), None);
         #[cfg(not(any(windows, target_os = "linux")))]
-        let (name, mut blocked) = (None::<String>, None);
-        let isochronous = blocked.is_none() && device.active_config_descriptor().is_ok_and(|c| has_isochronous(&c));
+        let (name, blocked) = (None::<String>, None);
         #[cfg(target_os = "linux")]
-        let kernel = isochronous && missing.is_none();
-        #[cfg(target_os = "linux")]
-        if let (true, Some(missing)) = (isochronous, &missing) { blocked = Some(Blocked::Kernel(missing.clone())); }
+        let kernel = {
+            let isochronous = device.active_config_descriptor().is_ok_and(|c| has_isochronous(&c));
+            select_backend(Platform::Linux { has_kernel_usbip: missing.is_none() }, isochronous)
+                == Backend::LinuxKernel
+        };
         #[cfg(not(target_os = "linux"))]
         let kernel = false;
-        #[cfg(not(target_os = "linux"))]
-        if isochronous { blocked = Some(Blocked::Isochronous); }
         let name = name.unwrap_or_else(|| format!("USB device {vid:04x}:{pid:04x}"));
         out.push(Local { busid, vid, pid, name, blocked, kernel });
     }
@@ -129,6 +170,19 @@ pub fn open(local: &Local) -> Result<Arc<dyn UsbDevice>, String> {
         .find(|d| busid(d.bus_number(), &d.port_numbers().unwrap_or_default()) == local.busid
             && d.device_descriptor().is_ok_and(|desc| (desc.vendor_id(), desc.product_id()) == (local.vid, local.pid)))
         .ok_or_else(|| tr("The device was unplugged.").to_owned())?;
+    #[cfg(windows)]
+    {
+        let isochronous = device.active_config_descriptor().is_ok_and(|c| has_isochronous(&c));
+        if isochronous {
+            let ports = device.port_numbers().unwrap_or_default();
+            let nodes = crate::usb_winusb::nodes()?;
+            let uses_winusb = crate::usb_winusb::uses_winusb(&nodes, local.vid, local.pid, &ports);
+            if select_backend(Platform::Windows { uses_winusb }, true) == Backend::WinUsbIso {
+                let paths = crate::usb_winusb::interface_paths(local.vid, local.pid, &ports)?;
+                return winusb::open_device(&device, &local.busid, local.vid, local.pid, &paths);
+            }
+        }
+    }
     libusb::open_device(&device, &local.busid, local.vid, local.pid).map_err(open_error)
 }
 

@@ -56,12 +56,20 @@ fn is_winusb(service: &str) -> bool {
     service.eq_ignore_ascii_case("WinUSB")
 }
 
+fn is_libusbk(service: &str) -> bool {
+    service.eq_ignore_ascii_case("libusbK")
+}
+
+fn is_supported_driver(service: &str) -> bool {
+    is_winusb(service) || is_libusbk(service)
+}
+
 fn driver_name(service: &str) -> &str {
     if service.is_empty() { "no driver" } else { service }
 }
 
-/// None when libusb can open the device at `ports`: WinUSB holds it, or every interface of a
-/// composite one. Otherwise which driver holds it, for the user.
+/// None when Nightjar can open the device at `ports`: WinUSB (or an already-installed libusbK)
+/// holds it, or every interface of a composite one. Otherwise which driver holds it, for the user.
 pub fn blocked(nodes: &[Node], vid: u16, pid: u16, ports: &[u8]) -> Option<String> {
     let here = |n: &&Node| n.vid == vid && n.pid == pid && n.ports == ports;
     let devices: Vec<&Node> = nodes.iter().filter(here).filter(|n| n.interface.is_none()).collect();
@@ -70,12 +78,12 @@ pub fn blocked(nodes: &[Node], vid: u16, pid: u16, ports: &[u8]) -> Option<Strin
     }
     let mut drivers = Vec::new();
     for device in devices {
-        if is_winusb(&device.service) { continue; }
+        if is_supported_driver(&device.service) { continue; }
         if device.service.eq_ignore_ascii_case("usbccgp") {
             let mut interfaces: Vec<&Node> = nodes.iter().filter(here).filter(|n| n.interface.is_some()).collect();
             interfaces.sort_by_key(|n| n.interface);
             if interfaces.is_empty() { drivers.push("usbccgp".to_owned()); }
-            for interface in interfaces.into_iter().filter(|n| !is_winusb(&n.service)) {
+            for interface in interfaces.into_iter().filter(|n| !is_supported_driver(&n.service)) {
                 drivers.push(format!("interface {}: {}", interface.interface.unwrap_or_default(), driver_name(&interface.service)));
             }
         } else {
@@ -83,6 +91,56 @@ pub fn blocked(nodes: &[Node], vid: u16, pid: u16, ports: &[u8]) -> Option<Strin
         }
     }
     (!drivers.is_empty()).then(|| drivers.join(", "))
+}
+
+/// True when the device at `ports` is bound exclusively to Microsoft's inbox `WinUSB` driver
+/// (either directly or on every interface of a `usbccgp` composite device), so isochronous
+/// transfers should open it directly through inbox `winusb.dll`.
+pub fn uses_winusb(nodes: &[Node], vid: u16, pid: u16, ports: &[u8]) -> bool {
+    let here = |n: &&Node| n.vid == vid && n.pid == pid && n.ports == ports;
+    let devices: Vec<&Node> = nodes.iter().filter(here).filter(|n| n.interface.is_none()).collect();
+    if devices.is_empty() {
+        return false;
+    }
+    let mut saw_winusb = false;
+    for device in devices {
+        if is_winusb(&device.service) {
+            saw_winusb = true;
+        } else if device.service.eq_ignore_ascii_case("usbccgp") {
+            let interfaces: Vec<&Node> = nodes.iter().filter(here).filter(|n| n.interface.is_some()).collect();
+            if interfaces.is_empty() || !interfaces.iter().all(|n| is_winusb(&n.service)) {
+                return false;
+            }
+            saw_winusb = true;
+        } else {
+            return false;
+        }
+    }
+    saw_winusb
+}
+
+/// Parses a registry GUID string (`{xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx}` with optional braces)
+/// into `(data1, data2, data3, data4)`.
+pub fn parse_guid(text: &str) -> Option<(u32, u16, u16, [u8; 8])> {
+    let trimmed = text.trim().trim_start_matches('{').trim_end_matches('}');
+    let mut parts = trimmed.split('-');
+    let d1 = parts.next().filter(|s| s.len() == 8)?;
+    let d2 = parts.next().filter(|s| s.len() == 4)?;
+    let d3 = parts.next().filter(|s| s.len() == 4)?;
+    let d4a = parts.next().filter(|s| s.len() == 4)?;
+    let d4b = parts.next().filter(|s| s.len() == 12)?;
+    if parts.next().is_some() {
+        return None;
+    }
+    let data1 = u32::from_str_radix(d1, 16).ok()?;
+    let data2 = u16::from_str_radix(d2, 16).ok()?;
+    let data3 = u16::from_str_radix(d3, 16).ok()?;
+    let mut data4 = [0u8; 8];
+    let tail = format!("{d4a}{d4b}");
+    for (i, slot) in data4.iter_mut().enumerate() {
+        *slot = u8::from_str_radix(&tail[i * 2..i * 2 + 2], 16).ok()?;
+    }
+    Some((data1, data2, data3, data4))
 }
 
 /// The product string Windows has for the device at `ports`, if any.
@@ -135,6 +193,155 @@ pub fn nodes() -> Result<Vec<Node>, String> {
     }
 }
 
+/// SetupAPI device interface paths (`\\?\usb#...`) for opening a `WinUSB` device (or every
+/// `WinUSB` child interface of a `usbccgp` composite device) directly through `winusb.dll`.
+#[cfg(windows)]
+pub fn interface_paths(vid: u16, pid: u16, ports: &[u8]) -> Result<Vec<String>, String> {
+    use windows::core::{w, GUID, PCWSTR};
+    use windows::Win32::Devices::DeviceAndDriverInstallation::*;
+    use windows::Win32::Foundation::ERROR_SUCCESS;
+    use windows::Win32::System::Registry::{RegCloseKey, RegQueryValueExW, KEY_READ};
+
+    const GUID_DEVINTERFACE_USB_DEVICE: GUID = GUID::from_values(
+        0xA5DC_BF10,
+        0x6530,
+        0x11D2,
+        [0x90, 0x1F, 0x00, 0xC0, 0x4F, 0xB9, 0x51, 0xED],
+    );
+
+    fn wide_strings(buffer: &[u8]) -> Vec<String> {
+        let units: Vec<u16> = buffer.as_chunks::<2>().0.iter().map(|c| u16::from_le_bytes(*c)).collect();
+        units.split(|&u| u == 0).filter(|s| !s.is_empty()).map(String::from_utf16_lossy).collect()
+    }
+
+    unsafe fn reg_guids(set: HDEVINFO, data: &SP_DEVINFO_DATA) -> Vec<GUID> {
+        let mut guids = Vec::new();
+        // SAFETY: `set` and `data` come from a live SetupAPI enumeration in `interface_paths`.
+        unsafe {
+            let Ok(key) = SetupDiOpenDevRegKey(set, data, DICS_FLAG_GLOBAL.0, 0, DIREG_DEV, KEY_READ.0) else {
+                return guids;
+            };
+            for name in [w!("DeviceInterfaceGUIDs"), w!("DeviceInterfaceGUID")] {
+                let mut buf = vec![0u8; 4096];
+                let mut size = buf.len() as u32;
+                let status = RegQueryValueExW(key, name, None, None, Some(buf.as_mut_ptr()), Some(&mut size));
+                if status == ERROR_SUCCESS {
+                    let len = (size as usize).min(buf.len());
+                    for text in wide_strings(&buf[..len]) {
+                        if let Some((d1, d2, d3, d4)) = parse_guid(&text) {
+                            guids.push(GUID::from_values(d1, d2, d3, d4));
+                        }
+                    }
+                    if !guids.is_empty() {
+                        break;
+                    }
+                }
+            }
+            let _ = RegCloseKey(key);
+        }
+        guids
+    }
+
+    unsafe fn path_for_guid(instance_id: &[u16], guid: &GUID) -> Option<String> {
+        // SAFETY: `instance_id` is NUL-terminated UTF-16 and every `HDEVINFO` handle is destroyed before return.
+        unsafe {
+            let if_set = SetupDiGetClassDevsW(
+                Some(guid),
+                PCWSTR(instance_id.as_ptr()),
+                None,
+                DIGCF_PRESENT | DIGCF_DEVICEINTERFACE,
+            )
+            .ok()?;
+            let mut result = None;
+            let mut if_data = SP_DEVICE_INTERFACE_DATA {
+                cbSize: std::mem::size_of::<SP_DEVICE_INTERFACE_DATA>() as u32,
+                ..Default::default()
+            };
+            if SetupDiEnumDeviceInterfaces(if_set, None, guid, 0, &mut if_data).is_ok() {
+                let mut required = 0u32;
+                let _ = SetupDiGetDeviceInterfaceDetailW(if_set, &if_data, None, 0, Some(&mut required), None);
+                let min_size = std::mem::size_of::<SP_DEVICE_INTERFACE_DETAIL_DATA_W>();
+                if (required as usize) >= min_size {
+                    let mut detail_buf = vec![0u8; required as usize];
+                    let detail_ptr = detail_buf.as_mut_ptr().cast::<SP_DEVICE_INTERFACE_DETAIL_DATA_W>();
+                    (*detail_ptr).cbSize = min_size as u32;
+                    if SetupDiGetDeviceInterfaceDetailW(
+                        if_set,
+                        &if_data,
+                        Some(detail_ptr),
+                        required,
+                        None,
+                        None,
+                    )
+                    .is_ok()
+                    {
+                        let offset = std::mem::offset_of!(SP_DEVICE_INTERFACE_DETAIL_DATA_W, DevicePath);
+                        if let Some(path) = wide_strings(&detail_buf[offset..]).into_iter().next() {
+                            result = Some(path);
+                        }
+                    }
+                }
+            }
+            let _ = SetupDiDestroyDeviceInfoList(if_set);
+            result
+        }
+    }
+
+    unsafe {
+        let set = SetupDiGetClassDevsW(None, w!("USB"), None, DIGCF_ALLCLASSES | DIGCF_PRESENT)
+            .map_err(|e| format!("Windows' USB device list could not be read: {e}"))?;
+        let mut whole_paths = Vec::new();
+        let mut iface_paths: Vec<(u8, String)> = Vec::new();
+        let mut index = 0;
+        loop {
+            let mut data = SP_DEVINFO_DATA { cbSize: std::mem::size_of::<SP_DEVINFO_DATA>() as u32, ..Default::default() };
+            if SetupDiEnumDeviceInfo(set, index, &mut data).is_err() { break; }
+            index += 1;
+            let mut id_buf = [0u16; 512];
+            if SetupDiGetDeviceInstanceIdW(set, &data, Some(&mut id_buf), None).is_err() { continue; }
+            let nul = id_buf.iter().position(|&u| u == 0).unwrap_or(id_buf.len());
+            let id = String::from_utf16_lossy(&id_buf[..nul]);
+            let Some((v, p, iface)) = parse_instance_id(&id) else { continue };
+            if (v, p) != (vid, pid) { continue; }
+            let mut prop_buf = vec![0u8; 4096];
+            let mut property = |key| {
+                prop_buf.fill(0);
+                SetupDiGetDeviceRegistryPropertyW(set, &data, key, None, Some(&mut prop_buf), None)
+                    .ok()
+                    .map(|()| wide_strings(&prop_buf))
+                    .unwrap_or_default()
+            };
+            let Some(node_ports) = location(&property(SPDRP_LOCATION_PATHS), iface.is_some()) else { continue };
+            if node_ports != ports { continue; }
+            let service = property(SPDRP_SERVICE).into_iter().next().unwrap_or_default();
+            if !is_winusb(&service) { continue; }
+
+            let mut guids = reg_guids(set, &data);
+            guids.push(GUID_DEVINTERFACE_USB_DEVICE);
+            let mut id_wide = id_buf[..nul].to_vec();
+            id_wide.push(0);
+            if let Some(path) = guids.iter().find_map(|g| path_for_guid(&id_wide, g)) {
+                match iface {
+                    None => whole_paths.push(path),
+                    Some(mi) => iface_paths.push((mi, path)),
+                }
+            }
+        }
+        let _ = SetupDiDestroyDeviceInfoList(set);
+        let mut out = if !whole_paths.is_empty() {
+            whole_paths
+        } else {
+            iface_paths.sort_by_key(|(mi, _)| *mi);
+            iface_paths.into_iter().map(|(_, p)| p).collect()
+        };
+        out.dedup();
+        if out.is_empty() {
+            return Err("Windows listed no WinUSB interface path for this device.".to_owned());
+        }
+        Ok(out)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -170,21 +377,45 @@ mod tests {
     }
 
     #[test]
-    fn only_winusb_opens() {
+    fn winusb_and_libusbk_both_open_and_winusb_routing_distinguishes_them() {
         assert_eq!(blocked(&[node(None, &[2], "WinUSB")], 0x1209, 0x0001, &[2]), None);
+        assert!(uses_winusb(&[node(None, &[2], "WinUSB")], 0x1209, 0x0001, &[2]));
+        assert_eq!(blocked(&[node(None, &[2], "libusbK")], 0x1209, 0x0001, &[2]), None);
+        assert!(!uses_winusb(&[node(None, &[2], "libusbK")], 0x1209, 0x0001, &[2]));
         assert_eq!(blocked(&[node(None, &[2], "USBSTOR")], 0x1209, 0x0001, &[2]).as_deref(), Some("USBSTOR"));
+        assert!(!uses_winusb(&[node(None, &[2], "USBSTOR")], 0x1209, 0x0001, &[2]));
         assert_eq!(blocked(&[node(None, &[2], "")], 0x1209, 0x0001, &[2]).as_deref(), Some("no driver"));
         // Another port, or nothing Windows knows: never offered as if it would work.
         assert_eq!(blocked(&[node(None, &[3], "WinUSB")], 0x1209, 0x0001, &[2]).as_deref(), Some("Windows lists no driver for it"));
     }
 
     #[test]
-    fn a_composite_device_opens_only_when_every_interface_has_winusb() {
+    fn a_composite_device_opens_when_every_interface_has_winusb_or_libusbk() {
         let mut nodes = vec![node(None, &[1, 4], "usbccgp"), node(Some(0), &[1, 4], "WinUSB"), node(Some(1), &[1, 4], "WinUSB")];
         assert_eq!(blocked(&nodes, 0x1209, 0x0001, &[1, 4]), None);
+        assert!(uses_winusb(&nodes, 0x1209, 0x0001, &[1, 4]));
+        // Mixed WinUSB + libusbK opens through libusb, not pure WinUSB.
+        let mixed = vec![node(None, &[1, 4], "usbccgp"), node(Some(0), &[1, 4], "WinUSB"), node(Some(1), &[1, 4], "libusbK")];
+        assert_eq!(blocked(&mixed, 0x1209, 0x0001, &[1, 4]), None);
+        assert!(!uses_winusb(&mixed, 0x1209, 0x0001, &[1, 4]));
         nodes.push(node(Some(3), &[1, 4], "HidUsb"));
         assert_eq!(blocked(&nodes, 0x1209, 0x0001, &[1, 4]).as_deref(), Some("interface 3: HidUsb"));
+        assert!(!uses_winusb(&nodes, 0x1209, 0x0001, &[1, 4]));
         assert_eq!(blocked(&nodes[..1], 0x1209, 0x0001, &[1, 4]).as_deref(), Some("usbccgp"));
+    }
+
+    #[test]
+    fn registry_guids_parse_with_or_without_braces() {
+        assert_eq!(
+            parse_guid("{A5DCBF10-6530-11D2-901F-00C04FB951ED}"),
+            Some((0xA5DC_BF10, 0x6530, 0x11D2, [0x90, 0x1F, 0x00, 0xC0, 0x4F, 0xB9, 0x51, 0xED]))
+        );
+        assert_eq!(
+            parse_guid("da812bff-12c3-46a2-8e2b-dbd3b7834c43"),
+            Some((0xda81_2bff, 0x12c3, 0x46a2, [0x8e, 0x2b, 0xdb, 0xd3, 0xb7, 0x83, 0x4c, 0x43]))
+        );
+        assert_eq!(parse_guid("not-a-guid"), None);
+        assert_eq!(parse_guid("{A5DCBF10-6530-11D2-901F-00C04FB951ED-extra}"), None);
     }
 
     #[test]

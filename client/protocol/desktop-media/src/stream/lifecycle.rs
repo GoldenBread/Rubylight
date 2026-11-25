@@ -438,6 +438,7 @@ mod pipeline_finish_cleanup_tests {
             present_us: 2,
             hold_us: 0,
             late: false,
+            uploaded: false,
         });
         // Unix (Linux and macOS): gpu_planes::Pin is a unit struct without a live D3D11 device.
         #[cfg(unix)]
