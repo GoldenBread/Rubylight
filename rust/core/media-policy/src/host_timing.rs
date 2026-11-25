@@ -21,6 +21,8 @@ pub use rubylight_protocol::control::HOST_TIMING_MESSAGE_TYPE;
 /// and taken by the control loop.
 #[derive(Default)]
 pub struct HostTimings {
+    /// Whether reports are currently enabled, read lock-free by stream threads.
+    enabled: AtomicBool,
     /// Whether a report may wait, read without the lock: the control loop
     /// takes the lock only when this says so. Set under the lock with every
     /// record kept, and cleared under it by `take_report` when the last
@@ -46,6 +48,7 @@ impl HostTimings {
         let request = HostTimingRequest::decode(payload)?;
         let mut inner = self.inner.lock().unwrap();
         inner.enabled = request.enabled;
+        self.enabled.store(inner.enabled, Ordering::Release);
         if !inner.enabled {
             inner.pending.clear();
         }
@@ -54,12 +57,15 @@ impl HostTimings {
     }
 
     pub fn enabled(&self) -> bool {
-        self.inner.lock().unwrap().enabled
+        self.enabled.load(Ordering::Acquire)
     }
 
     /// Notes a new picture whose last packet was just handed to the socket as video frame
     /// `frame`; `epoch` is the media clock's start. Nothing is kept unless the client asked.
     pub fn record(&self, frame: u32, stamps: &Stamps, epoch: Instant) {
+        if !self.enabled.load(Ordering::Acquire) {
+            return;
+        }
         let mut inner = self.inner.lock().unwrap();
         if !inner.enabled {
             return;

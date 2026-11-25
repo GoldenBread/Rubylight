@@ -318,7 +318,7 @@ pub fn highest_refresh(
     output: &str,
     resolution: Option<(u32, u32)>,
 ) -> Result<butterpollo_media_policy::framegen::Rate> {
-    let monitors = monitors()?;
+    let monitors = basic_monitors()?;
     let monitor = monitors
         .iter()
         .find(|m| m.matches(output))

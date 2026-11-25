@@ -22,7 +22,7 @@ pub struct Topology {
 }
 impl Topology {
     pub(super) fn rotations(&self) -> std::collections::BTreeMap<String, u32> {
-        self.rotations_of(&self.monitors())
+        self.rotations_of(&self.basic_monitors())
     }
     /// [`Self::rotations`] for monitors already listed, which cost a DXGI enumeration.
     pub(super) fn rotations_of(
@@ -43,7 +43,7 @@ impl Topology {
         &mut self,
         rotations: &std::collections::BTreeMap<String, u32>,
     ) -> Result<()> {
-        let monitors = self.monitors();
+        let monitors = self.basic_monitors();
         let mut changed = false;
         for monitor in monitors {
             if let Some(rotation) = rotations.get(&monitor.device_id) {
@@ -83,7 +83,7 @@ impl Topology {
         Ok(())
     }
     pub fn nodes(&self) -> Result<Vec<butterpollo_media_policy::topology::Node>> {
-        self.nodes_of(self.monitors())
+        self.nodes_of(self.basic_monitors())
     }
     /// [`Self::nodes`] for monitors already listed, which cost a DXGI enumeration.
     pub(super) fn nodes_of(
@@ -126,7 +126,7 @@ impl Topology {
             butterpollo_media_policy::topology::Position,
         >,
     ) -> Result<()> {
-        let monitors = self.monitors();
+        let monitors = self.basic_monitors();
         let mut moved = false;
         let mut placed = Vec::new();
         for monitor in monitors {
@@ -255,7 +255,7 @@ impl Topology {
         }
     }
     pub fn refresh(&self, id: &str) -> Result<butterpollo_media_policy::framegen::Rate> {
-        self.refresh_in(&self.monitors(), id)
+        self.refresh_in(&self.basic_monitors(), id)
     }
     /// [`Self::refresh`] among monitors already listed, which cost a DXGI enumeration.
     fn refresh_in(
@@ -294,7 +294,7 @@ impl Topology {
         }
         let mut topology = Self::query()?;
         let monitor = topology
-            .monitors()
+            .basic_monitors()
             .into_iter()
             .find(|m| m.matches(name))
             .context("display unavailable")?;
@@ -363,12 +363,20 @@ impl Topology {
         Ok(())
     }
     pub fn monitors(&self) -> Vec<Monitor> {
-        self.monitors_filtered(false)
+        self.monitors_filtered(false, true)
+    }
+    /// Monitors without per-monitor HDR/WCG colour queries, for identity/layout callers.
+    pub(crate) fn basic_monitors(&self) -> Vec<Monitor> {
+        self.monitors_filtered(false, false)
     }
     /// Connected monitors only (`targetAvailable`), filtering out disconnected
     /// cached routes returned by [`Self::query_all`].
     pub fn available_monitors(&self) -> Vec<Monitor> {
-        self.monitors_filtered(true)
+        self.monitors_filtered(true, true)
+    }
+    /// Connected monitors without colour queries.
+    pub(crate) fn available_basic_monitors(&self) -> Vec<Monitor> {
+        self.monitors_filtered(true, false)
     }
     fn target_paths(&self, only_available: bool) -> Vec<&DISPLAYCONFIG_PATH_INFO> {
         let mut paths: Vec<_> = self
@@ -389,7 +397,7 @@ impl Topology {
             })
             .collect()
     }
-    fn monitors_filtered(&self, only_available: bool) -> Vec<Monitor> {
+    fn monitors_filtered(&self, only_available: bool, with_color: bool) -> Vec<Monitor> {
         let primary = crate::desktop::primary_display_name();
         self.target_paths(only_available)
             .into_iter()
@@ -418,8 +426,11 @@ impl Topology {
                 {
                     return None;
                 }
-                let color =
-                    color_state::query(p.targetInfo.adapterId, p.targetInfo.id).unwrap_or_default();
+                let color = if with_color {
+                    color_state::query(p.targetInfo.adapterId, p.targetInfo.id).unwrap_or_default()
+                } else {
+                    Default::default()
+                };
                 let display_name = wide(&source.viewGdiDeviceName);
                 let monitor_device_path = wide(&target.monitorDevicePath);
                 Some(Monitor {
@@ -475,6 +486,10 @@ impl Topology {
 }
 pub fn monitors() -> Result<Vec<Monitor>> {
     Ok(Topology::query()?.monitors())
+}
+/// Active monitors without HDR/WCG colour queries.
+pub(crate) fn basic_monitors() -> Result<Vec<Monitor>> {
+    Ok(Topology::query()?.basic_monitors())
 }
 /// How many displays Windows shows now, from the display configuration alone (no DXGI or
 /// colour query, which take nearly all of `monitors`' half a millisecond). A display that

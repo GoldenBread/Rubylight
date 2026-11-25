@@ -74,6 +74,7 @@ pub(crate) fn own_sid() -> Result<String> {
 struct InputDesktop {
     original: HDESK,
     current: HDESK,
+    name: Option<String>,
 }
 impl Drop for InputDesktop {
     fn drop(&mut self) {
@@ -88,6 +89,24 @@ thread_local! {
     static INPUT_DESKTOP: std::cell::RefCell<Option<InputDesktop>> = const { std::cell::RefCell::new(None) };
 }
 
+fn desktop_name(desktop: HDESK) -> Option<String> {
+    let mut wide = [0u16; 128];
+    let mut needed = 0u32;
+    // SAFETY: `desktop` is a live desktop handle and `wide` fits `size_of_val(&wide)` bytes.
+    unsafe {
+        GetUserObjectInformationW(
+            HANDLE(desktop.0),
+            UOI_NAME,
+            Some(wide.as_mut_ptr().cast()),
+            std::mem::size_of_val(&wide) as u32,
+            Some(&mut needed),
+        )
+        .ok()?;
+    }
+    let units = (needed as usize / 2).min(wide.len());
+    Some(crate::text::from_wide(&wide[..units]))
+}
+
 pub(crate) fn follow_input_desktop() -> bool {
     // SAFETY: The thread-local attachment owns every opened desktop handle.
     INPUT_DESKTOP.with_borrow_mut(|attachment| unsafe {
@@ -98,6 +117,14 @@ pub(crate) fn follow_input_desktop() -> bool {
         ) else {
             return false;
         };
+        let next_name = desktop_name(desktop);
+        if let Some(attached) = attachment.as_ref()
+            && next_name.is_some()
+            && attached.name == next_name
+        {
+            let _ = CloseDesktop(desktop);
+            return true;
+        }
         let Ok(original) = GetThreadDesktop(GetCurrentThreadId()) else {
             let _ = CloseDesktop(desktop);
             return false;
@@ -108,11 +135,13 @@ pub(crate) fn follow_input_desktop() -> bool {
         }
         if let Some(attached) = attachment {
             let previous = std::mem::replace(&mut attached.current, desktop);
+            attached.name = next_name;
             let _ = CloseDesktop(previous);
         } else {
             *attachment = Some(InputDesktop {
                 original,
                 current: desktop,
+                name: next_name,
             });
         }
         true

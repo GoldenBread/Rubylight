@@ -690,8 +690,10 @@ impl Window {
     /// Mean, p95 and p99 of each stage over the last five seconds' new
     /// pictures, in milliseconds.
     fn stage_snapshot(&self) -> Value {
-        let spread = |index: usize| {
-            let mut values: Vec<u32> = self.stages.iter().map(|s| s[index]).collect();
+        let mut values = Vec::with_capacity(self.stages.len());
+        let mut spread = |index: usize| {
+            values.clear();
+            values.extend(self.stages.iter().map(|s| s[index]));
             values.sort_unstable();
             let ms = |us: u32| f64::from(us) / 1000.;
             let at = |percent: usize| {

@@ -220,8 +220,16 @@ impl Converter {
         let (index, copy) = match self.menu.current {
             Some((index, revision)) if revision == overlay.revision => (index, None),
             current => {
-                let ring: Vec<_> = self.menu.ring.iter().map(|i| (i.size, i.read)).collect();
-                let picked = pick(&ring, current.map(|(index, _)| index), size, |value| {
+                let mut ring = [([0, 0], 0u64); RING];
+                let ring_slice = if self.menu.ring.len() <= RING {
+                    for (slot, item) in ring.iter_mut().zip(&self.menu.ring) {
+                        *slot = (item.size, item.read);
+                    }
+                    &ring[..self.menu.ring.len()]
+                } else {
+                    unreachable!("menu ring never exceeds RING")
+                };
+                let picked = pick(ring_slice, current.map(|(index, _)| index), size, |value| {
                     self.compute.completed(value)
                 });
                 let index = match picked {

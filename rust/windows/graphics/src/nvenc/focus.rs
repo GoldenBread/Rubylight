@@ -324,7 +324,11 @@ impl Encoder {
                     started.elapsed() < Duration::from_secs(2),
                     "focus probe frame {frame} was not encoded within two seconds"
                 );
-                idr |= self.poll()?.iter().any(|encoded| encoded.idr);
+                let polled = self.poll()?;
+                idr |= polled.iter().any(|encoded| encoded.idr);
+                if polled.is_empty() && self.pending() {
+                    std::thread::sleep(Duration::from_millis(1));
+                }
             }
             anyhow::ensure!(
                 !idr || frame == 0,

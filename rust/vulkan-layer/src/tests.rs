@@ -580,3 +580,62 @@ fn formats2_preserves_caller_pnext_and_fills_known_injected_structs() {
         drop(Box::from_raw(inst.cast::<FakeDispatchable>()));
     }
 }
+
+#[test]
+fn inject_cache_reuses_window_and_stream_probes_within_ttl_and_expires() {
+    let stream_probes = AtomicUsize::new(0);
+    let hdr_probes = AtomicUsize::new(0);
+    let surface_a = 0xAA01u64;
+    let surface_b = 0xAA02u64;
+    let win_a = 0x1111usize;
+    let win_b = 0x2222usize;
+    {
+        let mut s = state().lock().unwrap();
+        s.surfaces.insert(surface_a, (0xF001, win_a));
+        s.surfaces.insert(surface_b, (0xF001, win_b));
+        s.inject = InjectCache::default();
+    }
+
+    let probe_stream = || {
+        stream_probes.fetch_add(1, Ordering::Relaxed);
+        true
+    };
+    let probe_hdr = |window: usize| {
+        hdr_probes.fetch_add(1, Ordering::Relaxed);
+        window == win_a
+    };
+
+    let t0 = Instant::now();
+    assert!(inject_with(surface_a, t0, probe_stream, probe_hdr));
+    assert!(inject_with(
+        surface_a,
+        t0 + Duration::from_millis(50),
+        probe_stream,
+        probe_hdr
+    ));
+    assert_eq!(stream_probes.load(Ordering::Relaxed), 1);
+    assert_eq!(hdr_probes.load(Ordering::Relaxed), 1);
+
+    assert!(!inject_with(
+        surface_b,
+        t0 + Duration::from_millis(100),
+        probe_stream,
+        probe_hdr
+    ));
+    assert_eq!(stream_probes.load(Ordering::Relaxed), 1);
+    assert_eq!(hdr_probes.load(Ordering::Relaxed), 2);
+
+    assert!(inject_with(
+        surface_a,
+        t0 + INJECT_CACHE_TTL + Duration::from_millis(1),
+        probe_stream,
+        probe_hdr
+    ));
+    assert_eq!(stream_probes.load(Ordering::Relaxed), 2);
+    assert_eq!(hdr_probes.load(Ordering::Relaxed), 3);
+
+    let mut s = state().lock().unwrap();
+    s.surfaces.remove(&surface_a);
+    s.surfaces.remove(&surface_b);
+    s.inject = InjectCache::default();
+}

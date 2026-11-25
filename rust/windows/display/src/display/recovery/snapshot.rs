@@ -223,9 +223,9 @@ impl Snapshot {
             bail!("unsupported Rust display snapshot version");
         }
         let current = Topology::query()?;
-        let available = Topology::query_all()?.available_monitors();
+        let available = Topology::query_all()?.available_basic_monitors();
         let preserve = |id: &str| excluded.iter().any(|e| id.eq_ignore_ascii_case(e));
-        let ids = self.active_ids(&current.monitors(), &available, excluded);
+        let ids = self.active_ids(&current.basic_monitors(), &available, excluded);
         if ids.is_empty() {
             // A headless host whose only display was the virtual one, now
             // gone: there is nothing left to turn on, so retrying cannot help.

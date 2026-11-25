@@ -77,12 +77,12 @@ impl Lease {
         original: Option<Snapshot>,
         device: &str,
     ) -> Result<Self> {
-        let mut state = crate::lock_unpoisoned(state());
-        let monitors = crate::display::monitors()?;
+        let monitors = crate::display::basic_monitors()?;
         let target = monitors
             .iter()
             .find(|m| m.matches(output))
             .ok_or_else(|| anyhow::anyhow!("display arrangement target unavailable"))?;
+        let mut state = crate::lock_unpoisoned(state());
         let target_id = target.device_id.clone();
         note_device(&mut state, &target_id, device);
         let retained: Vec<_> = monitors
@@ -353,8 +353,8 @@ impl Lease {
     /// Reapply the stream layout after an owned VDD is recreated, retaining the
     /// original restoration snapshot and recovery journal.
     pub fn reapply(&self, output: &str, retained: &[String]) -> Result<()> {
+        let monitors = crate::display::basic_monitors()?;
         let mut state = crate::lock_unpoisoned(state());
-        let monitors = crate::display::monitors()?;
         let mut owned = crate::lock_unpoisoned(&self.target);
         let target = reapplied_target(&monitors, output, &owned)
             .ok_or_else(|| anyhow::anyhow!("recovered arrangement target unavailable"))?;

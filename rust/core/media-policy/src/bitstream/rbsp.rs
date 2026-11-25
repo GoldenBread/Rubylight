@@ -132,8 +132,13 @@ pub struct Writer {
 }
 impl Writer {
     pub fn with_prefix(prefix: &[u8]) -> Self {
+        Self::with_capacity_prefix(prefix.len(), prefix)
+    }
+    pub fn with_capacity_prefix(capacity: usize, prefix: &[u8]) -> Self {
+        let mut bytes = Vec::with_capacity(capacity.max(prefix.len()));
+        bytes.extend_from_slice(prefix);
         Self {
-            bytes: prefix.to_vec(),
+            bytes,
             at: prefix.len() * 8,
         }
     }
@@ -147,14 +152,36 @@ impl Writer {
     }
     pub fn put(&mut self, count: u32, value: u64) {
         debug_assert!(count <= 64 && (count == 64 || value >> count == 0));
-        for index in (0..count).rev() {
-            if self.at.is_multiple_of(8) {
+        let mut rem = count;
+        while rem > 0 {
+            let bit_in_byte = (self.at & 7) as u32;
+            if bit_in_byte == 0 {
                 self.bytes.push(0);
             }
-            if (value >> index) & 1 == 1 {
-                *self.bytes.last_mut().unwrap() |= 0x80 >> (self.at % 8);
+            let room = 8 - bit_in_byte;
+            let take = rem.min(room);
+            let mask = (1u64 << take) - 1;
+            let bits = ((value >> (rem - take)) & mask) as u8;
+            *self.bytes.last_mut().unwrap() |= bits << (room - take);
+            self.at += take as usize;
+            rem -= take;
+        }
+    }
+    pub fn put_zeros(&mut self, count: usize) {
+        if count == 0 {
+            return;
+        }
+        self.at += count;
+        self.bytes.resize(self.at.div_ceil(8), 0);
+    }
+    pub fn put_bytes(&mut self, data: &[u8]) {
+        if self.at.is_multiple_of(8) {
+            self.bytes.extend_from_slice(data);
+            self.at += data.len() * 8;
+        } else {
+            for &byte in data {
+                self.put(8, u64::from(byte));
             }
-            self.at += 1;
         }
     }
     /// Two's complement in `count` bits.
@@ -191,17 +218,25 @@ impl Writer {
     /// followed by a read_more one bit, every group after the first adding
     /// one to the value before it is shifted.
     pub fn variable(&mut self, count: u32, mut value: u64) {
-        let mask = (1 << count) - 1;
-        let mut groups = vec![value & mask];
-        value >>= count;
+        debug_assert!((1..=64).contains(&count));
+        let mask = if count >= 64 {
+            u64::MAX
+        } else {
+            (1u64 << count) - 1
+        };
+        let mut groups = [0u64; 64];
+        groups[0] = value & mask;
+        let mut len = 1usize;
+        value = if count >= 64 { 0 } else { value >> count };
         while value > 0 {
             value -= 1;
-            groups.push(value & mask);
-            value >>= count;
+            groups[len] = value & mask;
+            len += 1;
+            value = if count >= 64 { 0 } else { value >> count };
         }
-        for (index, &group) in groups.iter().rev().enumerate() {
+        for (index, &group) in groups[..len].iter().rev().enumerate() {
             self.put(count, group);
-            self.put(1, u64::from(index + 1 < groups.len()));
+            self.put(1, u64::from(index + 1 < len));
         }
     }
     /// Pad the trailing partial byte with zeros to a byte boundary.
@@ -224,7 +259,32 @@ impl Writer {
         self.bytes
     }
     /// Bits `start..end` of `from`, unchanged.
-    pub fn copy(&mut self, from: &[u8], start: usize, end: usize) {
+    pub fn copy(&mut self, from: &[u8], mut start: usize, end: usize) {
+        if start >= end {
+            return;
+        }
+        let head = (8 - (start & 7)) & 7;
+        if head > 0 && start + head <= end {
+            let mask = (1u8 << head) - 1;
+            self.put(head as u32, u64::from(from[start / 8] & mask));
+            start += head;
+        }
+        if start.is_multiple_of(8) && self.at.is_multiple_of(8) && end - start >= 8 {
+            let full_end = end & !7;
+            self.put_bytes(&from[start / 8..full_end / 8]);
+            start = full_end;
+        }
+        while start + 8 <= end {
+            let byte = if start.is_multiple_of(8) {
+                from[start / 8]
+            } else {
+                let b = start / 8;
+                let s = start & 7;
+                (from[b] << s) | (from[b + 1] >> (8 - s))
+            };
+            self.put(8, u64::from(byte));
+            start += 8;
+        }
         for at in start..end {
             self.flag((from[at / 8] >> (7 - at % 8)) & 1 == 1);
         }
@@ -233,9 +293,7 @@ impl Writer {
     /// the backing buffer reusable across headers.
     pub fn finish_in_place(&mut self) -> &[u8] {
         self.flag(true);
-        while !self.at.is_multiple_of(8) {
-            self.flag(false);
-        }
+        self.put_zeros((8 - (self.at & 7)) & 7);
         &self.bytes
     }
     /// The bytes after a one bit and zeros to the byte boundary: RBSP

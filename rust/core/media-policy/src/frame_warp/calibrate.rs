@@ -617,15 +617,14 @@ impl Calibrator {
                 (MAX_LENS_OFFSET * f * f / f64::from(edge.max(1))) as f32
             })
         };
-        let clamp_gain = |g: [f32; 2]| {
-            g.map(|v| {
-                if v.is_finite() {
-                    v.clamp(-100_000.0, 100_000.0)
-                } else {
-                    0.0
-                }
-            })
+        let clamp = |v: f32| {
+            if v.is_finite() {
+                v.clamp(-100_000.0, 100_000.0)
+            } else {
+                0.0
+            }
         };
+        let clamp_gain = |g: [f32; 2]| g.map(clamp);
         Model {
             generation,
             mouse_locked: self.mouse_locked,
@@ -661,19 +660,20 @@ fn best_fit(
     input: &dyn Fn(&Chunk, u64) -> Option<[f64; 2]>,
     min_input: f64,
 ) -> Option<Fit> {
-    let mut fits = Vec::new();
-    let mut lag = 0;
-    while lag <= MAX_LAG_US {
+    const SLOTS: usize = (MAX_LAG_US / LAG_STEP_US) as usize + 1;
+    let (mut fits, mut count, mut best) = ([None; SLOTS], 0usize, f64::NEG_INFINITY);
+    for lag in (0..=MAX_LAG_US).step_by(LAG_STEP_US as usize) {
         if let Some(fit) = score(chunks, input, lag, None, min_input) {
-            fits.push(fit);
+            best = best.max(fit.fit);
+            fits[count] = Some(fit);
+            count += 1;
         }
-        lag += LAG_STEP_US;
     }
-    let best = fits.iter().map(|f| f.fit).fold(f64::NEG_INFINITY, f64::max);
-    if !best.is_finite() {
-        return None;
-    }
-    fits.into_iter().find(|f| f.fit >= best * LAG_TOLERANCE)
+    fits[..count]
+        .iter()
+        .flatten()
+        .copied()
+        .find(|f| best.is_finite() && f.fit >= best * LAG_TOLERANCE)
 }
 
 /// A locked `model` keeps its lag unless `fresh` explains at least [`REFIT_MARGIN`] more of the

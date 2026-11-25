@@ -11,6 +11,12 @@
 //! pointer arguments Vulkan's valid-usage rules describe; each `unsafe` block
 //! relies on that contract.
 #![warn(clippy::undocumented_unsafe_blocks, clippy::missing_safety_doc)]
+mod probe;
+#[cfg(test)]
+use probe::{INJECT_CACHE_TTL, inject_with};
+use probe::{InjectCache, inject};
+#[cfg(test)]
+use std::time::{Duration, Instant};
 use std::{
     collections::BTreeMap,
     ffi::{CStr, c_char, c_void},
@@ -69,6 +75,15 @@ pub struct Format2 {
     kind: u32,
     next: *mut c_void,
     format: Format,
+}
+impl Default for Format2 {
+    fn default() -> Self {
+        Self {
+            kind: 1000119002,
+            next: ptr::null_mut(),
+            format: Format::default(),
+        }
+    }
 }
 const IMAGE_COMPRESSION_PROPERTIES_EXT: u32 = 1000338003;
 #[repr(C)]
@@ -192,6 +207,7 @@ struct State {
     instances: BTreeMap<usize, Instance>,
     devices: BTreeMap<usize, Gipa>,
     surfaces: BTreeMap<u64, (usize, usize)>,
+    inject: InjectCache,
 }
 fn state() -> &'static Mutex<State> {
     static STATE: OnceLock<Mutex<State>> = OnceLock::new();
@@ -240,148 +256,6 @@ fn extend(formats: &mut Vec<Format>) {
         }
     }
 }
-#[cfg(windows)]
-fn stream_active() -> bool {
-    use windows::{
-        Win32::{
-            Foundation::{CloseHandle, WAIT_OBJECT_0},
-            System::Threading::*,
-        },
-        core::PCWSTR,
-    };
-    for name in [
-        "Global\\ButterpolloRustVirtualHdrActive",
-        "Local\\ButterpolloRustVirtualHdrActive",
-    ] {
-        let name: Vec<u16> = name.encode_utf16().chain(Some(0)).collect();
-        // SAFETY: `name` is a NUL-terminated UTF-16 string that outlives the call.
-        let opened =
-            unsafe { OpenEventW(SYNCHRONIZATION_SYNCHRONIZE, false, PCWSTR(name.as_ptr())) };
-        if let Ok(event) = opened {
-            // SAFETY: `event` is the handle just opened.
-            let active = unsafe { WaitForSingleObject(event, 0) == WAIT_OBJECT_0 };
-            // SAFETY: `event` is open and not used afterwards.
-            unsafe {
-                let _ = CloseHandle(event);
-            }
-            if active {
-                return true;
-            }
-        }
-    }
-    false
-}
-#[cfg(not(windows))]
-fn stream_active() -> bool {
-    false
-}
-#[cfg(windows)]
-fn hdr_supported(window: usize) -> bool {
-    use windows::Win32::{Devices::Display::*, Foundation::*, Graphics::Gdi::*};
-    // SAFETY: every pointer passed is to a local of the size its header
-    // states, and the path and mode buffers hold the counts Windows reported.
-    unsafe {
-        let monitor = MonitorFromWindow(HWND(window as Handle), MONITOR_DEFAULTTONEAREST);
-        let mut info = MONITORINFOEXW::default();
-        info.monitorInfo.cbSize = size_of::<MONITORINFOEXW>() as u32;
-        if monitor.is_invalid()
-            || !GetMonitorInfoW(monitor, (&mut info as *mut MONITORINFOEXW).cast()).as_bool()
-        {
-            return false;
-        }
-        let (mut paths_len, mut modes_len) = (0, 0);
-        if GetDisplayConfigBufferSizes(QDC_ONLY_ACTIVE_PATHS, &mut paths_len, &mut modes_len)
-            .is_err()
-            || paths_len > 256
-            || modes_len > 768
-        {
-            return false;
-        }
-        let mut paths = vec![DISPLAYCONFIG_PATH_INFO::default(); paths_len as usize];
-        let mut modes = vec![DISPLAYCONFIG_MODE_INFO::default(); modes_len as usize];
-        if QueryDisplayConfig(
-            QDC_ONLY_ACTIVE_PATHS,
-            &mut paths_len,
-            paths.as_mut_ptr(),
-            &mut modes_len,
-            modes.as_mut_ptr(),
-            None,
-        )
-        .is_err()
-        {
-            return false;
-        }
-        for path in &paths[..paths_len as usize] {
-            let mut source = DISPLAYCONFIG_SOURCE_DEVICE_NAME {
-                header: DISPLAYCONFIG_DEVICE_INFO_HEADER {
-                    r#type: DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME,
-                    size: size_of::<DISPLAYCONFIG_SOURCE_DEVICE_NAME>() as u32,
-                    adapterId: path.sourceInfo.adapterId,
-                    id: path.sourceInfo.id,
-                },
-                ..Default::default()
-            };
-            if DisplayConfigGetDeviceInfo(&mut source.header) != 0
-                || source.viewGdiDeviceName != info.szDevice
-            {
-                continue;
-            }
-            // Windows 11 24H2 distinguishes HDR from automatic wide color.
-            #[repr(C)]
-            struct Advanced2 {
-                header: DISPLAYCONFIG_DEVICE_INFO_HEADER,
-                flags: u32,
-                encoding: u32,
-                bits: u32,
-                active: u32,
-            }
-            let mut color = Advanced2 {
-                header: DISPLAYCONFIG_DEVICE_INFO_HEADER {
-                    r#type: DISPLAYCONFIG_DEVICE_INFO_TYPE(15),
-                    size: size_of::<Advanced2>() as u32,
-                    adapterId: path.targetInfo.adapterId,
-                    id: path.targetInfo.id,
-                },
-                flags: 0,
-                encoding: 0,
-                bits: 0,
-                active: 0,
-            };
-            if DisplayConfigGetDeviceInfo(&mut color.header) == 0 {
-                return color.flags & 16 != 0;
-            }
-            let mut old = DISPLAYCONFIG_GET_ADVANCED_COLOR_INFO {
-                header: DISPLAYCONFIG_DEVICE_INFO_HEADER {
-                    r#type: DISPLAYCONFIG_DEVICE_INFO_GET_ADVANCED_COLOR_INFO,
-                    size: size_of::<DISPLAYCONFIG_GET_ADVANCED_COLOR_INFO>() as u32,
-                    adapterId: path.targetInfo.adapterId,
-                    id: path.targetInfo.id,
-                },
-                ..Default::default()
-            };
-            return DisplayConfigGetDeviceInfo(&mut old.header) == 0
-                && old.Anonymous.value & 1 != 0;
-        }
-        false
-    }
-}
-#[cfg(not(windows))]
-fn hdr_supported(_: usize) -> bool {
-    false
-}
-fn inject(surface: u64) -> bool {
-    if !stream_active() || std::env::var("DISABLE_SUNSHINE_VIRTUAL_HDR").is_ok_and(|v| v == "1") {
-        return false;
-    }
-    let window = state()
-        .lock()
-        .ok()
-        .and_then(|s| s.surfaces.get(&surface).map(|(_, window)| *window));
-    window.is_some_and(|window| {
-        std::env::var("SUNSHINE_VHDR_FORCE").is_ok_and(|v| v.starts_with('1'))
-            || hdr_supported(window)
-    })
-}
 unsafe extern "system" fn create(
     info: *const CreateInfo,
     allocator: *const c_void,
@@ -411,30 +285,20 @@ unsafe extern "system" fn create(
         let Some(key) = key(*result) else {
             return FAILED;
         };
+        macro_rules! load {
+            ($name:literal, $ty:ty) => {
+                std::mem::transmute::<Function, Option<$ty>>(next(*result, $name.as_ptr()))
+            };
+        }
         let data = Instance {
             handle: *result as usize,
             next,
             physical_next,
-            destroy: std::mem::transmute::<Function, Option<Destroy>>(next(
-                *result,
-                c"vkDestroyInstance".as_ptr(),
-            )),
-            create_surface: std::mem::transmute::<Function, Option<CreateSurface>>(next(
-                *result,
-                c"vkCreateWin32SurfaceKHR".as_ptr(),
-            )),
-            destroy_surface: std::mem::transmute::<Function, Option<DestroySurface>>(next(
-                *result,
-                c"vkDestroySurfaceKHR".as_ptr(),
-            )),
-            formats: std::mem::transmute::<Function, Option<Formats>>(next(
-                *result,
-                c"vkGetPhysicalDeviceSurfaceFormatsKHR".as_ptr(),
-            )),
-            formats2: std::mem::transmute::<Function, Option<Formats2>>(next(
-                *result,
-                c"vkGetPhysicalDeviceSurfaceFormats2KHR".as_ptr(),
-            )),
+            destroy: load!(c"vkDestroyInstance", Destroy),
+            create_surface: load!(c"vkCreateWin32SurfaceKHR", CreateSurface),
+            destroy_surface: load!(c"vkDestroySurfaceKHR", DestroySurface),
+            formats: load!(c"vkGetPhysicalDeviceSurfaceFormatsKHR", Formats),
+            formats2: load!(c"vkGetPhysicalDeviceSurfaceFormats2KHR", Formats2),
         };
         if let Ok(mut s) = state().lock() {
             s.instances.insert(key, data);
@@ -566,6 +430,28 @@ unsafe fn copy_formats(
         SUCCESS
     }
 }
+/// # Safety
+/// `count` is valid when non-null, and `next` writes `*base` only on `SUCCESS`.
+unsafe fn base_count<A: Copy, T>(
+    next: unsafe extern "system" fn(Handle, A, *mut u32, *mut T) -> i32,
+    device: Handle,
+    arg: A,
+    surface: u64,
+    count: *mut u32,
+    out: *mut T,
+) -> Result<u32, i32> {
+    // SAFETY: Caller guarantees `count` and `out` satisfy `next`'s Vulkan contract.
+    unsafe {
+        if !inject(surface) {
+            return Err(next(device, arg, count, out));
+        }
+        let mut base = 0;
+        if next(device, arg, &mut base, ptr::null_mut()) != SUCCESS || base > MAX_FORMATS {
+            return Err(next(device, arg, count, out));
+        }
+        Ok(base)
+    }
+}
 unsafe extern "system" fn formats(
     device: Handle,
     surface: u64,
@@ -581,13 +467,10 @@ unsafe extern "system" fn formats(
         if count.is_null() {
             return FAILED;
         }
-        if !inject(surface) {
-            return next(device, surface, count, out);
-        }
-        let mut base = 0;
-        if next(device, surface, &mut base, ptr::null_mut()) != SUCCESS || base > MAX_FORMATS {
-            return next(device, surface, count, out);
-        }
+        let mut base = match base_count(next, device, surface, surface, count, out) {
+            Ok(b) => b,
+            Err(code) => return code,
+        };
         let mut values = vec![Format::default(); base as usize];
         let code = next(device, surface, &mut base, values.as_mut_ptr());
         if !matches!(code, SUCCESS | INCOMPLETE) || base as usize > values.len() {
@@ -619,22 +502,15 @@ unsafe extern "system" fn formats2(
         if count.is_null() {
             return FAILED;
         }
-        if info.is_null() || !inject((*info).surface) {
+        if info.is_null() {
             return next(device, info, count, out);
         }
-        let mut base = 0;
-        if next(device, info, &mut base, ptr::null_mut()) != SUCCESS || base > MAX_FORMATS {
-            return next(device, info, count, out);
-        }
+        let mut base = match base_count(next, device, info, (*info).surface, count, out) {
+            Ok(b) => b,
+            Err(code) => return code,
+        };
         if out.is_null() {
-            let mut values = vec![
-                Format2 {
-                    kind: 1000119002,
-                    next: ptr::null_mut(),
-                    format: Format::default(),
-                };
-                base as usize
-            ];
+            let mut values = vec![Format2::default(); base as usize];
             let code = next(device, info, &mut base, values.as_mut_ptr());
             if !matches!(code, SUCCESS | INCOMPLETE) || base as usize > values.len() {
                 return next(device, info, count, out);

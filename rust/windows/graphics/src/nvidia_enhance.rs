@@ -54,11 +54,23 @@ impl PartialEq for Component {
 }
 impl Eq for Component {}
 
+#[derive(PartialEq, Eq)]
+struct VerifiedAdapter {
+    folder: PathBuf,
+    sha256: String,
+    size: u64,
+    modified: Option<std::time::SystemTime>,
+}
+
 static COMPONENT: RwLock<Option<Component>> = RwLock::new(None);
+static VERIFIED_ADAPTER: std::sync::Mutex<Option<VerifiedAdapter>> = std::sync::Mutex::new(None);
 
 /// Names the installed component, or none.
 pub fn set_component(component: Option<Component>) {
     *COMPONENT.write().unwrap_or_else(PoisonError::into_inner) = component;
+    *VERIFIED_ADAPTER
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner) = None;
 }
 
 /// The installed component.
@@ -74,16 +86,48 @@ pub fn installed() -> bool {
     component().is_some()
 }
 
+fn verify_component_cached(component: &Component, path: &std::path::Path) -> Result<()> {
+    verify_component_cached_with(component, path, nvidia_component::verify)
+}
+
+fn verify_component_cached_with(
+    component: &Component,
+    path: &std::path::Path,
+    verify: impl FnOnce(&std::path::Path, &str) -> Result<()>,
+) -> Result<()> {
+    let meta =
+        std::fs::metadata(path).with_context(|| format!("cannot inspect {}", path.display()))?;
+    let current = VerifiedAdapter {
+        folder: component.folder.clone(),
+        sha256: component.adapter_sha256.clone(),
+        size: meta.len(),
+        modified: meta.modified().ok(),
+    };
+    if VERIFIED_ADAPTER
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .as_ref()
+        == Some(&current)
+    {
+        return Ok(());
+    }
+    verify(&component.folder, &component.adapter_sha256)?;
+    *VERIFIED_ADAPTER
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner) = Some(current);
+    Ok(())
+}
+
 /// Checks the component's files, loads the adapter by full path, checks its
 /// ABI and gives it NGX's data folder.
 pub(crate) fn load() -> Result<libloading::Library> {
     let component = component().context(
         "the NVIDIA components are not installed; download them in the console's Settings, Picture, Integrations",
     )?;
-    nvidia_component::verify(&component.folder, &component.adapter_sha256)?;
+    let path = component.folder.join(ADAPTER);
+    verify_component_cached(&component, &path)?;
     std::fs::create_dir_all(&component.data)
         .with_context(|| format!("cannot create {}", component.data.display()))?;
-    let path = component.folder.join(ADAPTER);
     let data: Vec<u16> = component
         .data
         .as_os_str()
@@ -267,5 +311,42 @@ mod tests {
             "the NVIDIA driver is too old; it needs 570.02 or newer"
         );
         assert!(super::unavailable(0xbad0_0004, 0).contains("NVIDIA components"));
+    }
+
+    #[test]
+    fn component_verify_cache_skips_redundant_hashes_until_changed_or_cleared() {
+        let dir = tempfile::tempdir().unwrap();
+        let adapter = dir.path().join(super::ADAPTER);
+        std::fs::write(&adapter, b"adapter-v1").unwrap();
+        let (sha1, _) = super::nvidia_component::hash_file(&adapter).unwrap();
+        let comp = super::Component {
+            folder: dir.path().to_path_buf(),
+            adapter_sha256: sha1,
+            data: dir.path().join("data"),
+            hold: std::sync::Arc::new(()),
+        };
+        let calls = std::sync::atomic::AtomicUsize::new(0);
+        let probe = |_folder: &std::path::Path, _sha: &str| {
+            calls.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            Ok(())
+        };
+
+        super::set_component(Some(comp.clone()));
+        assert!(super::verify_component_cached_with(&comp, &adapter, probe).is_ok());
+        assert!(super::verify_component_cached_with(&comp, &adapter, probe).is_ok());
+        assert_eq!(calls.load(std::sync::atomic::Ordering::Relaxed), 1);
+
+        // Changed adapter SHA or set_component(None) invalidates cached verification.
+        let changed = super::Component {
+            adapter_sha256: "0".repeat(64),
+            ..comp.clone()
+        };
+        assert!(super::verify_component_cached_with(&changed, &adapter, probe).is_ok());
+        assert_eq!(calls.load(std::sync::atomic::Ordering::Relaxed), 2);
+
+        super::set_component(None);
+        assert!(super::verify_component_cached_with(&comp, &adapter, probe).is_ok());
+        assert_eq!(calls.load(std::sync::atomic::Ordering::Relaxed), 3);
+        super::set_component(None);
     }
 }

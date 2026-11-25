@@ -313,6 +313,7 @@ struct Session {
     cut_limit: Option<u64>,
     reencoded_cuts: u64,
     keyframes_over_cap: u64,
+    rfi_fallbacks: u64,
     /// When a frame over twice its cap was last reported.
     oversize_warned: Option<Instant>,
     /// Why encoding a scene cut again failed, until the encoder reports it.

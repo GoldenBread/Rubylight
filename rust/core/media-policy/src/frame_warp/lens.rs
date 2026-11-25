@@ -330,9 +330,16 @@ fn tangent_of(degrees: f64) -> f64 {
     half.tan() * half.tan()
 }
 
+/// Precomputed squared tangents of half the horizontal field of view for all
+/// candidate lenses.
+static CANDIDATE_TANGENTS: std::sync::LazyLock<[f64; CANDIDATES]> =
+    std::sync::LazyLock::new(|| {
+        core::array::from_fn(|index| tangent_of(FIRST_DEGREES + STEP_DEGREES * index as f64))
+    });
+
 /// The squared tangent of half the field of view of candidate `index`.
 fn candidate(index: usize) -> f64 {
-    tangent_of(FIRST_DEGREES + STEP_DEGREES * index as f64)
+    CANDIDATE_TANGENTS[index]
 }
 
 /// Chooses the lens from the moves the camera's turns made.

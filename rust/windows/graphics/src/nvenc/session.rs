@@ -136,6 +136,7 @@ impl Session {
             cut_limit: None,
             reencoded_cuts: 0,
             keyframes_over_cap: 0,
+            rfi_fallbacks: 0,
             oversize_warned: None,
             reencode_failure: None,
             armed: std::cell::Cell::new(0),

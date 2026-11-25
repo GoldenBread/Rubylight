@@ -3,14 +3,23 @@
 use super::super::*;
 use super::Topology;
 
+fn path_parts(path: &str) -> Option<(&str, &str)> {
+    let mut parts = path.split('#');
+    let _ = parts.next()?;
+    let hardware = parts.next()?;
+    let instance = parts.next()?;
+    Some((hardware, instance))
+}
+
 fn monitor_edid(path: &str) -> Vec<u8> {
-    let parts: Vec<_> = path.split('#').collect();
-    if parts.len() < 3 || parts[1..3].iter().any(|p| p.contains(['\\', '/'])) {
+    let Some((hardware, instance)) = path_parts(path) else {
+        return Vec::new();
+    };
+    if hardware.contains(['\\', '/']) || instance.contains(['\\', '/']) {
         return Vec::new();
     }
     let key: Vec<u16> = format!(
-        "SYSTEM\\CurrentControlSet\\Enum\\DISPLAY\\{}\\{}\\Device Parameters\0",
-        parts[1], parts[2]
+        "SYSTEM\\CurrentControlSet\\Enum\\DISPLAY\\{hardware}\\{instance}\\Device Parameters\0"
     )
     .encode_utf16()
     .collect();
@@ -110,23 +119,25 @@ pub(in super::super) type Route = (LUID, u32);
 /// belongs to a Rubylight virtual display that IddCx gave target id `target`:
 /// the maker code is RBY and the instance ends in the target id as its UID.
 pub(in super::super) fn is_virtual_monitor(path: &str, target: u32) -> bool {
-    let parts: Vec<_> = path.split('#').collect();
-    is_rubylight_monitor(path)
-        && parts[2]
+    let Some((hardware, instance)) = path_parts(path) else {
+        return false;
+    };
+    hardware
+        .get(..3)
+        .is_some_and(|m| m.eq_ignore_ascii_case("RBY"))
+        && instance
             .to_ascii_lowercase()
             .ends_with(&format!("&uid{target}"))
 }
 /// Whether a monitor device path names a Rubylight virtual display (maker RBY).
 pub(in super::super) fn is_rubylight_monitor(path: &str) -> bool {
-    let parts: Vec<_> = path.split('#').collect();
-    parts.len() >= 3
-        && parts[1]
-            .get(..3)
-            .is_some_and(|maker| maker.eq_ignore_ascii_case("RBY"))
+    path_parts(path)
+        .and_then(|(hardware, _)| hardware.get(..3))
+        .is_some_and(|maker| maker.eq_ignore_ascii_case("RBY"))
 }
 /// Whether a monitor device path can be read and names another maker's display.
 pub(in super::super) fn is_physical_monitor(path: &str) -> bool {
-    path.split('#').count() >= 3 && !is_rubylight_monitor(path)
+    path_parts(path).is_some() && !is_rubylight_monitor(path)
 }
 pub(super) fn monitor_id(path: &str) -> String {
     static IDS: std::sync::LazyLock<
@@ -149,17 +160,18 @@ pub(super) fn monitor_id(path: &str) -> String {
 }
 
 pub fn edid_refresh(hint: &str, targets: &[u32]) -> Result<serde_json::Value> {
-    let monitors = Topology::query_all()?.monitors();
+    let monitors = Topology::query_all()?.basic_monitors();
     let monitor = monitors
         .iter()
         .find(|monitor| monitor.matches(hint) || monitor.friendly_name.eq_ignore_ascii_case(hint))
         .context("display device not found for EDID refresh validation")?;
-    let parts: Vec<_> = monitor.monitor_device_path.split('#').collect();
     let mut bytes = Vec::new();
-    if parts.len() >= 3 && parts[1..3].iter().all(|part| !part.contains(['\\', '/'])) {
+    if let Some((hardware, instance)) = path_parts(&monitor.monitor_device_path)
+        && !hardware.contains(['\\', '/'])
+        && !instance.contains(['\\', '/'])
+    {
         let key = format!(
-            "SYSTEM\\CurrentControlSet\\Enum\\DISPLAY\\{}\\{}\\Device Parameters",
-            parts[1], parts[2]
+            "SYSTEM\\CurrentControlSet\\Enum\\DISPLAY\\{hardware}\\{instance}\\Device Parameters"
         );
         let key: Vec<_> = key.encode_utf16().chain(Some(0)).collect();
         let name: Vec<_> = "EDID\0".encode_utf16().collect();

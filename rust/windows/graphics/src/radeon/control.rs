@@ -439,6 +439,7 @@ impl<B: RadeonBackend> Controller<B> {
         order.sort_by_key(|e| e.side_effect);
         let mut results: Vec<(Entry, RestoreResult)> = vec![];
         let mut pending = order;
+        let mut read_cache: HashMap<i32, HashMap<String, Value>> = HashMap::new();
         for pass in 0..2 {
             let mut failed = vec![];
             let mut follow_up = vec![];
@@ -457,7 +458,7 @@ impl<B: RadeonBackend> Controller<B> {
                         vec![],
                     )
                 } else {
-                    self.restore_one(&mut journal, &entry, startup)
+                    self.restore_one(&mut journal, &entry, startup, &mut read_cache)
                 };
                 if matches!(result, RestoreResult::Failed(_)) {
                     failed.push(entry.clone());
@@ -479,8 +480,7 @@ impl<B: RadeonBackend> Controller<B> {
                     continue;
                 }
                 if self
-                    .backend
-                    .read_value(extra_entry.gpu, &extra_entry.id)
+                    .cached_read_value(&mut read_cache, extra_entry.gpu, &extra_entry.id)
                     .ok()
                     .as_ref()
                     == Some(&extra_entry.original)
@@ -553,23 +553,51 @@ impl<B: RadeonBackend> Controller<B> {
         Ok(report)
     }
 
+    fn cached_read_value(
+        &mut self,
+        cache: &mut HashMap<i32, HashMap<String, Value>>,
+        gpu: i32,
+        id: &str,
+    ) -> std::result::Result<Value, BackendError> {
+        if !cache.contains_key(&gpu)
+            && let Ok(settings) = self.backend.read(gpu)
+        {
+            let map: HashMap<String, Value> = settings
+                .into_iter()
+                .filter_map(|s| s.value.map(|v| (s.id.to_owned(), v)))
+                .collect();
+            if !map.is_empty() {
+                cache.insert(gpu, map);
+            }
+        }
+        if let Some(value) = cache.get(&gpu).and_then(|map| map.get(id)) {
+            return Ok(value.clone());
+        }
+        self.backend.read_value(gpu, id)
+    }
+
     fn restore_one(
         &mut self,
         journal: &mut Journal,
         entry: &Entry,
         startup: bool,
+        read_cache: &mut HashMap<i32, HashMap<String, Value>>,
     ) -> (RestoreResult, Vec<Entry>, Vec<(Entry, String)>) {
-        let now = match self.backend.read_value(entry.gpu, &entry.id) {
+        let now = match self.cached_read_value(read_cache, entry.gpu, &entry.id) {
             Ok(now) => now,
             Err(e) => return (RestoreResult::Failed(e.0), vec![], vec![]),
         };
         if now == entry.original {
             if startup {
                 match self.backend.restore_raw(entry) {
-                    Ok(true) => {}
+                    Ok(true) => {
+                        read_cache.remove(&entry.gpu);
+                    }
                     Ok(false) => {
                         if let Err(e) = self.backend.write(entry.gpu, &entry.id, &entry.original) {
                             tracing::debug!(setting = %entry.id, error = %e, "startup write-back of the original");
+                        } else {
+                            read_cache.remove(&entry.gpu);
                         }
                     }
                     Err(e) => {
@@ -590,12 +618,16 @@ impl<B: RadeonBackend> Controller<B> {
             );
         }
         if let Some(toggle) = model::feature_toggle(&entry.id) {
-            match self.backend.read_value(entry.gpu, &toggle) {
-                Ok(Value::Bool(false)) => return self.restore_through(journal, entry, &toggle),
+            match self.cached_read_value(read_cache, entry.gpu, &toggle) {
+                Ok(Value::Bool(false)) => {
+                    read_cache.remove(&entry.gpu);
+                    return self.restore_through(journal, entry, &toggle);
+                }
                 Ok(_) => {}
                 Err(e) => return (RestoreResult::Failed(e.0), vec![], vec![]),
             }
         }
+        read_cache.remove(&entry.gpu);
         let result = match self.put_back(entry) {
             Ok(()) => RestoreResult::Restored,
             Err(message) => RestoreResult::Failed(message),

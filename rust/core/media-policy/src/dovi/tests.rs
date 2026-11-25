@@ -420,3 +420,37 @@ fn full_range_streams_do_not_negotiate_limited_range_dovi_rpus() {
         assert_eq!(negotiated(&full), None, "{codec} {hdr_format}");
     }
 }
+
+#[test]
+fn crc32_mpeg2_lookup_table_matches_bitwise_reference() {
+    fn bitwise_crc32_mpeg2(data: &[u8]) -> u32 {
+        let mut crc = u32::MAX;
+        for &byte in data {
+            crc ^= u32::from(byte) << 24;
+            for _ in 0..8 {
+                crc = if crc & 0x8000_0000 != 0 {
+                    (crc << 1) ^ 0x04C1_1DB7
+                } else {
+                    crc << 1
+                };
+            }
+        }
+        crc
+    }
+
+    let sample: Vec<u8> = (0..300)
+        .map(|i| (i as u8).wrapping_mul(37).wrapping_add(11))
+        .collect();
+    for len in [0, 1, 2, 7, 64, 255, 300] {
+        assert_eq!(
+            crc32_mpeg2(&sample[..len]),
+            bitwise_crc32_mpeg2(&sample[..len])
+        );
+    }
+    let frame = Writer::new(1000).frame(true);
+    let rpu = frame.rpu();
+    assert_eq!(
+        crc32_mpeg2(&rpu[1..rpu.len() - 5]),
+        bitwise_crc32_mpeg2(&rpu[1..rpu.len() - 5])
+    );
+}

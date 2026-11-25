@@ -167,7 +167,7 @@ impl Frame {
     /// The RPU payload: prefix, header, mapping, display-management data,
     /// CRC-32 and the final byte, before emulation prevention.
     pub fn rpu(&self) -> Vec<u8> {
-        let mut bits = Bits::with_prefix(&[RPU_PREFIX]);
+        let mut bits = Bits::with_capacity_prefix(256, &[RPU_PREFIX]);
         header(&mut bits);
         match self.profile {
             Profile::P81 | Profile::P101 => mapping(&mut bits),
@@ -200,7 +200,8 @@ impl Frame {
     pub fn obu(&self) -> Vec<u8> {
         let rpu = self.rpu();
         let payload = &rpu[1..];
-        let mut bits = Bits::with_prefix(&AV1_T35_HEADER);
+        let mut bits =
+            Bits::with_capacity_prefix(AV1_T35_HEADER.len() + payload.len() + 16, &AV1_T35_HEADER);
         bits.put(2, 0); // emdf_version
         bits.put(3, 6); // key_id
         bits.put(5, 31); // emdf_payload_id: 31 and an extension
@@ -211,9 +212,7 @@ impl Frame {
         bits.put(1, 0); // codecdatae
         bits.put(1, 1); // discard_unknown_payload
         bits.variable(8, payload.len() as u64); // emdf_payload_size
-        for &byte in payload {
-            bits.put(8, byte.into());
-        }
+        bits.put_bytes(payload);
         bits.put(5, 0); // emdf_payload_id: the end of the payloads
         bits.put(2, 1); // protection_length_primary
         bits.put(2, 0); // protection_length_secondary
@@ -461,24 +460,35 @@ fn extension_block(bits: &mut Bits, level: u8, length: u64, payload: impl FnOnce
     payload(bits);
     let used = bits.position() - start;
     debug_assert!(used <= length * 8, "L{level} uses {used} bits");
-    for _ in used..length * 8 {
-        bits.put(1, 0); // ext_dm_alignment_zero_bit
-    }
+    bits.put_zeros((length * 8 - used) as usize); // ext_dm_alignment_zero_bit
 }
+
+const CRC32_MPEG2_TABLE: [u32; 256] = {
+    let mut table = [0u32; 256];
+    let mut i = 0usize;
+    while i < 256 {
+        let mut crc = (i as u32) << 24;
+        let mut bit = 0;
+        while bit < 8 {
+            crc = if crc & 0x8000_0000 != 0 {
+                (crc << 1) ^ 0x04C1_1DB7
+            } else {
+                crc << 1
+            };
+            bit += 1;
+        }
+        table[i] = crc;
+        i += 1;
+    }
+    table
+};
 
 /// CRC-32/MPEG-2 (polynomial 0x04C11DB7, initial value all ones, unreflected,
 /// no final XOR), which RPUs carry over everything after their prefix byte.
 pub fn crc32_mpeg2(data: &[u8]) -> u32 {
     let mut crc = u32::MAX;
     for &byte in data {
-        crc ^= u32::from(byte) << 24;
-        for _ in 0..8 {
-            crc = if crc & 0x8000_0000 != 0 {
-                (crc << 1) ^ 0x04C1_1DB7
-            } else {
-                crc << 1
-            };
-        }
+        crc = (crc << 8) ^ CRC32_MPEG2_TABLE[((crc >> 24) ^ u32::from(byte)) as usize];
     }
     crc
 }

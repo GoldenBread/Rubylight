@@ -167,7 +167,7 @@ struct OverlayKey {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct MetaKey {
+pub(super) struct MetaKey {
     source: (u32, u32, Pixel),
     origin: u64,
     ready: Option<(usize, u64)>,
@@ -239,29 +239,26 @@ impl PartialEq for RepeatKey {
 impl Eq for RepeatKey {}
 
 impl RepeatKey {
-    pub(super) fn new(
+    pub(super) fn meta_for(
         image: &GpuImage,
         luminance: [f32; 2],
         overlay: Option<&Overlay>,
         kbps: u32,
-    ) -> Self {
+    ) -> MetaKey {
+        MetaKey::from_inputs(image, luminance, overlay, kbps)
+    }
+
+    pub(super) fn with_meta(image: &GpuImage, overlay: Option<&Overlay>, meta: MetaKey) -> Self {
         Self {
             source_texture: image.texture.clone(),
             _cursor_pixels: image.cursor.as_ref().map(|c| c.pixels.clone()),
             _overlay_rgba: overlay.map(|o| o.rgba.clone()),
-            meta: MetaKey::from_inputs(image, luminance, overlay, kbps),
+            meta,
         }
     }
 
-    pub(super) fn matches(
-        &self,
-        image: &GpuImage,
-        luminance: [f32; 2],
-        overlay: Option<&Overlay>,
-        kbps: u32,
-    ) -> bool {
-        Arc::ptr_eq(&self.source_texture, &image.texture)
-            && self.meta == MetaKey::from_inputs(image, luminance, overlay, kbps)
+    pub(super) fn matches_meta(&self, image: &GpuImage, meta: &MetaKey) -> bool {
+        Arc::ptr_eq(&self.source_texture, &image.texture) && &self.meta == meta
     }
 }
 
@@ -353,28 +350,19 @@ impl<K: PartialEq> RepeatCacheCore<K> {
 }
 
 impl RepeatCache {
-    pub(super) fn matches(
-        &self,
-        image: &GpuImage,
-        luminance: [f32; 2],
-        overlay: Option<&Overlay>,
-        kbps: u32,
-        limit: usize,
-    ) -> bool {
-        self.matches_with(limit, |key| key.matches(image, luminance, overlay, kbps))
+    pub(super) fn matches_meta(&self, image: &GpuImage, meta: &MetaKey, limit: usize) -> bool {
+        self.matches_with(limit, |key| key.matches_meta(image, meta))
     }
 
-    /// Emit a sequence-patched copy of the cached frame if the inputs match and
-    /// the cached wire length fits `limit`.
-    pub(super) fn try_hit(
+    /// Emit a sequence-patched copy of the cached frame if the precomputed key metadata matches
+    /// and the cached wire length fits `limit`.
+    pub(super) fn try_hit_meta(
         &mut self,
         image: &GpuImage,
-        luminance: [f32; 2],
-        overlay: Option<&Overlay>,
-        kbps: u32,
+        meta: &MetaKey,
         limit: usize,
     ) -> Option<Vec<u8>> {
-        self.try_hit_with(limit, |key| key.matches(image, luminance, overlay, kbps))
+        self.try_hit_with(limit, |key| key.matches_meta(image, meta))
     }
 }
 
