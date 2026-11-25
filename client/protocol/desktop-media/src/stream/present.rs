@@ -24,12 +24,26 @@ use super::pipeline::Decoded;
 use crate::config::FramePacing;
 use crate::media::{self, FrameInfo};
 
+mod color;
 mod direct_draw;
+mod geometry;
 mod pacer;
 mod planes;
 mod upload;
+mod video_only;
 
+pub use color::hdr_negotiated;
+pub(super) use color::{interleaved_flags, planar_hlg, planar_parameters, vulkan_flags};
+// Both Linux and macOS route HLG hardware surfaces through the plane shader.
+#[cfg(unix)]
+pub(super) use color::hlg_through_planes;
+use color::*;
+pub use geometry::{draws_one_to_one, viewport, whole_pixel_shift};
+#[cfg(test)]
+pub use geometry::letterbox;
+use geometry::{plain, visible_part};
 pub use pacer::*;
+pub use video_only::{VideoOnly, VideoOnlyFrame, VIDEO_ONLY_ENVIRONMENT};
 
 /// How long the presenter waits for a GPU-decoded picture's fence before the stream ends. The
 /// decoder thread has already waited for the decode, so this is only a bound on a broken device.
@@ -290,145 +304,6 @@ impl Default for VideoTexture {
     }
 }
 
-/// Whether the session negotiated HDR: the client asked for it and the host chose a 10-bit format.
-/// With "10-bit color (SDR)" a 10-bit format alone is SDR.
-pub fn hdr_negotiated(asked_hdr: bool, negotiated_format: u32) -> bool {
-    asked_hdr && negotiated_format & nightjar_core::sdp::VIDEO_FORMAT_MASK_10BIT != 0
-}
-
-/// FFmpeg's AVCOL_TRC_SMPTE2084 (PQ) and AVCOL_TRC_ARIB_STD_B67 (HLG).
-const TRC_PQ: i32 = 16;
-const TRC_HLG: i32 = 18;
-
-/// Whether a picture is shown as HDR: as the host's HDR mode says once it has, else when it
-/// carries the PQ or HLG transfer or the session negotiated HDR. A 10-bit format alone is not HDR.
-fn shows_hdr(hdr_mode: Option<bool>, hdr_stream: bool, color_trc: i32) -> bool {
-    hdr_mode.unwrap_or(hdr_stream || color_trc == TRC_PQ || color_trc == TRC_HLG)
-}
-
-/// The plane shader's constants for a software-decoded planar picture: its colour description is
-/// FFmpeg's, read as `colorspace` reads it (the shader's matrix 0 is BT.601, 2 BT.2020, else BT.709).
-/// An HDR picture with the HLG transfer gets the shader's HLG flag (128), never PQ, with the
-/// display it is drawn for (`planar_hlg`) in place of the wavelet pass's level and operation,
-/// and that display's white as the SDR white.
-pub(super) fn planar_parameters(info: &FrameInfo, layout: media::PlanarLayout, hdr: bool, white_level: f32, headroom: f32) -> [u32; 8] {
-    let matrix = match info.color_space { 5 | 6 => 0, 9 | 10 => 2, _ => 1 };
-    let hlg = planar_hlg(info, hdr, white_level, headroom);
-    let flags = u32::from(info.color_range == 2) | (u32::from(hdr) << 1) | (matrix << 2) | (u32::from(layout.ten_bit) << 4)
-        | (u32::from(layout.chroma444) << 5) | (u32::from(layout.ten_bit) << 6) | (u32::from(hlg.is_some()) << 7);
-    match hlg {
-        Some(display) => [layout.width, layout.height, layout.width, layout.height, display.peak.to_bits(), display.gamma.to_bits(), flags, (display.white / 80.0).to_bits()],
-        None => [layout.width, layout.height, layout.width, layout.height, 0, 3, flags, white_level.to_bits()],
-    }
-}
-
-/// Whether a packed picture takes the other reconstruction than the one made: from planes for a
-/// Vulkan picture (mapped VAAPI or Vulkan video, `vulkan_picture`) where the made one reads memory
-/// (no `planes`), or the reverse, as when a new decoder's map fails.
-#[cfg(any(unix, test))]
-fn packed_path_changed(reconstruction: bool, vulkan_picture: bool, planes: bool) -> bool {
-    reconstruction && vulkan_picture != planes
-}
-
-/// `planar_parameters` for Vulkan video's copied planes when `vulkan`: flag 256 (the chroma
-/// interleaved, 10-bit samples in the high bits) in place of 64 (in the low bits).
-pub(super) fn vulkan_flags(mut parameters: [u32; 8], vulkan: bool) -> [u32; 8] {
-    if vulkan {
-        parameters[6] = parameters[6] & !64 | 256;
-    }
-    parameters
-}
-
-/// `vulkan_flags` for the one copied image of a mapped 4:4:4 VAAPI picture when `interleaved`
-/// (`media::FRAME_VULKAN_INTERLEAVED444`): flag 2048 in place of 256, Y, Cb and Cr read from one
-/// texel, its 10-bit samples whole.
-pub(super) fn interleaved_flags(mut parameters: [u32; 8], interleaved: bool) -> [u32; 8] {
-    if interleaved {
-        parameters[6] = parameters[6] & !256 | 2048;
-    }
-    parameters
-}
-
-/// The display a plane shader picture shown as HDR with the HLG transfer is drawn for, as the
-/// Windows draw pass draws it (`hlg::hlg_display`): an HDR output's own peak (`headroom` over the
-/// SDR white of `white_level` x 80 nits), else HLG's 1000-nit reference display with its
-/// reference white at SDR white, which SDL's tone map brings into SDR. None for other pictures.
-pub(super) fn planar_hlg(info: &FrameInfo, hdr: bool, white_level: f32, headroom: f32) -> Option<super::hlg::HlgDisplay> {
-    (hdr && info.color_trc == TRC_HLG).then(|| super::hlg::hlg_display(headroom, 80.0 * white_level))
-}
-
-/// Whether a picture SDL would show (NV12 or P010 from memory, or an imported VAAPI surface) goes
-/// to the plane shader instead: SDL reads P010 as PQ and knows no HLG, so an HLG one is drawn as a
-/// 4:2:0 planar picture with the shader's HLG flag. SDR and PQ pictures keep SDL's upload or
-/// import as they are.
-#[cfg(unix)]
-pub(super) fn hlg_through_planes(info: &FrameInfo) -> bool {
-    info.color_trc == TRC_HLG && matches!(info.kind, media::FRAME_NV12 | media::FRAME_P010 | media::FRAME_DMABUF)
-}
-
-/// FFmpeg's colour description as an SDL colorspace.
-fn colorspace(info: &FrameInfo) -> SDL_Colorspace {
-    // AVCOL_RANGE_JPEG = 2; AVCOL_SPC_BT709 = 1, BT470BG = 5, SMPTE170M = 6, BT2020_NCL = 9;
-    // AVCOL_TRC_SMPTE2084 = 16.
-    let full = info.color_range == 2;
-    // A PQ picture is YCbCr BT.2020 (SDL's BT2020_* spaces carry the PQ transfer). SDL_COLORSPACE_HDR10
-    // is an RGB space with the identity matrix: SDL's D3D11 renderer cannot make a P010 texture in it
-    // ("Unsupported YUV colorspace"), which showed as "Cannot show d3d11 pictures".
-    if info.color_trc == 16 {
-        return if full { SDL_COLORSPACE_BT2020_FULL } else { SDL_COLORSPACE_BT2020_LIMITED };
-    }
-    match (info.color_space, full) {
-        (9 | 10, false) => SDL_COLORSPACE_BT2020_LIMITED,
-        (9 | 10, true) => SDL_COLORSPACE_BT2020_FULL,
-        (5 | 6, false) => SDL_COLORSPACE_BT601_LIMITED,
-        (5 | 6, true) => SDL_COLORSPACE_BT601_FULL,
-        (_, true) => SDL_COLORSPACE_BT709_FULL,
-        _ => SDL_COLORSPACE_BT709_LIMITED,
-    }
-}
-
-/// The YCbCr matrix (0 BT.601, 1 BT.709, 2 BT.2020) and full range of an SDL colorspace from
-/// `colorspace`, for `stream::direct`.
-#[cfg(windows)]
-fn direct_matrix(space: SDL_Colorspace) -> (u32, bool) {
-    match space {
-        SDL_COLORSPACE_BT601_LIMITED => (0, false),
-        SDL_COLORSPACE_BT601_FULL => (0, true),
-        SDL_COLORSPACE_BT2020_LIMITED => (2, false),
-        SDL_COLORSPACE_BT2020_FULL => (2, true),
-        SDL_COLORSPACE_BT709_FULL => (1, true),
-        _ => (1, false),
-    }
-}
-
-/// A decoded picture's transfer, one decision for every path that shows it. When the stream
-/// shows HDR (`shows_hdr`: the host's HDR mode, else the PQ or HLG transfer or the negotiated
-/// HDR), a picture with the HLG transfer is HLG and any other P010 picture PQ, even when the
-/// bitstream does not signal PQ. Everything else is SDR: an NV12 picture is never PQ.
-#[cfg(windows)]
-fn picture_transfer(format: SDL_PixelFormat, hdr_mode: Option<bool>, hdr_stream: bool, hdr_frame: bool, hlg_frame: bool) -> super::direct::Transfer {
-    use super::direct::Transfer;
-    let trc = if hlg_frame { TRC_HLG } else if hdr_frame { TRC_PQ } else { 0 };
-    if !matches!(format, SDL_PIXELFORMAT_P010 | SDL_PIXELFORMAT_NV12) || !shows_hdr(hdr_mode, hdr_stream, trc) {
-        Transfer::Sdr
-    } else if hlg_frame {
-        Transfer::Hlg
-    } else if format == SDL_PIXELFORMAT_P010 {
-        Transfer::Pq
-    } else {
-        Transfer::Sdr
-    }
-}
-
-/// SDL's D3D11 shaders decode every P010 texture as PQ and NV12 as gamma, and know no HLG: a
-/// picture whose `picture_transfer` differs reaches SDL converted to RGB by the pass.
-#[cfg(windows)]
-fn sdl_needs_rgb(format: SDL_PixelFormat, transfer: super::direct::Transfer) -> bool {
-    use super::direct::Transfer;
-    let sdl_reads = if format == SDL_PIXELFORMAT_P010 { Transfer::Pq } else { Transfer::Sdr };
-    sdl_reads != transfer
-}
-
 /// The pass for the renderer's device, made on first use or after the device changed.
 #[cfg(windows)]
 fn direct_pass(direct: &mut Option<(usize, super::direct::Direct)>, renderer: *mut SDL_Renderer) -> Result<&mut super::direct::Direct, String> {
@@ -455,42 +330,6 @@ fn lock_for(held: &Option<media::Frame>, texture: *mut c_void, submit: &mut dyn 
         Some(frame) if frame.d3d11_surface().is_some_and(|surface| surface.texture == texture) => frame.with_decoder_lock(submit),
         _ => submit(),
     }
-}
-
-/// The HDR properties of a texture request.
-#[derive(Clone, Copy, Debug, PartialEq)]
-struct HdrProperties {
-    /// `SDL_PROP_TEXTURE_CREATE_SDR_WHITE_POINT_FLOAT`, in nits (HDR10 textures only).
-    white_point: Option<f32>,
-    /// `SDL_PROP_TEXTURE_CREATE_HDR_HEADROOM_FLOAT`, relative to the SDR white.
-    headroom: Option<f32>,
-}
-
-/// The white point and headroom a texture is created with. `white_level` is the renderer's SDR
-/// white as a multiple of 80 nits; a value that is not a positive finite number is not passed on.
-fn hdr_properties(hdr10: bool, white_level: f32, metadata: Option<nightjar_core::control::HdrMetadata>) -> HdrProperties {
-    let white_nits = 80.0 * white_level;
-    if !white_nits.is_finite() || white_nits <= 0.0 {
-        return HdrProperties { white_point: None, headroom: None };
-    }
-    let headroom = metadata.and_then(|metadata| {
-        let peak = if metadata.max_content_light_level != 0 {
-            metadata.max_content_light_level
-        } else {
-            metadata.max_display_luminance
-        };
-        (peak > 0).then(|| f32::from(peak) / white_nits)
-    });
-    HdrProperties { white_point: hdr10.then_some(white_nits), headroom }
-}
-
-fn pixel_format_name(format: SDL_PixelFormat) -> String {
-    let name = SDL_GetPixelFormatName(format);
-    if name.is_null() {
-        return format!("format {:#x}", format.0);
-    }
-    // SAFETY: checked non-null above.
-    unsafe { std::ffi::CStr::from_ptr(name) }.to_string_lossy().into_owned()
 }
 
 impl VideoTexture {
@@ -799,171 +638,6 @@ impl VideoTexture {
 #[cfg_attr(not(unix), allow(dead_code))]
 fn planes_after_upload(uploaded: bool, new: Option<[u32; 8]>, last: Option<[u32; 8]>, held: bool, pass_format: Option<[u32; 8]>) -> Option<[u32; 8]> {
     if uploaded || new.is_some() || !held || pass_format != last { new } else { last }
-}
-
-/// `0` keeps every HDR frame on the PQ pass through the back buffer, as before video-only frames.
-#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-pub const VIDEO_ONLY_ENVIRONMENT: &str = "NIGHTJAR_PQ_VIDEO_ONLY";
-
-/// How long the first frame that lost draws holds video-only frames off; each further one doubles it.
-#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-const VIDEO_ONLY_HOLD_US: u64 = 2_000_000;
-
-/// After this many frames that lost draws, a stream draws no more video-only frames.
-#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-const VIDEO_ONLY_MISSES: u32 = 4;
-
-/// What a frame on the window's target will draw, for whether it can be video only.
-#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub struct VideoOnlyFrame {
-    /// The renderer presents through the patched SDL's PQ pass (`handheld::Output::Pq`).
-    pub pq_output: bool,
-    /// The plane pass draws the picture straight into the window's target (`draws_planes_direct`),
-    /// with no upscaler or AI enhancement drawing it instead.
-    pub planes_direct: bool,
-    /// Nothing else draws there that SDL would draw itself: no Remote Input screen, and the
-    /// overlay, a toast or the stream menu only as meshes that write PQ (`ui_pq::UiPq`).
-    pub nothing_else: bool,
-    /// A read-back of the frame is asked for (a screenshot), which reads the back buffer as scRGB.
-    pub read_back: bool,
-}
-
-/// HDR frames that draw only the picture, through the patched SDL's `SDL.renderer.gpu.video_only`
-/// (`vendor/sdl3-src/README.md`): the plane pass writes PQ into the HDR10 swapchain image itself,
-/// and SDL skips the RGBA16F back buffer and its full-screen PQ pass. SDL drops its own draws in
-/// such a frame and counts them; a frame that lost any (something drew that `VideoOnlyFrame` did
-/// not foresee) holds video-only frames off for a while, longer each time, and after
-/// `VIDEO_ONLY_MISSES` for the rest of the stream.
-#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-#[derive(Debug)]
-pub struct VideoOnly {
-    switched_on: bool,
-    /// The path was logged.
-    said: bool,
-    /// SDL's count of the draws it dropped, as last read.
-    dropped_seen: i64,
-    misses: u32,
-    held_until_us: u64,
-}
-
-#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-impl VideoOnly {
-    pub fn of(value: Option<&std::ffi::OsStr>) -> Self {
-        Self { switched_on: !value.is_some_and(|value| value == "0"), said: false, dropped_seen: 0, misses: 0, held_until_us: 0 }
-    }
-
-    pub fn from_environment() -> Self {
-        Self::of(std::env::var_os(VIDEO_ONLY_ENVIRONMENT).as_deref())
-    }
-
-    /// Whether to ask SDL for a video-only frame, and a line to log the first time one could be
-    /// asked for while the environment switches them off.
-    pub fn wanted(&mut self, frame: VideoOnlyFrame, now_us: u64) -> (bool, Option<&'static str>) {
-        let could = frame.pq_output && frame.planes_direct && frame.nothing_else && !frame.read_back;
-        let line = (could && !self.switched_on && !std::mem::replace(&mut self.said, true))
-            .then_some("nightjar: HDR frames go through the back buffer and its PQ pass (NIGHTJAR_PQ_VIDEO_ONLY=0)");
-        (could && self.switched_on && self.misses < VIDEO_ONLY_MISSES && now_us >= self.held_until_us, line)
-    }
-
-    /// What SDL settled for a frame asked to be video only; a line to log the first time.
-    pub fn settled(&mut self, video_only: bool) -> Option<&'static str> {
-        (!std::mem::replace(&mut self.said, true)).then_some(if video_only {
-            "nightjar: HDR frames with only the picture take PQ straight from the plane pass, without the back buffer and its PQ pass"
-        } else {
-            "nightjar: SDL did not take a video-only frame; HDR frames go through the back buffer and its PQ pass"
-        })
-    }
-
-    /// SDL's count of the draws it dropped in video-only frames, after a present; a line to log
-    /// when this frame lost any.
-    pub fn presented(&mut self, dropped: i64, now_us: u64) -> Option<String> {
-        // A renderer made again counts from 0.
-        let lost = if dropped < self.dropped_seen { 0 } else { dropped - self.dropped_seen };
-        self.dropped_seen = dropped;
-        if lost == 0 {
-            return None;
-        }
-        self.misses += 1;
-        if self.misses >= VIDEO_ONLY_MISSES {
-            return Some(format!("nightjar: SDL dropped {lost} draws of a video-only HDR frame; HDR frames go through the PQ pass for the rest of the stream"));
-        }
-        let hold_us = VIDEO_ONLY_HOLD_US << (self.misses - 1);
-        self.held_until_us = now_us + hold_us;
-        Some(format!("nightjar: SDL dropped {lost} draws of a video-only HDR frame; HDR frames go through the PQ pass for {} s", hold_us / 1_000_000))
-    }
-}
-
-/// A decoded H.264, HEVC or AV1 picture, which may carry an encoder's alignment padding; not a
-/// PyroWave or packed 4:4:4 one, whose size the setup gives.
-fn plain(decoded: &Decoded) -> bool {
-    decoded.setup.chroma_packing == 0 && decoded.setup.format & nightjar_core::sdp::VIDEO_FORMAT_MASK_PYROWAVE == 0
-        && decoded.picture.frame().is_some()
-}
-
-/// The `visible` part of a `texture`-sized texture to show, when it is less than the texture;
-/// None when the whole texture is, or the part would reach past it.
-fn visible_part(visible: (i32, i32), texture: (i32, i32)) -> Option<(i32, i32)> {
-    (visible != texture && visible.0 <= texture.0 && visible.1 <= texture.1).then_some(visible)
-}
-
-/// Whether `picture` lands on `destination` one texel to one pixel, the only scale at which the
-/// plane pass shows what SDL's draw of the video texture shows.
-///
-/// The texture SDL draws holds the picture converted to linear light (`pyrowave.hlsl`'s
-/// `linearRgb`, `planes_direct.hlsl`'s `directFinish`), so SDL's bilinear taps when it scales are
-/// in linear light. The plane pass samples the picture's Y'CbCr codes and converts afterwards, so
-/// its taps are in the codes: filtering there and then converting darkens detail on an upscaled
-/// picture and brightens it on a downscaled one, where converting first and then filtering in
-/// linear light leaves the levels alone (issue 120: a PyroWave stream at another resolution than
-/// the display came out dark or bright). Only an unscaled picture is drawn by the plane pass
-/// (`direct_planes` on Windows, `planes_gpu`'s `planesDirect` elsewhere); anything else goes
-/// through the texture.
-pub fn draws_one_to_one(destination: &SDL_FRect, picture: (i32, i32)) -> bool {
-    destination.w == picture.0 as f32
-        && destination.h == picture.1 as f32
-        && destination.x.fract() == 0.0
-        && destination.y.fract() == 0.0
-}
-
-/// The shift of a picture drawn one texel to one pixel, rounded to whole picture pixels:
-/// `packed444.hlsl` rounds it the same way at its own size. A fractional shift samples between
-/// texels, which the plane pass filters in the codes rather than in the converted picture.
-pub fn whole_pixel_shift(shift: [f32; 2], picture: (i32, i32)) -> [f32; 2] {
-    let (width, height) = (picture.0 as f32, picture.1 as f32);
-    if !(width > 0.0 && height > 0.0 && shift[0].is_finite() && shift[1].is_finite()) {
-        return [0.0; 2];
-    }
-    [(shift[0] * width).round() / width, (shift[1] * height).round() / height]
-}
-
-/// The largest rectangle of the picture's aspect ratio inside `area`, centred.
-#[cfg(test)]
-pub fn letterbox(picture: (i32, i32), area: (i32, i32)) -> SDL_FRect {
-    viewport(picture, area, crate::config::VideoScaling::Fit, false)
-}
-
-pub fn viewport(picture: (i32, i32), area: (i32, i32), scaling: crate::config::VideoScaling, top: bool) -> SDL_FRect {
-    use crate::config::VideoScaling;
-    let (aw, ah) = (area.0 as f32, area.1 as f32);
-    if picture.0 <= 0 || picture.1 <= 0 || area.0 <= 0 || area.1 <= 0 {
-        return SDL_FRect { x: 0.0, y: 0.0, w: aw.max(1.0), h: ah.max(1.0) };
-    }
-    let (pw, ph) = (picture.0 as f32, picture.1 as f32);
-    let (w, h) = match scaling {
-        VideoScaling::Stretch => (aw, ah),
-        VideoScaling::Native => (pw, ph),
-        VideoScaling::Fit | VideoScaling::Fill => {
-            let scale = if scaling == VideoScaling::Fit { (aw / pw).min(ah / ph) } else { (aw / pw).max(ah / ph) };
-            ((pw * scale).round(), (ph * scale).round())
-        }
-    };
-    SDL_FRect {
-        x: ((aw - w) / 2.0).trunc(),
-        y: if top && matches!(scaling, VideoScaling::Fit | VideoScaling::Native) { 0.0 } else { ((ah - h) / 2.0).trunc() },
-        w,
-        h,
-    }
 }
 
 #[cfg(all(target_os = "macos", feature = "demo-library"))]
