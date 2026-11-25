@@ -77,26 +77,28 @@ final class NvConnectionAudio {
     }
 
     static boolean microphoneCapturePermitted(NvConnection conn) {
-        if (!conn.micPermitted
-                || conn.stopRequested
-                || (!conn.context.streamConfig.getApp().isMicOnly() && !conn.canSendInput())) {
-            return false;
-        }
-        long now = SystemClock.uptimeMillis();
-        if (conn.microphoneAccessAt != 0 && now - conn.microphoneAccessAt < 100) {
+        synchronized (conn) {
+            if (!conn.micPermitted
+                    || conn.stopRequested
+                    || (!conn.context.streamConfig.getApp().isMicOnly() && !conn.canSendInput())) {
+                return false;
+            }
+            long now = SystemClock.uptimeMillis();
+            if (conn.microphoneAccessAt != 0 && now - conn.microphoneAccessAt < 100) {
+                return conn.microphoneAccess;
+            }
+            AudioManager audio =
+                    (AudioManager) conn.appContext.getSystemService(Context.AUDIO_SERVICE);
+            int mode = recordAudioOp(conn.appContext, RECORD_AUDIO_CHECK);
+            conn.microphoneAccess =
+                    hasMicrophonePermission(conn.appContext)
+                            && audio != null
+                            && !audio.isMicrophoneMute()
+                            && (mode == AppOpsManager.MODE_ALLOWED
+                                    || mode == AppOpsManager.MODE_DEFAULT);
+            conn.microphoneAccessAt = now;
             return conn.microphoneAccess;
         }
-        AudioManager audio =
-                (AudioManager) conn.appContext.getSystemService(Context.AUDIO_SERVICE);
-        int mode = recordAudioOp(conn.appContext, RECORD_AUDIO_CHECK);
-        conn.microphoneAccess =
-                hasMicrophonePermission(conn.appContext)
-                        && audio != null
-                        && !audio.isMicrophoneMute()
-                        && (mode == AppOpsManager.MODE_ALLOWED
-                                || mode == AppOpsManager.MODE_DEFAULT);
-        conn.microphoneAccessAt = now;
-        return conn.microphoneAccess;
     }
 
     static boolean beginControllerMicrophone(NvConnection conn) {

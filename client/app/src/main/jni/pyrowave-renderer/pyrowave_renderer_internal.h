@@ -93,7 +93,7 @@ private:
                      VkImageUsageFlags usage);
     VkFormat planeFormat() const { return tenBit ? VK_FORMAT_R16_UNORM : VK_FORMAT_R8_UNORM; }
     bool createPlanes();
-    bool createSwapchain();
+    bool createSwapchain(bool allowEmpty = false);
     bool createSwapchainResources();
     void destroySwapchainResources();
     PyroWaveExtent surfaceExtent(const VkSurfaceCapabilitiesKHR &caps) const;
@@ -286,6 +286,7 @@ private:
     std::vector<PyroSurfaceFormat> surfaceFormats;
     std::atomic<VkPresentModeKHR> presentMode{VK_PRESENT_MODE_FIFO_KHR};
     VkSwapchainKHR swapchain = VK_NULL_HANDLE;
+    bool surfaceEmpty = false;
     VkExtent2D swapchainExtent = {};
     PyroWaveExtent displayExtent = {};
     VkSurfaceTransformFlagBitsKHR surfaceTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;

@@ -150,10 +150,12 @@ void VulkanRenderer::renderThreadMain() {
     ndk_->AChoreographer_postFrameCallback64(choreographer_, &VulkanRenderer::onVsyncThunk, this);
 
     if (frontBufferAligned_) {
-        alignedTimerFd_ = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK | TFD_CLOEXEC);
-        if (alignedTimerFd_ >= 0) {
-            ALooper_addFd(looper, alignedTimerFd_, kLooperIdAlignedTimer, ALOOPER_EVENT_INPUT,
+        const int timerFd = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK | TFD_CLOEXEC);
+        if (timerFd >= 0) {
+            ALooper_addFd(looper, timerFd, kLooperIdAlignedTimer, ALOOPER_EVENT_INPUT,
                           &VulkanRenderer::onAlignedTimerThunk, this);
+            std::lock_guard<std::mutex> renderLock(renderMutex_);
+            alignedTimerFd_ = timerFd;
         }
         else {
             ALOGW("timerfd_create failed; the front buffer won't be aligned to the scan");
@@ -168,10 +170,15 @@ void VulkanRenderer::renderThreadMain() {
         ndk_->AChoreographer_unregisterRefreshRateCallback(choreographer_, &VulkanRenderer::onRefreshRateThunk, this);
     }
     ALooper_removeFd(looper, wakeFd_);
-    if (alignedTimerFd_ >= 0) {
-        ALooper_removeFd(looper, alignedTimerFd_);
-        close(alignedTimerFd_);
+    int timerFd = -1;
+    {
+        std::lock_guard<std::mutex> renderLock(renderMutex_);
+        timerFd = alignedTimerFd_;
         alignedTimerFd_ = -1;
+    }
+    if (timerFd >= 0) {
+        ALooper_removeFd(looper, timerFd);
+        close(timerFd);
     }
 }
 
@@ -556,12 +563,15 @@ bool VulkanRenderer::presentsAhead() const {
 }
 
 void VulkanRenderer::presentAhead() {
-    if (!presentsAhead()) {
+    if (quit_ || !presentsAhead()) {
         return;
     }
     // In order, as long as each waiting frame's vsync is known and comes after the last one
     // committed. Anything else waits for its vsync.
     for (;;) {
+        if (quit_) {
+            return;
+        }
         FramePtr frame;
         uint64_t presentId = 0;
         int64_t showVsyncNs = 0;

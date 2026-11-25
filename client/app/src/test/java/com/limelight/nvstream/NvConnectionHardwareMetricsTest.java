@@ -175,6 +175,59 @@ public class NvConnectionHardwareMetricsTest {
         }
     }
 
+    @Test
+    public void newlyCreatedTelemetryHttpInheritsHostCapabilitiesAndFetchesMetrics() throws Exception {
+        String payload = "{\"version\":1,\"sampled_at_unix_ms\":1791712800000,\"interval_ms\":1000,\"cpu\":{},\"gpus\":[]}";
+        try (com.limelight.nvstream.http.TestHttpServer server = new com.limelight.nvstream.http.TestHttpServer(req -> {
+            assertEquals("https", req.scheme);
+            assertEquals("/api/hardware-metrics", req.path);
+            return com.limelight.nvstream.http.TestHttpServer.Response.json(200, payload);
+        })) {
+            NvConnection connection = new NvConnection(null,
+                    new ComputerDetails.AddressTuple("127.0.0.1", server.httpPort()),
+                    server.httpsPort(), "device", new StreamConfiguration.Builder().build(),
+                    com.limelight.nativeapi.NativeApiFixtures.crypto(), server.serverCert());
+            ComputerDetails details = connection.getHostDetails();
+            details.caps = com.limelight.nvstream.http.TestHosts.rubylight();
+            details.pairState = PairingManager.PairState.PAIRED;
+            details.httpsPort = server.httpsPort();
+
+            ScheduledThreadPoolExecutor executor = new ScheduledThreadPoolExecutor(1);
+            field(connection, "hardwareMetricsPoller", executor);
+            AtomicReference<HardwareMetrics> received = new AtomicReference<>();
+            Method poll = NvConnection.class.getDeclaredMethod("pollHardwareMetrics",
+                    java.util.concurrent.ScheduledExecutorService.class, Consumer.class);
+            poll.setAccessible(true);
+            try {
+                // Warm up loopback TLS provider before the 2 s hardware-metrics call timeout.
+                NvHTTP unseeded = server.newClient("device", true, com.limelight.nativeapi.NativeApiFixtures.crypto());
+                assertThrows("Unseeded NvHTTP must reject locally before hitting network",
+                        IOException.class, unseeded::getHardwareMetrics);
+                assertEquals(0, server.requests().size());
+                unseeded.setHostCapabilities(details.caps);
+                assertEquals(1000, unseeded.getHardwareMetrics().intervalMs);
+                assertEquals(1, server.requests().size());
+
+                // hardwareMetricsHttp is null: pollHardwareMetrics() must construct NvHTTP and seed hostCaps.
+                poll.invoke(connection, executor, (Consumer<HardwareMetrics>) received::set);
+                Field httpField = NvConnection.class.getDeclaredField("hardwareMetricsHttp");
+                httpField.setAccessible(true);
+                NvHTTP created = (NvHTTP) httpField.get(connection);
+                assertNotNull(created);
+                assertEquals(details.caps, created.getHostCapabilities());
+                if (received.get() == null) {
+                    // Surface the exact transport exception instead of swallowing it in pollHardwareMetrics().
+                    created.getHardwareMetrics();
+                }
+                assertNotNull("Expected live hardware metrics sample (hostCaps seeded on NvHTTP)", received.get());
+                assertEquals(1000, received.get().intervalMs);
+                assertEquals(2, server.requests().size());
+            } finally {
+                connection.stop();
+            }
+        }
+    }
+
     private static HardwareMetrics sample(int interval) {
         return new HardwareMetrics(1, interval, Map.of(), List.of());
     }

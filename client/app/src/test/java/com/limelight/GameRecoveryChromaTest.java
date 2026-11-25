@@ -60,17 +60,29 @@ public class GameRecoveryChromaTest {
         Game game = recoveryGame();
         // This session already runs without packed chroma, so a failure has nothing left to turn off.
         game.setIntent(new Intent().putExtra("PackedChromaOff", true));
-        TerminationProbe probe = new TerminationProbe();
-        ReflectionHelpers.setStaticField(MoonBridge.class, "connectionListener", probe.listener);
+        java.util.concurrent.CountDownLatch ended = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.atomic.AtomicReference<Thread> endedOn = new java.util.concurrent.atomic.AtomicReference<>();
+        ReflectionHelpers.setField(game, "conn", new MuteConnection() {
+            @Override public boolean hasEndedSession() {
+                endedOn.set(Thread.currentThread());
+                ended.countDown();
+                return false;
+            }
+        });
+        // An unrelated newer stream registered on MoonBridge must never be terminated by this Game.
+        TerminationProbe otherStream = new TerminationProbe();
+        ReflectionHelpers.setStaticField(MoonBridge.class, "connectionListener", otherStream.listener);
         try {
             ReflectionHelpers.callInstanceMethod(game.streamRecovery, "onPackedChromaFailure",
                     ReflectionHelpers.ClassParameter.from(String.class, "the GPU path failed"));
-            assertTrue(probe.ended.await(HANG_GUARD_MS, java.util.concurrent.TimeUnit.MILLISECONDS));
+            assertTrue(ended.await(HANG_GUARD_MS, java.util.concurrent.TimeUnit.MILLISECONDS));
             // connectionTerminated asks the PC and tests the network: blocking calls, never on the UI thread.
-            assertNotSame(Looper.getMainLooper().getThread(), probe.endedOn);
-            assertEquals(1, probe.ends);
+            assertNotSame(Looper.getMainLooper().getThread(), endedOn.get());
+            awaitOnUi(() -> game.isFinishing());
+            assertEquals("unrelated MoonBridge listener must not be killed", 0, otherStream.ends);
         } finally {
             ReflectionHelpers.setStaticField(MoonBridge.class, "connectionListener", null);
+            cleanupRecovery(game);
         }
     }
 

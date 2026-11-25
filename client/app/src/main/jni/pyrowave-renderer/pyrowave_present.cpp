@@ -333,6 +333,16 @@ void Renderer::presentLoop() {
 // Runs on the present thread, which owns the swapchain.
 bool Renderer::presentSlot(int index) {
     if (!applyPendingHdr()) return false;
+    if (surfaceEmpty) {
+        if (surfaceSizeChanged(nowUs()) && !recreateSwapchain()) {
+            dropSlot(index);
+            return false;
+        }
+        if (surfaceEmpty) {
+            dropSlot(index);
+            return true;
+        }
+    }
     pollRenderedFrames();
     refreshDisplayClock();
     uint32_t imageIndex = 0;

@@ -533,4 +533,39 @@ public class GameRecoveryMoveTest {
             }
         }
     }
+
+    @Test
+    @Config(shadows = RecoveryBridge.class, instrumentedPackages = "com.limelight.nvstream.jni")
+    public void dismissingOrStoppingMovedPromptDestroysMoveWatchHandleImmediately() throws Exception {
+        java.util.concurrent.atomic.AtomicInteger reads = new java.util.concurrent.atomic.AtomicInteger();
+        Game game = movedAwayFrom(pcAnswering(reads, STILL_MOVED));
+        try {
+            assertNotEquals("move watch handle created", 0L, game.streamConnection.moveWatchHandle);
+            assertNotNull("move watch poll scheduled", game.streamConnection.moveWatchTask);
+            // Dismissing the prompt (e.g., tapping OK) before the 3s timer fires must free the handle at once.
+            android.app.Dialog prompt = ReflectionHelpers.getField(game, "streamMenu");
+            assertNotNull(prompt);
+            prompt.dismiss();
+            org.robolectric.shadows.ShadowLooper.idleMainLooper();
+            assertEquals("handle destroyed on dismiss", 0L, game.streamConnection.moveWatchHandle);
+            assertNull("delayed poll cancelled on dismiss", game.streamConnection.moveWatchTask);
+            passWatchInterval();
+            assertEquals("no background read after dismiss", 0, reads.get());
+        } finally {
+            cleanupRecovery(game);
+        }
+
+        // Also verify stopConnection() destroys the handle directly even if the prompt did not dismiss first.
+        Game destroyed = movedAwayFrom(pcAnswering(reads, STILL_MOVED));
+        try {
+            assertNotEquals(0L, destroyed.streamConnection.moveWatchHandle);
+            destroyed.streamConnection.stopConnection();
+            assertEquals(0L, destroyed.streamConnection.moveWatchHandle);
+            assertNull(destroyed.streamConnection.moveWatchTask);
+            passWatchInterval();
+            assertEquals(0, reads.get());
+        } finally {
+            cleanupRecovery(destroyed);
+        }
+    }
 }

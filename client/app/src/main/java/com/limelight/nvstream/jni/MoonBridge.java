@@ -27,10 +27,10 @@ public class MoonBridge extends MoonBridgeForwarders {
     public static final short LI_CCAP_DUAL_TOUCHPAD   = 0x100;
     public static final short LI_CCAP_HAPTICS_PCM     = (short)0x8000;
 
-    private static AudioRenderer audioRenderer;
+    private static volatile AudioRenderer audioRenderer;
     private static volatile VideoDecoderRenderer videoRenderer;
-    private static NvConnectionListener connectionListener;
-    private static BooleanSupplier connectionCancelled;
+    private static volatile NvConnectionListener connectionListener;
+    private static volatile BooleanSupplier connectionCancelled;
     // Whether the listener was told that this start failed or that its connection ended.
     private static volatile boolean startFailureReported;
     private static volatile boolean packed444Requested;
@@ -45,13 +45,14 @@ public class MoonBridge extends MoonBridgeForwarders {
     }
 
     public static int bridgeDrSetup(int videoFormat, int width, int height, int redrawRate) {
-        if (videoRenderer != null) {
+        VideoDecoderRenderer renderer = videoRenderer;
+        if (renderer != null) {
             // This stream's DESCRIBE has the PC's packed modes now: they name why 10-bit was not picked.
             int packedModes = getHostPacked444Modes();
-            if (packedModes > 0) videoRenderer.setHostPacked444Modes(packedModes);
+            if (packedModes > 0) renderer.setHostPacked444Modes(packedModes);
             // And the ANNOUNCE is out: the renderer decodes the HDR format it actually asked for.
-            videoRenderer.setAnnouncedHdrFormat(getAnnouncedHdrFormat());
-            return videoRenderer.setup(videoFormat, width, height, redrawRate);
+            renderer.setAnnouncedHdrFormat(getAnnouncedHdrFormat());
+            return renderer.setup(videoFormat, width, height, redrawRate);
         }
         else {
             return -1;
@@ -59,32 +60,46 @@ public class MoonBridge extends MoonBridgeForwarders {
     }
 
     public static int bridgeDrSetupPacking(int version, int width, int height, int colorSpace, int colorRange) {
-        return videoRenderer == null ? -1 : videoRenderer.setChromaPacking(version, width, height, colorSpace, colorRange);
+        VideoDecoderRenderer renderer = videoRenderer;
+        return renderer == null ? -1 : renderer.setChromaPacking(version, width, height, colorSpace, colorRange);
     }
 
     public static void bridgeClDisplayMessage(String message) {
-        if (connectionListener != null) connectionListener.displayMessage(message);
+        NvConnectionListener listener = connectionListener;
+        if (listener != null) listener.displayMessage(message);
     }
 
-    public static void bridgeDrStart() { if (videoRenderer != null) videoRenderer.start(); }
+    public static void bridgeDrStart() {
+        VideoDecoderRenderer renderer = videoRenderer;
+        if (renderer != null) renderer.start();
+    }
 
-    public static void bridgeDrStop() { if (videoRenderer != null) videoRenderer.stop(); }
+    public static void bridgeDrStop() {
+        VideoDecoderRenderer renderer = videoRenderer;
+        if (renderer != null) renderer.stop();
+    }
 
-    public static void bridgeDrCleanup() { if (videoRenderer != null) videoRenderer.cleanup(); }
+    public static void bridgeDrCleanup() {
+        VideoDecoderRenderer renderer = videoRenderer;
+        if (renderer != null) renderer.cleanup();
+    }
 
     public static void bridgeDrSubmitChunks(byte[] data, int length, boolean first) {
-        if (videoRenderer != null) videoRenderer.submitChunks(data, length, first);
+        VideoDecoderRenderer renderer = videoRenderer;
+        if (renderer != null) renderer.submitChunks(data, length, first);
     }
 
     // The engine's chunk batch in place; see VideoDecoderRenderer.submitChunksDirect.
     public static void bridgeDrSubmitChunksDirect(ByteBuffer data, int length, boolean first) {
-        if (videoRenderer != null) videoRenderer.submitChunksDirect(data, length, first);
+        VideoDecoderRenderer renderer = videoRenderer;
+        if (renderer != null) renderer.submitChunksDirect(data, length, first);
     }
 
     // Raw native pointer fast path for PyroWave chunks (avoids NewDirectByteBuffer upcalls).
     public static void drSubmitChunksRaw(long dataPtr, int length, boolean first) {
-        if (videoRenderer instanceof MediaCodecDecoderRenderer) {
-            ((MediaCodecDecoderRenderer)videoRenderer).submitChunksRaw(dataPtr, length, first);
+        VideoDecoderRenderer renderer = videoRenderer;
+        if (renderer instanceof MediaCodecDecoderRenderer) {
+            ((MediaCodecDecoderRenderer) renderer).submitChunksRaw(dataPtr, length, first);
         }
     }
 
@@ -92,7 +107,8 @@ public class MoonBridge extends MoonBridgeForwarders {
                                                int frameNumber, int frameType, char frameHostProcessingLatency,
                                                long receiveTimeUs, long enqueueTimeUs, long receiveTimeNs,
                                                long presentationTimeUs) {
-        return videoRenderer == null ? DR_OK : videoRenderer.submitDecodeUnit(decodeUnitData, decodeUnitLength,
+        VideoDecoderRenderer renderer = videoRenderer;
+        return renderer == null ? DR_OK : renderer.submitDecodeUnit(decodeUnitData, decodeUnitLength,
                 decodeUnitType, frameNumber, frameType, frameHostProcessingLatency, receiveTimeUs, enqueueTimeUs,
                 receiveTimeNs, presentationTimeUs);
     }
@@ -102,7 +118,8 @@ public class MoonBridge extends MoonBridgeForwarders {
                                                      int frameNumber, int frameType, char frameHostProcessingLatency,
                                                      long receiveTimeUs, long enqueueTimeUs, long receiveTimeNs,
                                                      long presentationTimeUs) {
-        return videoRenderer == null ? DR_OK : videoRenderer.submitDirectDecodeUnit(decodeUnitData, decodeUnitLength,
+        VideoDecoderRenderer renderer = videoRenderer;
+        return renderer == null ? DR_OK : renderer.submitDirectDecodeUnit(decodeUnitData, decodeUnitLength,
                 decodeUnitType, frameNumber, frameType, frameHostProcessingLatency, receiveTimeUs, enqueueTimeUs,
                 receiveTimeNs, presentationTimeUs);
     }
@@ -112,8 +129,9 @@ public class MoonBridge extends MoonBridgeForwarders {
                                             int frameNumber, int frameType, char frameHostProcessingLatency,
                                             long receiveTimeUs, long enqueueTimeUs, long receiveTimeNs,
                                             long presentationTimeUs) {
-        if (videoRenderer instanceof MediaCodecDecoderRenderer) {
-            return ((MediaCodecDecoderRenderer)videoRenderer).submitRawDecodeUnit(dataPtr, decodeUnitLength,
+        VideoDecoderRenderer renderer = videoRenderer;
+        if (renderer instanceof MediaCodecDecoderRenderer) {
+            return ((MediaCodecDecoderRenderer) renderer).submitRawDecodeUnit(dataPtr, decodeUnitLength,
                     decodeUnitType, frameNumber, frameType, frameHostProcessingLatency, receiveTimeUs, enqueueTimeUs,
                     receiveTimeNs, presentationTimeUs);
         }
@@ -121,58 +139,76 @@ public class MoonBridge extends MoonBridgeForwarders {
     }
 
     public static int bridgeArInit(int audioConfiguration, int sampleRate, int samplesPerFrame) {
-        return audioRenderer == null ? -1 : audioRenderer.setup(new AudioConfiguration(audioConfiguration), sampleRate, samplesPerFrame);
+        AudioRenderer renderer = audioRenderer;
+        return renderer == null ? -1 : renderer.setup(new AudioConfiguration(audioConfiguration), sampleRate, samplesPerFrame);
     }
 
-    public static void bridgeArStart() { if (audioRenderer != null) audioRenderer.start(); }
+    public static void bridgeArStart() {
+        AudioRenderer renderer = audioRenderer;
+        if (renderer != null) renderer.start();
+    }
 
-    public static void bridgeArStop() { if (audioRenderer != null) audioRenderer.stop(); }
+    public static void bridgeArStop() {
+        AudioRenderer renderer = audioRenderer;
+        if (renderer != null) renderer.stop();
+    }
 
-    public static void bridgeArCleanup() { if (audioRenderer != null) audioRenderer.cleanup(); }
+    public static void bridgeArCleanup() {
+        AudioRenderer renderer = audioRenderer;
+        if (renderer != null) renderer.cleanup();
+    }
 
     public static void bridgeArPlaySample(short[] pcmData, int length) {
-        if (audioRenderer != null) audioRenderer.playDecodedAudio(pcmData, length);
+        AudioRenderer renderer = audioRenderer;
+        if (renderer != null) renderer.playDecodedAudio(pcmData, length);
     }
 
     // Direct native-memory stereo AAudio fast path (zero short[] copy, zero getPendingAudioDuration JNI).
     public static int arPlaySampleDirect(long pcmPtr, int length, int pendingMs) {
-        if (audioRenderer instanceof AndroidAudioRenderer) {
-            return ((AndroidAudioRenderer)audioRenderer).playDecodedAudioDirect(pcmPtr, length, pendingMs);
+        AudioRenderer renderer = audioRenderer;
+        if (renderer instanceof AndroidAudioRenderer) {
+            return ((AndroidAudioRenderer) renderer).playDecodedAudioDirect(pcmPtr, length, pendingMs);
         }
         return -1;
     }
 
     // Fallback short[] path with pending audio duration forwarded from Rust (zero getPendingAudioDuration JNI).
     public static void arPlaySamplePending(short[] pcmData, int length, int pendingMs) {
-        if (audioRenderer instanceof AndroidAudioRenderer) {
-            ((AndroidAudioRenderer)audioRenderer).playDecodedAudio(pcmData, length, pendingMs);
-        } else if (audioRenderer != null) {
-            audioRenderer.playDecodedAudio(pcmData, length);
+        AudioRenderer renderer = audioRenderer;
+        if (renderer instanceof AndroidAudioRenderer) {
+            ((AndroidAudioRenderer) renderer).playDecodedAudio(pcmData, length, pendingMs);
+        } else if (renderer != null) {
+            renderer.playDecodedAudio(pcmData, length);
         }
     }
 
     public static int bridgeArInitEncoded(int audioConfiguration, int codec) {
-        return audioRenderer == null ? -1 : audioRenderer.setupEncoded(new AudioConfiguration(audioConfiguration), codec);
+        AudioRenderer renderer = audioRenderer;
+        return renderer == null ? -1 : renderer.setupEncoded(new AudioConfiguration(audioConfiguration), codec);
     }
 
     public static void bridgeArPlayEncoded(byte[] frame, int length) {
-        if (audioRenderer != null) audioRenderer.playEncodedAudio(frame, length);
+        AudioRenderer renderer = audioRenderer;
+        if (renderer != null) renderer.playEncodedAudio(frame, length);
     }
 
     public static void bridgeClStageStarting(int stage) {
         // LiStartConnection resets its interrupt flag before this first callback.
-        if (connectionCancelled != null && connectionCancelled.getAsBoolean()) {
+        BooleanSupplier cancelled = connectionCancelled;
+        if (cancelled != null && cancelled.getAsBoolean()) {
             interruptConnection();
             return;
         }
-        if (connectionListener != null) {
-            connectionListener.stageStarting(getStageName(stage));
+        NvConnectionListener listener = connectionListener;
+        if (listener != null) {
+            listener.stageStarting(getStageName(stage));
         }
     }
 
     public static void bridgeClStageComplete(int stage) {
-        if (connectionListener != null) {
-            connectionListener.stageComplete(getStageName(stage));
+        NvConnectionListener listener = connectionListener;
+        if (listener != null) {
+            listener.stageComplete(getStageName(stage));
         }
     }
 
@@ -185,88 +221,102 @@ public class MoonBridge extends MoonBridgeForwarders {
     }
 
     public static void bridgeClStageFailed(int stage, int errorCode) {
-        if (connectionListener != null) {
+        NvConnectionListener listener = connectionListener;
+        if (listener != null) {
             startFailureReported = true;
-            connectionListener.stageFailed(getStageName(stage), getPortFlagsFromStage(stage), errorCode);
+            listener.stageFailed(getStageName(stage), getPortFlagsFromStage(stage), errorCode);
         }
     }
 
     public static void bridgeClConnectionStarted() {
-        if (connectionListener != null) {
-            connectionListener.connectionStarted();
+        NvConnectionListener listener = connectionListener;
+        if (listener != null) {
+            listener.connectionStarted();
         }
     }
 
     public static void bridgeClConnectionTerminated(int errorCode) {
-        if (connectionListener != null) {
+        NvConnectionListener listener = connectionListener;
+        if (listener != null) {
             startFailureReported = true;
-            connectionListener.connectionTerminated(errorCode);
+            listener.connectionTerminated(errorCode);
         }
     }
 
     public static void bridgeClRumble(short controllerNumber, short lowFreqMotor, short highFreqMotor) {
-        if (connectionListener != null) {
-            connectionListener.rumble(controllerNumber, lowFreqMotor, highFreqMotor);
+        NvConnectionListener listener = connectionListener;
+        if (listener != null) {
+            listener.rumble(controllerNumber, lowFreqMotor, highFreqMotor);
         }
     }
 
     public static void bridgeClConnectionStatusUpdate(int connectionStatus) {
-        if (connectionListener != null) {
-            connectionListener.connectionStatusUpdate(connectionStatus);
+        NvConnectionListener listener = connectionListener;
+        if (listener != null) {
+            listener.connectionStatusUpdate(connectionStatus);
         }
     }
 
     public static void bridgeClSetHdrMode(boolean enabled, byte[] hdrMetadata) {
-        if (connectionListener != null) {
-            connectionListener.setHdrMode(enabled, hdrMetadata);
+        NvConnectionListener listener = connectionListener;
+        if (listener != null) {
+            listener.setHdrMode(enabled, hdrMetadata);
         }
     }
 
     public static void bridgeClRumbleTriggers(short controllerNumber, short leftTrigger, short rightTrigger) {
-        if (connectionListener != null) {
-            connectionListener.rumbleTriggers(controllerNumber, leftTrigger, rightTrigger);
+        NvConnectionListener listener = connectionListener;
+        if (listener != null) {
+            listener.rumbleTriggers(controllerNumber, leftTrigger, rightTrigger);
         }
     }
 
     public static void bridgeClSetMotionEventState(short controllerNumber, byte eventType, short sampleRateHz) {
-        if (connectionListener != null) {
-            connectionListener.setMotionEventState(controllerNumber, eventType, sampleRateHz);
+        NvConnectionListener listener = connectionListener;
+        if (listener != null) {
+            listener.setMotionEventState(controllerNumber, eventType, sampleRateHz);
         }
     }
 
     public static void bridgeClSetControllerLED(short controllerNumber, byte r, byte g, byte b) {
-        if (connectionListener != null) {
-            connectionListener.setControllerLED(controllerNumber, r, g, b);
+        NvConnectionListener listener = connectionListener;
+        if (listener != null) {
+            listener.setControllerLED(controllerNumber, r, g, b);
         }
     }
 
     public static void bridgeClSetAdaptiveTriggers(short controllerNumber, byte eventFlags, byte typeLeft,
                                                    byte typeRight, byte[] left, byte[] right) {
-        if (connectionListener != null) {
-            connectionListener.setAdaptiveTriggers(controllerNumber, eventFlags, typeLeft, typeRight, left, right);
+        NvConnectionListener listener = connectionListener;
+        if (listener != null) {
+            listener.setAdaptiveTriggers(controllerNumber, eventFlags, typeLeft, typeRight, left, right);
         }
     }
 
     public static void bridgeClControllerHaptics(short controllerNumber, int sequence, byte[] pcm) {
-        if (connectionListener != null) {
-            connectionListener.controllerHaptics(controllerNumber, sequence, pcm);
+        NvConnectionListener listener = connectionListener;
+        if (listener != null) {
+            listener.controllerHaptics(controllerNumber, sequence, pcm);
         }
     }
 
     // Steam Controller (2026) haptic report (0x5504) and settings write (0x5505). A host sends them only for a controller that advertised LI_CCAP_STEAM_HAPTIC or
     // LI_CCAP_STEAM_SETTINGS, which Nightjar never does yet.
     public static void bridgeClSteamHaptic(short controllerNumber, byte[] report) {
-        if (connectionListener != null) connectionListener.steamHaptic(controllerNumber, report);
+        NvConnectionListener listener = connectionListener;
+        if (listener != null) listener.steamHaptic(controllerNumber, report);
     }
 
     public static void bridgeClSteamSettings(short controllerNumber, byte command, byte[] triples) {
-        if (connectionListener != null) connectionListener.steamSettings(controllerNumber, command, triples);
+        NvConnectionListener listener = connectionListener;
+        if (listener != null) listener.steamSettings(controllerNumber, command, triples);
     }
 
     // Host cursor shape message (0x5541, docs/protocol/cursor-shape.md), on the control stream's
     // receive thread; only between an accepted sendCursorShapeRequest(true) and the next false.
     public static void bridgeClCursorShape(byte[] message) {
-        if (connectionListener != null) connectionListener.cursorShape(message);
+        NvConnectionListener listener = connectionListener;
+        if (listener != null) listener.cursorShape(message);
     }
 
     public static void bridgeClUsbChanged() {
@@ -278,27 +328,32 @@ public class MoonBridge extends MoonBridgeForwarders {
     public static native int readUsbMicrophone(long handle, byte[] samples);
 
     public static void bridgeClLinkNotice(int state, int ceilingKbps, int currentKbps) {
-        if (connectionListener != null) connectionListener.linkNotice(state, ceilingKbps, currentKbps);
+        NvConnectionListener listener = connectionListener;
+        if (listener != null) listener.linkNotice(state, ceilingKbps, currentKbps);
     }
 
     public static void bridgeClRateChange(int serial, int bitrateKbps, int fpsMillihz, int bitrateStatus,
                                           int bitrateReason, int fpsStatus, int fpsReason) {
-        if (connectionListener != null) {
-            connectionListener.rateChange(new RateChangeResult(serial, bitrateKbps, fpsMillihz, bitrateStatus,
+        NvConnectionListener listener = connectionListener;
+        if (listener != null) {
+            listener.rateChange(new RateChangeResult(serial, bitrateKbps, fpsMillihz, bitrateStatus,
                     bitrateReason, fpsStatus, fpsReason));
         }
     }
 
     public static void bridgeClTextInput(int kind, int inputType, int flags, int element) {
-        if (connectionListener != null) connectionListener.textInput(kind, inputType, flags, element);
+        NvConnectionListener listener = connectionListener;
+        if (listener != null) listener.textInput(kind, inputType, flags, element);
     }
 
     public static void bridgeClClipboardSync(String text) {
-        if (connectionListener != null) connectionListener.clipboardSync(text);
+        NvConnectionListener listener = connectionListener;
+        if (listener != null) listener.clipboardSync(text);
     }
 
     public static void bridgeClClipboardSyncRefused(int reason) {
-        if (connectionListener != null) connectionListener.clipboardSyncRefused(reason);
+        NvConnectionListener listener = connectionListener;
+        if (listener != null) listener.clipboardSyncRefused(reason);
     }
 
     public static void bridgeClHostTiming(byte[] payload) {
@@ -308,7 +363,8 @@ public class MoonBridge extends MoonBridgeForwarders {
     }
 
     public static void bridgeClControllerAudio(int kind, byte[] payload) {
-        if (connectionListener != null) connectionListener.controllerAudio(kind, payload);
+        NvConnectionListener listener = connectionListener;
+        if (listener != null) listener.controllerAudio(kind, payload);
     }
 
     public static native long openUsbHaptics(int fd, int endpoint, int interval);
@@ -342,10 +398,11 @@ public class MoonBridge extends MoonBridgeForwarders {
      * start's result stays -1, so what the PC offers is not forgotten for a refusal that is not its own.
      */
     private static int refuseStart(String stage, int errorCode, String message) {
-        bridgeClDisplayMessage(message);
-        if (connectionListener != null) {
+        NvConnectionListener listener = connectionListener;
+        if (listener != null) {
+            listener.displayMessage(message);
             startFailureReported = true;
-            connectionListener.stageFailed(stage, 0, errorCode);
+            listener.stageFailed(stage, 0, errorCode);
         }
         return -1;
     }
@@ -382,8 +439,9 @@ public class MoonBridge extends MoonBridgeForwarders {
         LimeLog.info("Streaming engine: " + StreamEngine.summary());
         int packedModes = 0;
         if (packed444Requested) {
-            packedModes = videoRenderer == null ? 0 :
-                    videoRenderer.preparePacked444Modes(supportedVideoFormats, width, height, fps);
+            VideoDecoderRenderer renderer = videoRenderer;
+            packedModes = renderer == null ? 0 :
+                    renderer.preparePacked444Modes(supportedVideoFormats, width, height, fps);
             if (packedModes == 0) {
                 return refusePacked444("Full chroma requires a hardware decoder for the coded size/rate and verified raw 8/10-bit GL_EXT_YUV_target sampling.");
             }

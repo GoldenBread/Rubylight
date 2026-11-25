@@ -329,7 +329,7 @@ final class GameHostActions {
             float[] result = LatencyProbe.summarize(samples, measured);
             game.runOnUiThread(() -> {
                 latencyTestRunning = false;
-                if (!game.foreground || !game.connected || game.isFinishing()) return;
+                if (!game.foreground || !game.connected || game.isFinishing() || game.streamMenu != null) return;
                 String message = result == null || measured < 5 ? game.getString(R.string.latency_test_failed) :
                         game.getString(R.string.latency_test_result, result[1], result[0], result[2], measured);
                 LimeLog.info("Latency test: " + message);

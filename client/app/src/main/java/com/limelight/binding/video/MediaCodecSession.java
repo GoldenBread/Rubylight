@@ -117,10 +117,12 @@ final class MediaCodecSession {
         return videoFormat;
     }
 
-    void configureAndStartDecoder(MediaFormat format) {
+    boolean configureAndStartDecoder(MediaFormat format) {
         applyRequiredInputSize(format, r.requiredInputBufferSize);
         // A stream handed back from Vulkan draws on the standard renderer from here
-        r.vulkanHelper.handOverFromVulkan();
+        if (!r.vulkanHelper.handOverFromVulkan()) {
+            return false;
+        }
         // Set HDR metadata if present
         if (r.packing != null) {
             Packed444.sampleDataFormat(format);
@@ -188,6 +190,7 @@ final class MediaCodecSession {
             LimeLog.warning("Decoder diagnostics unavailable: " + e);
             r.telemetry.decoderDiagnostics = "";
         }
+        return true;
     }
 
     // Some decoders only honour low-latency settings sent after start, so send them again at runtime.
@@ -227,7 +230,9 @@ final class MediaCodecSession {
         boolean configured = false;
         try {
             r.videoDecoder = MediaCodec.createByCodecName(selectedDecoderInfo.getName());
-            configureAndStartDecoder(format);
+            if (!configureAndStartDecoder(format)) {
+                return false;
+            }
             LimeLog.info("Using codec " + selectedDecoderInfo.getName() + " for hardware decoding " + format.getString(MediaFormat.KEY_MIME));
             r.activeDecoderName = selectedDecoderInfo.getName();
             r.debt.watchDisplay(DecoderQueuePolicy.watchesDisplayQueue(r.activeDecoderName));

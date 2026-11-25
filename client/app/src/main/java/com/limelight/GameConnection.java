@@ -63,12 +63,28 @@ final class GameConnection {
     private Runnable openPlaySettled;
     boolean streamFailed;
     volatile String movedAwayTo;
+    long moveWatchHandle;
+    Runnable moveWatchTask;
+    android.app.Dialog moveWatchDialog;
 
     static final long STOP_REPORT_MS = 10_000;
     static final long USB_DETACH_WAIT_MS = 500;
     @VisibleForTesting static final int MOVE_WATCH_READS = 50;
 
     GameConnection(Game game) { this.game = game; }
+
+    void destroyMoveWatch() {
+        if (moveWatchTask != null) {
+            game.bitrateHandler.removeCallbacks(moveWatchTask);
+            moveWatchTask = null;
+        }
+        moveWatchDialog = null;
+        if (moveWatchHandle != 0) {
+            long handle = moveWatchHandle;
+            moveWatchHandle = 0;
+            NightjarSessionJni.moveWatchDestroy(handle);
+        }
+    }
 
     void onCreate(Bundle savedInstanceState) {
         if (!GameStreamUiSetup.onCreate(game, this, savedInstanceState)) {
@@ -205,6 +221,7 @@ final class GameConnection {
     }
 
     void stopConnection() {
+        destroyMoveWatch();
         if (hostLossWatch != null) hostLossWatch.stop();
         if (openPlaySettled != null) game.bitrateHandler.removeCallbacks(openPlaySettled);
         game.adaptation.stopFoundationAbr();

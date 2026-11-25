@@ -35,6 +35,8 @@ final class GameMenuActions {
     private com.limelight.ui.StreamMenu streamMenuSheet;
     // Whether the system keyboard was open as the stream menu opened.
     private boolean systemKeyboardAtMenu;
+    // Whether the current streamMenu is a post-stream / termination prompt that must survive onPause().
+    private boolean streamMenuTerminal;
 
     // A failed request may still have ended the session: the host can drop the stream before the
     // request fails, and the lost transport then takes up to its 10 s timeout to report. The
@@ -44,21 +46,51 @@ final class GameMenuActions {
         if (GameMenuActions.this.game.connected && !GameMenuActions.this.game.hostActionInProgress) GameMenuActions.this.game.hostExitRequested = false;
     };
 
+    boolean isTerminalDialog() {
+        return streamMenuTerminal;
+    }
+
     void showStreamDialog(android.app.Dialog dialog) {
+        showStreamDialog(dialog, false);
+    }
+
+    void showTerminalDialog(android.app.Dialog dialog) {
+        showStreamDialog(dialog, true);
+    }
+
+    private void showStreamDialog(android.app.Dialog dialog, boolean terminal) {
+        if (game.streamMenu == dialog) {
+            streamMenuTerminal = terminal;
+            return;
+        }
         game.keyboardInput.hidePcKeyboard();
         game.touchInput.setInputGrabState(false);
+        android.app.Dialog previous = game.streamMenu;
+        game.streamMenuAction = null;
+        streamMenuTerminal = terminal;
+        game.streamMenu = dialog;
         game.suppressPipRefCount++;
         game.videoOutput.updatePipAutoEnter();
-        game.streamMenu = dialog;
+        if (previous != null) {
+            previous.dismiss();
+        }
         dialog.setOnDismissListener(ignored -> {
-            if (game.streamMenu == dialog) {
+            boolean wasCurrent = game.streamMenu == dialog;
+            if (wasCurrent) {
                 game.streamMenu = null;
+                streamMenuTerminal = false;
             }
             if (streamMenuSheet != null && streamMenuSheet.sheet() == dialog) {
                 streamMenuSheet = null;
             }
+            if (game.streamConnection != null && game.streamConnection.moveWatchDialog == dialog) {
+                game.streamConnection.destroyMoveWatch();
+            }
             game.suppressPipRefCount--;
             game.videoOutput.updatePipAutoEnter();
+            if (!wasCurrent) {
+                return;
+            }
             Runnable action = game.streamMenuAction;
             game.streamMenuAction = null;
             if (game.foreground && game.connected && !game.isFinishing()) {

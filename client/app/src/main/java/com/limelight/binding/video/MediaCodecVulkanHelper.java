@@ -138,8 +138,13 @@ final class MediaCodecVulkanHelper {
     // Vulkan renderer's surface (stop, reset or recreate), so the renderer stops presenting here and,
     // once its stop finished, the decoder draws on the standard (direct/GL) path from this configure
     // on. The stopped renderer waits for cleanup rather than being freed on a recovery thread.
-    void handOverFromVulkan() {
-        if (!vulkanHandoverPending) return;
+    // Returns false when the stream is stopping or the handover timed out and must NOT configure.
+    boolean handOverFromVulkan() {
+        if (!vulkanHandoverPending) return true;
+        if (r.stopping) {
+            vulkanHandoverPending = false;
+            return false;
+        }
         VulkanRendererBridge vulkan = r.vulkanRenderer;
         boolean stopFinished = vulkan == null || vulkan.stop();
         // A stop that gave up after RendererGate.STOP_WAIT_MS is still running, and its native part
@@ -147,9 +152,11 @@ final class MediaCodecVulkanHelper {
         // window then. The gate stays closed, so the Vulkan path cannot be kept either (it would
         // freeze on its last frame): end the stream and say why.
         if (!HdrPolicy.handOverAfterVulkanStop(vulkan != null, stopFinished)) {
+            vulkanHandoverPending = false;
+            r.stopping = true;
             failVulkan("the renderer did not stop within " + RendererGate.STOP_WAIT_MS +
                     " ms while handing an HDR stream to the standard renderer");
-            return;
+            return false;
         }
         vulkanHandoverPending = false;
         r.wantVulkan = false;
@@ -165,6 +172,7 @@ final class MediaCodecVulkanHelper {
         // Balanced pacing on the direct path releases frames on the Choreographer, which the Vulkan
         // renderer paced itself and so never started.
         if (r.vsyncPacer.choreographerHandlerThread == null) r.vsyncPacer.startChoreographerThread();
+        return true;
     }
 
     String getVulkanFailure() {

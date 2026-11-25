@@ -129,6 +129,9 @@ bool VulkanRenderer::createSwapchain() {
 
     // Nothing may still use the old swapchain's images when we destroy them
     waitIdle();
+    if (wedged_ || deviceLost_ || quit_) {
+        return false;
+    }
 
     VkSwapchainKHR swapchain = VK_NULL_HANDLE;
     VkResult result = vk_.vkCreateSwapchainKHR(device_, &info, nullptr, &swapchain);
@@ -432,6 +435,9 @@ bool VulkanRenderer::ensureConversion(const ConversionKey& key) {
     }
 
     waitIdle();
+    if (wedged_ || deviceLost_ || quit_) {
+        return false;
+    }
     destroyConversion();
 
     if (key.ycbcr) {

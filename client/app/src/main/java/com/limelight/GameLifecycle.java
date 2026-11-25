@@ -252,6 +252,7 @@ final class GameLifecycle {
         }
         ((DisplayManager) game.getSystemService(Context.DISPLAY_SERVICE))
                 .unregisterDisplayListener(game.inputDisplayListener);
+        if (game.streamMenu != null) { game.streamMenu.dismiss(); }
         if (game.spinner != null) { game.spinner.dismiss(); game.spinner = null; }
         SpinnerDialog.closeDialogs(game);
         Dialog.closeDialogs(game);
@@ -337,7 +338,7 @@ final class GameLifecycle {
             game.pendingConfirmation.cancel();
             game.launchConfirmationFinished();
         }
-        if (game.streamMenu != null) {
+        if (game.streamMenu != null && (!game.menuActions.isTerminalDialog() || game.isFinishing())) {
             restoreInputOnResume = game.restoreInputAfterMenu;
             game.streamMenu.dismiss();
         }

@@ -48,4 +48,12 @@ public class MoonBridgeControlMessagesTest {
         }
         assertEquals(listed, java);
     }
+
+    @Test
+    public void bridgeCallbackFieldsAreVolatile() throws Exception {
+        for (String name : new String[] {"audioRenderer", "videoRenderer", "connectionListener", "connectionCancelled"}) {
+            java.lang.reflect.Field field = MoonBridge.class.getDeclaredField(name);
+            assertTrue(name + " must be volatile", java.lang.reflect.Modifier.isVolatile(field.getModifiers()));
+        }
+    }
 }

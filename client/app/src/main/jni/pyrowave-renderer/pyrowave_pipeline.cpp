@@ -17,7 +17,7 @@ const uint32_t *warpSgsrFragSpv(size_t *sizeBytes) {
     return sgsr_warp_frag_spv;
 }
 
-bool Renderer::createSwapchain() {
+bool Renderer::createSwapchain(bool allowEmpty) {
     // An image taken ahead goes with the old swapchain; its fence must signal before the
     // new swapchain's first acquire uses it.
     if (swapchain != VK_NULL_HANDLE && !imageHold.release([this] { return settleAcquireFence(); })) return false;
@@ -25,9 +25,36 @@ bool Renderer::createSwapchain() {
     if (!check(vk.GetPhysicalDeviceSurfaceCapabilitiesKHR(physicalDevice, surface, &caps), "surface capabilities")) {
         return false;
     }
-    if (caps.currentExtent.width == 0 || caps.currentExtent.height == 0) {
-        LOGW("Surface has no extent yet");
-        return false;
+    const auto logicalExtent = surfaceExtent(caps);
+    if (caps.currentExtent.width == 0 || caps.currentExtent.height == 0 ||
+        logicalExtent.width == 0 || logicalExtent.height == 0) {
+        if (!allowEmpty) {
+            LOGW("Surface has no extent yet");
+            return false;
+        }
+        if (!surfaceEmpty) {
+            LOGI("Surface has no extent yet; pausing presentation until resized");
+        }
+        destroySwapchainResources();
+        if (swapchain != VK_NULL_HANDLE) {
+            pollRenderedFrames();
+            {
+                std::lock_guard<std::mutex> lock(eventsMutex);
+                for (const auto &frame : pendingPresents) {
+                    renderedFrames.push_back(frame.ptsUs);
+                    renderedFrames.push_back(0);
+                }
+            }
+            pendingPresents.clear();
+            vk.DestroySwapchainKHR(device, swapchain, nullptr);
+            swapchain = VK_NULL_HANDLE;
+        }
+        swapchainImages.clear();
+        swapchainExtent = {};
+        displayExtent = {};
+        surfaceEmpty = true;
+        lastSizeCheckUs = nowUs();
+        return true;
     }
 
     if (swapchainFormat == VK_FORMAT_UNDEFINED) {
@@ -94,7 +121,6 @@ bool Renderer::createSwapchain() {
         return false;
     }
     const int32_t rotation = pyroRotationQuarterTurns(transform);
-    const auto logicalExtent = surfaceExtent(caps);
     const auto bufferExtent = pyroRotateExtent(logicalExtent, rotation);
     info.imageExtent = {bufferExtent.width, bufferExtent.height};
     info.imageArrayLayers = 1;
@@ -132,6 +158,7 @@ bool Renderer::createSwapchain() {
         vk.DestroySwapchainKHR(device, swapchain, nullptr);
     }
     swapchain = newSwapchain;
+    surfaceEmpty = false;
     swapchainExtent = info.imageExtent;
     displayExtent = logicalExtent;
     rotationQuarterTurns = rotation;
@@ -225,8 +252,8 @@ PyroWaveExtent Renderer::surfaceExtent(const VkSurfaceCapabilitiesKHR &caps) con
 // Include same-size rotations (landscape to reverse landscape), which do not
 // necessarily resize the Surface or make presentation report SUBOPTIMAL.
 bool Renderer::surfaceSizeChanged(uint64_t now) {
-    constexpr uint64_t SIZE_CHECK_INTERVAL_US = 250'000;
-    if (now - lastSizeCheckUs < SIZE_CHECK_INTERVAL_US) {
+    const uint64_t checkIntervalUs = surfaceEmpty ? 50'000 : 250'000;
+    if (now - lastSizeCheckUs < checkIntervalUs) {
         return false;
     }
     lastSizeCheckUs = now;
@@ -235,6 +262,10 @@ bool Renderer::surfaceSizeChanged(uint64_t now) {
         return false;
     }
     const auto extent = surfaceExtent(caps);
+    if (surfaceEmpty) {
+        return caps.currentExtent.width != 0 && caps.currentExtent.height != 0 &&
+               extent.width != 0 && extent.height != 0;
+    }
     return caps.currentTransform != surfaceTransform || extent.width != displayExtent.width ||
            extent.height != displayExtent.height;
 }
@@ -246,7 +277,7 @@ bool Renderer::recreateSwapchain() {
         std::scoped_lock lock(decodeQueueMutex, renderQueueMutex);
         if (!check(vk.DeviceWaitIdle(device), "wait before recreating swapchain")) return false;
     }
-    return createSwapchain();
+    return createSwapchain(true);
 }
 
 VkShaderModule Renderer::createShader(const uint32_t *code, size_t size) {

@@ -72,6 +72,14 @@ bool VulkanRenderer::renderFrame(const FramePtr& frame, uint64_t presentId, int6
     }
     slotPresentIds_[slot] = 0;
 
+    // Wait/import the decoder's fence before acquiring a swapchain image so a decoder timeout
+    // never leaves imageAcquired_[slot] with a pending WSI signal or strands a swapchain image.
+    bool decoderWait = false;
+    if (frame->decodeFence.pending() && !waitForDecoder(*frame, slot, &decoderWait)) {
+        noteFailure("waiting for the decoder", VK_TIMEOUT, kFatalFenceTimeouts);
+        return false;
+    }
+
     uint32_t imageIndex = 0;
     // In slices, so stopping doesn't wait out the whole timeout
     const auto acquireImage = [&]() {
@@ -280,15 +288,7 @@ bool VulkanRenderer::renderFrame(const FramePtr& frame, uint64_t presentId, int6
     const VkPipelineStageFlags waitStage =
             timed ? VK_PIPELINE_STAGE_ALL_COMMANDS_BIT : VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
 
-    // The decoder's writes, before the barrier that takes the image from it
-    bool decoderWait = false;
-    if (frame->decodeFence.pending() && !waitForDecoder(*frame, slot, &decoderWait)) {
-        // The image is acquired and its semaphore signalled; start the swapchain over
-        swapchainDirty_ = true;
-        recreateSlotSync(slot);
-        noteFailure("waiting for the decoder", VK_TIMEOUT, kFatalFenceTimeouts);
-        return false;
-    }
+    // The decoder's writes (imported before acquireImage) finish before the acquire barrier.
     const VkSemaphore waitSemaphores[2] = {imageAcquired_[slot], decodeDone_[slot]};
     const VkPipelineStageFlags waitStages[2] = {waitStage, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT};
 

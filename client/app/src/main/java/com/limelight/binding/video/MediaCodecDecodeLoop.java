@@ -616,9 +616,19 @@ final class MediaCodecDecodeLoop {
     }
 
     /** The stream's H.264 SPS NAL unit (with its start code), rewritten for this decoder's quirks. */
-    private byte[] patchH264Sps(byte[] decodeUnitData, int decodeUnitLength) {
-        ByteBuffer spsBuf = ByteBuffer.wrap(decodeUnitData);
+    byte[] patchH264Sps(byte[] decodeUnitData, int decodeUnitLength) {
+        if (decodeUnitData == null || decodeUnitLength <= 0) {
+            return new byte[0];
+        }
+        int len = Math.min(decodeUnitLength, decodeUnitData.length);
+        if (len < 4) {
+            return Arrays.copyOf(decodeUnitData, len);
+        }
         int startSeqLen = decodeUnitData[2] == 0x01 ? 3 : 4;
+        if (len <= startSeqLen + 1) {
+            return Arrays.copyOf(decodeUnitData, len);
+        }
+        ByteBuffer spsBuf = ByteBuffer.wrap(decodeUnitData, 0, len);
         spsBuf.position(startSeqLen + 1);
         SeqParameterSet sps = H264Utils.readSPS(spsBuf);
 
@@ -683,7 +693,7 @@ final class MediaCodecDecodeLoop {
 
         doProfileSpecificSpsPatching(sps);
 
-        ByteBuffer escapedNalu = H264Utils.writeSPS(sps, decodeUnitLength);
+        ByteBuffer escapedNalu = H264Utils.writeSPS(sps, len);
         byte[] naluBuffer = new byte[startSeqLen + 1 + escapedNalu.limit()];
         System.arraycopy(decodeUnitData, 0, naluBuffer, 0, startSeqLen + 1);
         escapedNalu.get(naluBuffer, startSeqLen + 1, escapedNalu.limit());

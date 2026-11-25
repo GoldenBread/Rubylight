@@ -277,6 +277,7 @@ public class NvConnection {
             if (request == null) {
                 request = new NvHTTP(context.serverAddress, hostDetails.httpsPort, uniqueId,
                         context.serverCert, cryptoProvider);
+                request.setHostCapabilities(hostDetails.caps);
                 synchronized (this) {
                     if (hardwareMetricsPoller != poller) {
                         request.cancelPendingRequests();
@@ -448,7 +449,7 @@ public class NvConnection {
     // --- Microphone & Controller Audio ---
 
     boolean controllerMicrophoneOwnsRoute() { return NvConnectionAudio.controllerMicrophoneOwnsRoute(this); }
-    boolean microphoneCapturePermitted() { return NvConnectionAudio.microphoneCapturePermitted(this); }
+    synchronized boolean microphoneCapturePermitted() { return NvConnectionAudio.microphoneCapturePermitted(this); }
     void startMicrophone() { NvConnectionAudio.startMicrophone(this, false); }
     static int audioPassthroughCodecs(boolean enabled, boolean muted, int channels) {
         return NvConnectionAudio.audioPassthroughCodecs(enabled, muted, channels);

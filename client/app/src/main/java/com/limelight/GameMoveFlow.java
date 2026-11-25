@@ -43,20 +43,33 @@ final class GameMoveFlow {
                     R.string.continue_here_action, (dialog, which) -> takeStreamBack(game, client));
         }
         Dialog prompt = builder.create();
-        game.menuActions.showStreamDialog(prompt);
+        game.streamConnection.destroyMoveWatch();
+        game.menuActions.showTerminalDialog(prompt);
         if (client != null) {
             long handle = NightjarSessionJni.moveWatchCreate(GameConnection.MOVE_WATCH_READS);
-            watchMovedPrompt(game, prompt, client, handle);
+            if (handle != 0) {
+                game.streamConnection.moveWatchHandle = handle;
+                game.streamConnection.moveWatchDialog = prompt;
+                watchMovedPrompt(game, prompt, client, handle);
+            }
+        }
+    }
+
+    private static void clearMoveWatch(Game game, long watchHandle) {
+        if (game.streamConnection.moveWatchHandle == watchHandle) {
+            game.streamConnection.destroyMoveWatch();
         }
     }
 
     private static void watchMovedPrompt(
             Game game, Dialog prompt, NativeApiClient client, long watchHandle) {
-        if (watchHandle == 0) return;
-        game.bitrateHandler.postDelayed(
+        if (watchHandle == 0 || game.streamConnection.moveWatchHandle != watchHandle) return;
+        Runnable pollTask =
                 () -> {
+                    if (game.streamConnection.moveWatchHandle != watchHandle) return;
+                    game.streamConnection.moveWatchTask = null;
                     if (!prompt.isShowing() || game.isFinishing() || game.isDestroyed()) {
-                        NightjarSessionJni.moveWatchDestroy(watchHandle);
+                        clearMoveWatch(game, watchHandle);
                         return;
                     }
                     new Thread(
@@ -72,6 +85,9 @@ final class GameMoveFlow {
                                         final StreamMove answer = read;
                                         game.runOnUiThread(
                                                 () -> {
+                                                    if (game.streamConnection.moveWatchHandle != watchHandle) {
+                                                        return;
+                                                    }
                                                     boolean showing =
                                                             prompt.isShowing()
                                                                     && !game.isFinishing()
@@ -88,44 +104,40 @@ final class GameMoveFlow {
                                                                     movedKnown,
                                                                     owns);
                                                     if (!showing) {
-                                                        NightjarSessionJni.moveWatchDestroy(
-                                                                watchHandle);
+                                                        clearMoveWatch(game, watchHandle);
                                                         return;
                                                     }
                                                     if (step == 1 && cameBack) {
-                                                        NightjarSessionJni.moveWatchDestroy(
-                                                                watchHandle);
+                                                        clearMoveWatch(game, watchHandle);
                                                         LimeLog.info(
                                                                 "The move failed; the game is this device's again");
                                                         prompt.dismiss();
                                                         showCameBackPrompt(game, client);
                                                     } else if (answer != null && answer.movedTo == null && answer.pressFailed) {
-                                                        NightjarSessionJni.moveWatchDestroy(
-                                                                watchHandle);
+                                                        clearMoveWatch(game, watchHandle);
                                                         LimeLog.info(
                                                                 "The move failed; the game stayed with another device");
                                                         prompt.dismiss();
                                                         showMoveFailedPrompt(game, client);
                                                     } else if (answer != null && answer.movedTo == null) {
-                                                        NightjarSessionJni.moveWatchDestroy(
-                                                                watchHandle);
+                                                        clearMoveWatch(game, watchHandle);
                                                     } else if (step == 2) {
                                                         watchMovedPrompt(
                                                                 game, prompt, client, watchHandle);
                                                     } else {
-                                                        NightjarSessionJni.moveWatchDestroy(
-                                                                watchHandle);
+                                                        clearMoveWatch(game, watchHandle);
                                                     }
                                                 });
                                     },
                                     "Moved prompt")
                             .start();
-                },
-                MOVE_WATCH_MS);
+                };
+        game.streamConnection.moveWatchTask = pollTask;
+        game.bitrateHandler.postDelayed(pollTask, MOVE_WATCH_MS);
     }
 
     private static void showCameBackPrompt(Game game, NativeApiClient client) {
-        game.menuActions.showStreamDialog(
+        game.menuActions.showTerminalDialog(
                 new NavigationDialogBuilder(game)
                         .setTitle(R.string.continue_here_came_back)
                         .setCancelable(false)
@@ -137,7 +149,7 @@ final class GameMoveFlow {
     }
 
     private static void showMoveFailedPrompt(Game game, NativeApiClient client) {
-        game.menuActions.showStreamDialog(
+        game.menuActions.showTerminalDialog(
                 new NavigationDialogBuilder(game)
                         .setTitle(R.string.continue_here_did_not_move)
                         .setCancelable(false)
@@ -231,7 +243,7 @@ final class GameMoveFlow {
             builder.setPositiveButton(
                     R.string.continue_here_action, (dialog, which) -> takeStreamBack(game, client));
         }
-        game.menuActions.showStreamDialog(builder.create());
+        game.menuActions.showTerminalDialog(builder.create());
     }
 
     private static void resumeTheGame(Game game) {
@@ -269,7 +281,7 @@ final class GameMoveFlow {
                                             game.streamRecovery.reconnectStream(false, true);
                                             return;
                                         }
-                                        game.menuActions.showStreamDialog(
+                                        game.menuActions.showTerminalDialog(
                                                 new NavigationDialogBuilder(game)
                                                         .setTitle(R.string.continue_here_failed)
                                                         .setMessage(why)

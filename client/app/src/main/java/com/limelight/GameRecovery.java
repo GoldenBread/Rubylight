@@ -459,8 +459,9 @@ final class GameRecovery {
     // connectionTerminated tests the network and asks the PC (blocking calls), so never on the UI thread.
     private void endStreamAfterPackedFailure(String reason) {
         new Thread(() -> {
-            MoonBridge.bridgeClDisplayMessage("Packed full-chroma presentation stopped: " + reason);
-            MoonBridge.bridgeClConnectionTerminated(-1);
+            if (game.isFinishing() || game.isDestroyed() || game.displayedFailureDialog) return;
+            game.displayMessage("Packed full-chroma presentation stopped: " + reason);
+            game.connectionTerminated(-1);
         }, "Packed chroma end").start();
     }
 
@@ -730,7 +731,7 @@ final class GameRecovery {
     void showReconnectDialog(int title, String message) {
         if (title != R.string.conn_error_title) {
             // A stream that was running and ended: its message speaks of Reconnect, and this is no failed start.
-            game.menuActions.showStreamDialog(new NavigationDialogBuilder(game).setTitle(title).setMessage(message)
+            game.menuActions.showTerminalDialog(new NavigationDialogBuilder(game).setTitle(title).setMessage(message)
                     .setCancelable(false)
                     .setNegativeButton(R.string.stream_disconnect, (dialog, which) -> game.finish())
                     .setPositiveButton(R.string.stream_reconnect, (dialog, which) -> reconnectFromPrompt()).create());
@@ -769,7 +770,7 @@ final class GameRecovery {
                 });
         // After the stream ran only the menu's small copy is held: the panel reads the cover at its own size again.
         game.streamConnection.readCoverInto(screen);
-        game.menuActions.showStreamDialog(screen.dialog());
+        game.menuActions.showTerminalDialog(screen.dialog());
         screen.showFailure();
     }
 

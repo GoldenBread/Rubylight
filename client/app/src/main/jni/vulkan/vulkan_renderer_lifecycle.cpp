@@ -90,6 +90,12 @@ void VulkanRenderer::noteFailure(const char* what, VkResult result, int limit) {
 }
 
 void VulkanRenderer::recreateSlotSync(int slot) {
+    waitIdle();
+    if (wedged_ || deviceLost_) {
+        return;
+    }
+    // Retire any pending WSI signal on imageAcquired_[slot] before destroying the semaphore.
+    destroySwapchain();
     if (fences_[slot]) {
         vk_.vkDestroyFence(device_, fences_[slot], nullptr);
         fences_[slot] = VK_NULL_HANDLE;

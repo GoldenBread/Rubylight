@@ -94,6 +94,14 @@ public class NvHTTP implements AutoCloseable {
 
     long httpHandle() { return handle; }
 
+    public void setHostCapabilities(HostCapabilities caps) {
+        this.hostCaps = caps == null ? HostCapabilities.UNKNOWN : caps;
+    }
+
+    public HostCapabilities getHostCapabilities() {
+        return hostCaps;
+    }
+
     void setServerCert(X509Certificate serverCert) {
         this.serverCert = serverCert;
         try {

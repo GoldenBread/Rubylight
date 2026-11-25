@@ -73,6 +73,13 @@ public class NvConnectionMicrophoneAppOpsTest {
         connection.endControllerMicrophone();
     }
 
+    @Test
+    public void microphoneCapturePermittedIsSynchronized() throws Exception {
+        java.lang.reflect.Method method = NvConnection.class.getDeclaredMethod("microphoneCapturePermitted");
+        assertTrue("microphoneCapturePermitted must be synchronized",
+                java.lang.reflect.Modifier.isSynchronized(method.getModifiers()));
+    }
+
     private static NvConnection connection() {
         NvConnection connection = new NvConnection(RuntimeEnvironment.getApplication(),
                 new ComputerDetails.AddressTuple("127.0.0.1", 47989), 47984, "test",

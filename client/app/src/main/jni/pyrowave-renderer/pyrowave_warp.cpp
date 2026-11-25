@@ -112,6 +112,10 @@ bool Renderer::redrawSlot(int index, int64_t vsyncNs) {
         return true;
     }
     if (!applyPendingHdr()) return false;
+    if (surfaceEmpty) {
+        if (surfaceSizeChanged(nowUs()) && !recreateSwapchain()) return false;
+        if (surfaceEmpty) return true;
+    }
     uint32_t imageIndex = 0;
     const PyroAcquire acquired = imageHold.take(&imageIndex,
             [this](uint32_t *image) { return acquireImage(image, 0); },

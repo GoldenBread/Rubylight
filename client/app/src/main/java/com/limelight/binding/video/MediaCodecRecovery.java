@@ -147,12 +147,12 @@ final class MediaCodecRecovery {
                                         r.restartRecreates, r.restartReason, r.recoveryCodec);
                         if (toVulkan) r.rebuildForVulkan = false;
                         if (!recovered) {
-                            if (r.renderTarget != null && r.renderTarget.isValid()) {
+                            if (!r.stopping && r.renderTarget != null && r.renderTarget.isValid()) {
                                 // The surface is fine: the decoder refused its configuration.
                                 r.telemetry.failDecoder(r.telemetry.decoderName() + " refused its configuration after a recovery", null);
                                 return true;
                             }
-                            // Our Surface is gone, so just stop
+                            // Our Surface is gone, or Vulkan handover failed and already stopped the stream.
                             r.stopping = true;
                         }
                         r.codecRecoveryType.set(MediaCodecDecoderRenderer.CR_RECOVERY_TYPE_NONE);
@@ -273,7 +273,9 @@ final class MediaCodecRecovery {
                     r.vulkanHelper.closeUpscaler();
                     r.vulkanHelper.setupUpscaling();
                 }
-                r.session.configureAndStartDecoder(r.configuredFormat);
+                if (!r.session.configureAndStartDecoder(r.configuredFormat)) {
+                    throw new IllegalArgumentException("Vulkan handover stopped before decoder configure");
+                }
             }
 
             @Override public void rebuild(boolean codecFailed) {
