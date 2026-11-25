@@ -79,6 +79,18 @@ import java.security.cert.X509Certificate;
 final class GameStreamUiSetup {
     private GameStreamUiSetup() {}
 
+    /**
+     * Preserves an explicit fractional stream rate (e.g. 120.04 -> 12004) in RTSP ANNOUNCE
+     * {@code clientRefreshRateX100} when it matches the negotiated integer frame rate, instead of
+     * overwriting it with Android's rounded nominal display refresh rate (#119).
+     */
+    static int clientRefreshRateX100(int launchRefreshRateX100, int chosenFrameRate, float desiredRefreshRate) {
+        if (launchRefreshRateX100 > 0 && (launchRefreshRateX100 + 50) / 100 == chosenFrameRate) {
+            return launchRefreshRateX100;
+        }
+        return Math.round(desiredRefreshRate * 100);
+    }
+
     static boolean onCreate(Game game, GameConnection conn, Bundle savedInstanceState) {
         if (savedInstanceState != null) {
             LimeLog.info("Stream restored after process death");
@@ -385,12 +397,14 @@ final class GameStreamUiSetup {
         game.streamPanelHz = game.panelMaxRefreshRate;
 
         boolean smallStream = game.app.isSmallStreamInputOnly();
+        int launchRefreshRateX100 = smallStream ? 0 : game.prefConfig.launchRefreshRateX100;
+        int streamRefreshRate = smallStream ? NightjarPolicyJni.INPUT_ONLY_SMALL_FPS : chosenFrameRate;
         StreamConfiguration config = new StreamConfiguration.Builder()
                 .setResolution(smallStream ? NightjarPolicyJni.INPUT_ONLY_SMALL_WIDTH : game.prefConfig.width,
                         smallStream ? NightjarPolicyJni.INPUT_ONLY_SMALL_HEIGHT : game.prefConfig.height)
                 .setLaunchRefreshRate(smallStream ? NightjarPolicyJni.INPUT_ONLY_SMALL_FPS : game.prefConfig.fps)
-                .setLaunchRefreshRateX100(smallStream ? 0 : game.prefConfig.launchRefreshRateX100)
-                .setRefreshRate(smallStream ? NightjarPolicyJni.INPUT_ONLY_SMALL_FPS : chosenFrameRate)
+                .setLaunchRefreshRateX100(launchRefreshRateX100)
+                .setRefreshRate(streamRefreshRate)
                 .setApp(game.app)
                 .setResumeOnly(game.streamRecovery.isResumeOnlyStream())
                 .setJoinRunning(game.streamRecovery.isJoinRunningStream())
@@ -409,7 +423,8 @@ final class GameStreamUiSetup {
                 .setPacked444(mediaStream && game.prefConfig.experimentalPacked444)
                 .setSharpColor(mediaStream && (game.prefConfig.enableYuv444 || game.prefConfig.experimentalPacked444),
                         game.prefConfig.videoFormat == PreferenceConfiguration.FormatOption.FORCE_PYROWAVE)
-                .setAttachedGamepadMask(gamepadMask).setClientRefreshRateX100(Math.round(game.desiredRefreshRate * 100))
+                .setAttachedGamepadMask(gamepadMask)
+                .setClientRefreshRateX100(clientRefreshRateX100(launchRefreshRateX100, streamRefreshRate, game.desiredRefreshRate))
                 .setVirtualDisplay(!smallStream && game.prefConfig.virtualDisplay, game.prefConfig.virtualDisplayScale)
                 .setVirtualDisplayDpi(game.prefConfig.virtualDisplayDpi)
                 .setImageEnhancements(game.prefConfig.rtxHdr, game.prefConfig.rtxVideo)

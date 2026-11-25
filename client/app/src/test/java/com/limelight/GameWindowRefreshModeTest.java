@@ -82,6 +82,8 @@ public class GameWindowRefreshModeTest {
                     assertEquals(120.00001f, activity.getWindow().getAttributes().preferredRefreshRate, 0f);
                     View surfaceChild = view.getChildAt(0);
                     assertEquals(120.00001f, surfaceChild.getRequestedFrameRate(), 0f);
+                    assertEquals(120.00001f, view.getRequestedFrameRate(), 0f);
+                    assertEquals(120.00001f, activity.getWindow().getDecorView().getRequestedFrameRate(), 0f);
                 } finally {
                     surface.release();
                     texture.release();
@@ -231,6 +233,9 @@ public class GameWindowRefreshModeTest {
             assertTrue(activity.getWindow().getAttributes().isFrameRatePowerSavingsBalanced());
             assertEquals(View.REQUESTED_FRAME_RATE_CATEGORY_DEFAULT,
                     view.getChildAt(0).getRequestedFrameRate(), 0f);
+            assertEquals(View.REQUESTED_FRAME_RATE_CATEGORY_DEFAULT, view.getRequestedFrameRate(), 0f);
+            assertEquals(View.REQUESTED_FRAME_RATE_CATEGORY_DEFAULT,
+                    activity.getWindow().getDecorView().getRequestedFrameRate(), 0f);
         } finally {
             RefreshSwitchMonitorTest.FakePanel.clear();
             surface.release();
@@ -269,6 +274,237 @@ public class GameWindowRefreshModeTest {
             surface.release();
             texture.release();
         }
+    }
+
+    @Test
+    @Config(sdk = 35, shadows = {GameFrameRateTest.FrameRateSurface.class, RefreshSwitchMonitorTest.FakePanel.class})
+    public void pinnedPhoneRefreshDropReappliesPinThenStartsFallbackHeartbeatAndStopsOnTeardown() {
+        // Issue #168: OriginOS AMOLED (e.g. iQOO 11s, 60/144 Hz without seamless alternatives) drops
+        // to 60 Hz after UI views go idle; stage 1 re-applies the pin, stage 2 starts a UI heartbeat.
+        Display.Mode m60 = RefreshSwitchMonitorTest.mode(1, 60f);
+        Display.Mode m144 = RefreshSwitchMonitorTest.mode(2, 144f);
+        RefreshSwitchMonitorTest.FakePanel.set(m144, m60, m144);
+        Game activity = Robolectric.buildActivity(Game.class).get();
+        PreferenceConfiguration prefs = new PreferenceConfiguration();
+        prefs.width = 2400;
+        prefs.height = 1080;
+        prefs.fps = 120;
+        android.widget.FrameLayout holder = new android.widget.FrameLayout(activity);
+        StreamView view = new StreamView(activity);
+        view.initializeSurface(false);
+        holder.addView(view);
+        attachOverlayViews(activity, holder);
+        ReflectionHelpers.setField(activity, "prefConfig", prefs);
+        ReflectionHelpers.setField(activity, "streamView", view);
+        ReflectionHelpers.setField(activity, "renderView", view);
+        ReflectionHelpers.setField(activity, "connected", true);
+        ReflectionHelpers.setField(activity, "foreground", true);
+        ReflectionHelpers.setField(activity, "panelMaxRefreshRate", 144f);
+        ReflectionHelpers.callInstanceMethod(activity.videoOutput, "prepareDisplayForRendering");
+
+        SurfaceTexture texture = new SurfaceTexture(0);
+        Surface surface = new Surface(texture);
+        try {
+            ReflectionHelpers.setField(activity, "videoSurface", surface);
+            ReflectionHelpers.setField(activity, "surfaceCreated", true);
+            vote(activity, surface);
+            ReflectionHelpers.callInstanceMethod(activity.videoOutput, "startRefreshSwitchPolling");
+
+            // Display drops to 60 Hz while idle.
+            RefreshSwitchMonitorTest.FakePanel.set(m60, m60, m144);
+            GameFrameRateTest.FrameRateSurface voteShadow = Shadow.extract(surface);
+            voteShadow.frameRate = 0f;
+            activity.videoOutput.refresh.pollRefreshSwitchTick();
+            assertNull("Not settled yet", activity.videoOutput.refresh.refreshHeartbeat);
+
+            // After settle window: stage 1 re-applies window mode pin and frame rate vote (no heartbeat yet).
+            ShadowSystemClock.advanceBy(Duration.ofMillis(com.limelight.binding.video.RefreshSwitchDiagnosis.Watcher.SETTLE_MS));
+            activity.videoOutput.refresh.pollRefreshSwitchTick();
+            assertEquals(144f, voteShadow.frameRate, 0f);
+            assertEquals(2, activity.getWindow().getAttributes().preferredDisplayModeId);
+            assertNull(activity.videoOutput.refresh.refreshHeartbeat);
+
+            // Still stuck at 60 Hz after another settle window: stage 2 starts fallback UI heartbeat.
+            ShadowSystemClock.advanceBy(Duration.ofMillis(com.limelight.binding.video.RefreshSwitchDiagnosis.Watcher.SETTLE_MS));
+            activity.videoOutput.refresh.pollRefreshSwitchTick();
+            assertNotNull(activity.videoOutput.refresh.refreshHeartbeat);
+            assertTrue(activity.videoOutput.refresh.refreshHeartbeat.running());
+            assertEquals(3, holder.getChildCount());
+
+            // Teardown removes the fallback heartbeat dot cleanly.
+            ReflectionHelpers.callInstanceMethod(activity.videoOutput, "stopRefreshSwitchPolling");
+            assertNull(activity.videoOutput.refresh.refreshHeartbeat);
+            assertEquals(2, holder.getChildCount());
+        } finally {
+            ReflectionHelpers.callInstanceMethod(activity.videoOutput, "stopRefreshSwitchPolling");
+            RefreshSwitchMonitorTest.FakePanel.clear();
+            surface.release();
+            texture.release();
+        }
+    }
+
+    @Test
+    @Config(sdk = 35, shadows = {GameFrameRateTest.FrameRateSurface.class, RefreshSwitchMonitorTest.FakePanel.class})
+    public void refreshDropRecoveryStartsHeartbeatImmediatelyOnSecondDropAfterReapplyAndStopsInBackground() {
+        Display.Mode m60 = RefreshSwitchMonitorTest.mode(1, 60f);
+        Display.Mode m144 = RefreshSwitchMonitorTest.mode(2, 144f);
+        RefreshSwitchMonitorTest.FakePanel.set(m144, m60, m144);
+        Game activity = Robolectric.buildActivity(Game.class).get();
+        PreferenceConfiguration prefs = new PreferenceConfiguration();
+        prefs.width = 2400;
+        prefs.height = 1080;
+        prefs.fps = 120;
+        android.widget.FrameLayout holder = new android.widget.FrameLayout(activity);
+        StreamView view = new StreamView(activity);
+        view.initializeSurface(false);
+        holder.addView(view);
+        attachOverlayViews(activity, holder);
+        ReflectionHelpers.setField(activity, "prefConfig", prefs);
+        ReflectionHelpers.setField(activity, "streamView", view);
+        ReflectionHelpers.setField(activity, "renderView", view);
+        ReflectionHelpers.setField(activity, "connected", true);
+        ReflectionHelpers.setField(activity, "foreground", true);
+        ReflectionHelpers.setField(activity, "panelMaxRefreshRate", 144f);
+        ReflectionHelpers.callInstanceMethod(activity.videoOutput, "prepareDisplayForRendering");
+
+        SurfaceTexture texture = new SurfaceTexture(0);
+        Surface surface = new Surface(texture);
+        try {
+            ReflectionHelpers.setField(activity, "videoSurface", surface);
+            ReflectionHelpers.setField(activity, "surfaceCreated", true);
+            vote(activity, surface);
+            ReflectionHelpers.callInstanceMethod(activity.videoOutput, "startRefreshSwitchPolling");
+
+            // First drop settles -> stage 1 re-applies pin.
+            RefreshSwitchMonitorTest.FakePanel.set(m60, m60, m144);
+            activity.videoOutput.refresh.pollRefreshSwitchTick();
+            ShadowSystemClock.advanceBy(Duration.ofMillis(com.limelight.binding.video.RefreshSwitchDiagnosis.Watcher.SETTLE_MS));
+            activity.videoOutput.refresh.pollRefreshSwitchTick();
+            assertNull(activity.videoOutput.refresh.refreshHeartbeat);
+
+            // Re-apply temporarily restores 144 Hz, then idle drops it to 60 Hz a second time.
+            RefreshSwitchMonitorTest.FakePanel.set(m144, m60, m144);
+            ShadowSystemClock.advanceBy(Duration.ofSeconds(1));
+            activity.videoOutput.refresh.pollRefreshSwitchTick();
+            RefreshSwitchMonitorTest.FakePanel.set(m60, m60, m144);
+            ShadowSystemClock.advanceBy(Duration.ofSeconds(1));
+            activity.videoOutput.refresh.pollRefreshSwitchTick();
+            ShadowSystemClock.advanceBy(Duration.ofMillis(com.limelight.binding.video.RefreshSwitchDiagnosis.Watcher.SETTLE_MS));
+            activity.videoOutput.refresh.pollRefreshSwitchTick();
+            assertNotNull(activity.videoOutput.refresh.refreshHeartbeat);
+            assertTrue(activity.videoOutput.refresh.refreshHeartbeat.running());
+
+            // Moving out of foreground stops the fallback heartbeat on the next tick.
+            ReflectionHelpers.setField(activity, "foreground", false);
+            ShadowSystemClock.advanceBy(Duration.ofSeconds(1));
+            activity.videoOutput.refresh.pollRefreshSwitchTick();
+            assertNull(activity.videoOutput.refresh.refreshHeartbeat);
+            assertEquals(2, holder.getChildCount());
+
+            // Returning to foreground does not stay wedged at stage 2: a subsequent drop restarts
+            // the fallback heartbeat cleanly (and even a transient missing parent does not wedge it).
+            holder.removeView(view);
+            ReflectionHelpers.setField(activity, "foreground", true);
+            ShadowSystemClock.advanceBy(Duration.ofSeconds(1));
+            activity.videoOutput.refresh.pollRefreshSwitchTick();
+            assertNull("No parent holder yet; must stay retryable", activity.videoOutput.refresh.refreshHeartbeat);
+
+            holder.addView(view);
+            ShadowSystemClock.advanceBy(Duration.ofSeconds(1));
+            activity.videoOutput.refresh.pollRefreshSwitchTick();
+            assertNotNull(activity.videoOutput.refresh.refreshHeartbeat);
+            assertTrue(activity.videoOutput.refresh.refreshHeartbeat.running());
+            assertEquals(3, holder.getChildCount());
+        } finally {
+            ReflectionHelpers.callInstanceMethod(activity.videoOutput, "stopRefreshSwitchPolling");
+            RefreshSwitchMonitorTest.FakePanel.clear();
+            surface.release();
+            texture.release();
+        }
+    }
+
+    @Test
+    @Config(sdk = 35, shadows = {GameFrameRateTest.FrameRateSurface.class, RefreshSwitchMonitorTest.FakePanel.class})
+    public void refreshDropRecoveryDoesNotEngageOnAndroidTvOrBatterySaver() {
+        Display.Mode m60 = RefreshSwitchMonitorTest.mode(1, 60f);
+        Display.Mode m120 = RefreshSwitchMonitorTest.mode(2, 120f);
+        RefreshSwitchMonitorTest.FakePanel.set(m60, m60, m120);
+        try {
+            // Case 1: Battery saver caps the display to 60 Hz; Case 2: Android TV does not pin window modes.
+            for (boolean tv : new boolean[] {false, true}) {
+                Shadows.shadowOf((android.os.PowerManager) RuntimeEnvironment.getApplication()
+                        .getSystemService(android.content.Context.POWER_SERVICE)).setIsPowerSaveMode(!tv);
+                Shadows.shadowOf(RuntimeEnvironment.getApplication().getPackageManager())
+                        .setSystemFeature(PackageManager.FEATURE_LEANBACK, tv);
+                Game activity = Robolectric.buildActivity(Game.class).get();
+                PreferenceConfiguration prefs = new PreferenceConfiguration();
+                prefs.width = 2400;
+                prefs.height = 1080;
+                prefs.fps = 120;
+                android.widget.FrameLayout holder = new android.widget.FrameLayout(activity);
+                StreamView view = new StreamView(activity);
+                view.initializeSurface(false);
+                holder.addView(view);
+                attachOverlayViews(activity, holder);
+                ReflectionHelpers.setField(activity, "prefConfig", prefs);
+                ReflectionHelpers.setField(activity, "streamView", view);
+                ReflectionHelpers.setField(activity, "renderView", view);
+                ReflectionHelpers.setField(activity, "connected", true);
+                ReflectionHelpers.setField(activity, "foreground", true);
+                ReflectionHelpers.setField(activity, "desiredRefreshRate", 120f);
+                SurfaceTexture texture = new SurfaceTexture(0);
+                Surface surface = new Surface(texture);
+                try {
+                    ReflectionHelpers.setField(activity, "videoSurface", surface);
+                    ReflectionHelpers.setField(activity, "surfaceCreated", true);
+                    vote(activity, surface);
+                    ReflectionHelpers.callInstanceMethod(activity.videoOutput, "startRefreshSwitchPolling");
+                    activity.videoOutput.refresh.pollRefreshSwitchTick();
+                    ShadowSystemClock.advanceBy(Duration.ofMillis(com.limelight.binding.video.RefreshSwitchDiagnosis.Watcher.SETTLE_MS * 2));
+                    activity.videoOutput.refresh.pollRefreshSwitchTick();
+                    ShadowSystemClock.advanceBy(Duration.ofMillis(com.limelight.binding.video.RefreshSwitchDiagnosis.Watcher.SETTLE_MS * 2));
+                    activity.videoOutput.refresh.pollRefreshSwitchTick();
+                    assertNull(tv ? "Android TV" : "Battery saver", activity.videoOutput.refresh.refreshHeartbeat);
+                } finally {
+                    ReflectionHelpers.callInstanceMethod(activity.videoOutput, "stopRefreshSwitchPolling");
+                    surface.release();
+                    texture.release();
+                }
+            }
+        } finally {
+            Shadows.shadowOf((android.os.PowerManager) RuntimeEnvironment.getApplication()
+                    .getSystemService(android.content.Context.POWER_SERVICE)).setIsPowerSaveMode(false);
+            Shadows.shadowOf(RuntimeEnvironment.getApplication().getPackageManager())
+                    .setSystemFeature(PackageManager.FEATURE_LEANBACK, false);
+            RefreshSwitchMonitorTest.FakePanel.clear();
+        }
+    }
+
+    @Test
+    public void fractionalLaunchRefreshRateIsPreservedInClientRefreshRateX100() {
+        // Issue #119: explicit fractional stream rate (e.g. 120.04 on nominal 120.0 Hz Fold7)
+        // must survive into RTSP clientRefreshRateX100 instead of being overwritten with 12000.
+        assertEquals(12004, GameStreamUiSetup.clientRefreshRateX100(12004, 120, 120.0f));
+        assertEquals(11988, GameStreamUiSetup.clientRefreshRateX100(11988, 120, 120.0f));
+        assertEquals(5994, GameStreamUiSetup.clientRefreshRateX100(5994, 60, 120.0f));
+        // Unset launchRefreshRateX100 or a stream clamped to a different integer rate keeps desiredRefreshRate.
+        assertEquals(12000, GameStreamUiSetup.clientRefreshRateX100(0, 120, 120.0f));
+        assertEquals(5994, GameStreamUiSetup.clientRefreshRateX100(0, 60, 59.94f));
+        assertEquals(6000, GameStreamUiSetup.clientRefreshRateX100(12004, 60, 60.0f));
+    }
+
+    private static void attachOverlayViews(Game activity, android.widget.FrameLayout holder) {
+        android.widget.ScrollView scroll = new android.widget.ScrollView(activity);
+        android.widget.LinearLayout row = new android.widget.LinearLayout(activity);
+        android.widget.TextView col1 = new android.widget.TextView(activity);
+        android.widget.TextView col2 = new android.widget.TextView(activity);
+        col2.setId(R.id.performanceOverlayColumn2);
+        row.addView(col1);
+        row.addView(col2);
+        scroll.addView(row);
+        holder.addView(scroll);
+        ReflectionHelpers.setField(activity, "performanceOverlayView", col1);
+        ReflectionHelpers.setField(activity, "performanceOverlayScroll", scroll);
     }
 
     private static void giveStreamView(Game activity) {

@@ -7,18 +7,25 @@ import com.limelight.binding.video.HdrFormatPolicy;
 import com.limelight.binding.video.HdrPolicy;
 import com.limelight.binding.video.HdrRecomposition;
 import com.limelight.binding.video.PerformanceOverlay;
+import com.limelight.binding.video.RefreshSwitchDiagnosis;
 import com.limelight.binding.video.RefreshSwitchMonitor;
 import com.limelight.binding.video.Sdr10Policy;
 import com.limelight.binding.video.UpscalingPolicy;
 import com.limelight.computers.HostNotices;
+import com.limelight.nvstream.http.NvApp;
 import com.limelight.nvstream.jni.MoonBridge;
 import com.limelight.preferences.PreferenceConfiguration;
+import com.limelight.ui.CompositorHeartbeat;
 import com.limelight.ui.StreamGlass;
 import android.os.Build;
+import android.os.Looper;
 import android.os.SystemClock;
 import android.view.Display;
 import android.view.Surface;
 import android.view.View;
+import android.view.ViewGroup;
+import android.view.ViewParent;
+import android.view.Window;
 import android.view.WindowManager;
 
 /** Display refresh-rate selection, surface and content-rate votes, refresh-switch/ARR/HDR/Vulkan status polling, and Vulkan HDR recomposition. */
@@ -32,6 +39,14 @@ final class GameVideoRefresh {
             new DisplayFrameRatePolicy.ContentRateVote();
     // Tells why the screen did not follow the vote (see RefreshSwitchDiagnosis); created once connected.
     private RefreshSwitchMonitor refreshSwitchMonitor;
+    // Fallback recovery for pinned phone displays (e.g. OriginOS/ColorOS AMOLED LTPO) that drop
+    // back to 60 Hz after UI views go idle (#168): stage 1 re-applies the pinned mode and frame
+    // rate vote; stage 2 starts a UI compositor heartbeat if the display stays dropped or drops again.
+    private int refreshRecoveryStage;
+    private float refreshRecoveryVoteHz;
+    private long refreshRecoveryAtMs;
+    private boolean refreshRecoveredAfterReapply;
+    CompositorHeartbeat refreshHeartbeat;
     // One GPU composition of the Vulkan renderer's HDR picture each time it starts or the stream comes back to the front,
     // as opening the stream menu gives it: some screens show it as SDR until then (HdrRecomposition).
     private final HdrRecomposition hdrRecomposition = new HdrRecomposition();
@@ -88,8 +103,10 @@ final class GameVideoRefresh {
                     television, game.externalPresentation != null);
             displayRefreshRate = bestMode.getRefreshRate();
         }
-        if (game.prefConfig.useTextureView && game.renderView != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) {
-            game.renderView.setVideoRequestedFrameRate(game.useArr ? View.REQUESTED_FRAME_RATE_CATEGORY_DEFAULT : displayRefreshRate);
+        applyRequestedFrameRate(game.useArr ? View.REQUESTED_FRAME_RATE_CATEGORY_DEFAULT : displayRefreshRate);
+        if (game.useArr) {
+            stopRefreshHeartbeat();
+            resetRefreshRecovery();
         }
         logDisplayRefreshPolicy(display, arrSupported);
 
@@ -132,9 +149,9 @@ final class GameVideoRefresh {
             float vote = DisplayFrameRatePolicy.arrVote(
                     exactRate > 0 ? exactRate / 1000f : game.prefConfig.fps, game.panelMaxRefreshRate);
             DisplayFrameRatePolicy.applyWindowDisplayMode(output.getVideoWindow(), 0, 0f, true);
-            if (game.renderView != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) {
-                game.renderView.setVideoRequestedFrameRate(View.REQUESTED_FRAME_RATE_CATEGORY_DEFAULT);
-            }
+            stopRefreshHeartbeat();
+            resetRefreshRecovery();
+            applyRequestedFrameRate(View.REQUESTED_FRAME_RATE_CATEGORY_DEFAULT);
             applySurfaceFrameRate(surface, vote, Surface.CHANGE_FRAME_RATE_ONLY_IF_SEAMLESS);
             output.arrHalfRate.reset();
             LimeLog.info("VRR: ARR vote " + vote + " Hz (stream rate, seamless only)");
@@ -193,10 +210,20 @@ final class GameVideoRefresh {
             output.appSurfaceSeamlessOnly = true;
         }
         if (!game.useArr) {
-            if (game.renderView != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) {
-                game.renderView.setVideoRequestedFrameRate(frameRate);
-            }
+            applyRequestedFrameRate(frameRate);
             syncWindowDisplayMode(frameRate, output.appSurfaceSeamlessOnly);
+        }
+    }
+
+    private void applyRequestedFrameRate(float frameRate) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.VANILLA_ICE_CREAM) return;
+        if (game.renderView != null) {
+            game.renderView.setVideoRequestedFrameRate(frameRate);
+        }
+        Window window = output.getVideoWindow();
+        View decor = window == null ? null : window.getDecorView();
+        if (decor != null) {
+            decor.setRequestedFrameRate(frameRate);
         }
     }
 
@@ -217,6 +244,9 @@ final class GameVideoRefresh {
 
     void stopRefreshSwitchPolling() {
         game.bitrateHandler.removeCallbacks(output.pollRefreshSwitch);
+        stopRefreshHeartbeat();
+        resetRefreshRecovery();
+        if (refreshSwitchMonitor != null) refreshSwitchMonitor.poll(0, null, null, false);
         output.arrHalfRate.reset();
         game.messages.status("refresh", null);
         game.messages.status("arr", null);
@@ -231,12 +261,124 @@ final class GameVideoRefresh {
         checkVulkanPace();
     }
 
-    // When the screen has stayed off the rate voted for, says why on the overlay's status line.
+    // When the screen has stayed off the rate voted for, says why on the overlay's status line
+    // and, on pinned non-ARR non-TV displays, attempts pin re-application and UI heartbeat recovery.
     private void checkRefreshSwitch() {
+        if (refreshHeartbeat != null && !canKeepRefreshHeartbeat()) {
+            stopRefreshHeartbeat();
+        }
         if (refreshSwitchMonitor == null) return;
-        String text = refreshSwitchMonitor.poll(SystemClock.uptimeMillis(), output.getVideoDisplay(),
-                game.surfaceCreated && !game.useArr ? game.appSurfaceFrameRateVote : null, output.appSurfaceSeamlessOnly);
+        long nowMs = SystemClock.uptimeMillis();
+        Display display = output.getVideoDisplay();
+        Float voteHz = game.surfaceCreated && !game.useArr ? game.appSurfaceFrameRateVote : null;
+        String text = refreshSwitchMonitor.poll(nowMs, display, voteHz, output.appSurfaceSeamlessOnly);
         if (game.messages.status("refresh", text)) game.overlays.updatePerformanceOverlay();
+        recoverPinnedRefresh(nowMs, display, voteHz, refreshSwitchMonitor.lastSettled());
+    }
+
+    private boolean canKeepRefreshHeartbeat() {
+        return game.connected && game.foreground && !game.isFinishing() && !game.isDestroyed()
+                && !game.useArr && output.compositorHeartbeat == null
+                && (game.app == null || game.app.getRole() != NvApp.Role.INPUT_ONLY)
+                && (Build.VERSION.SDK_INT < Build.VERSION_CODES.O || !game.isInPictureInPictureMode());
+    }
+
+    private boolean canRecoverPinnedRefresh(RefreshSwitchDiagnosis.Result settled) {
+        if (settled == null || output.appSurfaceSeamlessOnly || !canKeepRefreshHeartbeat()) return false;
+        if (settled.activeHz >= settled.voteHz - 0.5f) return false;
+        if (settled.cause != RefreshSwitchDiagnosis.Cause.UNEXPLAINED &&
+                settled.cause != RefreshSwitchDiagnosis.Cause.NEEDS_MATCH_SETTING) {
+            return false;
+        }
+        return DisplayFrameRatePolicy.syncsWindowDisplayModeWithVote(
+                game.useArr, game.prefConfig.useTextureView, output.isTelevision(), game.externalPresentation != null);
+    }
+
+    private void recoverPinnedRefresh(long nowMs, Display display, Float voteHz, RefreshSwitchDiagnosis.Result settled) {
+        if (voteHz == null || voteHz <= 0f) {
+            stopRefreshHeartbeat();
+            resetRefreshRecovery();
+            return;
+        }
+        if (refreshRecoveryVoteHz > 0f && Math.abs(voteHz - refreshRecoveryVoteHz) > 0.01f) {
+            stopRefreshHeartbeat();
+            resetRefreshRecovery();
+        }
+        if (settled == null) {
+            if (refreshRecoveryStage == 1 && display != null &&
+                    RefreshSwitchDiagnosis.holds(voteHz, display.getMode().getRefreshRate())) {
+                refreshRecoveredAfterReapply = true;
+            }
+            return;
+        }
+        if (!canRecoverPinnedRefresh(settled)) return;
+        if (refreshRecoveryStage == 0) {
+            reapplyPinnedDisplayMode(voteHz);
+            refreshRecoveryStage = 1;
+            refreshRecoveryVoteHz = voteHz;
+            refreshRecoveryAtMs = nowMs;
+            refreshRecoveredAfterReapply = false;
+            LimeLog.info("Refresh drop recovery: re-applying pinned display mode for " + voteHz + " Hz");
+        } else if ((refreshRecoveryStage == 1 &&
+                (refreshRecoveredAfterReapply || nowMs - refreshRecoveryAtMs >= RefreshSwitchDiagnosis.Watcher.SETTLE_MS)) ||
+                (refreshRecoveryStage == 2 && refreshHeartbeat == null)) {
+            startRefreshHeartbeat(voteHz, nowMs);
+        }
+    }
+
+    private void reapplyPinnedDisplayMode(float voteHz) {
+        syncWindowDisplayMode(voteHz, false);
+        Window window = output.getVideoWindow();
+        if (window != null) {
+            // Re-commit attributes even when preferredDisplayModeId is unchanged so the window manager
+            // re-evaluates the pinned mode after an OEM idle refresh drop.
+            window.setAttributes(window.getAttributes());
+        }
+        if (game.videoSurface != null && game.videoSurface.isValid()) {
+            applySurfaceFrameRate(game.videoSurface, voteHz, Surface.CHANGE_FRAME_RATE_ALWAYS);
+        } else {
+            applyRequestedFrameRate(voteHz);
+        }
+    }
+
+    private void startRefreshHeartbeat(float voteHz, long nowMs) {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            game.runOnUiThread(() -> startRefreshHeartbeat(voteHz, nowMs));
+            return;
+        }
+        if (!canKeepRefreshHeartbeat()) return;
+        ViewParent parent = game.renderView == null ? null : game.renderView.getParent();
+        ViewGroup holder = parent instanceof ViewGroup ? (ViewGroup) parent : null;
+        if (holder == null) return;
+        if (refreshHeartbeat != null && refreshHeartbeat.holder() != holder) {
+            refreshHeartbeat.stop();
+            refreshHeartbeat = null;
+        }
+        if (refreshHeartbeat == null) {
+            refreshHeartbeat = new CompositorHeartbeat(holder);
+            refreshHeartbeat.start();
+            LimeLog.info("Refresh drop recovery: starting UI compositor heartbeat to hold " + voteHz + " Hz");
+        }
+        refreshRecoveryStage = 2;
+        refreshRecoveryAtMs = nowMs;
+        reapplyPinnedDisplayMode(voteHz);
+    }
+
+    private void stopRefreshHeartbeat() {
+        if (refreshHeartbeat == null) return;
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            game.runOnUiThread(this::stopRefreshHeartbeat);
+            return;
+        }
+        refreshHeartbeat.stop();
+        refreshHeartbeat = null;
+    }
+
+    private void resetRefreshRecovery() {
+        refreshRecoveryStage = 0;
+        refreshRecoveryVoteHz = 0f;
+        refreshRecoveryAtMs = 0L;
+        refreshRecoveredAfterReapply = false;
     }
 
     // Under ARR the refresh switch check above cannot tell what the screen runs at, so watch what it

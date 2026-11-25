@@ -20,10 +20,16 @@ import java.util.List;
 public final class RefreshSwitchMonitor {
     private final Context context;
     private final RefreshSwitchDiagnosis.Watcher watcher = new RefreshSwitchDiagnosis.Watcher();
+    private RefreshSwitchDiagnosis.Result lastSettled;
     private String logged;
 
     public RefreshSwitchMonitor(Context context) {
         this.context = context.getApplicationContext() != null ? context.getApplicationContext() : context;
+    }
+
+    /** The settled mismatch from the latest {@link #poll}, or null when holding or unsettled. */
+    public RefreshSwitchDiagnosis.Result lastSettled() {
+        return lastSettled;
     }
 
     /**
@@ -34,12 +40,14 @@ public final class RefreshSwitchMonitor {
     public String poll(long nowMs, Display display, Float voteHz, boolean seamlessOnly) {
         if (voteHz == null || voteHz <= 0 || Build.VERSION.SDK_INT < Build.VERSION_CODES.R || display == null) {
             watcher.observe(nowMs, null);
+            lastSettled = null;
             return null;
         }
         RefreshSwitchDiagnosis.PanelMode active = activeMode(display);
         RefreshSwitchDiagnosis.Result result = RefreshSwitchDiagnosis.diagnose(Build.VERSION.SDK_INT, voteHz,
                 seamlessOnly, active, modes(display), conditions(context));
         RefreshSwitchDiagnosis.Result settled = watcher.observe(nowMs, result);
+        lastSettled = settled;
         if (settled == null) {
             if (!result.mismatch()) logged = null;
             return null;

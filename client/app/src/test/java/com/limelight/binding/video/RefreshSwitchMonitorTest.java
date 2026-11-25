@@ -73,7 +73,24 @@ public class RefreshSwitchMonitorTest {
         monitor.poll(10_000, display, 120f, true);
         assertNotNull(monitor.poll(10_000 + SETTLE, display, 120f, true));
         assertNull("No vote, nothing to follow", monitor.poll(20_000, display, null, true));
+        assertNull(monitor.lastSettled());
         assertNull("The zero vote leaves the rate to ARR", monitor.poll(21_000, display, 0f, true));
+        assertNull(monitor.lastSettled());
+    }
+
+    @Test public void lastSettledTracksTheSettledDiagnosisAndClearsOnRecovery() {
+        RefreshSwitchMonitor monitor = new RefreshSwitchMonitor(context);
+        assertNull(monitor.lastSettled());
+        assertNull(monitor.poll(0, display, 120f, false));
+        assertNull(monitor.lastSettled());
+        assertNotNull(monitor.poll(SETTLE, display, 120f, false));
+        assertNotNull(monitor.lastSettled());
+        assertEquals(RefreshSwitchDiagnosis.Cause.UNEXPLAINED, monitor.lastSettled().cause);
+        assertEquals(120f, monitor.lastSettled().voteHz, 0f);
+        assertEquals(60f, monitor.lastSettled().activeHz, 0f);
+        FakePanel.setActive(mode(3, 120f, 60f, 90f));
+        assertNull(monitor.poll(SETTLE + 1_000, display, 120f, false));
+        assertNull(monitor.lastSettled());
     }
 
     @Test public void batterySaverIsNamedWhenItIsOn() {
