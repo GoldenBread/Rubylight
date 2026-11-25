@@ -55,11 +55,17 @@ final class HostFeed {
                 if (!candidate.waitForReady() || activity.isFinishing() || activity.isDestroyed()) {
                     return;
                 }
+                List<ComputerDetails> saved = candidate.getSavedComputers();
                 activity.runOnUiThread(() -> {
                     if (!bound || activity.isFinishing() || activity.isDestroyed()) {
                         return;
                     }
                     binder = candidate;
+                    for (ComputerDetails details : saved) {
+                        if (details != null && details.uuid != null) {
+                            update(new ComputerDetails(details));
+                        }
+                    }
                     startPolling();
                 });
             }, "console-host-feed");

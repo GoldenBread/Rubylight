@@ -123,7 +123,7 @@ final class GameTouchInput {
     void cancelTouchInput() {
         if (game.desktopGestures != null) game.desktopGestures.cancelTouch();
         cancelHostTouchInput();
-        physicalTouchpad.cancelNativeTouchpad();
+        physicalTouchpad.cancelTouchpad();
     }
 
     // Desktop pan/zoom takes over the host gesture while retaining its own tap candidate.
@@ -274,8 +274,12 @@ final class GameTouchInput {
         if (game.trackpadPointer != null) {
             if (game.streamView.getWidth() <= 0 || game.streamView.getHeight() <= 0) return;
             float zoom = game.trackpadPointer.isLocalCursor() ? game.trackpadPointer.zoomScale() : 1;
-            dx *= game.prefConfig.width / (game.streamView.getWidth() * zoom);
-            dy *= game.prefConfig.height / (game.streamView.getHeight() * zoom);
+            boolean inputOnly = game.app != null && game.app.getRole() == com.limelight.nvstream.http.NvApp.Role.INPUT_ONLY;
+            float[] scale = com.limelight.binding.input.touch.RelativeTouchContext.motionScale(
+                    game.prefConfig.width, game.prefConfig.height,
+                    game.streamView.getWidth(), game.streamView.getHeight(), 1f / zoom, inputOnly);
+            dx *= scale[0];
+            dy *= scale[1];
             game.trackpadPointer.stopMomentum();
         }
         short x = desktopDelta(desktopDeltaX, dx);

@@ -27,6 +27,7 @@ import org.robolectric.shadows.ShadowDialog;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 @RunWith(RobolectricTestRunner.class)
@@ -102,6 +103,39 @@ public class HostStreamSettingsTest {
             assertEquals(Boolean.FALSE, saved.rtxHdr);
             assertEquals(Boolean.TRUE, saved.rtxVideo);
         } finally {
+            controller.pause().stop().destroy();
+        }
+    }
+
+    @Test
+    public void liveCapabilityUpdateRebuildsGatedDisplayAndEnhancementRows() {
+        HostCapabilityCache.save(app, "upgraded-pc", TestHosts.fixture("sunshine-serverinfo.xml"));
+        Intent intent = new Intent(app, HostStreamSettings.class)
+                .putExtra("host_uuid", "upgraded-pc")
+                .putExtra("host_name", "Desk");
+        ActivityController<HostStreamSettings> controller = Robolectric.buildActivity(HostStreamSettings.class, intent).setup();
+        try {
+            HostStreamSettings screen = controller.get();
+            HostStreamSettings.SettingsFragment fragment = (HostStreamSettings.SettingsFragment)
+                    screen.getFragmentManager().findFragmentById(R.id.host_profile_settings);
+            assertNull(fragment.findPreference("rtx_hdr"));
+            assertNull(fragment.findPreference("host_display"));
+
+            com.limelight.nvstream.http.ComputerDetails updated = new com.limelight.nvstream.http.ComputerDetails();
+            updated.uuid = "upgraded-pc";
+            updated.name = "Desk";
+            updated.state = com.limelight.nvstream.http.ComputerDetails.State.ONLINE;
+            updated.activeAddress = new com.limelight.nvstream.http.ComputerDetails.AddressTuple("10.0.0.5", 47989);
+            updated.caps = TestHosts.caps(TestHosts.serverInfo("rubylight-serverinfo.xml")
+                    .replace("</root>", "<NvidiaEnhancements>3</NvidiaEnhancements><DisplayScaleVersion>1</DisplayScaleVersion></root>"));
+            screen.showComputer(updated);
+
+            assertNotNull("rtx_hdr rebuilt after live capability upgrade", fragment.findPreference("rtx_hdr"));
+            assertNotNull("rtx_video rebuilt after live capability upgrade", fragment.findPreference("rtx_video"));
+            assertNotNull("host_display rebuilt after live capability upgrade", fragment.findPreference("host_display"));
+            assertNotNull("dpi rebuilt after live capability upgrade", fragment.findPreference("dpi"));
+        } finally {
+            HostCapabilityCache.forget(app, "upgraded-pc");
             controller.pause().stop().destroy();
         }
     }

@@ -463,6 +463,8 @@ final class ConsoleHomeListAdapter extends RecyclerView.Adapter<RecyclerView.Vie
             ArtFit.reset(image);
             if (card.appId == 0) {
                 // A game not added has no app id, so no cover the host can send: its title on the cover's surface.
+                image.setTag(null);
+                com.limelight.grid.assets.CachedAppAssetLoader.clearBoundView(image);
                 image.setImageDrawable(null);
                 imageText.setText(card.title);
                 imageText.setVisibility(View.VISIBLE);

@@ -31,6 +31,7 @@ public class TrackpadContext implements TouchContext {
     private int maxPointerCountInGesture;
     private boolean isClickPending;
     private byte pendingClickButton = MouseButtonPacket.BUTTON_LEFT;
+    private byte activeDragButton = MouseButtonPacket.BUTTON_LEFT;
     private boolean isDblClickPending;
     private boolean isFlicking;
     private double velocityX = 0.0;
@@ -227,7 +228,7 @@ public class TrackpadContext implements TouchContext {
             if (Math.sqrt(velocityX * velocityX + velocityY * velocityY) * MOMENTUM_FRAME_INTERVAL_MS < 0.5) {
                 isFlicking = false;
                 if (confirmedDrag) {
-                    conn.sendMouseButtonUp(getMouseButtonIndex());
+                    conn.sendMouseButtonUp(activeDragButton);
                     confirmedDrag = false;
                 }
             }
@@ -315,7 +316,7 @@ public class TrackpadContext implements TouchContext {
             isFlicking = false;
             handler.removeCallbacksAndMessages(null);
             if (confirmedDrag) {
-                conn.sendMouseButtonUp(getMouseButtonIndex());
+                conn.sendMouseButtonUp(activeDragButton);
                 confirmedDrag = false;
             }
         }
@@ -334,7 +335,7 @@ public class TrackpadContext implements TouchContext {
             maxPointerCountInGesture = pointerCount;
             originalTouchTime = eventTime;
             if (confirmedDrag) {
-                conn.sendMouseButtonUp(getMouseButtonIndex());
+                conn.sendMouseButtonUp(activeDragButton);
             }
             cancelled = confirmedMove = confirmedScroll = confirmedDrag = isDblClickPending = false;
             distanceMoved = 0;
@@ -349,6 +350,7 @@ public class TrackpadContext implements TouchContext {
                 isClickPending = false;
                 isDblClickPending = true;
                 confirmedDrag = true;
+                activeDragButton = pendingClickButton;
             }
         } else {
             if (pointerCount == 2 && !confirmedMove) {
@@ -397,9 +399,9 @@ public class TrackpadContext implements TouchContext {
 
         if (isDblClickPending) {
             handler.removeCallbacksAndMessages(null);
-            conn.sendMouseButtonUp(buttonIndex);
-            conn.sendMouseButtonDown(buttonIndex);
-            conn.sendMouseButtonUp(buttonIndex);
+            conn.sendMouseButtonUp(activeDragButton);
+            conn.sendMouseButtonDown(activeDragButton);
+            conn.sendMouseButtonUp(activeDragButton);
             isClickPending = false;
             isDblClickPending = false;
             confirmedDrag = false;
@@ -412,7 +414,7 @@ public class TrackpadContext implements TouchContext {
                 isFlicking = true;
                 handler.post(momentumRunnable);
             } else {
-                conn.sendMouseButtonUp(buttonIndex);
+                conn.sendMouseButtonUp(activeDragButton);
                 confirmedDrag = false;
             }
         }
@@ -580,7 +582,7 @@ public class TrackpadContext implements TouchContext {
 
         if (confirmedDrag) {
             handler.removeCallbacks(clickReleaseRunnable);
-            conn.sendMouseButtonUp(getMouseButtonIndex());
+            conn.sendMouseButtonUp(activeDragButton);
             confirmedDrag = false;
         }
         isDblClickPending = false;
@@ -606,7 +608,7 @@ public class TrackpadContext implements TouchContext {
         }
 
         if (pointerCount < this.pointerCount && confirmedDrag && !isFlicking) {
-            conn.sendMouseButtonUp(getMouseButtonIndex());
+            conn.sendMouseButtonUp(activeDragButton);
             confirmedDrag = false;
             confirmedMove = false;
             confirmedScroll = false;

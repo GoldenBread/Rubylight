@@ -341,8 +341,11 @@ public class PreferenceConfiguration extends SettingsCatalogGen {
         hostFrameTimes = vrr ? realVrr : gridHostFrameTimes;
     }
 
-    /** The bitrate for this configuration's size and frame rate when nobody chose one. */
+    /** The bitrate for this configuration's size, frame rate, and codec when nobody chose one. */
     int automaticBitrateKbps() {
+        if (videoFormat == FormatOption.FORCE_PYROWAVE) {
+            return com.limelight.nvstream.PyroWaveBitrateFloor.defaultKbps(width, height, fps, 0);
+        }
         return getDefaultBitrate(getResolutionText(width, height), Integer.toString(fps));
     }
 

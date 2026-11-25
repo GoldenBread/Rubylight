@@ -324,6 +324,7 @@ public class AllGamesActivity extends NightjarActivity implements HostFeed.Liste
     @Override
     protected void onDestroy() {
         handler.removeCallbacksAndMessages(null);
+        if (factFilter != null) factFilter.destroy();
         hostActions.destroy();
         feed.unbind();
         worker.shutdownNow();

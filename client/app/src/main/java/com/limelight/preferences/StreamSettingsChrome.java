@@ -354,6 +354,9 @@ final class StreamSettingsChrome {
                 .remove(PreferenceConfiguration.BITRATE_PREF_OLD_STRING)
                 .remove(PreferenceConfiguration.PREFS_VERSION_PREF_STRING)
                 .remove(PreferenceConfiguration.CODEC_LOW_LATENCY_CORRUPTION_OFF_PREF_STRING)
+                .remove(PreferenceConfiguration.DISABLE_HEVC_LOW_LATENCY_PREF_STRING)
+                .remove(SimpleProfile.VRR_OPT_IN)
+                .remove(SimpleProfile.VRR_LAST)
                 // Stored by the Sharper colored text, Controllers and When Nightjar opens pickers.
                 .remove(PreferenceConfiguration.YUV444_PREF_STRING)
                 .remove(PreferenceConfiguration.PACKED_444_PREF_STRING)
@@ -371,6 +374,7 @@ final class StreamSettingsChrome {
         FoldedChoice.migrate(prefs);
         // The XML default just came back: where Android's low-latency mode can corrupt the picture it starts off again.
         PreferenceConfiguration.migrateCodecLowLatencyCorruption(prefs);
+        SimpleProfile.forgetCapabilities();
     }
 
     /** Whether this is TV Settings with its rail, whose group headings are settings_category_tv. */

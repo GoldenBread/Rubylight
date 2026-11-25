@@ -155,4 +155,41 @@ public class UsbControllerLifecycleTest {
         assertFalse("The connection was closed under a USB read", UsbPads.Connection.closedDuringRead);
         assertEquals(UsbPads.Connection.claims.get(), UsbPads.Connection.releases.get());
     }
+
+    @Test
+    public void autoForwardedControllerIsSkippedByUsbDriverService() {
+        UsbDevice pad = UsbPads.dualSense("/dev/bus/usb/001/011");
+        app.getSharedPreferences("usb_forwarding", Context.MODE_PRIVATE).edit()
+                .putStringSet("auto", java.util.Collections.singleton(
+                        String.format(java.util.Locale.ROOT, "%04x:%04x", pad.getVendorId(), pad.getProductId())))
+                .commit();
+        try {
+            com.limelight.preferences.PreferenceConfiguration config = new com.limelight.preferences.PreferenceConfiguration();
+            config.usbDualSense = true;
+            assertFalse(UsbDriverService.shouldClaimDevice(app, pad, config));
+            bind(pad).start();
+            shadowOf(Looper.getMainLooper()).idle();
+            assertEquals("Auto-forwarded controller must not be opened by UsbDriverService", 0, UsbPads.Connection.claims.get());
+        } finally {
+            app.getSharedPreferences("usb_forwarding", Context.MODE_PRIVATE).edit().clear().commit();
+        }
+    }
+
+    @Test
+    public void releasingActiveDeviceStopsControllerAndPreventsReclaimUntilDetach() throws Exception {
+        UsbPads.Connection.inputReport = UsbPads.dualSenseReport();
+        UsbDevice pad = UsbPads.dualSense("/dev/bus/usb/001/012");
+        bind(pad).start();
+        UsbPads.await(() -> listener.has("added"));
+
+        UsbDriverService.releaseActiveDevice(pad);
+        UsbDriverService.awaitDeviceRelease(pad, 2000);
+        UsbPads.await(() -> UsbPads.Connection.closes.get() == 1 && listener.has("removed"));
+        assertEquals(UsbPads.Connection.claims.get(), UsbPads.Connection.releases.get());
+
+        // A stray attach event for the same device must not reclaim it while forwarded.
+        app.sendBroadcast(new Intent(UsbManager.ACTION_USB_DEVICE_ATTACHED).putExtra(UsbManager.EXTRA_DEVICE, pad));
+        shadowOf(Looper.getMainLooper()).idleFor(1500, java.util.concurrent.TimeUnit.MILLISECONDS);
+        assertEquals("Released device must not be reclaimed mid-stream", 1, UsbPads.Connection.closes.get());
+    }
 }

@@ -682,4 +682,68 @@ public class ComputerManagerLifecycleTest {
             }
         }
     }
+
+    @Test
+    public void savedPairedHostBeforeFirstPollHasNullPairStateAndIsListedByGetSavedComputers() {
+        ComputerDetails stored = new ComputerDetails();
+        stored.uuid = "unpolled-paired-host";
+        stored.name = "Living Room";
+        stored.localAddress = new ComputerDetails.AddressTuple("192.168.1.77", 47989);
+        stored.serverCert = NativeApiFixtures.certificate();
+        seedHost(stored);
+
+        ServiceController<Manager> controller = Robolectric.buildService(Manager.class).create();
+        Manager service = controller.get();
+        ComputerManagerService.ComputerManagerBinder binder =
+                (ComputerManagerService.ComputerManagerBinder) service.onBind(null);
+        try {
+            ComputerDetails snap = binder.getComputer("unpolled-paired-host");
+            assertNotNull(snap);
+            assertEquals(ComputerDetails.State.UNKNOWN, snap.state);
+            assertNull("unpolled saved host keeps null pairState so Home waits for first answer", snap.pairState);
+            assertNotNull(snap.serverCert);
+            List<ComputerDetails> saved = binder.getSavedComputers();
+            assertEquals(1, saved.size());
+            assertEquals("unpolled-paired-host", saved.get(0).uuid);
+            assertNull(saved.get(0).pairState);
+        } finally {
+            controller.destroy();
+        }
+    }
+
+    @Test
+    public void pairingFailureWhenClientCreateReturnsZeroStillDeliversPairingResult() {
+        org.robolectric.android.controller.ActivityController<com.limelight.ui.ToolbarIconTintTest.Screen> act =
+                Robolectric.buildActivity(com.limelight.ui.ToolbarIconTintTest.Screen.class).setup();
+        try {
+            com.limelight.ui.ToolbarIconTintTest.Screen screen = act.get();
+            java.util.concurrent.atomic.AtomicInteger resumed = new java.util.concurrent.atomic.AtomicInteger();
+            HostActions actions = new HostActions(screen, new HostActions.Callbacks() {
+                @Override public ComputerManagerService.ComputerManagerBinder binder() { return null; }
+                @Override public boolean isForeground() { return true; }
+                @Override public void onPaired(ComputerDetails computer) { }
+                @Override public void onRemoved(ComputerDetails computer) { }
+                @Override public void onRenamed(ComputerDetails computer) { }
+                @Override public void onWakeSent(ComputerDetails computer) { }
+                @Override public void pausePolling() { }
+                @Override public void resumePolling() { resumed.incrementAndGet(); }
+            });
+            ComputerDetails target = new ComputerDetails();
+            target.uuid = "bad-handle-pc";
+            target.name = "PC";
+            // Invalid host address triggers NightjarHttpJni.clientCreate returning 0.
+            target.activeAddress = new ComputerDetails.AddressTuple("invalid host!", 47989);
+            ComputerManagerService mgr = new ComputerManagerService();
+            ComputerManagerService.ComputerManagerBinder binder = mgr.new ComputerManagerBinder() {
+                @Override public void waitForPollingStopped() { }
+                @Override public String getUniqueId() { return "uid"; }
+            };
+            HostFlowRoutes.runPairWorker(screen, actions, binder, target, null, "1234", null, null, 0);
+            org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();
+            assertEquals("failed clientCreate must resume polling via showPairingResult", 1, resumed.get());
+            assertTrue("failed clientCreate must show pairing error dialog", actions.isShowingError());
+        } finally {
+            act.pause().stop().destroy();
+        }
+    }
 }

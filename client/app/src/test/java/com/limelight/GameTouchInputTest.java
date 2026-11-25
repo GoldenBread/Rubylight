@@ -301,6 +301,73 @@ public class GameTouchInputTest {
         assertEquals("Destroying the controls leaves the stream alone", 1, parent.getChildCount());
     }
 
+    @Test
+    public void portraitAndInputOnlyUseIsotropicScalingAndDisableAbsoluteMouseMode() {
+        float[] portraitScale = com.limelight.binding.input.touch.RelativeTouchContext.motionScale(
+                3120, 1440, 1440, 3120, 1f, false);
+        assertEquals(1f, portraitScale[0], 0.0001f);
+        assertEquals(portraitScale[0], portraitScale[1], 0.0001f);
+
+        float[] inputOnlyScale = com.limelight.binding.input.touch.RelativeTouchContext.motionScale(
+                1920, 1080, 2400, 1080, 1f, true);
+        assertEquals(0.8f, inputOnlyScale[0], 0.0001f);
+        assertEquals(inputOnlyScale[0], inputOnlyScale[1], 0.0001f);
+
+        float[] landscapeVideoScale = com.limelight.binding.input.touch.RelativeTouchContext.motionScale(
+                1920, 1080, 1600, 720, 1f, false);
+        assertEquals(1.2f, landscapeVideoScale[0], 0.0001f);
+        assertEquals(1.5f, landscapeVideoScale[1], 0.0001f);
+
+        // Portrait INPUT_ONLY stream with absoluteMouseMode on must send relative moves with equal X/Y delta.
+        RecordingConnection connection = new RecordingConnection();
+        Game game = game(connection);
+        PreferenceConfiguration config = touchConfig(game, TouchMode.TRACKPAD);
+        config.width = 3120;
+        config.height = 1440;
+        config.absoluteMouseMode = true;
+        com.limelight.nvstream.http.NvApp inputOnly = new com.limelight.nvstream.http.NvApp("Input", 9, false);
+        inputOnly.setSmallStreamInputOnly(true);
+        assertEquals(com.limelight.nvstream.http.NvApp.Role.INPUT_ONLY, inputOnly.getRole());
+        ReflectionHelpers.setField(game, "app", inputOnly);
+        View background = new View(game);
+        background.layout(0, 0, 1440, 3120);
+        StreamView stream = new StreamView(game);
+        stream.layout(0, 0, 1440, 3120);
+        ReflectionHelpers.setField(game, "streamView", stream);
+        ReflectionHelpers.callInstanceMethod(game.touchInput, "initializeTouchContexts");
+
+        touchAt(game, background, MotionEvent.ACTION_DOWN, 500, 500, 1000);
+        touchAt(game, background, MotionEvent.ACTION_MOVE, 600, 600, 1020);
+        touchAt(game, background, MotionEvent.ACTION_UP, 600, 600, 1040);
+        assertTrue("INPUT_ONLY never sends absolute mouse positions", connection.positions.isEmpty());
+        assertFalse(connection.moves.isEmpty());
+        int totalX = 0, totalY = 0;
+        for (int[] move : connection.moves) { totalX += move[0]; totalY += move[1]; }
+        assertEquals("diagonal swipe produces equal X and Y motion", totalX, totalY);
+    }
+
+    @Test
+    public void cancelTouchInputCancelsPhysicalTouchpadFallbackDrag() {
+        RecordingConnection connection = new RecordingConnection();
+        Game game = game(connection);
+        StreamView stream = new StreamView(game);
+        stream.layout(0, 0, 800, 400);
+        ReflectionHelpers.setField(game, "streamView", stream);
+        GamePhysicalTouchpad physical = ReflectionHelpers.getField(game.touchInput, "physicalTouchpad");
+        physical.initializeContexts();
+        com.limelight.binding.input.touch.TrackpadContext[] contexts =
+                ReflectionHelpers.getField(physical, "touchpadContextMap");
+        contexts[0].setPointerCount(1);
+        contexts[0].touchDownEvent(200, 200, 1000, true);
+        contexts[0].touchUpEvent(200, 200, 1040);
+        contexts[0].touchDownEvent(200, 200, 1080, true);
+        contexts[0].touchMoveEvent(260, 200, 1100);
+        assertEquals(Collections.singletonList("down 1"), connection.buttons);
+
+        game.touchInput.cancelTouchInput();
+        assertEquals(java.util.Arrays.asList("down 1", "up 1"), connection.buttons);
+    }
+
     static com.limelight.ui.DesktopGestures enableZoom(Game game) {
         StreamView stream = ReflectionHelpers.getField(game, "streamView");
         com.limelight.ui.DesktopGestures desktop = new com.limelight.ui.DesktopGestures(game, stream,

@@ -234,6 +234,24 @@ public class ComputerManagerService extends Service {
             }
         }
 
+        /** All saved PCs with their current in-memory snapshots (call off the UI thread). */
+        public java.util.List<ComputerDetails> getSavedComputers() {
+            if (hostManagerHandle == 0) return java.util.Collections.emptyList();
+            ComputerDatabaseManager db = new ComputerDatabaseManager(ComputerManagerService.this);
+            java.util.List<ComputerDetails> saved;
+            try {
+                saved = db.getAllComputers();
+            } finally {
+                db.close();
+            }
+            java.util.List<ComputerDetails> out = new java.util.ArrayList<>(saved.size());
+            for (ComputerDetails entry : saved) {
+                ComputerDetails live = entry.uuid == null ? null : getComputer(entry.uuid);
+                out.add(live != null ? live : entry);
+            }
+            return out;
+        }
+
         public void invalidateStateForComputer(String uuid) {
             if (hostManagerHandle != 0 && uuid != null) {
                 NightjarHostsJni.hostManagerInvalidateState(hostManagerHandle, uuid);
@@ -591,8 +609,13 @@ public class ComputerManagerService extends Service {
         target.remoteAddress = toTuple(snap.optObject("remote"));
         target.pinnedAddress = toTuple(snap.optObject("pinned"));
         target.activeAddress = toTuple(snap.optObject("active"));
-        target.pairState = snap.optBoolean("paired", false)
-                ? PairingManager.PairState.PAIRED : PairingManager.PairState.NOT_PAIRED;
+        Json.Obj si = snap.optObject("server_info");
+        boolean online = "ONLINE".equals(snap.optString("state", "UNKNOWN"));
+        // Before a host has answered /serverinfo, leave pairState null so saved paired hosts wait for
+        // their first answer (or appear as offline paired cards if unreachable) instead of looking settled/unpaired.
+        target.pairState = (si != null || online)
+                ? (snap.optBoolean("paired", false) ? PairingManager.PairState.PAIRED : PairingManager.PairState.NOT_PAIRED)
+                : null;
         target.anotherCertificate = snap.optBoolean("another_certificate", false);
         target.runningGameId = snap.optInt("running_game_id", 0);
         target.runningGameUuid = optNull(snap, "running_game_uuid");
@@ -600,7 +623,6 @@ public class ComputerManagerService extends Service {
         target.internetPath = optNull(snap, "internet_path");
         String certB64 = optNull(snap, "server_cert_b64");
         if (certB64 != null) target.serverCert = decodeCert(certB64);
-        Json.Obj si = snap.optObject("server_info");
         if (si != null) {
             int port = target.activeAddress != null ? target.activeAddress.port : NvHTTP.DEFAULT_HTTP_PORT;
             NvHTTP.applyServerInfoSnapshot(target, si, port);
@@ -680,8 +702,12 @@ public class ComputerManagerService extends Service {
         private Thread thread;
         private final ComputerDetails computer;
         private long pollerHandle;
+        private boolean startFailedNoEndpoint;
 
         public ApplistPoller(ComputerDetails computer) { this.computer = computer; }
+
+        /** True when {@link #start()} returned early because the host had no reachable address or cert yet. */
+        public synchronized boolean needsRestart() { return startFailedNoEndpoint && thread == null; }
 
         public void pollNow() {
             long h = pollerHandle;
@@ -707,13 +733,18 @@ public class ComputerManagerService extends Service {
             try {
                 addr = ServerHelper.getCurrentAddressFromComputer(computer);
             } catch (IOException e) {
+                startFailedNoEndpoint = true;
                 return;
             }
             byte[] cert = null;
             if (computer.serverCert != null) {
                 try { cert = computer.serverCert.getEncoded(); } catch (CertificateEncodingException ignored) { }
             }
-            if (addr == null || cert == null) return;
+            if (addr == null || cert == null) {
+                startFailedNoEndpoint = true;
+                return;
+            }
+            startFailedNoEndpoint = false;
             final long h = NightjarHostsJni.applistPollerStart(
                     hostManagerHandle, addr.address, addr.port, computer.httpsPort, cert);
             pollerHandle = h;
@@ -722,9 +753,12 @@ public class ComputerManagerService extends Service {
                     String rawXml = NightjarHostsJni.applistPollerNextUpdate(h);
                     if (rawXml == null || !isCurrentWorker()) break;
                     if (!saveAppList(rawXml)) break;
+                    ComputerDetails latest = binder.getComputer(computer.uuid);
+                    ComputerDetails delivered = latest != null ? latest : computer;
+                    delivered.rawAppList = rawXml;
                     ComputerManagerListener currentListener = listener;
-                    if (currentListener != null && isCurrentWorker()) currentListener.notifyAppListUpdated(computer, true);
-                    FrontendSync.appListChanged(ComputerManagerService.this, computer);
+                    if (currentListener != null && isCurrentWorker()) currentListener.notifyAppListUpdated(delivered, true);
+                    FrontendSync.appListChanged(ComputerManagerService.this, delivered);
                 }
             }, "App list polling thread for " + computer.name);
             thread.start();

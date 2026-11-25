@@ -202,17 +202,36 @@ public class UsbForwardingTest {
     }
 
     @Test
-    public void thePickerLeavesOutHubsAndWhatTheInputDriversTake() {
+    public void thePickerLeavesOutHubsButIncludesControllersAndReleasesDriverBeforeOpening() {
         prefs.usbDualSense = true;
-        shadowUsb().addOrUpdateUsbDevice(device("/dev/bus/usb/001/002", "Hub", UsbConstants.USB_CLASS_HUB, 0x05E3, 0x0610), true);
-        shadowUsb().addOrUpdateUsbDevice(com.limelight.binding.input.driver.UsbPads.dualSense("/dev/bus/usb/001/003"), true);
-        shadowUsb().addOrUpdateUsbDevice(tablet(), true);
+        UsbDevice hub = device("/dev/bus/usb/001/002", "Hub", UsbConstants.USB_CLASS_HUB, 0x05E3, 0x0610);
+        UsbDevice pad = com.limelight.binding.input.driver.UsbPads.dualSense("/dev/bus/usb/001/003");
+        UsbDevice tablet = tablet();
+        shadowUsb().addOrUpdateUsbDevice(hub, true);
+        shadowUsb().addOrUpdateUsbDevice(pad, true);
+        shadowUsb().addOrUpdateUsbDevice(tablet, true);
+
         List<UsbDevice> candidates = forwarding.candidates();
-        assertEquals(1, candidates.size());
-        assertEquals("Drawing Tablet", UsbForwarding.name(candidates.get(0)));
-        // Without its own driver the DualSense may go to the PC like anything else.
-        prefs.usbDualSense = false;
-        assertEquals(2, forwarding.candidates().size());
+        assertEquals(2, candidates.size());
+        assertEquals("/dev/bus/usb/001/003", candidates.get(0).getDeviceName());
+        assertEquals("Drawing Tablet", UsbForwarding.name(candidates.get(1)));
+
+        List<String> order = new ArrayList<>();
+        forwarding = new UsbForwarding(context, usbManager, prefs, bridge, d -> {
+            order.add("open:" + d.getDeviceName());
+            FakeConnection connection = new FakeConnection(40 + connections.size());
+            connections.add(connection);
+            return connection;
+        }, worker, text -> messages.add(text.toString()));
+        forwarding.setDeviceReleaser(d -> order.add("release:" + d.getDeviceName()));
+
+        forwarding.choose(pad);
+        assertEquals(java.util.Arrays.asList("release:/dev/bus/usb/001/003", "open:/dev/bus/usb/001/003"), order);
+        assertFalse(UsbForwarding.isAutoForwarded(context, pad));
+        forwarding.setAuto(Collections.singletonList(pad), new boolean[] {true});
+        assertTrue(UsbForwarding.isAutoForwarded(context, pad));
+        forwarding.setAuto(Collections.singletonList(pad), new boolean[] {false});
+        assertFalse(UsbForwarding.isAutoForwarded(context, pad));
     }
 
     @Test

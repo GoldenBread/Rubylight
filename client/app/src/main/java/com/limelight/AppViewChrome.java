@@ -5,6 +5,7 @@ import android.os.Bundle;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.View;
+import android.view.ViewGroup;
 import android.widget.AbsListView;
 import android.widget.TextView;
 
@@ -406,6 +407,12 @@ final class AppViewChrome {
             for (int id : new int[] {R.id.library_back, R.id.library_options, R.id.library_search_button}) {
                 View top = view.findViewById(id);
                 if (top != null) top.setNextFocusDownId(down);
+            }
+            ViewGroup items = view.findViewById(R.id.shell_bar_items);
+            if (items != null) {
+                for (int i = 0; i < items.getChildCount(); i++) {
+                    items.getChildAt(i).setNextFocusDownId(down);
+                }
             }
             bannerRetry.setNextFocusDownId(R.id.fragmentView);
         }

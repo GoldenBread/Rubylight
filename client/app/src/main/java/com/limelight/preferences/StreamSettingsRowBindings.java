@@ -56,8 +56,13 @@ final class StreamSettingsRowBindings {
         } finally {
             database.close();
         }
-        // The name the user gave a PC, as on Home.
-        for (com.limelight.nvstream.http.ComputerDetails pc : pcs) pc.alias = com.limelight.computers.HostNames.get(context, pc.uuid);
+        // The name the user gave a PC and its last known capabilities, as on Home.
+        for (com.limelight.nvstream.http.ComputerDetails pc : pcs) {
+            pc.alias = com.limelight.computers.HostNames.get(context, pc.uuid);
+            if (pc.uuid != null) {
+                pc.caps = com.limelight.computers.HostCapabilityCache.load(context, pc.uuid);
+            }
+        }
         pcs.sort((a, b) -> String.CASE_INSENSITIVE_ORDER.compare(String.valueOf(a.displayName()),
                 String.valueOf(b.displayName())));
         return pcs;
@@ -138,8 +143,12 @@ final class StreamSettingsRowBindings {
             List<com.limelight.nvstream.http.ComputerDetails> pcs) {
         List<com.limelight.nvstream.http.ComputerDetails> pace = new ArrayList<>();
         for (com.limelight.nvstream.http.ComputerDetails pc : pcs) {
-            if (pc.supportsPyroWavePaceCalibration() ||
-                    com.limelight.utils.PyroWavePaceStore.get(context, pc.uuid) != null) pace.add(pc);
+            if (pc.supportsPyroWavePaceCalibration()
+                    || (pc.caps != null && pc.caps.has(com.limelight.nvstream.http.HostCapabilities.Feature.PYROWAVE)
+                        && pc.serverCert != null)
+                    || com.limelight.utils.PyroWavePaceStore.get(context, pc.uuid) != null) {
+                pace.add(pc);
+            }
         }
         return pace;
     }

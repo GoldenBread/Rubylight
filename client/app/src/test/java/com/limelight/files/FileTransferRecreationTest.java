@@ -53,7 +53,7 @@ public class FileTransferRecreationTest {
     private final Application app = RuntimeEnvironment.getApplication();
 
     /** A transfer list with nothing in it that counts how it is ended. */
-    private static final class Engine implements FileTransferEngine {
+    private static class Engine implements FileTransferEngine {
         int cancelAlls;
         boolean destroyed;
 
@@ -388,6 +388,58 @@ public class FileTransferRecreationTest {
         assertTrue(root.findViewWithTag("download:a.txt").isFocused());
         screen.get().finish();
         screen.pause().stop().destroy();
+    }
+
+    @Test
+    public void missingDocumentPickerShowsToastAndClearsPendingDownloadState() {
+        ActivityController<FileTransferActivity> screen = Robolectric.buildActivity(FileTransferActivity.class,
+                FileTransferActivity.forPc(app, "tower")).setup();
+        FileTransferActivity activity = screen.get();
+        activity.work.pendingDownload = new RemoteFiles.Entry("clip.bin", 10, 0);
+        activity.work.pendingRetry = 7;
+        ReflectionHelpers.setField(activity, "creator", new androidx.activity.result.ActivityResultLauncher<String>() {
+            @Override public void launch(String input, androidx.core.app.ActivityOptionsCompat options) {
+                throw new android.content.ActivityNotFoundException("no documents UI");
+            }
+            @Override public void unregister() { }
+            @Override public androidx.activity.result.contract.ActivityResultContract<String, ?> getContract() { return null; }
+        });
+        ReflectionHelpers.callInstanceMethod(activity, "launchCreator",
+                ReflectionHelpers.ClassParameter.from(String.class, "clip.bin"));
+        assertEquals(app.getString(R.string.folders_no_picker), ShadowToast.getTextOfLatestToast());
+        assertEquals(null, activity.work.pendingDownload);
+        assertEquals(-1L, activity.work.pendingRetry);
+        screen.get().finish();
+        screen.pause().stop().destroy();
+    }
+
+    @Test
+    public void pendingDescribesKeepsTransferWorkAliveAndCloseReleasesPreopenedOpener() {
+        FileTransferActivity.TransferWork work = new FileTransferActivity.TransferWork(app);
+        assertFalse(work.kept());
+        work.pendingDescribes = 1;
+        assertTrue("in-flight describe batch keeps TransferWork alive", work.kept());
+        work.pendingDescribes = 0;
+        assertFalse(work.kept());
+
+        java.util.concurrent.atomic.AtomicInteger closedCount = new java.util.concurrent.atomic.AtomicInteger();
+        Engine engine = new Engine() {
+            @Override public long queueUpload(long handle, String localName, long size) { return 11; }
+            @Override public String snapshot(long handle) {
+                return "[{\"id\":11,\"direction\":\"upload\",\"name\":\"a.bin\",\"local_name\":\"a.bin\",\"size\":4,\"state\":\"queued\"}]";
+            }
+        };
+        FileTransferController controller = new FileTransferController(engine, HOST, Runnable::run, Runnable::run,
+                new FileTransferController.Ui() {
+                    @Override public void onTransfersChanged(java.util.List<FileRow> rows) { }
+                    @Override public void onUploaded() { }
+                });
+        controller.send("a.bin", 4, new FileTransferController.Opener() {
+            @Override public int open() { return -1; }
+            @Override public void close() { closedCount.incrementAndGet(); }
+        });
+        controller.close();
+        assertTrue("closing controller releases unconsumed upload opener", closedCount.get() >= 1);
     }
 
     private static void showFiles(FileTransferActivity activity, RemoteFiles list) {

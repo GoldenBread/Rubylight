@@ -6,6 +6,7 @@ import android.os.Handler;
 import android.os.Looper;
 
 import androidx.annotation.VisibleForTesting;
+import androidx.appcompat.app.AlertDialog;
 
 import com.google.android.material.button.MaterialButton;
 import com.limelight.LimeLog;
@@ -47,12 +48,14 @@ public final class NeuralSheet {
     private final Executor worker;
     private final Executor main;
     private final Scheduler scheduler;
+    private final Runnable cancelPending;
     private final ActionSheet sheet;
     // Main thread only.
     private int request;
     private boolean closed;
     private boolean writing;
     private NativeNeural shown;
+    private AlertDialog childDialog;
 
     /** Opens the sheet for {@code appUuid}, the library's app id. */
     public static NeuralSheet show(Activity activity, ComputerDetails computer, String uniqueId, String appUuid,
@@ -66,7 +69,8 @@ public final class NeuralSheet {
                         "No address or pinned certificate for the PC");
             }
             return new NativeApiClient(new JniNativeApiTransport(), endpoint);
-        }, task -> new Thread(task, "Neural Rendering").start(), handler::post, handler::postDelayed);
+        }, task -> new Thread(task, "Neural Rendering").start(), handler::post, handler::postDelayed,
+                () -> handler.removeCallbacksAndMessages(null));
         sheet.show();
         return sheet;
     }
@@ -74,14 +78,53 @@ public final class NeuralSheet {
     @VisibleForTesting
     NeuralSheet(Activity activity, String app, String gameName, Client client, Executor worker, Executor main,
                 Scheduler scheduler) {
+        this(activity, app, gameName, client, worker, main, scheduler, () -> { });
+    }
+
+    private NeuralSheet(Activity activity, String app, String gameName, Client client, Executor worker, Executor main,
+                        Scheduler scheduler, Runnable cancelPending) {
         this.activity = activity;
         this.app = app;
         this.client = client;
         this.worker = worker;
         this.main = main;
         this.scheduler = scheduler;
+        this.cancelPending = cancelPending;
         sheet = new ActionSheet(activity, activity.getString(R.string.neural_title, gameName));
-        sheet.setOnClosed(() -> closed = true);
+        sheet.setOnClosed(() -> {
+            closed = true;
+            cancelPending.run();
+            dismissChildDialog();
+        });
+    }
+
+    /** Closes the sheet and any open prompt when its host activity leaves the foreground. */
+    public void dismiss() {
+        closed = true;
+        cancelPending.run();
+        dismissChildDialog();
+        if (sheet.isShowing()) {
+            sheet.dismiss();
+        }
+    }
+
+    private void dismissChildDialog() {
+        if (childDialog != null) {
+            if (childDialog.isShowing()) {
+                childDialog.dismiss();
+            }
+            childDialog = null;
+        }
+    }
+
+    private void showChildDialog(AlertDialog dialog) {
+        dismissChildDialog();
+        if (closed || activity.isFinishing() || activity.isDestroyed()) return;
+        childDialog = dialog;
+        dialog.setOnDismissListener(d -> {
+            if (childDialog == dialog) childDialog = null;
+        });
+        dialog.show();
     }
 
     @VisibleForTesting
@@ -134,7 +177,7 @@ public final class NeuralSheet {
     }
 
     private boolean speaks(int asked) {
-        return !closed && asked == request;
+        return !closed && asked == request && !activity.isFinishing() && !activity.isDestroyed();
     }
 
     private void answered(int asked, NativeNeural state) {
@@ -157,11 +200,11 @@ public final class NeuralSheet {
         } else {
             sheet.dismiss();
         }
-        new NavigationDialogBuilder(activity)
+        showChildDialog(new NavigationDialogBuilder(activity)
                 .setTitle(R.string.neural_problem)
                 .setMessage(CoopSheet.problemMessage(activity, error))
                 .setPositiveButton(android.R.string.ok, null)
-                .show();
+                .create());
         if (wrote) load();
     }
 
@@ -206,12 +249,12 @@ public final class NeuralSheet {
         NativeNeural.Switch fg = state.frameGeneration;
         if (fg == null || writing) return;
         if (!fg.configurable()) {
-            new NavigationDialogBuilder(activity)
+            showChildDialog(new NavigationDialogBuilder(activity)
                     .setTitle(R.string.neural_frame_generation)
                     .setMessage(whyText(activity, fg) != null ? whyText(activity, fg)
                             : activity.getString(R.string.neural_unavailable))
                     .setPositiveButton(android.R.string.ok, null)
-                    .show();
+                    .create());
             return;
         }
         if (fg.on) {
@@ -220,13 +263,13 @@ public final class NeuralSheet {
             write(true, false);
         } else {
             // The host's one-time notice; Cancel is the default, by touch and by D-pad alike.
-            new NavigationDialogBuilder(activity)
+            showChildDialog(new NavigationDialogBuilder(activity)
                     .startOnCancel()
                     .setTitle(R.string.neural_notice_title)
                     .setMessage(activity.getString(R.string.neural_notice))
                     .setNegativeButton(android.R.string.cancel, null)
                     .setPositiveButton(R.string.neural_notice_accept, (d, w) -> write(true, true))
-                    .show();
+                    .create());
         }
     }
 

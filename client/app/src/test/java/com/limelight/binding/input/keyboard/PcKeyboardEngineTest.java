@@ -227,4 +227,26 @@ public class PcKeyboardEngineTest {
         engine.release(2);
         assertNothingStuck();
     }
+
+    @Test
+    public void releaseTouchesReleasesTouchKeysAndArmedModifiersWhileKeepingPadAndLockedModifiers() {
+        engine.tapModifier(PcModifier.CTRL);
+        engine.tapModifier(PcModifier.CTRL); // locked
+        engine.tapModifier(PcModifier.SHIFT); // armed once
+        engine.press(key("A"), 1, 0); // touch pointer 1 consumes armed Shift
+        engine.press(key("B"), PcKeyboardController.Pad.A, 0); // pad holds B
+
+        engine.releaseTouches();
+        assertFalse("touch key A released", engine.isHeld(1));
+        assertTrue("pad key B stays held", engine.isHeld(PcKeyboardController.Pad.A));
+        assertEquals(StickyModifiers.State.LOCKED, engine.modifiers().state(PcModifier.CTRL));
+        assertFalse("armed shift released with touch key", engine.modifiers().isActive(PcModifier.SHIFT));
+        assertTrue(events.contains(A + "-"));
+        assertTrue(events.contains(SHIFT + "-"));
+        assertFalse(events.contains(B + "-"));
+        assertFalse(events.contains(CTRL + "-"));
+
+        engine.releaseAll();
+        assertNothingStuck();
+    }
 }

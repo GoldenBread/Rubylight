@@ -124,6 +124,15 @@ public final class PcKeyboardEngine {
         else if (state == StickyModifiers.State.OFF && !usedByHeldKey(modifier)) setHostDown(modifier, false);
     }
 
+    /** Release every key held by a touch pointer, leaving pad-owned keys and locked modifiers intact. */
+    public void releaseTouches() {
+        for (int i = held.size() - 1; i >= 0; i--) {
+            if (held.get(i).owner instanceof Integer) {
+                release(held.get(i).owner);
+            }
+        }
+    }
+
     /** Release every key and modifier this engine pressed and forget the sticky state. */
     public void releaseAll() {
         for (int i = held.size() - 1; i >= 0; i--) {

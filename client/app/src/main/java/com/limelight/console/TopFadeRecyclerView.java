@@ -23,6 +23,16 @@ public class TopFadeRecyclerView extends RecyclerView {
     }
 
     @Override
+    protected boolean isPaddingOffsetRequired() {
+        return true;
+    }
+
+    @Override
+    protected int getTopPaddingOffset() {
+        return -getPaddingTop();
+    }
+
+    @Override
     protected float getBottomFadingEdgeStrength() {
         return 0f;
     }

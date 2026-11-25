@@ -24,6 +24,9 @@ public final class FileTransferController {
     /** Opens a file and detaches its descriptor for the Rust client, which closes it. */
     public interface Opener {
         int open() throws IOException;
+
+        /** Releases any pre-opened descriptor or temporary resource if the transfer never consumed it. */
+        default void close() {}
     }
 
     public interface Ui {
@@ -88,6 +91,7 @@ public final class FileTransferController {
 
     private long add(long id, Job job) {
         if (closed || id < 0) {
+            job.opener.close();
             if (job.discard != null) worker.execute(job.discard);
             return -1;
         }
@@ -135,7 +139,10 @@ public final class FileTransferController {
         engine.clearFinished(handle);
         changed();
         for (Long id : jobs.keySet().toArray(new Long[0])) {
-            if (!contains(id)) jobs.remove(id);
+            if (!contains(id)) {
+                Job removed = jobs.remove(id);
+                if (removed != null) removed.opener.close();
+            }
         }
     }
 
@@ -152,6 +159,9 @@ public final class FileTransferController {
         engine.cancelAll(handle);
         refresh();
         discardFinished();
+        for (Job job : jobs.values()) {
+            job.opener.close();
+        }
         closed = true;
         engine.destroy(handle);
     }
@@ -177,10 +187,12 @@ public final class FileTransferController {
     private void discardFinished() {
         for (FileRow row : rows) {
             Job job = jobs.get(row.id);
-            if (job != null && !job.upload && !job.started && !job.discarded && row.isFinished()
-                    && row.state != FileRow.State.DONE) {
-                job.discarded = true;
-                worker.execute(job.discard);
+            if (job != null && !job.started && row.isFinished() && row.state != FileRow.State.DONE) {
+                job.opener.close();
+                if (!job.upload && !job.discarded) {
+                    job.discarded = true;
+                    worker.execute(job.discard);
+                }
             }
         }
     }

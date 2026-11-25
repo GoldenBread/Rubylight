@@ -499,4 +499,81 @@ public class AppViewLifecycleTest {
                 .putExtra(AppView.UUID_EXTRA, "running-host").putExtra(AppView.NAME_EXTRA, "PC");
         return Robolectric.buildActivity(Library.class, intent).setup().visible();
     }
+
+    @Test
+    public void wakingHostUpdatesComputerSnapshotAndRestartsApplistPoller() {
+        Intent intent = new Intent(RuntimeEnvironment.getApplication(), Library.class)
+                .putExtra(AppView.UUID_EXTRA, "waking-host").putExtra(AppView.NAME_EXTRA, "PC");
+        ActivityController<Library> controller = Robolectric.buildActivity(Library.class, intent).setup();
+        try {
+            Library screen = controller.get();
+            ComputerDetails offline = new ComputerDetails();
+            offline.uuid = "waking-host";
+            offline.name = "PC";
+            offline.state = ComputerDetails.State.OFFLINE;
+            ReflectionHelpers.setField(screen, "computer", offline);
+            AppGridAdapter adapter = new AppGridAdapter(screen, new PreferenceConfiguration(), offline, "test", false);
+            ReflectionHelpers.setField(screen, "appGridAdapter", adapter);
+
+            ComputerManagerListener[] listener = new ComputerManagerListener[1];
+            List<ComputerDetails> polledWith = new java.util.ArrayList<>();
+            ComputerManagerService manager = new ComputerManagerService();
+            ReflectionHelpers.setField(screen, "managerBinder", manager.new ComputerManagerBinder() {
+                @Override public void startPolling(ComputerManagerListener callback) { listener[0] = callback; }
+                @Override public void stopPolling() { }
+                @Override public ComputerManagerService.ApplistPoller createAppListPoller(ComputerDetails details) {
+                    polledWith.add(details);
+                    return manager.new ApplistPoller(details) {
+                        @Override public void start() { }
+                        @Override public void stop() { }
+                    };
+                }
+            });
+            ReflectionHelpers.callInstanceMethod(screen, "startComputerUpdates");
+            assertEquals(1, polledWith.size());
+
+            ComputerDetails online = new ComputerDetails();
+            online.uuid = "waking-host";
+            online.name = "PC";
+            online.state = ComputerDetails.State.ONLINE;
+            online.pairState = com.limelight.nvstream.http.PairingManager.PairState.PAIRED;
+            online.activeAddress = new ComputerDetails.AddressTuple("10.0.0.42", 47989);
+            online.httpsPort = 47984;
+            listener[0].notifyComputerUpdated(online);
+
+            ComputerDetails current = ReflectionHelpers.getField(screen, "computer");
+            assertEquals(ComputerDetails.State.ONLINE, current.state);
+            assertEquals(online.activeAddress, current.activeAddress);
+            assertEquals("poller recreated with fresh endpoint", 2, polledWith.size());
+            assertEquals(online.activeAddress, polledWith.get(1).activeAddress);
+        } finally {
+            controller.pause().stop().destroy();
+        }
+    }
+
+    @Test
+    @Config(qualifiers = "w960dp-h540dp-land-television-xhdpi")
+    public void tvOfflineBannerWiresShellBarTabNextFocusDown() {
+        Intent intent = new Intent(RuntimeEnvironment.getApplication(), Library.class)
+                .putExtra(AppView.UUID_EXTRA, "tv-banner-host").putExtra(AppView.NAME_EXTRA, "PC");
+        ActivityController<Library> controller = Robolectric.buildActivity(Library.class, intent).setup();
+        try {
+            Library screen = controller.get();
+            savedLibraryOffline(screen, 4);
+            android.view.ViewGroup items = screen.findViewById(R.id.shell_bar_items);
+            assertNotNull(items);
+            assertTrue(items.getChildCount() > 0);
+            for (int i = 0; i < items.getChildCount(); i++) {
+                assertEquals(R.id.library_retry_banner, items.getChildAt(i).getNextFocusDownId());
+            }
+            ReflectionHelpers.callInstanceMethod(screen, "showAppListStatus",
+                    ReflectionHelpers.ClassParameter.from(int.class, 0));
+            idle();
+            for (int i = 0; i < items.getChildCount(); i++) {
+                assertEquals(R.id.fragmentView, items.getChildAt(i).getNextFocusDownId());
+            }
+        } finally {
+            controller.pause().stop().destroy();
+        }
+    }
 }

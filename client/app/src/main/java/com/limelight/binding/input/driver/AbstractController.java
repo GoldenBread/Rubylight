@@ -94,6 +94,24 @@ public abstract class AbstractController {
         return usbWorkers.computeIfAbsent(usbDeviceName, name -> newUsbWorker());
     }
 
+    /** Waits boundedly on a background thread for any queued USB stop/release work on {@code usbDeviceName}. */
+    static void awaitUsbWorker(String usbDeviceName, long timeoutMs) {
+        if (usbDeviceName == null) return;
+        ThreadPoolExecutor worker;
+        synchronized (AbstractController.class) {
+            worker = usbWorkers.get(usbDeviceName);
+        }
+        if (worker == null) return;
+        try {
+            worker.submit(() -> { }).get(timeoutMs, TimeUnit.MILLISECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        } catch (java.util.concurrent.ExecutionException
+                | java.util.concurrent.TimeoutException
+                | java.util.concurrent.RejectedExecutionException ignored) {
+        }
+    }
+
     protected final void runOnUsbWorker(Runnable work) {
         usbWork.execute(work);
     }

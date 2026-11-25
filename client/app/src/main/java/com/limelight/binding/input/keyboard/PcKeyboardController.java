@@ -102,6 +102,12 @@ public final class PcKeyboardController {
         host.changed();
     }
 
+    /** Release every touch-held key without disturbing pad holds or locked modifiers. */
+    public void releaseTouches() {
+        engine.releaseTouches();
+        host.changed();
+    }
+
     // Controller and remote.
 
     public void pad(Pad button, boolean down, long now) {

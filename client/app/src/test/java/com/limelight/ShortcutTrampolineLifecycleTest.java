@@ -363,4 +363,45 @@ public class ShortcutTrampolineLifecycleTest {
             controller.destroy();
         }
     }
+
+    @Test
+    public void repeatedOnlinePollsDoNotFinishOverQuitConfirmationDialog() throws Exception {
+        Intent launch = intent().putExtra(Game.EXTRA_APP_NAME, "New game").putExtra(Game.EXTRA_APP_ID, "9");
+        ActivityController<Trampoline> controller = Robolectric.buildActivity(Trampoline.class, launch)
+                .create().start().resume();
+        Trampoline activity = controller.get();
+        ComputerDetails computer = new ComputerDetails();
+        computer.uuid = intent().getStringExtra(AppView.UUID_EXTRA);
+        computer.name = "PC";
+        computer.state = ComputerDetails.State.ONLINE;
+        computer.pairState = PairingManager.PairState.PAIRED;
+        computer.activeAddress = new ComputerDetails.AddressTuple("192.168.1.5", 47989);
+        computer.runningGameId = 42;
+        ComputerManagerListener[] captured = new ComputerManagerListener[1];
+        ComputerManagerService service = new ComputerManagerService();
+        activity.connection.onServiceConnected(null, service.new ComputerManagerBinder() {
+            @Override public boolean waitForReady() { return true; }
+            @Override public ComputerDetails getComputer(String uuid) { return computer; }
+            @Override public void invalidateStateForComputer(String uuid) { }
+            @Override public void startPolling(ComputerManagerListener l) { captured[0] = l; }
+            @Override public void stopPolling() { }
+            @Override public String getUniqueId() { return "unique"; }
+        });
+        Thread waiter = ReflectionHelpers.getField(activity, "serviceWaitThread");
+        waiter.join(2000);
+        try {
+            // Two back-to-back ONLINE notifications queued before unbind completes.
+            captured[0].notifyComputerUpdated(computer);
+            captured[0].notifyComputerUpdated(computer);
+            ShadowLooper.idleMainLooper();
+
+            AlertDialog dialog = (AlertDialog) ShadowDialog.getLatestDialog();
+            assertNotNull("quit confirmation dialog stays visible", dialog);
+            assertTrue(dialog.isShowing());
+            assertFalse("second poll must not finish() over the confirmation dialog", activity.isFinishing());
+            assertEquals(1, activity.unbinds);
+        } finally {
+            controller.pause().stop().destroy();
+        }
+    }
 }

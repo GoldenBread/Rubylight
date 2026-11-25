@@ -164,4 +164,38 @@ public class PyroWaveDefaultBitrateTest {
         assertEquals(PreferenceConfiguration.getDefaultBitrate("1920x1080", "60"),
                 prefs().getInt(PreferenceConfiguration.BITRATE_PREF_STRING, 0));
     }
+
+    @Test
+    public void automaticBitrateUsesPyroWaveDefaultAndFallsBackForUnsupportedHosts() {
+        Application app = RuntimeEnvironment.getApplication();
+        prefs().edit().putString(PreferenceConfiguration.RESOLUTION_PREF_STRING, "1920x1080")
+                .putBoolean(PreferenceConfiguration.RESOLUTION_FOLLOWS_SCREEN_PREF_STRING, false)
+                .putString(PreferenceConfiguration.FPS_PREF_STRING, "60")
+                .putString(PreferenceConfiguration.VIDEO_FORMAT_PREF_STRING, "forcepyrowave")
+                .putBoolean(PreferenceConfiguration.BITRATE_USER_SET_PREF_STRING, false)
+                .putInt(PreferenceConfiguration.PREFS_VERSION_PREF_STRING, PreferenceConfiguration.PROFILE_NATIVE_VERSION)
+                .commit();
+        PreferenceConfiguration global = PreferenceConfiguration.readPreferences(app);
+        assertEquals(398132, global.bitrate);
+
+        PreferenceConfiguration onRubylight = PreferenceConfiguration.readPreferences(app, "rl-pc", TestHosts.rubylight());
+        assertEquals(398132, onRubylight.bitrate);
+
+        PreferenceConfiguration onSunshine = PreferenceConfiguration.readPreferences(app, "sun-pc",
+                TestHosts.fixture("sunshine-serverinfo.xml"));
+        assertTrue(onSunshine.pyroWaveUnavailable);
+        assertEquals(PreferenceConfiguration.getDefaultBitrate("1920x1080", "60"), onSunshine.bitrate);
+
+        // PC layer choosing PyroWave while main settings use H.265 + automatic bitrate.
+        prefs().edit().putString(PreferenceConfiguration.VIDEO_FORMAT_PREF_STRING, "forceh265").commit();
+        HostStreamProfile layer = new HostStreamProfile();
+        layer.codec = PreferenceConfiguration.FormatOption.FORCE_PYROWAVE;
+        layer.save(app, "rl-layer-pc");
+        try {
+            PreferenceConfiguration layered = PreferenceConfiguration.readPreferences(app, "rl-layer-pc", TestHosts.rubylight());
+            assertEquals(398132, layered.bitrate);
+        } finally {
+            app.getSharedPreferences("HostStreamProfiles", android.content.Context.MODE_PRIVATE).edit().clear().commit();
+        }
+    }
 }

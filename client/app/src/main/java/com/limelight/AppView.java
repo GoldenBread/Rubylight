@@ -214,6 +214,30 @@ public class AppView extends NightjarActivity implements AdapterFragmentCallback
                     return;
                 }
 
+                // Refresh our live computer snapshot (address, ports, state, caps, running game) before
+                // handling state transitions so launches, cover art, and applist polling never stay stale.
+                ComputerDetails previous = computer;
+                boolean endpointChanged = previous == null
+                        || !java.util.Objects.equals(previous.activeAddress, details.activeAddress)
+                        || previous.httpsPort != details.httpsPort
+                        || !java.util.Objects.equals(previous.serverCert, details.serverCert);
+                boolean becameOnline = previous != null && previous.state != ComputerDetails.State.ONLINE
+                        && details.state == ComputerDetails.State.ONLINE;
+                ComputerDetails updated = new ComputerDetails(details);
+                if (updated.rawAppList == null && previous != null) {
+                    updated.rawAppList = previous.rawAppList;
+                }
+                computer = updated;
+                if (appGridAdapter != null) {
+                    appGridAdapter.updateComputer(updated);
+                }
+                if (runningPolling && managerBinder != null && details.state == ComputerDetails.State.ONLINE
+                        && (poller == null || endpointChanged || becameOnline || poller.needsRestart())) {
+                    if (poller != null) poller.stop();
+                    poller = managerBinder.createAppListPoller(updated);
+                    poller.start();
+                }
+
                 if (details.state == ComputerDetails.State.OFFLINE) {
                     showAppListStatus(R.string.library_offline);
                     return;

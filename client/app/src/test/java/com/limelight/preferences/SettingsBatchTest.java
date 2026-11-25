@@ -256,6 +256,39 @@ public class SettingsBatchTest {
         }
     }
 
+    @Test
+    public void customFrameRateDialogValidatesPersistsAndRestoresEntryOnReopen() {
+        try (ActivityController<StreamSettings> controller = Robolectric.buildActivity(StreamSettings.class).setup()) {
+            FpsPreference fps = (FpsPreference) section(controller, "video").findPreference("list_fps");
+            fps.showDialog(null);
+            androidx.appcompat.app.AlertDialog picker =
+                    (androidx.appcompat.app.AlertDialog) org.robolectric.shadows.ShadowDialog.getLatestDialog();
+            picker.getButton(androidx.appcompat.app.AlertDialog.BUTTON_NEUTRAL).performClick();
+            org.robolectric.shadows.ShadowLooper.idleMainLooper();
+
+            androidx.appcompat.app.AlertDialog editor =
+                    (androidx.appcompat.app.AlertDialog) org.robolectric.shadows.ShadowDialog.getLatestDialog();
+            android.widget.EditText input = editor.findViewById(android.R.id.edit);
+            input.setText("5");
+            editor.getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE).performClick();
+            assertTrue("below 10 FPS stays open", editor.isShowing());
+            input.setText("501");
+            editor.getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE).performClick();
+            assertTrue("above 500 FPS stays open", editor.isShowing());
+
+            input.setText("75");
+            editor.getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE).performClick();
+            assertFalse(editor.isShowing());
+            assertEquals("75", prefs().getString(PreferenceConfiguration.FPS_PREF_STRING, null));
+            assertEquals(75, PreferenceConfiguration.readPreferences(RuntimeEnvironment.getApplication()).fps);
+        }
+        try (ActivityController<StreamSettings> reopened = Robolectric.buildActivity(StreamSettings.class).setup()) {
+            FpsPreference fps = (FpsPreference) section(reopened, "video").findPreference("list_fps");
+            assertEquals("75", fps.getValue());
+            assertTrue("saved custom FPS entry restored on reopen", fps.findIndexOfValue("75") >= 0);
+        }
+    }
+
     private static java.util.List<String> rates(ActivityController<StreamSettings> controller) {
         android.preference.ListPreference fps =
                 (android.preference.ListPreference) section(controller, "video").findPreference("list_fps");

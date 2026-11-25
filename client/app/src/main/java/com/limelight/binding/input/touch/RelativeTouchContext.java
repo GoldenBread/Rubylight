@@ -36,6 +36,7 @@ public class RelativeTouchContext implements TouchContext {
     private final TrackpadPointer pointer;
     private final float density;
     private final Handler handler;
+    private boolean isotropic;
 
     private final Runnable dragTimerRunnable = new Runnable() {
         @Override
@@ -82,6 +83,29 @@ public class RelativeTouchContext implements TouchContext {
         this.pointer = pointer;
         this.density = view.getResources().getDisplayMetrics().density;
         this.handler = new Handler(Looper.getMainLooper());
+    }
+
+    public void setIsotropic(boolean isotropic) {
+        this.isotropic = isotropic;
+    }
+
+    /**
+     * Computes per-axis pointer scale factors from view pixels to host reference pixels.
+     * When {@code isotropic} is true (input-only streams without a video frame) or when the view and
+     * reference have opposite orientations (e.g. portrait view with landscape stream dimensions),
+     * returns an equal X/Y scale so horizontal and vertical finger motion stay 1:1.
+     */
+    public static float[] motionScale(int refWidth, int refHeight, int viewWidth, int viewHeight,
+                                      float speed, boolean isotropic) {
+        float vw = Math.max(1, viewWidth);
+        float vh = Math.max(1, viewHeight);
+        boolean orientationMismatch = (refWidth > refHeight && viewHeight > viewWidth)
+                || (refHeight > refWidth && viewWidth > viewHeight);
+        if (isotropic || orientationMismatch) {
+            float uniform = Math.max(refWidth, refHeight) / (float) Math.max(1, Math.max(viewWidth, viewHeight)) * speed;
+            return new float[] {uniform, uniform};
+        }
+        return new float[] {refWidth / vw * speed, refHeight / vh * speed};
     }
 
     @Override
@@ -134,8 +158,8 @@ public class RelativeTouchContext implements TouchContext {
             // Under desktop zoom the drawn pointer keeps pace with the finger on screen.
             speed /= pointer.zoomScale();
         }
-        xFactor = referenceWidth / (float)targetView.getWidth() * speed;
-        yFactor = referenceHeight / (float)targetView.getHeight() * speed;
+        xFactor = motionScale(referenceWidth, referenceHeight, targetView.getWidth(), targetView.getHeight(), speed, isotropic)[0];
+        yFactor = motionScale(referenceWidth, referenceHeight, targetView.getWidth(), targetView.getHeight(), speed, isotropic)[1];
 
         originalTouchX = lastTouchX = eventX;
         originalTouchY = lastTouchY = eventY;

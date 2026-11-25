@@ -186,6 +186,9 @@ final class HostCapsule {
             case HostMenu.PC_SETTINGS:
                 HostStreamSettings.show(activity, details.uuid, details.displayName());
                 break;
+            case HostMenu.CONNECTION_ADDRESS:
+                actions.chooseAddress(details);
+                break;
             case HostMenu.SHARED_FOLDERS:
                 FolderBrowserActivity.open(activity, details);
                 break;

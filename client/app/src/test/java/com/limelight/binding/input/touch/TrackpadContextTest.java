@@ -113,6 +113,36 @@ public class TrackpadContextTest {
     }
 
     @Test
+    public void multiFingerDragReleasesOriginalButtonEvenWhenPointerCountChanges() {
+        Recorder connection = new Recorder();
+        TrackpadContext context = new TrackpadContext(connection, 1, false, 100, 100, 100, null);
+        // Two-finger tap starts pending right-button click (button 3).
+        context.setPointerCount(2);
+        context.touchDownEvent(500, 500, 1000, true);
+        context.touchUpEvent(500, 500, 1050);
+        assertEquals(Collections.singletonList("down 3"), connection.buttons);
+
+        // Second tap within CLICK_RELEASE_DELAY starts drag with activeDragButton = button 3.
+        context.setPointerCount(1);
+        context.touchDownEvent(500, 500, 1100, true);
+        context.touchMoveEvent(560, 500, 1120);
+        // Pointer count is now 1 (not 2); lifting or cancelling must still release button 3, never button 1.
+        context.touchUpEvent(560, 500, 1200);
+        assertEquals(Arrays.asList("down 3", "up 3"), connection.buttons);
+
+        // Same when cancelled after pointerCount drops to 0.
+        connection.buttons.clear();
+        context.setPointerCount(2);
+        context.touchDownEvent(500, 500, 2000, true);
+        context.touchUpEvent(500, 500, 2050);
+        context.touchDownEvent(500, 500, 2100, true);
+        context.touchMoveEvent(560, 500, 2120);
+        context.setPointerCount(0);
+        context.cancelTouch();
+        assertEquals(Arrays.asList("down 3", "up 3"), connection.buttons);
+    }
+
+    @Test
     public void aNegativeSensitivityFlipsThatAxisOnly() {
         int[] normal = drag(false, 100, 100, 100);
         int[] flipped = drag(false, -100, 100, 100);

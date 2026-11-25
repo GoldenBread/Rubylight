@@ -153,6 +153,7 @@ final class StreamSettingsDisplayOptions {
             // Never remove 30 FPS or 60 FPS
         }
         addNativeFrameRateEntry(fragment, maxSupportedFps);
+        ((FpsPreference) fragment.findPreference(PreferenceConfiguration.FPS_PREF_STRING)).ensureSelectedFpsEntry();
 
         // 7.1.4 only where this device plays it. A 7.1.4 choice made on another route (spatial
         // headphones) stays picked; the stream asks for 7.1 while it isn't playable.

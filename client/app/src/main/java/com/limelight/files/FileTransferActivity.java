@@ -1,6 +1,7 @@
 package com.limelight.files;
 
 import android.app.Application;
+import android.content.ActivityNotFoundException;
 import android.content.ComponentName;
 import android.content.ContentResolver;
 import android.content.Context;
@@ -125,7 +126,7 @@ public class FileTransferActivity extends NightjarActivity implements FileTransf
         FrameLayout content = TopAppBar.setUpPage(this, R.string.files_title, this::finish);
         views = new FileTransferViews(this);
         content.addView(views.buildPage(
-                () -> picker.launch(new String[] {"*/*"}),
+                this::launchPicker,
                 this::loadAccess,
                 () -> {
                     work.leftovers.clear();
@@ -260,6 +261,7 @@ public class FileTransferActivity extends NightjarActivity implements FileTransf
         uploadAccess = FileProblems.Access.CHECKING;
         downloadAccess = FileProblems.Access.CHECKING;
         views.status.setText(R.string.files_checking);
+        views.status.setVisibility(View.VISIBLE);
         HostCapabilities known = work.computer.caps;
         work.workers.execute(() -> {
             String failure = null;
@@ -318,8 +320,27 @@ public class FileTransferActivity extends NightjarActivity implements FileTransf
 
     private void onPicked(List<Uri> uris) {
         if (uris == null || uris.isEmpty()) return;
+        for (Uri uri : uris) work.persistPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
         work.waiting.addAll(uris);
         sendWaiting();
+    }
+
+    private void launchPicker() {
+        try {
+            picker.launch(new String[] {"*/*"});
+        } catch (ActivityNotFoundException e) {
+            Toast.makeText(this, R.string.folders_no_picker, Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void launchCreator(String name) {
+        try {
+            creator.launch(name);
+        } catch (ActivityNotFoundException e) {
+            work.pendingDownload = null;
+            work.pendingRetry = -1;
+            Toast.makeText(this, R.string.folders_no_picker, Toast.LENGTH_LONG).show();
+        }
     }
 
     /**
@@ -331,25 +352,59 @@ public class FileTransferActivity extends NightjarActivity implements FileTransf
         TransferWork owner = work;
         FileTransferController controller = owner.controller;
         ContentResolver resolver = getApplicationContext().getContentResolver();
-        owner.workers.execute(() -> {
-            List<SharedFile> queued = new ArrayList<>();
-            for (Uri uri : uris) queued.add(describe(resolver, uri));
-            owner.handler.post(() -> {
-                for (SharedFile file : queued) {
-                    if (owner.controller != controller) {
-                        // Another PC's transfers meanwhile: the file waits for one that may receive it.
-                        owner.waiting.add(file.uri);
-                    } else if (file.size < 0) {
-                        // The host needs the length before the first byte.
-                        FileTransferActivity screen = owner.screen;
-                        if (screen != null) screen.views.status.setText(screen.getString(R.string.files_size_unknown, file.name));
-                    } else {
-                        controller.send(file.name, file.size,
-                                () -> FileShareIntents.detach(resolver.openFileDescriptor(file.uri, "r")));
+        owner.pendingDescribes++;
+        try {
+            owner.workers.execute(() -> {
+                List<SharedFile> queued = new ArrayList<>();
+                List<android.os.ParcelFileDescriptor> preopened = new ArrayList<>();
+                try {
+                    for (Uri uri : uris) {
+                        SharedFile info = describe(resolver, uri);
+                        queued.add(info);
+                        // Non-persistable URIs (e.g. external shares) lose Activity-scoped grants on finish();
+                        // capture a descriptor while the Activity is still alive so background uploads succeed.
+                        preopened.add(info.size >= 0 && !owner.hasPersistedPermission(uri)
+                                ? FileShareIntents.tryOpenRead(resolver, uri) : null);
                     }
+                } finally {
+                    owner.handler.post(() -> {
+                        try {
+                            for (int i = 0; i < queued.size(); i++) {
+                                SharedFile file = queued.get(i);
+                                android.os.ParcelFileDescriptor pfd = preopened.get(i);
+                                if (owner.controller != controller) {
+                                    closeQuietly(pfd);
+                                    // Another PC's transfers meanwhile: the file waits for one that may receive it.
+                                    owner.waiting.add(file.uri);
+                                } else if (file.size < 0) {
+                                    closeQuietly(pfd);
+                                    // The host needs the length before the first byte.
+                                    FileTransferActivity screen = owner.screen;
+                                    if (screen != null) {
+                                        screen.views.status.setText(screen.getString(R.string.files_size_unknown, file.name));
+                                        screen.views.status.setVisibility(View.VISIBLE);
+                                    }
+                                } else {
+                                    controller.send(file.name, file.size,
+                                            FileShareIntents.uploadOpener(resolver, file.uri, pfd));
+                                }
+                            }
+                        } finally {
+                            owner.pendingDescribes = Math.max(0, owner.pendingDescribes - 1);
+                            if (owner.screen == null && !owner.kept()) owner.end();
+                        }
+                    });
                 }
             });
-        });
+        } catch (java.util.concurrent.RejectedExecutionException e) {
+            owner.pendingDescribes = Math.max(0, owner.pendingDescribes - 1);
+        }
+    }
+
+    private static void closeQuietly(android.os.ParcelFileDescriptor pfd) {
+        if (pfd != null) {
+            try { pfd.close(); } catch (java.io.IOException ignored) { }
+        }
     }
 
     /** A shared file's name and size, as its provider gives them; size is -1 when it gives none. */
@@ -372,7 +427,7 @@ public class FileTransferActivity extends NightjarActivity implements FileTransf
     private void download(RemoteFiles.Entry entry) {
         work.pendingDownload = entry;
         work.pendingRetry = -1;
-        creator.launch(entry.name);
+        launchCreator(entry.name);
     }
 
     /** The save dialog's document for the download it was opened for; package-private for tests. */
@@ -382,6 +437,9 @@ public class FileTransferActivity extends NightjarActivity implements FileTransf
         work.pendingDownload = null;
         work.pendingRetry = -1;
         if (uri == null) return;
+        if (!work.persistPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION)) {
+            work.persistPermission(uri, Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+        }
         String name = FileShareIntents.displayName(getContentResolver(), uri,
                 entry != null ? entry.name : String.valueOf(uri.getLastPathSegment()));
         Runnable discard = work.discard(uri, name);
@@ -498,7 +556,7 @@ public class FileTransferActivity extends NightjarActivity implements FileTransf
             if (work.controller.needsNewDocument(row.id)) {
                 work.pendingDownload = null;
                 work.pendingRetry = row.id;
-                creator.launch(row.localName);
+                launchCreator(row.localName);
             } else {
                 work.controller.retry(row.id);
             }
@@ -580,6 +638,10 @@ public class FileTransferActivity extends NightjarActivity implements FileTransf
         final List<String> leftovers = new ArrayList<>();
         /** The failed transfers the page last showed ({@link #seen}). */
         final Set<Long> seenFailed = new HashSet<>();
+        /** Persistable SAF grants held for background transfers, released when this work ends. */
+        final Map<Uri, Integer> persistedPermissions = java.util.Collections.synchronizedMap(new LinkedHashMap<>());
+        /** In-flight upload describe batches that have not queued their controller jobs yet. */
+        int pendingDescribes;
         /** The intent was read: its share is in {@link #waiting} or sent. */
         boolean opened;
         String uuid;
@@ -628,12 +690,24 @@ public class FileTransferActivity extends NightjarActivity implements FileTransf
             return count;
         }
 
+        boolean persistPermission(Uri uri, int flags) {
+            if (FileShareIntents.takePersistable(application.getContentResolver(), uri, flags)) {
+                persistedPermissions.put(uri, flags);
+                return true;
+            }
+            return false;
+        }
+
+        boolean hasPersistedPermission(Uri uri) {
+            return persistedPermissions.containsKey(uri);
+        }
+
         /**
-         * Whether the work outlives its page: a transfer runs, or one failed that the page has not shown, which
-         * stays until that PC's page is opened again.
+         * Whether the work outlives its page: a transfer runs, an upload batch is still being described, or one failed
+         * that the page has not shown, which stays until that PC's page is opened again.
          */
         boolean kept() {
-            return running() || unseenFailures() > 0;
+            return running() || unseenFailures() > 0 || pendingDescribes > 0;
         }
 
         /**
@@ -650,6 +724,13 @@ public class FileTransferActivity extends NightjarActivity implements FileTransf
         void end() {
             RunningTransfers.release(this);
             if (controller != null) controller.close();
+            synchronized (persistedPermissions) {
+                ContentResolver resolver = application.getContentResolver();
+                for (Map.Entry<Uri, Integer> entry : persistedPermissions.entrySet()) {
+                    FileShareIntents.releasePersistable(resolver, entry.getKey(), entry.getValue());
+                }
+                persistedPermissions.clear();
+            }
             workers.shutdown();
         }
 

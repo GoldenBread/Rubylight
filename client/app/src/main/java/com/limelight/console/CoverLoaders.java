@@ -67,7 +67,9 @@ final class CoverLoaders {
 
     /** Shows the cover in {@code image}, or the title in {@code text} until there is one. */
     void bind(ComputerDetails host, NvApp app, ImageView image, TextView text) {
+        image.setTag(null);
         if (host == null) {
+            CachedAppAssetLoader.clearBoundView(image);
             text.setText(app.getAppName());
             text.setVisibility(android.view.View.VISIBLE);
             image.setImageDrawable(null);

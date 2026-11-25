@@ -41,6 +41,7 @@ final class AppViewMenu {
 
     private final AppView view;
     private ActionSheet appMenu;
+    private com.limelight.computers.NeuralSheet neuralSheet;
 
     AppViewMenu(AppView view) {
         this.view = view;
@@ -48,6 +49,10 @@ final class AppViewMenu {
 
     void dismiss() {
         if (appMenu != null) appMenu.dismiss();
+        if (neuralSheet != null) {
+            neuralSheet.dismiss();
+            neuralSheet = null;
+        }
     }
 
     void showAppMenu(AppView.AppObject selectedApp, View selectedView) {
@@ -197,7 +202,10 @@ final class AppViewMenu {
                         view.showAppListStatus(R.string.library_offline);
                         return;
                     }
-                    com.limelight.computers.NeuralSheet.show(view, view.computer, binder.getUniqueId(), appUuid,
+                    if (neuralSheet != null) {
+                        neuralSheet.dismiss();
+                    }
+                    neuralSheet = com.limelight.computers.NeuralSheet.show(view, view.computer, binder.getUniqueId(), appUuid,
                             app.app.getAppName());
                 });
     }

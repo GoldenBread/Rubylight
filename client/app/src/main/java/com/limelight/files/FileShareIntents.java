@@ -17,6 +17,7 @@ import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Share-intent parsing, URI validation and {@link ContentResolver} file inspection helpers for
@@ -114,6 +115,60 @@ final class FileShareIntents {
     static int detach(ParcelFileDescriptor fd) throws IOException {
         if (fd == null) throw new FileNotFoundException("no descriptor");
         return fd.detachFd();
+    }
+
+    /** Attempts to persist a SAF URI grant so background transfers survive Activity finish; returns true on success. */
+    static boolean takePersistable(ContentResolver resolver, Uri uri, int flags) {
+        if (resolver == null || uri == null) return false;
+        try {
+            resolver.takePersistableUriPermission(uri, flags);
+            return true;
+        } catch (SecurityException | UnsupportedOperationException | IllegalArgumentException e) {
+            return false;
+        }
+    }
+
+    static void releasePersistable(ContentResolver resolver, Uri uri, int flags) {
+        if (resolver == null || uri == null) return;
+        try {
+            resolver.releasePersistableUriPermission(uri, flags);
+        } catch (SecurityException | UnsupportedOperationException | IllegalArgumentException ignored) {
+        }
+    }
+
+    /**
+     * Opens an upload URI. When a non-persistable temporary URI grant (such as an external share) is queued,
+     * callers may pass a pre-opened {@link ParcelFileDescriptor} captured while the Activity still held the grant
+     * so queued uploads succeed in the background after the Activity finishes; unused descriptors are closed on
+     * cancel/clear/close.
+     */
+    static FileTransferController.Opener uploadOpener(ContentResolver resolver, Uri uri, ParcelFileDescriptor preopened) {
+        AtomicReference<ParcelFileDescriptor> held = new AtomicReference<>(preopened);
+        return new FileTransferController.Opener() {
+            @Override public int open() throws IOException {
+                ParcelFileDescriptor pfd = held.getAndSet(null);
+                if (pfd != null) return detach(pfd);
+                return detach(resolver.openFileDescriptor(uri, "r"));
+            }
+
+            @Override public void close() {
+                ParcelFileDescriptor pfd = held.getAndSet(null);
+                if (pfd != null) {
+                    try {
+                        pfd.close();
+                    } catch (IOException ignored) {
+                    }
+                }
+            }
+        };
+    }
+
+    static ParcelFileDescriptor tryOpenRead(ContentResolver resolver, Uri uri) {
+        try {
+            return resolver.openFileDescriptor(uri, "r");
+        } catch (IOException | RuntimeException e) {
+            return null;
+        }
     }
 
     static String displayName(ContentResolver resolver, Uri uri, String fallback) {

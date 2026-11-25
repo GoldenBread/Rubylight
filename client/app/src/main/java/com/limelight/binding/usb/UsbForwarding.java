@@ -77,6 +77,11 @@ public final class UsbForwarding {
         void show(CharSequence text);
     }
 
+    /** Releases any local in-process USB driver holding {@code device} before USB forwarding opens it. */
+    public interface DeviceReleaser {
+        void release(UsbDevice device);
+    }
+
     /** One entry of usbList(), as the Rust engine's usb.rs list_json writes it. */
     static final class Attachment {
         final int requestId;
@@ -137,6 +142,7 @@ public final class UsbForwarding {
     private final Opener opener;
     private final ExecutorService worker;
     private final Messages messages;
+    private DeviceReleaser deviceReleaser = UsbDriverService::releaseActiveDevice;
     private final Handler main = new Handler(Looper.getMainLooper());
     // By usbfs path, while it is forwarded or being attached.
     private final Map<String, Forwarded> forwarded = new LinkedHashMap<>();
@@ -233,6 +239,19 @@ public final class UsbForwarding {
         return String.format(Locale.ROOT, "%04x:%04x", device.getVendorId(), device.getProductId());
     }
 
+    /** Whether {@code device} is on the persistent automatic USB forwarding list. */
+    public static boolean isAutoForwarded(Context context, UsbDevice device) {
+        if (context == null || device == null) return false;
+        return context.getSharedPreferences(AUTO_PREFS, Context.MODE_PRIVATE)
+                .getStringSet(AUTO_KEY, Collections.emptySet())
+                .contains(autoKey(device));
+    }
+
+    /** Overrides the callback invoked to release an in-process USB controller driver before opening a device. */
+    public void setDeviceReleaser(DeviceReleaser releaser) {
+        this.deviceReleaser = releaser;
+    }
+
     /** Whether the device is attached to the PC whenever it is plugged in during a stream. */
     public boolean isAuto(UsbDevice device) {
         return auto.contains(autoKey(device));
@@ -279,10 +298,10 @@ public final class UsbForwarding {
     }
 
     private boolean forwardable(UsbDevice device) {
-        return device.getDeviceClass() != UsbConstants.USB_CLASS_HUB && !UsbDriverService.shouldClaimDevice(device, prefConfig);
+        return device.getDeviceClass() != UsbConstants.USB_CLASS_HUB;
     }
 
-    /** What the user may forward: no hubs, nothing the input drivers take. */
+    /** What the user may forward: any attached USB device except hubs. */
     public List<UsbDevice> candidates() {
         List<UsbDevice> devices = new ArrayList<>();
         if (usbManager == null) return devices;
@@ -408,6 +427,8 @@ public final class UsbForwarding {
         String path = device.getDeviceName();
         String name = name(device);
         if (forwarded.containsKey(path)) return;
+        DeviceReleaser releaser = deviceReleaser;
+        if (releaser != null) releaser.release(device);
         Connection connection;
         try {
             connection = opener.open(device);
@@ -424,6 +445,8 @@ public final class UsbForwarding {
         say(R.string.usb_forwarding_asking, name);
         int fd = connection.fd();
         worker.execute(() -> {
+            // Wait off the main thread for any in-process USB input driver to finish closing its interfaces.
+            UsbDriverService.awaitDeviceRelease(device, 2000);
             // Connects to the host's native API the first time, so not on the main thread.
             int result = bridge.attach(fd, path, name);
             main.post(() -> attached(path, entry, result));

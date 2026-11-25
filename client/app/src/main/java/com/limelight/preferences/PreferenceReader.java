@@ -95,6 +95,13 @@ final class PreferenceReader {
             config.videoFormat = PreferenceConfiguration.codecWithoutPyroWave(allPcsFormat);
             config.useTextureView = PreferenceManager.getDefaultSharedPreferences(context)
                     .getBoolean(TEXTURE_VIEW_PREF_STRING, false) && !config.enableHdr && !config.enableSdr10Bit;
+            if (config.automaticBitrate) {
+                int automatic = config.automaticBitrateKbps();
+                boolean limited = input.network == StreamLayers.Network.MOBILE && input.mobileLimitKbps > 0 &&
+                        automatic > input.mobileLimitKbps;
+                config.bitrate = limited ? input.mobileLimitKbps : automatic;
+                layers.bitrateLimited = limited;
+            }
         }
         config.contentRateFrameRate = com.limelight.binding.video.DisplayFrameRatePolicy.tracksContentRate(
                 PreferenceManager.getDefaultSharedPreferences(context)
@@ -142,10 +149,10 @@ final class PreferenceReader {
             prefs.edit().putBoolean(GAMEPAD_MOTION_SENSORS_PREF_STRING, false).apply();
         }
 
+        config.videoFormat = PreferenceResolution.getVideoFormatValue(context);
         config.bitrate = prefs.getInt(BITRATE_PREF_STRING, prefs.getInt(BITRATE_PREF_OLD_STRING, 0) * 1000);
         if (config.bitrate == 0) {
-            config.bitrate = PreferenceResolution.getDefaultBitrate(prefs.getString(RESOLUTION_PREF_STRING, DEFAULT_RESOLUTION),
-                    prefs.getString(FPS_PREF_STRING, DEFAULT_FPS));
+            config.bitrate = config.automaticBitrateKbps();
         }
         config.automaticBitrate = !PreferenceResolution.isBitrateUserSet(prefs);
         if (config.automaticBitrate) {
@@ -154,7 +161,6 @@ final class PreferenceReader {
 
         readAudioConfig(context, prefs, config);
         config.mobileBitrateLimit = PreferenceResolution.mobileBitrateLimit(prefs.getString(MOBILE_BITRATE_PREF_STRING, "0"));
-        config.videoFormat = PreferenceResolution.getVideoFormatValue(context);
         config.framePacing = PreferenceResolution.getFramePacingValue(context);
         config.analogStickForScrolling = PreferenceResolution.getAnalogStickForScrollingValue(context);
         config.deadzonePercentage = prefs.getInt(DEADZONE_PREF_STRING, DEFAULT_DEADZONE);

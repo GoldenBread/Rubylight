@@ -17,6 +17,7 @@ import com.limelight.binding.input.touch.TrackpadContext;
 import com.limelight.binding.input.touch.TrackpadPointer;
 import com.limelight.binding.input.touch.TwoFingerTapGesture;
 import com.limelight.computers.HostNotices;
+import com.limelight.nvstream.http.NvApp;
 import com.limelight.nvstream.input.MouseButtonPacket;
 import com.limelight.nvstream.jni.MoonBridge;
 
@@ -57,10 +58,14 @@ final class GameFingerTouchHandler {
         this.fingerTap = fingerTap;
     }
 
+    private boolean isInputOnly() {
+        return game.app != null && game.app.getRole() == NvApp.Role.INPUT_ONLY;
+    }
+
     void ensureTrackpadPointer(int mode) {
         if (game.trackpadPointer == null) {
             game.trackpadPointer = new TrackpadPointer(game.conn, game.streamView, game.findViewById(R.id.localCursor),
-                    game.prefConfig.absoluteMouseMode,
+                    game.prefConfig.absoluteMouseMode && !isInputOnly(),
                     game.prefConfig.trackpadAcceleration ? PointerAcceleration.forCurve(game.prefConfig.trackpadAccelerationCurve) : null,
                     game.prefConfig.trackpadMomentum ? new TouchMomentum(game.prefConfig.trackpadMomentumGlide) : null);
             trackpadArea = TrackpadArea.forPreset(game.prefConfig.trackpadArea);
@@ -72,17 +77,22 @@ final class GameFingerTouchHandler {
     }
 
     void initializeTouchContexts(boolean usesTrackpadGestures) {
+        boolean inputOnly = isInputOnly();
         for (int i = 0; i < touchContextMap.length; i++) {
             if (usesTrackpadGestures) {
                 // Same gestures as a physical touchpad: tap to click, two-finger scroll and right-click,
                 // tap and touch again to drag, flick momentum.
-                TrackpadContext gestures = new TrackpadContext(game.conn, i, game.prefConfig.absoluteMouseMode,
+                TrackpadContext gestures = new TrackpadContext(game.conn, i, game.prefConfig.absoluteMouseMode && !inputOnly,
                         game.prefConfig.width, game.prefConfig.height, new TrackpadContext.MoveScale() {
                             @Override public float x() {
-                                return game.prefConfig.width / (float) Math.max(1, game.streamView.getWidth()) * game.prefConfig.trackpadSpeed / 100f;
+                                return RelativeTouchContext.motionScale(game.prefConfig.width, game.prefConfig.height,
+                                        game.streamView.getWidth(), game.streamView.getHeight(),
+                                        game.prefConfig.trackpadSpeed / 100f, inputOnly)[0];
                             }
                             @Override public float y() {
-                                return game.prefConfig.height / (float) Math.max(1, game.streamView.getHeight()) * game.prefConfig.trackpadSpeed / 100f;
+                                return RelativeTouchContext.motionScale(game.prefConfig.width, game.prefConfig.height,
+                                        game.streamView.getWidth(), game.streamView.getHeight(),
+                                        game.prefConfig.trackpadSpeed / 100f, inputOnly)[1];
                             }
                         });
                 gestures.setScrollSpeed(game.prefConfig.trackpadScrollSpeed);
@@ -91,11 +101,15 @@ final class GameFingerTouchHandler {
                 touchContextMap[i] = gestures;
                 continue;
             }
-            touchContextMap[i] = game.prefConfig.touchscreenTrackpad ?
-                    new RelativeTouchContext(game.conn, i, game.prefConfig.width, game.prefConfig.height, game.streamView, game.prefConfig,
-                            game.trackpadPointer) :
-                    new AbsoluteTouchContext(game.conn, i, game.streamView,
-                            () -> game.desktopGestures != null ? game.desktopGestures.viewport().scale() : 1);
+            if (game.prefConfig.touchscreenTrackpad) {
+                RelativeTouchContext relative = new RelativeTouchContext(game.conn, i, game.prefConfig.width,
+                        game.prefConfig.height, game.streamView, game.prefConfig, game.trackpadPointer);
+                relative.setIsotropic(inputOnly);
+                touchContextMap[i] = relative;
+            } else {
+                touchContextMap[i] = new AbsoluteTouchContext(game.conn, i, game.streamView,
+                        () -> game.desktopGestures != null ? game.desktopGestures.viewport().scale() : 1);
+            }
         }
     }
 

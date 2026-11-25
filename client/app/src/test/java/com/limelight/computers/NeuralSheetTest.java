@@ -269,4 +269,19 @@ public class NeuralSheetTest {
         assertFalse(sheet.shown().working());
         assertTrue(later.isEmpty());
     }
+
+    @Test
+    public void dismissClosesSheetAndChildNoticeDialogAndDropsScheduledPoll() {
+        script("neural", OFF);
+        NeuralSheet sheet = sheet();
+        fg(sheet).performClick();
+        Shadows.shadowOf(Looper.getMainLooper()).idle();
+        AlertDialog notice = (AlertDialog) ShadowDialog.getLatestDialog();
+        assertTrue(notice.isShowing());
+        assertTrue(sheet.sheet().isShowing());
+
+        sheet.dismiss();
+        assertFalse("child dialog closed on dismiss", notice.isShowing());
+        assertFalse("sheet closed on dismiss", sheet.sheet().isShowing());
+    }
 }

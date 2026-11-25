@@ -497,30 +497,33 @@ final class HostFlowRoutes {
                 String deviceName = Build.MODEL != null && !Build.MODEL.isEmpty() ? Build.MODEL : "Nightjar";
                 httpHandle = NightjarHttpJni.clientCreate(addr.address, addr.port, computer.httpsPort,
                         binder.getUniqueId(), clientCert, clientKey, encodeCert(computer.serverCert), deviceName);
-                if (httpHandle <= 0 || !actions.acceptPairingRequest(generation, Long.valueOf(httpHandle))) {
-                    if (httpHandle > 0) NightjarHttpJni.clientCancelPendingRequests(httpHandle);
+                if (httpHandle <= 0) {
+                    message = activity.getString(R.string.pair_connection_fix);
+                } else if (!actions.acceptPairingRequest(generation, Long.valueOf(httpHandle))) {
+                    NightjarHttpJni.clientCancelPendingRequests(httpHandle);
                     return;
-                }
-                int mode = link != null ? 2 : (oneTimePin != null ? 1 : 0);
-                JSONObject res = new JSONObject(NightjarHostsJni.hostFlowPair(
-                        httpHandle, binder.hostManagerHandle(), mode, pin,
-                        passphrase == null ? "" : passphrase, link == null ? "" : link.text,
-                        computer.serverCert != null, computer.runningGameId != 0));
-                if (res.optBoolean("ok")) {
-                    byte[] der = Base64.decode(res.optString("cert_b64", ""), Base64.DEFAULT);
-                    ComputerDetails stored = binder.getComputer(computer.uuid);
-                    if (stored != null && der.length > 0) {
-                        stored.serverCert = (X509Certificate) CertificateFactory.getInstance("X.509")
-                                .generateCertificate(new ByteArrayInputStream(der));
-                        binder.setServerCertificate(computer.uuid, der);
-                        binder.invalidateStateForComputer(computer.uuid);
-                        success = true;
-                        com.limelight.console.SetupCard.offer(activity.getApplicationContext(), stored);
-                    } else {
-                        message = activity.getString(R.string.pair_fail);
-                    }
                 } else {
-                    message = activity.getString(pairFailureRes(res.optInt("kind", 10)));
+                    int mode = link != null ? 2 : (oneTimePin != null ? 1 : 0);
+                    JSONObject res = new JSONObject(NightjarHostsJni.hostFlowPair(
+                            httpHandle, binder.hostManagerHandle(), mode, pin,
+                            passphrase == null ? "" : passphrase, link == null ? "" : link.text,
+                            computer.serverCert != null, computer.runningGameId != 0));
+                    if (res.optBoolean("ok")) {
+                        byte[] der = Base64.decode(res.optString("cert_b64", ""), Base64.DEFAULT);
+                        ComputerDetails stored = binder.getComputer(computer.uuid);
+                        if (stored != null && der.length > 0) {
+                            stored.serverCert = (X509Certificate) CertificateFactory.getInstance("X.509")
+                                    .generateCertificate(new ByteArrayInputStream(der));
+                            binder.setServerCertificate(computer.uuid, der);
+                            binder.invalidateStateForComputer(computer.uuid);
+                            success = true;
+                            com.limelight.console.SetupCard.offer(activity.getApplicationContext(), stored);
+                        } else {
+                            message = activity.getString(R.string.pair_fail);
+                        }
+                    } else {
+                        message = activity.getString(pairFailureRes(res.optInt("kind", 10)));
+                    }
                 }
             }
         } catch (CertificateException | IOException | JSONException e) {

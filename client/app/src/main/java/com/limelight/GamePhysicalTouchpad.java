@@ -52,7 +52,7 @@ final class GamePhysicalTouchpad {
         // Like the mouse case, ignore the touchpad while we aren't capturing it; returning
         // true keeps Android from turning the touches into d-pad events.
         if (!game.inputCaptureProvider.isCapturingActive()) {
-            cancelNativeTouchpad();
+            cancelTouchpad();
             return true;
         }
         if (nativeTouchpad()) {
@@ -108,6 +108,17 @@ final class GamePhysicalTouchpad {
         if (nativeTouchpadHeld) {
             nativeTouchpadHeld = false;
             game.conn.cancelTouchpad();
+        }
+    }
+
+    /** Cancels both native touchpad frames and fallback touchpad mouse gestures (capture or focus lost). */
+    void cancelTouchpad() {
+        cancelNativeTouchpad();
+        for (TrackpadContext context : touchpadContextMap) {
+            if (context != null) {
+                context.cancelTouch();
+                context.setPointerCount(0);
+            }
         }
     }
 

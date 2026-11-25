@@ -413,15 +413,13 @@ final class HomeFocusManager {
         if (key == null) {
             return;
         }
-        int target = adapter.positionOfKey(key);
-        if (target < 0) {
-            target = adapter.nearestCard(at);
-        }
-        if (target < 0) {
-            return;
-        }
-        final int position = target;
+        final String focusKey = key;
+        final int focusAt = at;
         list.post(() -> {
+            int position = resolveGridPosition(adapter, focusKey, focusAt);
+            if (position < 0) {
+                return;
+            }
             RecyclerView.ViewHolder holder = list.findViewHolderForAdapterPosition(position);
             if (holder != null) {
                 if (!holder.itemView.hasFocus()) {
@@ -430,7 +428,11 @@ final class HomeFocusManager {
             } else {
                 revealCard(position);
                 list.post(() -> {
-                    RecyclerView.ViewHolder later = list.findViewHolderForAdapterPosition(position);
+                    int latest = resolveGridPosition(adapter, focusKey, focusAt);
+                    if (latest < 0) {
+                        return;
+                    }
+                    RecyclerView.ViewHolder later = list.findViewHolderForAdapterPosition(latest);
                     if (later != null) {
                         later.itemView.requestFocus();
                     }
@@ -439,12 +441,27 @@ final class HomeFocusManager {
         });
     }
 
+    private static int resolveGridPosition(ConsoleHomeListAdapter adapter, String key, int fallbackAt) {
+        int count = adapter.getItemCount();
+        if (count == 0) {
+            return -1;
+        }
+        int position = adapter.positionOfKey(key);
+        if (position < 0) {
+            position = adapter.nearestCard(fallbackAt);
+        }
+        return position >= 0 && position < count ? position : -1;
+    }
+
     /**
      * Brings the card at {@code position} in so it can take focus. On a TV its section's title shows above it while
      * that leaves the card on screen; a card further down a long section comes in itself under an empty title's
      * height, since from the title it would lie past the screen and never be laid out to take focus.
      */
     private void revealCard(int position) {
+        if (position < 0 || position >= host.adapter().getItemCount()) {
+            return;
+        }
         ConsoleHomeListAdapter.Reveal reveal = revealFor(position);
         host.grid().scrollToPositionWithOffset(reveal.position, reveal.offset);
     }
@@ -452,6 +469,9 @@ final class HomeFocusManager {
     /** Where {@link #revealCard} starts the list for the card at {@code position}, from what the list has laid out. */
     ConsoleHomeListAdapter.Reveal revealFor(int position) {
         ConsoleHomeListAdapter adapter = host.adapter();
+        if (position < 0 || position >= adapter.getItemCount()) {
+            return new ConsoleHomeListAdapter.Reveal(0, 0);
+        }
         GridLayoutManager grid = host.grid();
         RecyclerView list = host.list();
         int heading = adapter.sectionStart(position);

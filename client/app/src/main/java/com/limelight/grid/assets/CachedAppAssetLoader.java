@@ -311,6 +311,14 @@ public class CachedAppAssetLoader {
 
     /** Games whose SteamGridDB cover is being looked up through this loader now. */
     private final java.util.Set<Integer> coverFallbackAsked = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    /** The tuple most recently bound to each ImageView, so stale async fallbacks never paint over recycled views. */
+    private static final java.util.Map<ImageView, LoaderTuple> boundViews =
+            java.util.Collections.synchronizedMap(new java.util.WeakHashMap<>());
+
+    /** Clears any cover binding tracked for {@code imageView} when a caller binds non-loader art or clears the view. */
+    public static void clearBoundView(ImageView imageView) {
+        if (imageView != null) boundViews.remove(imageView);
+    }
 
     /**
      * The host answered 404 for this game's cover or sent its grey placeholder: when a SteamGridDB key is set, the
@@ -335,8 +343,10 @@ public class CachedAppAssetLoader {
                 ImageView view = imageRef.get();
                 TextView text = textRef.get();
                 LoaderTask current = getLoaderTask(view);
-                // A view bound to another game since stays with that game's load.
-                if (view != null && text != null && (current == null || current.tuple == null || current.tuple.equals(tuple))) {
+                LoaderTuple bound = view == null ? null : boundViews.get(view);
+                // A view bound to another game since (or cleared) stays with its newer binding.
+                if (view != null && text != null && tuple.equals(bound)
+                        && (current == null || current.tuple == null || current.tuple.equals(tuple))) {
                     populateImageView(tuple.app, view, text);
                 }
                 if (artListener != null) artListener.accept(tuple.app);
@@ -445,6 +455,7 @@ public class CachedAppAssetLoader {
 
     public boolean populateImageView(NvApp app, ImageView imgView, TextView textView) {
         LoaderTuple tuple = new LoaderTuple(computer, app);
+        boundViews.put(imgView, tuple);
 
         // Names can change while the same artwork is still loading. Bind the label even
         // when reusing that request, otherwise a renamed game keeps its previous title.

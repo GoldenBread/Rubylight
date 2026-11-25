@@ -20,17 +20,21 @@ import androidx.core.content.ContextCompat;
 
 import com.limelight.LimeLog;
 import com.limelight.R;
+import com.limelight.binding.usb.UsbForwarding;
 import com.limelight.preferences.PreferenceConfiguration;
 
 import java.io.File;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CopyOnWriteArraySet;
 
 public class UsbDriverService extends Service implements UsbDriverListener {
 
     private static final String ACTION_USB_PERMISSION =
             "com.limelight.USB_PERMISSION";
+    private static final CopyOnWriteArraySet<UsbDriverService> activeServices = new CopyOnWriteArraySet<>();
 
     private UsbManager usbManager;
     private PreferenceConfiguration prefConfig;
@@ -40,6 +44,8 @@ public class UsbDriverService extends Service implements UsbDriverListener {
     private final UsbDriverBinder binder = new UsbDriverBinder();
 
     private final CopyOnWriteArrayList<AbstractController> controllers = new CopyOnWriteArrayList<>();
+    private final Set<Integer> releasedDeviceIds = Collections.synchronizedSet(new HashSet<>());
+    private final Set<String> releasedDeviceNames = Collections.synchronizedSet(new HashSet<>());
 
     private volatile UsbDriverListener listener;
     private UsbDriverStateListener stateListener;
@@ -154,6 +160,8 @@ public class UsbDriverService extends Service implements UsbDriverListener {
                 }, 1000);
             }
             else if (UsbManager.ACTION_USB_DEVICE_DETACHED.equals(action)) {
+                releasedDeviceIds.remove(device.getDeviceId());
+                if (device.getDeviceName() != null) releasedDeviceNames.remove(device.getDeviceName());
                 if (pendingPermissions.remove(device.getDeviceId()) && stateListener != null) {
                     stateListener.onUsbPermissionPromptCompleted();
                 }
@@ -215,6 +223,40 @@ public class UsbDriverService extends Service implements UsbDriverListener {
         public void stop() {
             UsbDriverService.this.stop();
         }
+
+        public void releaseDevice(UsbDevice device) {
+            UsbDriverService.this.releaseDevice(device);
+        }
+    }
+
+    /** Stops and releases {@code device} on any active in-process {@link UsbDriverService} for USB forwarding. */
+    public static void releaseActiveDevice(UsbDevice device) {
+        if (device == null) return;
+        for (UsbDriverService service : activeServices) {
+            service.releaseDevice(device);
+        }
+    }
+
+    /** Waits boundedly off the main thread for any queued USB controller close/interface release on {@code device}. */
+    public static void awaitDeviceRelease(UsbDevice device, long timeoutMs) {
+        if (device == null) return;
+        AbstractController.awaitUsbWorker(device.getDeviceName(), timeoutMs);
+    }
+
+    /** Releases a claimed controller and prevents reclaiming it for the rest of this session (until unplugged). */
+    public void releaseDevice(UsbDevice device) {
+        if (device == null) return;
+        releasedDeviceIds.add(device.getDeviceId());
+        if (device.getDeviceName() != null) releasedDeviceNames.add(device.getDeviceName());
+        if (pendingPermissions.remove(device.getDeviceId()) && stateListener != null) {
+            stateListener.onUsbPermissionPromptCompleted();
+        }
+        for (AbstractController controller : controllers) {
+            if (isControllerForDevice(controller, device)) {
+                controllers.remove(controller);
+                controller.stop();
+            }
+        }
     }
 
     private static boolean isControllerForDevice(AbstractController controller, UsbDevice device) {
@@ -228,6 +270,9 @@ public class UsbDriverService extends Service implements UsbDriverListener {
 
     private void handleUsbDeviceState(UsbDevice device) {
         if (!started || device == null || pendingPermissions.contains(device.getDeviceId()) ||
+                releasedDeviceIds.contains(device.getDeviceId()) ||
+                (device.getDeviceName() != null && releasedDeviceNames.contains(device.getDeviceName())) ||
+                UsbForwarding.isAutoForwarded(this, device) ||
                 !usbManager.getDeviceList().containsKey(device.getDeviceName())) {
             return;
         }
@@ -401,6 +446,10 @@ public class UsbDriverService extends Service implements UsbDriverListener {
         return true;
     }
 
+    public static boolean shouldClaimDevice(Context context, UsbDevice device, PreferenceConfiguration config) {
+        return !UsbForwarding.isAutoForwarded(context, device) && shouldClaimDevice(device, config);
+    }
+
     public static boolean shouldClaimDevice(UsbDevice device, PreferenceConfiguration config) {
         // Android's InputDevice API cannot apply DualSense adaptive trigger effects.
         if (DualSenseController.canClaimDevice(device)) {
@@ -423,6 +472,7 @@ public class UsbDriverService extends Service implements UsbDriverListener {
         }
 
         started = true;
+        activeServices.add(this);
 
         // Register for USB attach broadcasts and permission completions
         IntentFilter filter = new IntentFilter();
@@ -433,7 +483,7 @@ public class UsbDriverService extends Service implements UsbDriverListener {
 
         // Enumerate existing devices
         for (UsbDevice dev : usbManager.getDeviceList().values()) {
-            if (shouldClaimDevice(dev, prefConfig)) {
+            if (shouldClaimDevice(this, dev, prefConfig)) {
                 // Start the process of claiming this device
                 handleUsbDeviceState(dev);
             }
@@ -441,6 +491,9 @@ public class UsbDriverService extends Service implements UsbDriverListener {
     }
 
     private void stop() {
+        activeServices.remove(this);
+        releasedDeviceIds.clear();
+        releasedDeviceNames.clear();
         if (!started) {
             return;
         }

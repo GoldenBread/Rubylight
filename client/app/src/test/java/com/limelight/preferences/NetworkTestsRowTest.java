@@ -225,4 +225,34 @@ public class NetworkTestsRowTest {
     private void HostCapabilities_save() {
         com.limelight.computers.HostCapabilityCache.save(app, "tests-pc", TestHosts.rubylight());
     }
+
+    @Test
+    public void cachedCapabilitiesShowJumboFramesAndPaceCalibrationRowsForSavedPc() {
+        ComputerDetails pc = new ComputerDetails();
+        pc.uuid = "jumbo-pace-pc";
+        pc.name = "Rubylight PC";
+        pc.serverCert = com.limelight.nativeapi.NativeApiFixtures.certificate();
+        ComputerDatabaseManager database = new ComputerDatabaseManager(app);
+        try {
+            assertTrue(database.updateComputer(pc));
+        } finally {
+            database.close();
+        }
+        com.limelight.nvstream.http.HostCapabilities jumboPyro = TestHosts.caps(
+                TestHosts.serverInfo("rubylight-serverinfo.xml")
+                        .replace("</root>", "<MaxVideoPacket>1472</MaxVideoPacket></root>"));
+        assertTrue(jumboPyro.maxVideoPacket() > 0);
+        com.limelight.computers.HostCapabilityCache.save(app, pc.uuid, jumboPyro);
+        try (ActivityController<StreamSettings> controller = open()) {
+            StreamSettings screen = controller.get();
+            SettingsStructureTest.settle(screen);
+            StreamSettings.SettingsFragment streaming = SettingsStructureTest.open(screen, "streaming");
+            Shadows.shadowOf(Looper.getMainLooper()).idle();
+            assertTrue("cached maxVideoPacket restores Jumbo frames row", screen.anyJumboPc);
+            assertTrue("cached PYROWAVE + cert restores Pace calibration row", screen.anyPacePc);
+            assertNotNull(streaming.findPreference(PreferenceConfiguration.JUMBO_FRAMES_PREF_STRING));
+        } finally {
+            com.limelight.computers.HostCapabilityCache.forget(app, pc.uuid);
+        }
+    }
 }

@@ -36,10 +36,11 @@ public class AppGridAdapter extends GenericGridAdapter<AppView.AppObject> {
     /** The covers that step back while one has the selection. */
     private final com.limelight.ui.CoverCard.Group coverGroup = new com.limelight.ui.CoverCard.Group();
 
-    private final ComputerDetails computer;
+    private ComputerDetails computer;
     private final String uniqueId;
     private boolean showHiddenApps;
     private String searchQuery = "";
+    private double scalingDivisor = 1.0;
 
     private CachedAppAssetLoader loader;
     private java.util.function.Consumer<NvApp> artListener;
@@ -119,8 +120,30 @@ public class AppGridAdapter extends GenericGridAdapter<AppView.AppObject> {
             // We don't want to make them bigger before draw-time
             scalingDivisor = 1.0;
         }
+        this.scalingDivisor = scalingDivisor;
         LimeLog.info("Art scaling divisor: " + scalingDivisor);
 
+        rebuildLoader();
+
+        // This will trigger the view to reload with the new layout
+        setLayoutId(getLayoutIdForPreferences(prefs));
+    }
+
+    /** Refreshes the bound PC details and recreates the asset loader when its reachability endpoint changes. */
+    public void updateComputer(ComputerDetails updated) {
+        if (updated == null) return;
+        ComputerDetails previous = this.computer;
+        boolean endpointChanged = previous == null
+                || !java.util.Objects.equals(previous.activeAddress, updated.activeAddress)
+                || previous.httpsPort != updated.httpsPort
+                || !java.util.Objects.equals(previous.serverCert, updated.serverCert);
+        this.computer = updated;
+        if (endpointChanged && loader != null) {
+            rebuildLoader();
+        }
+    }
+
+    private void rebuildLoader() {
         if (loader != null) {
             // Cancel operations on the old loader
             cancelQueuedOperations();
@@ -134,9 +157,6 @@ public class AppGridAdapter extends GenericGridAdapter<AppView.AppObject> {
                 Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888));
 
         loader.setArtListener(artListener);
-
-        // This will trigger the view to reload with the new layout
-        setLayoutId(getLayoutIdForPreferences(prefs));
     }
 
     /** Told on the main thread when a game's cover has just been loaded, or found to be missing, so a backdrop built without it can be built again. */

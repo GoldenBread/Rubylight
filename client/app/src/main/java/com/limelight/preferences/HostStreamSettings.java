@@ -356,9 +356,19 @@ public class HostStreamSettings extends NightjarActivity {
         details.alias = HostNames.get(this, hostUuid);
         computer = details;
         showName();
+        boolean capsChanged = details.caps.isKnown() && !details.caps.equals(caps);
         if (details.caps.isKnown()) {
             caps = details.caps;
-            ((MaterialToolbar) findViewById(R.id.host_profile_toolbar)).setSubtitle(caps.familyLabel(this));
+            if (mode == Mode.PC) {
+                ((MaterialToolbar) findViewById(R.id.host_profile_toolbar)).setSubtitle(caps.familyLabel(this));
+            }
+        }
+        if (capsChanged) {
+            SettingsFragment fragment = (SettingsFragment) getFragmentManager().findFragmentById(R.id.host_profile_settings);
+            if (fragment != null && fragment.isAdded()) {
+                fragment.rebuildForCapabilities();
+                return;
+            }
         }
         refreshActions();
     }
@@ -547,8 +557,28 @@ public class HostStreamSettings extends NightjarActivity {
         public void onActivityCreated(Bundle state) {
             super.onActivityCreated(state);
             activity = (HostStreamSettings) getActivity();
+            buildPreferenceScreen();
+            View root = getView();
+            View list = root == null ? null : root.findViewById(android.R.id.list);
+            String focus = state == null ? activity.getIntent().getStringExtra(EXTRA_FOCUS_KEY) : null;
+            if (list != null) list.post(() -> {
+                int position = focus != null && list instanceof ListView ?
+                        StreamSettings.RootFragment.positionOf((ListView) list, focus) : -1;
+                if (position >= 0) ((ListView) list).setSelection(position);
+                if (!list.isInTouchMode() && !list.hasFocus()) list.requestFocus();
+            });
+        }
+
+        void rebuildForCapabilities() {
+            if (activity == null) return;
+            buildPreferenceScreen();
+        }
+
+        private void buildPreferenceScreen() {
             PreferenceScreen screen = getPreferenceManager().createPreferenceScreen(activity);
             setPreferenceScreen(screen);
+            connection = null;
+            host = null;
             PreferenceCategory stream = category(screen, R.string.settings_section_video);
             if (activity.mode == Mode.GAME) {
                 row(stream, "preset", R.string.game_preset_title, this::showPreset);
@@ -611,15 +641,6 @@ public class HostStreamSettings extends NightjarActivity {
             footer.setSelectable(false);
             screen.addPreference(footer);
             updateSummaries();
-            View root = getView();
-            View list = root == null ? null : root.findViewById(android.R.id.list);
-            String focus = state == null ? activity.getIntent().getStringExtra(EXTRA_FOCUS_KEY) : null;
-            if (list != null) list.post(() -> {
-                int position = focus != null && list instanceof ListView ?
-                        StreamSettings.RootFragment.positionOf((ListView) list, focus) : -1;
-                if (position >= 0) ((ListView) list).setSelection(position);
-                if (!list.isInTouchMode() && !list.hasFocus()) list.requestFocus();
-            });
         }
 
         private PreferenceCategory category(PreferenceScreen screen, int title) {

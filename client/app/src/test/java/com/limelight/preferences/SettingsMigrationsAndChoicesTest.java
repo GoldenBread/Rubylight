@@ -434,4 +434,20 @@ public class SettingsMigrationsAndChoicesTest {
             assertTrue(Arrays.asList(StreamPreset.LATENCY_SWITCHES).contains(key));
         }
     }
+
+    @Test
+    public void resetAllClearsDisableHevcLowLatencyAndSimpleProfileVrrState() {
+        prefs().edit()
+                .putBoolean(PreferenceConfiguration.DISABLE_HEVC_LOW_LATENCY_PREF_STRING, true)
+                .putBoolean(SimpleProfile.VRR_OPT_IN, true)
+                .putBoolean(SimpleProfile.VRR_LAST, true)
+                .commit();
+        StreamSettings.resetAllSettings(RuntimeEnvironment.getApplication());
+        assertFalse("HEVC low-latency disable flag resets to false",
+                prefs().getBoolean(PreferenceConfiguration.DISABLE_HEVC_LOW_LATENCY_PREF_STRING, true));
+        assertEquals(PreferenceConfiguration.HEVC_LOW_LATENCY_AUTO,
+                PreferenceConfiguration.readHevcLowLatencyMode(prefs()));
+        assertFalse(prefs().contains(SimpleProfile.VRR_OPT_IN));
+        assertFalse(prefs().contains(SimpleProfile.VRR_LAST));
+    }
 }

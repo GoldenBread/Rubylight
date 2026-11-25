@@ -58,6 +58,8 @@ public class ConsoleHomeActivity extends NightjarActivity implements HostFeed.Li
     /** How long after coming to the front "no hosts" waits for the first host to answer. */
     private static final long SETTLE_MS = 1500;
     private static final long DEBOUNCE_MS = 250;
+    /** Follow-up refresh after returning from another screen so host session teardown is reflected on Home. */
+    private static final long RESUME_REFRESH_MS = 1500;
     /** How long Home waits for saved PCs to answer before it shows them offline: a poll that gets no answer is done by then. */
     private static final long WAIT_LIMIT_MS = 10_000;
     private static final int COVER_WIDTH_DP = 140;
@@ -106,6 +108,7 @@ public class ConsoleHomeActivity extends NightjarActivity implements HostFeed.Li
     private final HostsDrawn drawn = new HostsDrawn();
     private boolean settled;
     private boolean shown;
+    private boolean pausedOnce;
     private boolean focusPending = true;
     /**
      * Until the first key or touch Home is at its start, whatever arrives. The hosts' answer comes right after what was saved and
@@ -217,6 +220,11 @@ public class ConsoleHomeActivity extends NightjarActivity implements HostFeed.Li
     // Takes the button of transfers a closed Files page left running away again (RunningTransfers.showOn).
     private Runnable transfersButton;
     private final Runnable reload = this::reloadNow;
+    private final Runnable followUpRefresh = () -> {
+        if (!shown || isFinishing() || isDestroyed()) return;
+        refreshedSignature = null;
+        reloadNow();
+    };
     private final Runnable settle = () -> {
         settled = true;
         reloadNow();
@@ -447,6 +455,10 @@ public class ConsoleHomeActivity extends NightjarActivity implements HostFeed.Li
         feed.resume();
         // A game may have started or ended while another screen was in front.
         refreshedSignature = null;
+        handler.removeCallbacks(followUpRefresh);
+        if (pausedOnce) {
+            handler.postDelayed(followUpRefresh, RESUME_REFRESH_MS);
+        }
         handler.removeCallbacks(settle);
         handler.postDelayed(settle, SETTLE_MS);
         handler.removeCallbacks(stopWaiting);
@@ -467,11 +479,13 @@ public class ConsoleHomeActivity extends NightjarActivity implements HostFeed.Li
     @Override
     protected void onPause() {
         shown = false;
+        pausedOnce = true;
         if (transfersButton != null) { transfersButton.run(); transfersButton = null; }
         pairingWatch.pause();
         wake.cancel();
         feed.pause();
         handler.removeCallbacks(reload);
+        handler.removeCallbacks(followUpRefresh);
         handler.removeCallbacks(settle);
         handler.removeCallbacks(stopWaiting);
         super.onPause();
@@ -557,7 +571,8 @@ public class ConsoleHomeActivity extends NightjarActivity implements HostFeed.Li
         for (ComputerDetails host : hosts) {
             sb.append(host.uuid).append('|').append(host.displayName()).append('|').append(host.state).append('|')
                     .append(host.activeAddress == null ? "" : host.activeAddress.address + ":" + host.activeAddress.port)
-                    .append('|').append(host.runningGameId).append('|').append(host.runningGameUuid).append(';');
+                    .append('|').append(host.runningGameId).append('|').append(host.runningGameUuid)
+                    .append('|').append(host.sessionIdle).append(';');
         }
         return sb.toString();
     }

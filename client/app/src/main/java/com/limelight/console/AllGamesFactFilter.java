@@ -16,6 +16,7 @@ import com.limelight.utils.UiHelper;
 
 import org.json.JSONObject;
 
+import java.lang.ref.WeakReference;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -41,11 +42,13 @@ final class AllGamesFactFilter {
     private final Consumer<Boolean> bindGrid;
 
     private final Map<String, JSONObject> facts = new HashMap<>();
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private GameInfoModel.Library factsLibrary;
     private String genreChoice;
     private String lengthChoice;
     private String factsLoadedFor;
     private boolean factsReloadPending;
+    private boolean destroyed;
 
     AllGamesFactFilter(Activity activity, LinearLayout filterRow, Supplier<HomeModel> model,
                        Supplier<String> filter, Consumer<Boolean> bindGrid) {
@@ -56,9 +59,16 @@ final class AllGamesFactFilter {
         this.bindGrid = bindGrid;
     }
 
+    /** Stops pending callbacks and lets queued background prefetch tasks drop their reference to this filter. */
+    void destroy() {
+        destroyed = true;
+        factsReloadPending = false;
+        mainHandler.removeCallbacksAndMessages(null);
+    }
+
     /** Reads the facts kept for the library's games, then asks for the missing ones in the background. */
     void loadFacts() {
-        if (!GameInfo.factsWanted(activity)) return;
+        if (destroyed || !GameInfo.factsWanted(activity)) return;
         List<HomeModel.GameCard> cards = AllGamesActivity.cardsOf(model.get(), HomeModel.FILTER_ALL);
         // The keys are part of it: corrected keys ask again for the games a refused key found nothing for.
         StringBuilder signature = new StringBuilder(GameInfo.keys(activity).json(true, true).toString()).append('|');
@@ -73,20 +83,30 @@ final class AllGamesFactFilter {
                     card.source == null ? null : card.source.storeSource, card.source == null ? null : card.source.storeId));
         }
         GameInfo info = GameInfo.get(activity);
+        WeakReference<AllGamesFactFilter> selfRef = new WeakReference<>(this);
         Thread thread = new Thread(() -> {
             Map<String, JSONObject> found = new HashMap<>();
             List<GameInfo.Game> missing = new ArrayList<>();
             for (int i = 0; i < games.size(); i++) {
+                AllGamesFactFilter current = selfRef.get();
+                if (current == null || current.destroyed) return;
                 JSONObject kept = info.cachedFacts(games.get(i));
                 if (kept != null) found.put(keys.get(i), kept);
                 else missing.add(games.get(i));
             }
-            activity.runOnUiThread(() -> {
-                if (activity.isFinishing() || activity.isDestroyed() || found.isEmpty()) return;
-                facts.putAll(found);
-                bindGrid.accept(false);
+            AllGamesFactFilter current = selfRef.get();
+            if (current == null || current.destroyed) return;
+            current.mainHandler.post(() -> {
+                AllGamesFactFilter target = selfRef.get();
+                if (target == null || target.destroyed || target.activity.isFinishing()
+                        || target.activity.isDestroyed() || found.isEmpty()) return;
+                target.facts.putAll(found);
+                target.bindGrid.accept(false);
             });
-            info.prefetchFacts(missing, this::factsArrived);
+            info.prefetchFacts(missing, () -> {
+                AllGamesFactFilter target = selfRef.get();
+                if (target != null) target.factsArrived();
+            });
         }, "game-info-library");
         thread.setDaemon(true);
         thread.start();
@@ -94,14 +114,16 @@ final class AllGamesFactFilter {
 
     /** A lookup found facts: read them again once things settle, not after each game. */
     private void factsArrived() {
-        if (factsReloadPending || activity.isFinishing() || activity.isDestroyed()) return;
-        factsReloadPending = true;
-        new Handler(Looper.getMainLooper()).postDelayed(() -> {
-            factsReloadPending = false;
-            if (activity.isFinishing() || activity.isDestroyed()) return;
-            factsLoadedFor = null;
-            loadFacts();
-        }, 2000);
+        mainHandler.post(() -> {
+            if (destroyed || factsReloadPending || activity.isFinishing() || activity.isDestroyed()) return;
+            factsReloadPending = true;
+            mainHandler.postDelayed(() -> {
+                factsReloadPending = false;
+                if (destroyed || activity.isFinishing() || activity.isDestroyed()) return;
+                factsLoadedFor = null;
+                loadFacts();
+            }, 2000);
+        });
     }
 
     /** The cards the Genre and Length choices leave; every card when no game has facts. Draws the chips. */

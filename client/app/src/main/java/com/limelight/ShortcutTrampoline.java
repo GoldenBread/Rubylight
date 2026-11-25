@@ -74,6 +74,7 @@ public class ShortcutTrampoline extends Activity {
     private boolean managerServiceBound;
     private Thread serviceWaitThread;
     private volatile boolean stopped;
+    private boolean handled;
 
     private final ServiceConnection serviceConnection = new ServiceConnection() {
         public void onServiceConnected(ComponentName className, IBinder binder) {
@@ -215,10 +216,14 @@ public class ShortcutTrampoline extends Activity {
             blockingLoadSpinner.dismiss();
             blockingLoadSpinner = null;
         }
+        if (handled) {
+            return;
+        }
         if (stopped || managerBinder == null || isFinishing() || isDestroyed()) {
             finish();
             return;
         }
+        handled = true;
         Dialog.displayDialog(this, getString(R.string.conn_error_title), message, true);
         managerBinder.stopPolling();
         unbindService(serviceConnection);
@@ -246,12 +251,17 @@ public class ShortcutTrampoline extends Activity {
             blockingLoadSpinner = null;
         }
 
+        if (handled) {
+            return;
+        }
+
         // If the managerBinder was destroyed before this callback,
         // just finish the activity.
         if (stopped || managerBinder == null || isFinishing() || isDestroyed()) {
             finish();
             return;
         }
+        handled = true;
 
         if (details.state == ComputerDetails.State.ONLINE && details.pairState == PairingManager.PairState.PAIRED) {
 
