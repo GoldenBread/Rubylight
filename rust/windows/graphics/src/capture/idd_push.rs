@@ -56,7 +56,7 @@ pub struct Session {
     pub(super) gpu: Device,
     control: Box<dyn VddControl>,
     monitor: VddOwned,
-    remote: Remote,
+    remote: Arc<Remote>,
     adapter: (u32, i32),
     ring: Ring,
     /// Where a fence ring's textures and fences live: the capture GPU's compute device.
@@ -131,7 +131,7 @@ impl Session {
         if let Err(error) = crate::gpu_priority::configure(&gpu, config) {
             tracing::debug!(%error, "GPU priority remains at the process default");
         }
-        let remote = Remote::open(monitor.wudf_pid)?;
+        let remote = Arc::new(Remote::open(monitor.wudf_pid)?);
         let pool = GpuPool {
             warnings: warnings.clone(),
             ..Default::default()
@@ -183,7 +183,15 @@ impl Session {
             generation: next_generation(status.ring_generation),
         };
         let frame = Arc::new(crate::timing::Signal::new()?);
-        let ring = Self::make_ring(&gpu, compute_device, layout, zero_copy, &warnings, scope)?;
+        let ring = Self::make_ring(
+            &gpu,
+            compute_device,
+            layout,
+            zero_copy,
+            &warnings,
+            scope,
+            Some(remote.clone()),
+        )?;
         let compute = ring.fences.as_ref().map(|fences| fences.compute.clone());
         let now = Instant::now();
         let mut session = Self {
@@ -512,20 +520,39 @@ fn lend(
 impl Session {
     /// Synchronously clear the active ring in the display driver (waiting for
     /// `rlvd-swapchain` to drain its D3D11 GPU work and drop its shared handles)
-    /// and then CPU-wait on the latest driver `written` fence before releasing
-    /// our D3D12 shared textures, fences and compute device (#148).
+    /// and then CPU-wait up to a bounded budget on the latest driver `written`
+    /// fence before releasing D3D12 shared textures and fences (#148).
     pub(super) fn clear_ring(&self) {
+        if self.remote.has_exited() {
+            tracing::debug!("Rubylight display driver exited; skipping frame ring clear wait");
+            if let Some(fences) = &self.ring.fences {
+                let _ = fences.wait_written_within(Duration::ZERO);
+            }
+            return;
+        }
+        let started = Instant::now();
         let cleared = if self.control.caps() & CAP_SCOPED_CLEAR != 0 {
             self.control
                 .clear_frame_ring_generation(self.monitor.session_id, self.ring.layout.generation)
         } else {
             self.control.clear_frame_ring(self.monitor.session_id)
         };
-        if let Err(error) = cleared {
-            tracing::debug!(error = %format!("{error:#}"), "Rubylight frame ring was already gone");
-        }
-        if let Some(fences) = &self.ring.fences {
-            fences.wait_written();
+        let wait_budget = match cleared {
+            Ok(()) => Duration::from_secs(2)
+                .saturating_sub(started.elapsed())
+                .min(Duration::from_millis(250)),
+            Err(error) => {
+                tracing::debug!(
+                    error = %format!("{error:#}"),
+                    "Rubylight frame ring was already gone"
+                );
+                Duration::ZERO
+            }
+        };
+        if let Some(fences) = &self.ring.fences
+            && !fences.wait_written_within(wait_budget)
+        {
+            fences.mark_clear_timed_out();
         }
     }
 }

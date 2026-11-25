@@ -147,8 +147,8 @@ impl Session {
         // factory, context and component are owned interfaces released in Drop (or below on
         // error), and the library outlives them.
         unsafe {
-            let library =
-                libloading::Library::new("amfrt64.dll").context("AMD AMF runtime unavailable")?;
+            let library = crate::telemetry::system_library("amfrt64.dll")
+                .context("AMD AMF runtime unavailable")?;
             let query: libloading::Symbol<unsafe extern "C" fn(*mut u64) -> AMF_RESULT> =
                 library.get(b"AMFQueryVersion\0")?;
             let mut runtime = 0u64;

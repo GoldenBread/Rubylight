@@ -97,7 +97,12 @@ impl Encoder {
         } else {
             100.
         };
-        [white_nits, linear_scale.clamp(1., 2.)]
+        let linear_scale = if linear_scale.is_finite() {
+            linear_scale.clamp(1., 2.)
+        } else {
+            1.
+        };
+        [white_nits, linear_scale]
     }
     /// SDR white is absolute luminance; the scRGB scale expands a 1000-nit ceiling.
     pub fn set_luminance(&mut self, white_nits: f32, linear_scale: f32) {

@@ -450,6 +450,7 @@ fn restore_drops_an_entry_whose_write_never_happened() {
         original: Value::Int(140),
         written: Value::Int(150),
         side_effect: false,
+        raw: None,
     });
     journal.save(&c.journal).unwrap();
     let report = c.recover_on_startup().unwrap();

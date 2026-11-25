@@ -35,12 +35,13 @@ use butterpollo_win_abi::shaders::shader_bytecode;
 mod handoff;
 mod retained;
 pub(crate) use handoff::wait_fence;
-use handoff::wait_fence_until;
+pub(crate) use handoff::wait_fence_until;
 pub use handoff::*;
 #[cfg(test)]
 use retained::RETAINED;
 pub(crate) use retained::RetainedWork;
 use retained::allow_compute_generation;
+pub(crate) use retained::drain_retained;
 mod convert;
 mod device;
 mod focus;

@@ -129,6 +129,7 @@ impl Session {
             rate_control: RateControl::Cbr,
             budget: None,
             vbv_ceiling: 0,
+            vbv_increase: 0,
             cap_requested: None,
             cap_refused: false,
             frame_cap_target: None,

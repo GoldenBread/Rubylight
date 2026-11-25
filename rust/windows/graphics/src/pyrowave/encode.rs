@@ -283,7 +283,6 @@ impl Encoder {
                 )
             })?);
         }
-        self.submitting = Some(image.clone());
         let release = self.submit(slot, image, budget)?;
         let submitted = Instant::now();
         self.submitted = Some(submitted);
@@ -423,6 +422,9 @@ impl Encoder {
                     .context("PyroWave frame contexts unavailable")?;
                 check(set(self.encoder, slot as std::ffi::c_int))?;
             }
+            // Only once execution reaches `encoder_encode_gpu` has GPU work started whose
+            // completion is ambiguous on error; pre-submit validation/setup errors do not quarantine.
+            self.submitting = Some(image.clone());
             timed("PyroWave encode submit", || {
                 check((self.api.encoder_encode_gpu)(
                     self.encoder,

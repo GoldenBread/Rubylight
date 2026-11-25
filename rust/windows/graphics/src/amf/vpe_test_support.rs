@@ -13,7 +13,8 @@ impl Runtime {
         // SAFETY: As in `Encoder::create_attempt`: AMFInit's C ABI, owned interfaces released in
         // Drop, and the library outliving them.
         unsafe {
-            let library = libloading::Library::new("amfrt64.dll").context("AMD AMF runtime")?;
+            let library =
+                crate::telemetry::system_library("amfrt64.dll").context("AMD AMF runtime")?;
             let init: libloading::Symbol<
                 unsafe extern "C" fn(u64, *mut *mut AMFFactory) -> AMF_RESULT,
             > = library.get(b"AMFInit\0")?;

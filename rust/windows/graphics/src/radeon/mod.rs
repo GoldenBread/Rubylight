@@ -1,9 +1,8 @@
 //! Radeon Control Center support (plan slice A5).
 //!
-//! Step 1 is a read-only probe of the ADLX 3D settings on the installed driver: for each setting
-//! it records whether ADLX reports it supported, readable and writable, with its value, range or
-//! options and dependencies, and maps it to one of the five states of decision 5
-//! (`docs/native-api.md`). Nothing here writes a setting.
+//! [`adlx`] probes and drives ADLX 3D settings, [`control`] validates,
+//! journals and restores changes (shared with [`crate::nvidia_settings`]),
+//! and [`helper`] / [`worker`] run ADLX calls in short-lived helper processes.
 //!
 //! `model` is the pure mapping layer (unit-tested on fakes), `adlx` the FFI that fills it.
 //! `cargo run --example radeon_probe` prints the result as JSON.
@@ -18,8 +17,8 @@ pub mod worker;
 
 pub use adlx::{AdlxBackend, AdlxInfo, DriverInfo, GpuReport, Probe, probe};
 pub use control::{
-    BackendError, Change, Controller, Entry, ErrorKind, GpuInfo, Journal, RadeonBackend,
-    RestoreReport, Scope, WriteError,
+    BackendError, Change, Controller, Entry, ErrorKind, GpuIdentity, GpuInfo, Journal,
+    RadeonBackend, RawSettingKeys, RestoreReport, Scope, WriteError,
 };
 pub use model::{Kind, Setting, State, Writable};
 

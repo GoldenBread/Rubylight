@@ -168,7 +168,7 @@ fn a_fence_ring_carries_frames_both_ways_without_keyed_mutexes() -> Result<()> {
             format: crate::compute::format(pixel).0 as u32,
             generation: 1,
         };
-        let ring = Ring::fenced(&gpu, compute.clone(), layout, in_place)?;
+        let ring = Ring::fenced(&gpu, compute.clone(), layout, in_place, None)?;
         // The AMF and PyroWave compute paths take only textures they can share.
         for slot in &ring.slots {
             anyhow::ensure!(
@@ -364,7 +364,7 @@ fn a_fence_slot_waits_for_all_readers_and_survives_ring_replacement() -> Result<
         format: ring::FORMAT_BGRA8,
         generation: 1,
     };
-    let ring = Ring::fenced(&gpu, compute.clone(), layout, true)?;
+    let ring = Ring::fenced(&gpu, compute.clone(), layout, true, None)?;
     let owner = Arc::downgrade(ring.fences.as_ref().unwrap());
     let mut driver = FakeDriver::open(&ring)?;
     let source = solid(&driver.gpu, 40)?;
@@ -449,6 +449,7 @@ fn a_returned_slot_waits_for_gpu_completion_before_the_driver_reuses_it() -> Res
             generation: 1,
         },
         true,
+        None,
     )?;
     let mut driver = FakeDriver::open(&ring)?;
     let source = solid(&driver.gpu, 40)?;
@@ -514,6 +515,7 @@ fn an_unread_fence_slot_frees_immediately_without_signalling_the_compute_queue()
             generation: 1,
         },
         true,
+        None,
     )?;
     let mut driver = FakeDriver::open(&ring)?;
     let source = solid(&driver.gpu, 60)?;
@@ -565,6 +567,7 @@ fn cpu_readback_waits_for_a_delayed_fence_producer() -> Result<()> {
             generation: 1,
         },
         true,
+        None,
     )?;
     let mut driver = FakeDriver::open(&ring)?;
     let expected = pixels(16, 16, Pixel::Bgra8, 91);
@@ -693,7 +696,7 @@ fn transport_probe(kind: Kind, pixel: Pixel, round: usize) -> Result<()> {
         generation: 1,
     };
     let ring = if kind == Kind::Fence {
-        Ring::fenced(&gpu, compute.clone(), layout, true)?
+        Ring::fenced(&gpu, compute.clone(), layout, true, None)?
     } else {
         Ring::keyed(&gpu, layout)?
     };

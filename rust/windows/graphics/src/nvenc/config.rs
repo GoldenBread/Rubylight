@@ -323,6 +323,7 @@ impl Session {
             rc.vbvBufferSize = tuning.vbv(self.stream.bitrate_kbps, self.stream.fps_millihz());
             rc.vbvInitialDelay = rc.vbvBufferSize;
             self.vbv_ceiling = rc.vbvBufferSize;
+            self.vbv_increase = tuning.vbv_increase;
         }
         if let Some(qp) = tuning.min_qp {
             rc.set_enableMinQP(1);

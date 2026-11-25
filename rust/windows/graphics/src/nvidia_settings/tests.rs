@@ -17,6 +17,10 @@ impl Store for Fake {
         self.stored.insert(id, value);
         Ok(())
     }
+    fn delete(&mut self, id: u32) -> Result<()> {
+        self.stored.remove(&id);
+        Ok(())
+    }
     fn save(&mut self) -> Result<()> {
         self.saves += 1;
         Ok(())
@@ -226,13 +230,23 @@ fn values_the_setting_does_not_take_are_refused_before_anything_is_written() {
 #[test]
 fn the_controller_journals_and_restores_nvidia_settings() {
     use crate::radeon::{Change, Controller, Scope};
-    struct Backend(Fake);
+    struct Backend(std::sync::Arc<std::sync::Mutex<Fake>>);
     impl RadeonBackend for Backend {
         fn read(&mut self, _: i32) -> Result<Vec<Setting>, BackendError> {
-            read(&mut self.0).map_err(|e| BackendError(e.to_string()))
+            read(&mut *self.0.lock().unwrap()).map_err(|e| BackendError(e.to_string()))
         }
         fn write(&mut self, _: i32, id: &str, value: &Value) -> Result<(), BackendError> {
-            write(&mut self.0, id, value)
+            write(&mut *self.0.lock().unwrap(), id, value)
+        }
+        fn snapshot_keys(
+            &mut self,
+            _: i32,
+            id: &str,
+        ) -> Result<Option<Vec<(u32, Option<u32>)>>, BackendError> {
+            snapshot_keys(&mut *self.0.lock().unwrap(), id)
+        }
+        fn restore_raw(&mut self, entry: &Entry) -> Result<bool, BackendError> {
+            restore_raw_keys(&mut *self.0.lock().unwrap(), entry)
         }
         fn gpus(&mut self) -> Result<Vec<GpuInfo>, BackendError> {
             Ok(vec![GpuInfo {
@@ -245,7 +259,8 @@ fn the_controller_journals_and_restores_nvidia_settings() {
     let dir = tempfile::tempdir().unwrap();
     let mut store = Fake::default();
     store.stored.insert(FRL_FPS, 90);
-    let mut controller = Controller::new(Backend(store), dir.path().join(JOURNAL_FILE));
+    let store = std::sync::Arc::new(std::sync::Mutex::new(store));
+    let mut controller = Controller::new(Backend(store.clone()), dir.path().join(JOURNAL_FILE));
     let changes = vec![
         Change {
             id: "nvidia_low_latency.mode".into(),
@@ -270,5 +285,123 @@ fn the_controller_journals_and_restores_nvidia_settings() {
     assert_eq!(
         find(&settings, "nvidia_low_latency.mode").value,
         Some(Value::Choice("off".into()))
+    );
+    // Absent DRS keys restore via deletion rather than writing explicit defaults, and
+    // companion keys (e.g. SMOOTH_MOTION_APIS, ANISO_MODE_LEVEL) restore cleanly too.
+    assert!(
+        !store.lock().unwrap().stored.contains_key(&PRERENDERLIMIT),
+        "absent low-latency keys must be deleted rather than written as defaults"
+    );
+}
+
+#[test]
+fn restore_deletes_absent_keys_and_preserves_companions_raw_frl_and_machine_scope() {
+    use crate::radeon::{Change, Controller, Scope};
+    let dir = tempfile::tempdir().unwrap();
+    let journal = dir.path().join(JOURNAL_FILE);
+    let store = std::sync::Arc::new(std::sync::Mutex::new(Fake::default()));
+    {
+        let mut s = store.lock().unwrap();
+        s.driver = Some(58102);
+        // Original frame rate cap above UI 0x3FF ceiling (HG-17), plus absent Smooth Motion &
+        // Anisotropic Filtering keys (HG-16).
+        s.stored.insert(FRL_FPS, 1200);
+    }
+    struct Backend(std::sync::Arc<std::sync::Mutex<Fake>>);
+    impl RadeonBackend for Backend {
+        fn read(&mut self, _: i32) -> Result<Vec<Setting>, BackendError> {
+            read(&mut *self.0.lock().unwrap()).map_err(|e| BackendError(e.to_string()))
+        }
+        fn write(&mut self, _: i32, id: &str, value: &Value) -> Result<(), BackendError> {
+            write(&mut *self.0.lock().unwrap(), id, value)
+        }
+        fn snapshot_keys(
+            &mut self,
+            _: i32,
+            id: &str,
+        ) -> Result<Option<Vec<(u32, Option<u32>)>>, BackendError> {
+            snapshot_keys(&mut *self.0.lock().unwrap(), id)
+        }
+        fn restore_raw(&mut self, entry: &Entry) -> Result<bool, BackendError> {
+            restore_raw_keys(&mut *self.0.lock().unwrap(), entry)
+        }
+        fn gpus(&mut self) -> Result<Vec<GpuInfo>, BackendError> {
+            Ok(vec![GpuInfo {
+                id: 0,
+                name: "NVIDIA GeForce RTX 5070".into(),
+                driver: "581.02".into(),
+            }])
+        }
+    }
+
+    // Machine-scoped controller applies & restores even when nobody is signed in (HG-18).
+    let mut controller = Controller::new(Backend(store.clone()), journal.clone())
+        .with_machine_scope(true)
+        .with_user(|| None);
+    let changes = vec![
+        Change {
+            id: "nvidia_smooth_motion.enabled".into(),
+            value: Value::Bool(true),
+        },
+        Change {
+            id: "nvidia_anisotropic_filtering.mode".into(),
+            value: Value::Choice("8x".into()),
+        },
+        Change {
+            id: "nvidia_frame_rate_limit.fps".into(),
+            value: Value::Int(120),
+        },
+    ];
+    controller.apply("s1", 0, &changes).unwrap();
+    {
+        let s = store.lock().unwrap();
+        assert_eq!(s.stored[&SMOOTH_MOTION], 1);
+        assert_eq!(s.stored[&SMOOTH_MOTION_APIS], SMOOTH_MOTION_ALL_APIS);
+        assert_eq!(s.stored[&ANISO_MODE_SELECTOR], 1);
+        assert_eq!(s.stored[&ANISO_MODE_LEVEL], 8);
+        assert_eq!(s.stored[&FRL_FPS], 120);
+    }
+
+    // New controller instance with a different (or absent) user recovers everything cleanly.
+    let mut recovery = Controller::new(Backend(store.clone()), journal)
+        .with_machine_scope(true)
+        .with_user(|| Some("S-1-5-21-999-888".into()));
+    let report = recovery.recover_on_startup().unwrap();
+    assert!(report.is_clean(), "{report:?}");
+    let s = store.lock().unwrap();
+    assert!(!s.stored.contains_key(&SMOOTH_MOTION));
+    assert!(!s.stored.contains_key(&SMOOTH_MOTION_APIS));
+    assert!(!s.stored.contains_key(&ANISO_MODE_SELECTOR));
+    assert!(!s.stored.contains_key(&ANISO_MODE_LEVEL));
+    assert_eq!(s.stored.get(&FRL_FPS).copied(), Some(1200));
+
+    // Pre-existing/legacy journal entries with ANISO changed -> "application" and out-of-range
+    // FRL_FPS without `raw` snapshot also restore raw values cleanly.
+    drop(s);
+    store.lock().unwrap().stored.insert(ANISO_MODE_LEVEL, 16);
+    store.lock().unwrap().stored.insert(ANISO_MODE_SELECTOR, 1);
+    let legacy_entry = Entry {
+        gpu: 0,
+        id: "nvidia_frame_rate_limit.fps".into(),
+        session: "legacy".into(),
+        original: Value::Int(1440),
+        written: Value::Int(120),
+        side_effect: false,
+        user: "S-1-5-21-old-user".into(),
+        raw: None,
+    };
+    store.lock().unwrap().stored.insert(FRL_FPS, 120);
+    let mut legacy_journal = crate::radeon::Journal::default();
+    legacy_journal.entries.push(legacy_entry);
+    let legacy_path = dir.path().join("legacy-nvidia.json");
+    legacy_journal.save(&legacy_path).unwrap();
+    let mut legacy_ctrl = Controller::new(Backend(store.clone()), legacy_path)
+        .with_machine_scope(true)
+        .with_user(|| None);
+    let report = legacy_ctrl.restore(Scope::All).unwrap();
+    assert!(report.is_clean(), "{report:?}");
+    assert_eq!(
+        store.lock().unwrap().stored.get(&FRL_FPS).copied(),
+        Some(1440)
     );
 }

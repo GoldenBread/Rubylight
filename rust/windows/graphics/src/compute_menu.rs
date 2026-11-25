@@ -69,6 +69,20 @@ impl Menu {
             upload.fence = u64::MAX;
         }
     }
+    pub(super) fn mark_submitted(
+        &mut self,
+        index: usize,
+        revision: u64,
+        fence: u64,
+        has_copy: bool,
+    ) {
+        self.current = Some((index, revision));
+        self.ring[index].read = fence;
+        self.ring[index].in_copy_dest = false;
+        if has_copy && let Some(upload) = &mut self.upload {
+            upload.fence = fence;
+        }
+    }
 }
 /// One conversion's menu pass, recorded around its closed dispatch.
 pub(super) struct Pass {
@@ -303,14 +317,8 @@ impl Converter {
     /// does its texture count as holding the panel: a conversion that failed
     /// before submitting never ran its copy.
     pub(super) fn menu_submitted(&mut self, pass: &Pass, fence: u64) {
-        self.menu.current = Some((pass.index, pass.revision));
-        self.menu.ring[pass.index].read = fence;
-        self.menu.ring[pass.index].in_copy_dest = false;
-        if pass.copy.is_some()
-            && let Some(upload) = &mut self.menu.upload
-        {
-            upload.fence = fence;
-        }
+        self.menu
+            .mark_submitted(pass.index, pass.revision, fence, pass.copy.is_some());
     }
 }
 fn menu_texture(device: &ID3D12Device, [width, height]: [u32; 2]) -> Result<Image> {
@@ -467,27 +475,51 @@ mod tests {
     }
 
     #[test]
-    fn reused_texture_stays_in_copy_dest_after_pre_submission_failure() {
-        // Simulate `menu_texture()` creating a slot in `COPY_DEST` with `read = 0`,
-        // followed by a pre-submission error (so `menu_submitted()` never ran).
-        let size = [32, 16];
-        let mut in_copy_dest = true;
-        let mut read = 0u64;
-        // Next frame picks `Reuse(0)` because `read == 0` is completed.
-        assert_eq!(
-            pick(&[(size, read)], None, size, |v| v <= 5),
-            Pick::Reuse(0)
+    fn reused_texture_stays_in_copy_dest_after_pre_submission_failure() -> Result<()> {
+        let Ok(_com) = crate::capture::ComGuard::new() else {
+            return Ok(());
+        };
+        let Ok(gpu) = crate::capture::Device::new("") else {
+            return Ok(());
+        };
+        let Ok(compute) = Compute::for_device(&gpu.device) else {
+            return Ok(());
+        };
+        let mut converter = Converter::new(compute, 64, 64, false)?;
+        converter.values[2] = 64;
+        converter.values[3] = 64;
+        let overlay = Overlay {
+            revision: 1,
+            origin: [0, 0],
+            size: [16, 16],
+            scale: 1,
+            rgba: std::sync::Arc::from(vec![255u8; 16 * 16 * 4]),
+        };
+        converter.set_overlay(Some(&overlay));
+        let (entry, block) = converter.layout.menu_entry(false, 0);
+        let uavs = converter.layout.uav_count();
+        // Prepare a menu pass and discard it without submitting (`menu_submitted` never called).
+        let first = converter
+            .menu_pass(0, entry, 0, uavs, block)?
+            .expect("menu pass prepared");
+        assert!(
+            first.copy.as_ref().is_some_and(|(_, _, fresh)| *fresh),
+            "new ring texture must start fresh in COPY_DEST"
         );
-        // `Pass::copy` must see `fresh = in_copy_dest == true` so it does NOT emit
-        // a `NON_PIXEL_SHADER_RESOURCE -> COPY_DEST` barrier on a `COPY_DEST` resource.
-        assert!(in_copy_dest);
-        // Once submission succeeds (`menu_submitted`), the texture transitions to SRV.
-        read = 6;
-        in_copy_dest = false;
-        assert_eq!(
-            pick(&[(size, read)], Some(0), size, |v| v <= 6),
-            Pick::Reuse(0)
+        assert!(converter.menu.ring[first.index].in_copy_dest);
+        // Retry without submitting: the texture must STILL be reused in COPY_DEST (`fresh == true`)
+        // so `Pass::copy` does not emit an invalid SRV->COPY_DEST transition.
+        let retry = converter
+            .menu_pass(0, entry, 0, uavs, block)?
+            .expect("retry menu pass prepared");
+        assert_eq!(retry.index, first.index);
+        assert!(
+            retry.copy.as_ref().is_some_and(|(_, _, fresh)| *fresh),
+            "unsubmitted ring texture must stay in COPY_DEST across retries"
         );
-        assert!(!in_copy_dest);
+        // Once submission succeeds (`menu_submitted`), the texture moves out of COPY_DEST.
+        converter.menu_submitted(&retry, 1);
+        assert!(!converter.menu.ring[retry.index].in_copy_dest);
+        Ok(())
     }
 }

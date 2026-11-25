@@ -8,8 +8,8 @@
 #[cfg(test)]
 use super::control::JOURNAL_FILE;
 use super::{
-    BackendError, Change, Controller, Entry, GpuInfo, RadeonBackend, RestoreReport, Scope, Setting,
-    WriteError, helper::HelperBackend,
+    BackendError, Change, Controller, Entry, GpuIdentity, GpuInfo, RadeonBackend, RestoreReport,
+    Scope, Setting, WriteError, helper::HelperBackend,
 };
 use std::{
     collections::HashSet,
@@ -105,15 +105,122 @@ pub struct Panel {
     pub pending: Vec<Entry>,
 }
 
-/// The GPU the host works with: the one whose name contains `adapter` (the configured adapter
-/// name), else the first AMD GPU ADLX lists.
-fn pick(gpus: Vec<GpuInfo>, adapter: Option<&str>) -> Option<GpuInfo> {
-    let wanted = adapter.map(str::to_lowercase).filter(|a| !a.is_empty());
+fn normalize_pnp(value: &str) -> String {
+    value
+        .trim()
+        .trim_start_matches(r"\\?\")
+        .replace('#', r"\")
+        .to_ascii_lowercase()
+}
+
+fn gpu_index_for_dxgi(
+    dxgi: &crate::capture::Gpu,
+    gpus: &[GpuInfo],
+    identities: &[GpuIdentity],
+) -> Option<usize> {
+    let find_gpu = |id: i32| gpus.iter().position(|gpu| gpu.id == id);
+    if let Some(dxgi_pnp) = dxgi.pnp_id.as_deref() {
+        let wanted = normalize_pnp(dxgi_pnp);
+        if let Some(identity) = identities.iter().find(|id| {
+            id.pnp_id
+                .as_deref()
+                .is_some_and(|p| normalize_pnp(p) == wanted)
+        }) {
+            return find_gpu(identity.id);
+        }
+    }
+    let mut device_matches = identities
+        .iter()
+        .filter(|id| id.device_id == Some(dxgi.device));
+    if let (Some(first), None) = (device_matches.next(), device_matches.next()) {
+        return find_gpu(first.id);
+    }
+    None
+}
+
+/// The GPU the host works with: matching by PnP ID, PCI device ID (via DXGI),
+/// or adapter name when `adapter` is set; otherwise preferring the discrete /
+/// highest-VRAM GPU matched across `identities` & `dxgi_gpus` before falling
+/// back to the first listed GPU.
+fn pick_gpu(
+    gpus: Vec<GpuInfo>,
+    identities: &[GpuIdentity],
+    dxgi_gpus: &[crate::capture::Gpu],
+    adapter: Option<&str>,
+) -> Option<GpuInfo> {
+    let wanted = adapter
+        .map(str::trim)
+        .filter(|a| !a.is_empty())
+        .map(str::to_lowercase);
     let named = wanted.and_then(|wanted| {
+        let norm_wanted = normalize_pnp(&wanted);
+        // 1. Direct PnP ID match against ADLX identity.
+        if let Some(pos) = identities
+            .iter()
+            .find(|id| {
+                id.pnp_id
+                    .as_deref()
+                    .is_some_and(|p| normalize_pnp(p) == norm_wanted)
+            })
+            .and_then(|id| gpus.iter().position(|g| g.id == id.id))
+        {
+            return Some(pos);
+        }
+        // 2. Resolve configured DXGI GPU (exact PnP, exact name, or name substring),
+        //    then match ADLX by PnP ID or unique PCI device ID.
+        let dxgi_match = dxgi_gpus
+            .iter()
+            .find(|g| {
+                g.pnp_id
+                    .as_deref()
+                    .is_some_and(|p| normalize_pnp(p) == norm_wanted)
+            })
+            .or_else(|| {
+                dxgi_gpus
+                    .iter()
+                    .find(|g| g.name.eq_ignore_ascii_case(&wanted))
+            })
+            .or_else(|| {
+                dxgi_gpus
+                    .iter()
+                    .find(|g| g.name.to_lowercase().contains(&wanted))
+            });
+        if let Some(pos) = dxgi_match.and_then(|dxgi| gpu_index_for_dxgi(dxgi, &gpus, identities)) {
+            return Some(pos);
+        }
+        // 3. Name substring fallback on driver-reported GPU names.
         gpus.iter()
             .position(|gpu| gpu.name.to_lowercase().contains(&wanted))
     });
-    gpus.into_iter().nth(named.unwrap_or(0))
+    let index = named.unwrap_or_else(|| {
+        dxgi_gpus
+            .iter()
+            .filter_map(|dxgi| {
+                gpu_index_for_dxgi(dxgi, &gpus, identities).map(|pos| (pos, dxgi.dedicated_memory))
+            })
+            .max_by_key(|&(_, vram)| vram)
+            .map_or(0, |(pos, _)| pos)
+    });
+    gpus.into_iter().nth(index)
+}
+
+#[cfg(test)]
+fn pick(gpus: Vec<GpuInfo>, adapter: Option<&str>) -> Option<GpuInfo> {
+    pick_gpu(gpus, &[], &[], adapter)
+}
+
+fn pick_for<B: RadeonBackend>(
+    backend: &mut B,
+    adapter: Option<&str>,
+) -> Result<Option<GpuInfo>, BackendError> {
+    let gpus = backend.gpus()?;
+    let identities = backend.gpu_identities();
+    let dxgi = if identities.is_empty() {
+        Vec::new()
+    } else {
+        crate::capture::gpus().unwrap_or_default()
+    };
+    Ok(pick_gpu(gpus, &identities, &dxgi, adapter))
 }
 
 pub struct Worker {
@@ -137,12 +244,35 @@ impl Worker {
         )
     }
 
+    /// [`Self::start`] with machine-global scope (`Controller::with_machine_scope(true)`),
+    /// for driver stores like NVIDIA DRS that apply across all users and must restore regardless of sign-in.
+    pub fn start_machine<B: RadeonBackend + Send + 'static>(
+        backend: B,
+        journal: PathBuf,
+        timing: Timing,
+    ) -> Self {
+        Self::start_controller(
+            Controller::new(backend, journal).with_machine_scope(true),
+            timing,
+        )
+    }
+
     /// [`Self::start`] with an explicit signed-in user SID lookup (for SYSTEM hosts).
     pub fn start_with_user<B: RadeonBackend + Send + 'static>(
         backend: B,
         journal: PathBuf,
         timing: Timing,
         user_sid: Box<dyn Fn() -> Option<String> + Send + 'static>,
+    ) -> Self {
+        Self::start_controller(
+            Controller::new(backend, journal).with_user(user_sid),
+            timing,
+        )
+    }
+
+    fn start_controller<B: RadeonBackend + Send + 'static>(
+        controller: Controller<B>,
+        timing: Timing,
     ) -> Self {
         let (jobs, queue) = mpsc::channel();
         let status = Arc::new(Mutex::new(Status {
@@ -153,14 +283,7 @@ impl Worker {
         let shared = status.clone();
         std::thread::Builder::new()
             .name("radeon".into())
-            .spawn(move || {
-                run(
-                    Controller::new(backend, journal).with_user(user_sid),
-                    &queue,
-                    &shared,
-                    timing,
-                )
-            })
+            .spawn(move || run(controller, &queue, &shared, timing))
             .expect("spawn the Radeon worker thread");
         Self {
             jobs,
@@ -550,12 +673,7 @@ fn run<B: RadeonBackend>(
                 let _ = reply.send(result);
             }
             Some(Job::Gpu { adapter, reply }) => {
-                let _ = reply.send(
-                    controller
-                        .backend()
-                        .gpus()
-                        .map(|gpus| pick(gpus, adapter.as_deref())),
-                );
+                let _ = reply.send(pick_for(controller.backend(), adapter.as_deref()));
             }
             Some(Job::Panel { adapter, reply }) => {
                 let _ = reply.send(panel(&mut controller, adapter.as_deref()));
@@ -575,7 +693,7 @@ fn panel<B: RadeonBackend>(
     controller: &mut Controller<B>,
     adapter: Option<&str>,
 ) -> Result<Option<Panel>, BackendError> {
-    let Some(gpu) = pick(controller.backend().gpus()?, adapter) else {
+    let Some(gpu) = pick_for(controller.backend(), adapter)? else {
         return Ok(None);
     };
     let settings = controller.backend().read(gpu.id)?;
@@ -645,11 +763,10 @@ fn start_host_impl(
             };
             Worker::start_with_user(backend, journal, Timing::default(), user_sid)
         }
-        super::Driver::Nvidia => Worker::start_with_user(
+        super::Driver::Nvidia => Worker::start_machine(
             crate::nvidia_settings::NvidiaBackend,
             journal,
             Timing::default(),
-            user_sid,
         ),
     };
     Ok(HOST.get_or_init(|| worker))

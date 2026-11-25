@@ -56,6 +56,7 @@ pub struct Session {
     desktop_check: Instant,
     heartbeat: Instant,
     last_reply: Instant,
+    last_poll: Instant,
     staging: Option<ID3D11Texture2D>,
     process: Box<dyn UserChild>,
     /// Set by the helper after each frame: the capture worker wakes for it
@@ -257,6 +258,7 @@ impl Session {
             desktop_check: now,
             heartbeat: now + Duration::from_secs(1),
             last_reply: now,
+            last_poll: now,
             staging: None,
             process,
             frame,
@@ -291,6 +293,13 @@ impl Session {
             );
             ensure!(self.process.exit_code()?.is_none(), "WGC helper exited");
         }
+        // If capture polling paused longer than a heartbeat interval, send a Ping first and
+        // give the helper a fresh `START_TIMEOUT` to answer instead of tripping on stale time.
+        if now.saturating_duration_since(self.last_poll) >= Duration::from_secs(1) {
+            self.heartbeat = now;
+            self.last_reply = now;
+        }
+        self.last_poll = now;
         if now >= self.heartbeat {
             self.pipe.send_json(&Request::Ping)?;
             self.heartbeat = now + Duration::from_secs(1);

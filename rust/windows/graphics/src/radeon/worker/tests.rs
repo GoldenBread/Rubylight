@@ -125,6 +125,7 @@ fn crashed_journal(dir: &Path) -> PathBuf {
             original: Value::Bool(true),
             written: Value::Bool(false),
             side_effect: false,
+            raw: None,
         }],
     }
     .save(&path)
@@ -408,6 +409,7 @@ fn startup_recovery_retries_until_owning_user_signs_in() {
             original: Value::Bool(true),
             written: Value::Bool(false),
             side_effect: false,
+            raw: None,
         }],
     }
     .save(&journal)
@@ -439,4 +441,97 @@ fn startup_recovery_retries_until_owning_user_signs_in() {
             && Journal::load(&journal).unwrap().entries.is_empty()
     });
     assert_eq!(worker.status().phase, Phase::Ready);
+}
+
+#[test]
+fn the_pci_and_pnp_identity_picks_the_configured_and_discrete_gpu() {
+    use crate::capture::Gpu as DxgiGpu;
+    use crate::radeon::control::GpuIdentity;
+
+    // ADLX lists the integrated GPU first (id 10) and discrete GPU second (id 20).
+    let adlx_gpus = || {
+        vec![
+            GpuInfo {
+                id: 10,
+                name: "AMD Radeon(TM) Graphics".into(),
+                driver: String::new(),
+            },
+            GpuInfo {
+                id: 20,
+                name: "AMD Radeon RX 7900 XT".into(),
+                driver: String::new(),
+            },
+        ]
+    };
+    let igpu_pnp = r"PCI\VEN_1002&DEV_164E&SUBSYS_00011002&REV_C4\4&1111&0&0041";
+    let dgpu_pnp = r"PCI\VEN_1002&DEV_744C&SUBSYS_00021002&REV_CC\6&2222&0&0000";
+    let identities = [
+        GpuIdentity {
+            id: 10,
+            pnp_id: Some(igpu_pnp.into()),
+            device_id: Some(0x164E),
+        },
+        GpuIdentity {
+            id: 20,
+            pnp_id: Some(dgpu_pnp.into()),
+            device_id: Some(0x744C),
+        },
+    ];
+    let dxgi = [
+        DxgiGpu {
+            name: "AMD Radeon Graphics (iGPU)".into(),
+            vendor: 0x1002,
+            dedicated_memory: 512 * 1024 * 1024,
+            device: 0x164E,
+            luid: (1, 0),
+            pnp_id: Some(igpu_pnp.into()),
+        },
+        DxgiGpu {
+            name: "AMD Radeon RX 7900 XTX / XT".into(),
+            vendor: 0x1002,
+            dedicated_memory: 20 * 1024 * 1024 * 1024,
+            device: 0x744C,
+            luid: (2, 0),
+            pnp_id: Some(dgpu_pnp.into()),
+        },
+    ];
+
+    // Automatic (None / empty) must prefer the higher-VRAM discrete GPU even when ADLX lists iGPU first.
+    assert_eq!(
+        pick_gpu(adlx_gpus(), &identities, &dxgi, None).unwrap().id,
+        20
+    );
+    assert_eq!(
+        pick_gpu(adlx_gpus(), &identities, &dxgi, Some(""))
+            .unwrap()
+            .id,
+        20
+    );
+    // PnP ID selects the exact GPU (even selecting iGPU explicitly).
+    assert_eq!(
+        pick_gpu(adlx_gpus(), &identities, &dxgi, Some(igpu_pnp))
+            .unwrap()
+            .id,
+        10
+    );
+    // PCI device ID still matches when PnP instances differ or are absent on one side.
+    let device_only_dxgi = [DxgiGpu {
+        name: "Renamed Discrete Card".into(),
+        vendor: 0x1002,
+        dedicated_memory: 16 * 1024 * 1024 * 1024,
+        device: 0x744C,
+        luid: (3, 0),
+        pnp_id: None,
+    }];
+    assert_eq!(
+        pick_gpu(
+            adlx_gpus(),
+            &identities,
+            &device_only_dxgi,
+            Some("Renamed Discrete Card")
+        )
+        .unwrap()
+        .id,
+        20
+    );
 }

@@ -45,8 +45,10 @@ pub fn to_png(source: &Path, destination: &Path) -> Result<(u32, u32)> {
     let _com = crate::capture::ComGuard::new()?;
     let factory = factory()?;
     let frame = frame(&factory, source)?;
+    static PARTIAL_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let seq = PARTIAL_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let mut partial = destination.as_os_str().to_owned();
-    partial.push(".partial");
+    partial.push(format!(".{}.{}.partial", std::process::id(), seq));
     let partial = std::path::PathBuf::from(partial);
     if let Some(parent) = destination.parent() {
         std::fs::create_dir_all(parent)?;

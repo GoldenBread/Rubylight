@@ -454,6 +454,7 @@ impl Drop for Encoder {
             retain_pending(&mut self.completion);
             std::mem::forget(std::mem::take(&mut self.slots));
             retain_pending(&mut self.compute);
+            std::mem::forget(self.output_event.take());
             std::mem::forget(self.api.clone());
             std::mem::forget(self.d3d.clone());
             return;

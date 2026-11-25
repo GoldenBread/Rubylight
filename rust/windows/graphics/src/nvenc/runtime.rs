@@ -16,9 +16,6 @@ use windows::{
     Win32::{
         Foundation::HANDLE,
         Graphics::Direct3D12::{D3D12_FENCE_FLAG_NONE, ID3D12Fence},
-        System::{
-            LibraryLoader::LOAD_LIBRARY_SEARCH_SYSTEM32, SystemInformation::GetSystemDirectoryW,
-        },
     },
     core::Interface,
 };
@@ -26,21 +23,7 @@ use windows::{
 type CreateInstance = unsafe extern "C" fn(*mut NV_ENCODE_API_FUNCTION_LIST) -> NVENCSTATUS;
 type GetMaximum = unsafe extern "C" fn(*mut u32) -> NVENCSTATUS;
 
-pub(crate) fn system_library(name: &str) -> Result<libloading::Library> {
-    let mut directory = [0u16; 32768];
-    // SAFETY: `directory` is a live, writable UTF-16 buffer and the call writes at most its length.
-    let length = unsafe { GetSystemDirectoryW(Some(&mut directory)) } as usize;
-    if length == 0 || length >= directory.len() {
-        bail!("cannot locate the Windows system directory");
-    }
-    let path = std::path::PathBuf::from(String::from_utf16(&directory[..length])?).join(name);
-    // SAFETY: `path` is an absolute System32 path, so no search-order DLL is picked up; loading
-    // runs only the installed driver's initialisers.
-    Ok(unsafe {
-        libloading::os::windows::Library::load_with_flags(path, LOAD_LIBRARY_SEARCH_SYSTEM32.0)?
-    }
-    .into())
-}
+pub(crate) use crate::telemetry::system_library;
 pub(super) struct Runtime {
     pub(super) _library: Option<libloading::Library>,
     pub(super) create: CreateInstance,

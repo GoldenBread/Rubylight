@@ -53,6 +53,16 @@ impl Session {
         self.slots[slot].mapped = map.mappedResource;
         self.check(status, "map encoder input")?;
         if map.mappedResource.is_null() || map.mappedBufferFmt != buffer_format(&self.stream) {
+            if !self.slots[slot].mapped.is_null() {
+                // SAFETY: `mapped` was just mapped above and no picture consumed it.
+                let _ = unsafe {
+                    (self.functions.nvEncUnmapInputResource.unwrap())(
+                        self.raw,
+                        self.slots[slot].mapped,
+                    )
+                };
+                self.slots[slot].mapped = ptr::null_mut();
+            }
             bail!("NVENC mapped an incompatible input");
         }
         let mut signal = None;

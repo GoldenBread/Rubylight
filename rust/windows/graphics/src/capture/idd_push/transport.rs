@@ -12,11 +12,12 @@ impl Session {
         zero_copy: bool,
         warnings: &dyn WarningSink,
         scope: FenceScope,
+        remote: Option<Arc<Remote>>,
     ) -> Result<Ring> {
         if layout.kind == Kind::Fence {
             match compute
                 .map_or_else(|| crate::compute::Compute::for_device(&gpu.device), Ok)
-                .and_then(|compute| Ring::fenced(gpu, compute, layout, zero_copy))
+                .and_then(|compute| Ring::fenced(gpu, compute, layout, zero_copy, remote))
             {
                 Ok(ring) => return Ok(ring),
                 Err(error) => {
@@ -199,6 +200,7 @@ impl Session {
             self.zero_copy,
             &self.pool.warnings,
             FenceScope::new(&self.monitor, self.adapter),
+            Some(self.remote.clone()),
         )?;
         if self.ring.fences.is_some() {
             // Synchronously clear and drain the previous fence ring before dropping
@@ -267,6 +269,7 @@ impl Session {
         }
         let counters = header.counters();
         if self.counted.0.elapsed() >= COUNTERS_EVERY {
+            crate::compute::drain_retained();
             let last = std::mem::replace(&mut self.counted, (Instant::now(), counters)).1;
             tracing::debug!(
                 target: "idd_push",

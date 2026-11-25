@@ -465,6 +465,7 @@ fn get_or_create_shared<K: Copy + Eq, T>(
         if let Some(existing) = weak.upgrade()
             && is_healthy(&existing)
         {
+            drop(shared);
             return Ok(existing);
         }
     }

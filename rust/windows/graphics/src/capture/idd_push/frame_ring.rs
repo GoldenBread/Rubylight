@@ -426,6 +426,7 @@ impl Ring {
         compute: Arc<crate::compute::Compute>,
         layout: Layout,
         read_in_place: bool,
+        remote: Option<Arc<Remote>>,
     ) -> Result<Self> {
         let format = DXGI_FORMAT(layout.format as i32);
         let pixel = ring_pixel(format)?;
@@ -436,7 +437,7 @@ impl Ring {
         // Build the owner before importing textures: a later allocation/open failure must
         // remove every preceding import from Compute's cache as this partially built ring
         // drops, just as a complete ring does.
-        let fences = Fences::new(gpu, compute.clone(), section.clone(), read_in_place)?;
+        let fences = Fences::new(gpu, compute.clone(), section.clone(), read_in_place, remote)?;
         let mut ring = Self {
             section,
             slots: Vec::with_capacity(layout.slot_count as usize),

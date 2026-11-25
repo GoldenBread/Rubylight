@@ -349,6 +349,11 @@ impl GpuPool {
                     handoff.forget(texture);
                 }
             }
+            if let Some(Some(signal)) = &self.d3d11_signal {
+                for texture in &self.textures {
+                    signal.forget(texture);
+                }
+            }
             self.textures.clear();
             self.shape = shape;
         }

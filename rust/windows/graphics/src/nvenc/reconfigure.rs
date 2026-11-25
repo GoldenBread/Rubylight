@@ -107,6 +107,12 @@ impl Session {
         }
         let before = self.config.rcParams.averageBitRate;
         let after = bitrate * 1000;
+        let ceiling = if self.vbv_ceiling > 0 {
+            Tuning::vbv_bits(bitrate, self.stream.fps_millihz(), self.vbv_increase)
+                .max(MIN_VBV_BITS as u32)
+        } else {
+            0
+        };
         let scale = |bits: u32| {
             if bits > 0 && before > 0 {
                 (u64::from(after) * u64::from(bits) / u64::from(before))
@@ -115,8 +121,11 @@ impl Session {
                 bits
             }
         };
-        let scaled_vbv = scale(self.config.rcParams.vbvBufferSize);
-        let ceiling = scale(self.vbv_ceiling);
+        let scaled_vbv = if ceiling > 0 {
+            scale(self.config.rcParams.vbvBufferSize).min(ceiling)
+        } else {
+            scale(self.config.rcParams.vbvBufferSize)
+        };
         let capped_vbv = (with_cap && ceiling > 0 && self.dynamic_bitrate)
             .then(|| {
                 self.frame_cap_target.map(|bytes| {
