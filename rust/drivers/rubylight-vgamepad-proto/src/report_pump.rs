@@ -134,8 +134,8 @@ impl ReportPump {
         }
     }
 
-    /// Enqueues a report. Returns `false` if an entry (either oldest transition or new aside)
-    /// had to be dropped because the ordered queue was full.
+    /// Enqueues a report. Returns `false` if an entry (priority overflow, oldest transition,
+    /// or new aside) had to be dropped because the queue was full.
     pub fn enqueue(&mut self, data: &[u8], report_id: u8, kind: ReportKind) -> bool {
         if data.is_empty() {
             return true;
@@ -143,6 +143,7 @@ impl ReportPump {
         match kind {
             ReportKind::Priority => {
                 if usize::from(self.priority_count) >= PRIORITY_CAPACITY {
+                    self.dropped += 1;
                     return false;
                 }
                 self.priority[usize::from(self.priority_count)].store(data, report_id);
@@ -283,6 +284,15 @@ mod tests {
         // Full ring drops a new aside silently without incrementing dropped_transitions.
         assert!(!pump.enqueue(&[77], 0x43, ReportKind::Aside));
         assert_eq!(pump.dropped_transitions(), 1);
+
+        // Priority overflow also returns false and increments dropped counter.
+        let mut p = ReportPump::new();
+        for i in 0..PRIORITY_CAPACITY {
+            assert!(p.enqueue(&[i as u8], 0x21, ReportKind::Priority));
+        }
+        assert_eq!(p.dropped_transitions(), 0);
+        assert!(!p.enqueue(&[99], 0x21, ReportKind::Priority));
+        assert_eq!(p.dropped_transitions(), 1);
     }
 
     #[test]

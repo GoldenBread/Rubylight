@@ -273,7 +273,7 @@ impl Protection {
             }
             // Query again after reading target names: do not apply physical modes
             // from an earlier snapshot over a concurrent layout transition; retry
-            // briefly across hotplug transitions (`HW-L29`).
+            // briefly across hotplug transitions.
             let fresh = Topology::query()?;
             if same_topology(&candidate, &fresh) {
                 topology = Some(candidate);

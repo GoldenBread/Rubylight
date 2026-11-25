@@ -225,7 +225,8 @@ impl Snapshot {
         let current = Topology::query()?;
         let available = Topology::query_all()?.available_basic_monitors();
         let preserve = |id: &str| excluded.iter().any(|e| id.eq_ignore_ascii_case(e));
-        let ids = self.active_ids(&current.basic_monitors(), &available, excluded);
+        let current_basic = current.basic_monitors();
+        let ids = self.active_ids(&current_basic, &available, excluded);
         if ids.is_empty() {
             // A headless host whose only display was the virtual one, now
             // gone: there is nothing left to turn on, so retrying cannot help.
@@ -330,11 +331,11 @@ impl Snapshot {
             )
             .context("cannot restore the cloned displays")?;
         // Shift surviving node coordinates to `(0, 0)` when a saved origin monitor
-        // is disconnected so Windows accepts the layout (`Item 35`).
+        // is disconnected so Windows accepts the layout.
         let mut present: Vec<String> = ids.clone();
-        for m in current.monitors() {
+        for m in &current_basic {
             if preserve(&m.device_id) && !present.contains(&m.device_id) {
-                present.push(m.device_id);
+                present.push(m.device_id.clone());
             }
         }
         let adjusted = crate::display_arrangement::present_layout(self, &present);

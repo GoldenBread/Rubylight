@@ -303,8 +303,8 @@ fn restore_deletes_absent_keys_and_preserves_companions_raw_frl_and_machine_scop
     {
         let mut s = store.lock().unwrap();
         s.driver = Some(58102);
-        // Original frame rate cap above UI 0x3FF ceiling (HG-17), plus absent Smooth Motion &
-        // Anisotropic Filtering keys (HG-16).
+        // Original frame rate cap above UI 0x3FF ceiling, plus absent Smooth Motion &
+        // Anisotropic Filtering keys.
         s.stored.insert(FRL_FPS, 1200);
     }
     struct Backend(std::sync::Arc<std::sync::Mutex<Fake>>);
@@ -334,7 +334,7 @@ fn restore_deletes_absent_keys_and_preserves_companions_raw_frl_and_machine_scop
         }
     }
 
-    // Machine-scoped controller applies & restores even when nobody is signed in (HG-18).
+    // Machine-scoped controller applies & restores even when nobody is signed in.
     let mut controller = Controller::new(Backend(store.clone()), journal.clone())
         .with_machine_scope(true)
         .with_user(|| None);

@@ -73,7 +73,7 @@ struct Entry {
     /// The Windows scale in percent, (original, applied).
     #[serde(default)]
     scale: Option<(u32, u32)>,
-    /// Inherited from a prior crashed host while this process already started streaming (`HW-L31`).
+    /// Inherited from a prior crashed host while this process already started streaming.
     #[serde(default, skip_serializing_if = "is_false")]
     stale: bool,
 }
@@ -268,7 +268,7 @@ fn change(id: &str, output: &str, update: impl FnOnce(&mut Entry)) -> Result<()>
         match read_journal(path) {
             Ok(mut existing) => {
                 // Keep un-recovered entries from a prior host marked stale so `recover_pending`
-                // still restores them after this host writes its own PID (`HW-L31`).
+                // still restores them after this host writes its own PID.
                 if existing.pid != current_pid && !existing.entries.is_empty() {
                     for leftover in existing.entries.values_mut() {
                         leftover.stale = true;

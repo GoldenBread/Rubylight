@@ -75,7 +75,7 @@ pub fn apply_layout(nodes: &[butterpollo_media_policy::topology::Node]) -> Resul
             .map(|n| (n.device_id.clone(), n.desired_position))
             .collect(),
     )?;
-    // Re-read Windows' actual landed positions so snapped coordinates still match on restore (`HW-L30`).
+    // Re-read Windows' actual landed positions so snapped coordinates still match on restore.
     if !moved.is_empty()
         && let Ok(after) = Topology::query().and_then(|t| t.nodes())
     {
@@ -350,7 +350,7 @@ fn restore_settings(
     }
     restored
 }
-/// Set the previous mode back if the display still has the one applied (`R1-HG3`).
+/// Set the previous mode back if the display still has the one applied.
 fn restore_mode_rate_with(
     current_monitors: &[Monitor],
     identity: &str,

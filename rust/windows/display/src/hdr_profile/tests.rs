@@ -94,7 +94,7 @@ fn the_virtual_display_gets_back_what_it_had_unless_someone_chose_another() -> R
     let fake = Fake::default().with(&display, true, "main-cal.icm");
     restore_with(&fake, &display, None, "main-cal.icm", true)?;
     assert_eq!(fake.get(&display, true)?, None);
-    // A profile before comes back, and the stream's profile is disassociated (HW-L34).
+    // A profile before comes back, and the stream's profile is disassociated.
     let fake = Fake::default()
         .with(&display, true, "old.icm")
         .with(&display, true, "main-cal.icm");

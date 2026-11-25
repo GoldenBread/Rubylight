@@ -530,7 +530,7 @@ mod tests {
             "capture reopen reads the same registration"
         );
         // ADD can recreate the same persistent client id, target and driver process.
-        // Removing the stale first registration must leave the reconnect's new registration alive (`HW-L28`).
+        // Removing the stale first registration must leave the reconnect's new registration alive.
         let second_reg = register(monitor);
         unregister_registration(first_reg);
         let recreated = current();

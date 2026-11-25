@@ -141,11 +141,9 @@ pub unsafe fn dispatch(request: WDFREQUEST, ioctl_code: u32) {
                 ClearFrameRingRequest::SIZE,
                 ClearFrameRingRequest::decode,
             ) {
-                Ok(r) => crate::monitor::clear_frame_ring_generation(
-                    owner,
-                    r.session_id,
-                    r.generation,
-                ),
+                Ok(r) => {
+                    crate::monitor::clear_frame_ring_generation(owner, r.session_id, r.generation)
+                }
                 Err(st) => st,
             };
             request.complete(st);

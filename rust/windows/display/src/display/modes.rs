@@ -334,31 +334,7 @@ pub fn highest_refresh(
         })
         .context("selected display unavailable")?;
     let current = mode(&monitor.display_name)?;
-    let name: Vec<_> = monitor.display_name.encode_utf16().chain(Some(0)).collect();
-    let mut enumerated = Vec::new();
-    for index in 0..4096 {
-        let mut candidate = DEVMODEW {
-            dmSize: size_of::<DEVMODEW>() as u16,
-            ..Default::default()
-        };
-        // SAFETY: The display name is terminated and the initialized DEVMODEW remains writable throughout enumeration.
-        if !unsafe {
-            EnumDisplaySettingsW(
-                PCWSTR(name.as_ptr()),
-                ENUM_DISPLAY_SETTINGS_MODE(index),
-                &mut candidate,
-            )
-        }
-        .as_bool()
-        {
-            break;
-        }
-        enumerated.push((
-            candidate.dmPelsWidth,
-            candidate.dmPelsHeight,
-            candidate.dmDisplayFrequency,
-        ));
-    }
+    let enumerated = supported_modes(&monitor.display_name);
     highest_refresh_in(
         &enumerated,
         resolution,

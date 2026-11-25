@@ -139,20 +139,32 @@ pub(in super::super) fn is_rubylight_monitor(path: &str) -> bool {
 pub(in super::super) fn is_physical_monitor(path: &str) -> bool {
     path_parts(path).is_some() && !is_rubylight_monitor(path)
 }
+static IDS: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::BTreeMap<String, (Instant, String)>>,
+> = std::sync::LazyLock::new(Default::default);
+
 pub(super) fn monitor_id(path: &str) -> String {
-    static IDS: std::sync::LazyLock<
-        std::sync::Mutex<std::collections::BTreeMap<String, (Instant, String)>>,
-    > = std::sync::LazyLock::new(Default::default);
-    let mut ids = crate::lock_unpoisoned(&IDS);
-    ids.retain(|_, (at, _)| at.elapsed() < Duration::from_secs(1));
-    if let Some((_, id)) = ids.get(path) {
-        return id.clone();
+    monitor_id_with(path, |p| monitor_instance(p).ok(), monitor_edid)
+}
+
+fn monitor_id_with(
+    path: &str,
+    probe_instance: impl FnOnce(&str) -> Option<String>,
+    probe_edid: impl FnOnce(&str) -> Vec<u8>,
+) -> String {
+    {
+        let mut ids = crate::lock_unpoisoned(&IDS);
+        ids.retain(|_, (at, _)| at.elapsed() < Duration::from_secs(1));
+        if let Some((_, id)) = ids.get(path) {
+            return id.clone();
+        }
     }
     let id = butterpollo_media_policy::display_policy::legacy_device_id(
         path,
-        monitor_instance(path).ok().as_deref(),
-        &monitor_edid(path),
+        probe_instance(path).as_deref(),
+        &probe_edid(path),
     );
+    let mut ids = crate::lock_unpoisoned(&IDS);
     if ids.len() < 512 {
         ids.insert(path.into(), (Instant::now(), id.clone()));
     }
@@ -222,4 +234,44 @@ pub fn edid_refresh(hint: &str, targets: &[u32]) -> Result<serde_json::Value> {
         .collect::<Vec<_>>()
         .into();
     Ok(response)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn monitor_id_releases_global_cache_lock_before_probing_and_caches_hit() {
+        let path = r"\\?\DISPLAY#TEST#identity-lock-test#{e6f07b5f-ee97-4a90-b076-33f57bf4eaa7}";
+        {
+            crate::lock_unpoisoned(&IDS).remove(path);
+        }
+        let mut misses = 0usize;
+        let first = monitor_id_with(
+            path,
+            |_| {
+                misses += 1;
+                assert!(
+                    IDS.try_lock().is_ok(),
+                    "IDS mutex must not stay locked while probing monitor instance"
+                );
+                Some("DISPLAY\\TEST\\INSTANCE".to_string())
+            },
+            |_| {
+                assert!(
+                    IDS.try_lock().is_ok(),
+                    "IDS mutex must not stay locked while reading EDID"
+                );
+                Vec::new()
+            },
+        );
+        assert_eq!(misses, 1);
+        let second = monitor_id_with(
+            path,
+            |_| unreachable!("cache hit must not re-probe instance"),
+            |_| unreachable!("cache hit must not re-read EDID"),
+        );
+        assert_eq!(first, second);
+        crate::lock_unpoisoned(&IDS).remove(path);
+    }
 }

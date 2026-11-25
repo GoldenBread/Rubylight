@@ -29,11 +29,11 @@ const SESSION_PREFIX: &str = "ButterpolloPresent-";
 static START_FAILURES: AtomicU32 = AtomicU32::new(0);
 static LAST_ERROR: Mutex<Option<String>> = Mutex::new(None);
 
-/// Number of ETW present-timing startup failures recorded in this process (`HG-I10`).
+/// Number of ETW present-timing startup failures recorded in this process.
 pub fn start_failures() -> u32 {
     START_FAILURES.load(Ordering::Relaxed)
 }
-/// Last ETW present-timing startup diagnostic error, if initialization failed (`HG-I10`).
+/// Last ETW present-timing startup diagnostic error, if initialization failed.
 pub fn last_error() -> Option<String> {
     LAST_ERROR.lock().ok().and_then(|g| g.clone())
 }

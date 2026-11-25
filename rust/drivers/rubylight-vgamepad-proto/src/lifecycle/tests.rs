@@ -280,4 +280,43 @@ fn ntstatus_codes_and_keepalive_parking_and_pid_playing_match_contract() {
     let info = counter_dev.fill_query_info();
     assert_eq!(info.counters.haptic_evicted, 2);
     assert_eq!(info.counters.unknown_commands, 3);
+
+    // Failed VHF submit restores pump readiness; SC26 battery while busy is queued as Aside.
+    let mut pump_dev = DeviceState::new();
+    pump_dev.powered = true;
+    let (_, sc_gen) = pump_dev.check_create_preflight(owner, &create).unwrap();
+    let _ = pump_dev
+        .begin_create(owner, &create, sc_gen, false)
+        .unwrap();
+    pump_dev.publish_vhf(0, 0xCAFE);
+    assert!(pump_dev.commit_start(0, owner, true));
+    let (_, _) = pump_dev.on_vhf_ready_for_next_report(0, 1_000);
+    let (submitted, _) = pump_dev
+        .submit_input_state(owner, &input, 2_000, true)
+        .unwrap();
+    assert!(submitted.is_some());
+    assert!(!pump_dev.slots[0].pump.ready());
+    pump_dev.submit_finish(0, false);
+    assert!(pump_dev.slots[0].pump.ready());
+
+    // Mark pump not ready with an in-flight input, then submit battery state: delivers on ready.
+    let (next_in, _) = pump_dev
+        .submit_input_state(owner, &input, 3_000, true)
+        .unwrap();
+    assert!(next_in.is_some());
+    pump_dev.submit_finish(0, true);
+    assert!(!pump_dev.slots[0].pump.ready());
+    let bat = crate::protocol::BatteryStateRequest {
+        controller_id: 0,
+        percent: 75,
+        flags: crate::protocol::BatteryState::Discharging as u8,
+        ..Default::default()
+    };
+    let immediate = pump_dev.submit_battery_state(owner, &bat, 4_000).unwrap();
+    assert!(immediate.is_none());
+    let (bat_pending, _) = pump_dev.on_vhf_ready_for_next_report(0, 5_000);
+    assert_eq!(
+        bat_pending.unwrap().report_id,
+        crate::profiles::steam_controller::BATTERY_REPORT_ID
+    );
 }

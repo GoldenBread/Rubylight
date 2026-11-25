@@ -39,11 +39,16 @@ impl DeviceState {
         Some((taken.report_id, taken.length, vhf, is_sc26_input))
     }
 
-    pub fn submit_finish(&mut self, controller_id: u32) {
-        if let Some(slot) = self.slots.get_mut(controller_id as usize)
-            && slot.submits_in_flight > 0
-        {
-            slot.submits_in_flight -= 1;
+    pub fn submit_finish(&mut self, controller_id: u32, submitted: bool) {
+        let stopping = self.stopping;
+        let powered = self.powered;
+        if let Some(slot) = self.slots.get_mut(controller_id as usize) {
+            if slot.submits_in_flight > 0 {
+                slot.submits_in_flight -= 1;
+            }
+            if !submitted && slot.accepts_vhf_callbacks(stopping, powered) {
+                slot.pump.set_ready();
+            }
         }
     }
 
@@ -385,11 +390,7 @@ impl DeviceState {
             return Err(DriverStatus::InvalidParameter);
         }
         if profile == Profile::SteamController {
-            let ready = slot.pump.ready();
-            slot.sc26.last_battery_us = if ready { now_us } else { 0 };
-            if !ready {
-                return Ok(None);
-            }
+            slot.sc26.last_battery_us = now_us;
             let battery_report = steam_controller::encode_battery(&slot.sc26);
             return self.pump_enqueue_and_take(
                 req.controller_id,
