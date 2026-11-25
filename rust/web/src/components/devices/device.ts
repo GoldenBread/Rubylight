@@ -134,10 +134,14 @@ export interface Draft {
   release_delay: string;
   /** That delay exactly as stored, sent back while the field is untouched. */
   stored_release_delay?: unknown;
-  /** The device's sound overrides (`audio_night_mode`, `audio_headphone_surround`) as the selects show them; empty follows the host. */
+  /** The device's sound overrides (`stream_audio`, `audio_passthrough`, `audio_night_mode`, `audio_headphone_surround`) as the selects show them; empty follows the host. */
   audio: Record<AudioOverride, '' | 'on' | 'off'>;
   /** Those overrides exactly as stored, sent back while their choice is untouched. */
   stored_audio: Partial<Record<AudioOverride, unknown>>;
+  /** The device's audio device override (`audio_sink`) as the select shows it; empty follows the host. */
+  audio_sink: string;
+  /** That audio device exactly as stored, sent back while its choice is untouched. */
+  stored_audio_sink?: unknown;
   /** The device's couch menu overrides as the controls show them; empty follows the host. */
   couch: Record<CouchOverride, string>;
   /** Those overrides exactly as stored, sent back while their control is untouched. */
@@ -223,8 +227,13 @@ export const DISPLAY_OVERRIDE_OPTIONS = Object.fromEntries(
   }),
 ) as Record<DisplayOverride, { value: string; label: string }[]>;
 
-/** The sound options a device sets for itself, in its config overrides. */
-export const AUDIO_OVERRIDES = ['audio_night_mode', 'audio_headphone_surround'] as const;
+/** The boolean sound options a device sets for itself, in its config overrides. */
+export const AUDIO_OVERRIDES = [
+  'stream_audio',
+  'audio_passthrough',
+  'audio_night_mode',
+  'audio_headphone_surround',
+] as const;
 export type AudioOverride = (typeof AUDIO_OVERRIDES)[number];
 
 /** A stored sound override as its select shows it: as the host reads it, a boolean or its word. */
@@ -352,6 +361,9 @@ export function toDraft(client: Client): Draft {
       delete other[key];
     }
   }
+  // A null is no value: sent back, it would delete the host's own for this device's streams.
+  const storedAudioSink = other.audio_sink ?? undefined;
+  delete other.audio_sink;
   const storedCouch: Partial<Record<CouchOverride, unknown>> = {};
   for (const key of COUCH_OVERRIDES) {
     // A null is no value: sent back, it would delete the host's own for this device's streams.
@@ -401,6 +413,8 @@ export function toDraft(client: Client): Draft {
       '' | 'on' | 'off'
     >,
     stored_audio: storedAudio,
+    audio_sink: text(storedAudioSink),
+    stored_audio_sink: storedAudioSink,
     couch: Object.fromEntries(COUCH_OVERRIDES.map((key) => [key, shownCouch(key, storedCouch[key])])) as Record<
       CouchOverride,
       string
@@ -479,6 +493,13 @@ function overrides(draft: Draft): Record<string, unknown> | null {
       audio[key] = value === 'on';
     }
   }
+  const audioSinkUntouched =
+    draft.stored_audio_sink !== undefined && text(draft.stored_audio_sink) === draft.audio_sink;
+  const audioSink = audioSinkUntouched
+    ? { audio_sink: draft.stored_audio_sink }
+    : draft.audio_sink.trim()
+      ? { audio_sink: draft.audio_sink.trim() }
+      : {};
   const couch: Record<string, unknown> = {};
   for (const key of COUCH_OVERRIDES) {
     const value = draft.couch[key].trim();
@@ -502,7 +523,17 @@ function overrides(draft: Draft): Record<string, unknown> | null {
     : draft.release_delay.trim() && validReleaseDelay(draft.release_delay)
       ? { absolute_left_release_delay: Number(draft.release_delay) }
       : {};
-  const next = { ...draft.other_overrides, ...display, ...audio, ...couch, ...gamepad, ...ltr, ...delay, ...preset };
+  const next = {
+    ...draft.other_overrides,
+    ...display,
+    ...audio,
+    ...audioSink,
+    ...couch,
+    ...gamepad,
+    ...ltr,
+    ...delay,
+    ...preset,
+  };
   return Object.keys(next).length > 0 ? next : null;
 }
 

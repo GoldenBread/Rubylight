@@ -59,12 +59,12 @@ export const settings: Setting[] = [
   {
     key: 'virtual_display_refresh',
     label: 'Virtual display refresh',
-    description: 'A virtual display’s refresh rate: twice the stream rate is the default; 1000 Hz spaces a capped game’s frames more evenly. Off also ends the automatic FPS cap.',
-    details: 'Every choice but Off also caps games at the frame limit and uses 1000 Hz when the device asks for VRR; a display that refuses 1000 Hz uses the fastest refresh it offers below it. Off runs the display at the stream’s frame rate. On an RX 7900 XT, with a test picture capped at 60 fps for 5 minutes each, 0.04 % of frame intervals were more than 4 ms off at 1000 Hz, 0.23 % at twice and 2.22 % at four times the stream rate, with the same time from capture to send. An October run found 1000 Hz about 1 ms slower from render to received at 60 fps (14.28 against 13.15 ms).',
+    description: 'A virtual display’s refresh rate: twice the stream rate is the default; 480 Hz or 1000 Hz spaces a capped game’s frames more evenly. Off also ends the automatic FPS cap.',
+    details: 'Every choice but Off also caps games at the frame limit and uses 1000 Hz when the device asks for VRR; a display that refuses the chosen refresh uses the fastest refresh it offers below it. Off runs the display at the stream’s frame rate. On an RX 7900 XT, with a test picture capped at 60 fps for 5 minutes each, 0.04 % of frame intervals were more than 4 ms off at 1000 Hz, 0.23 % at twice and 2.22 % at four times the stream rate, with the same time from capture to send. An October run found 1000 Hz about 1 ms slower from render to received at 60 fps (14.28 against 13.15 ms).',
     category: 'frame-limiting',
     group: 'Frame limiter',
-    control: { kind: 'select', options: [{ value: 'legacy', label: 'Twice the stream rate' }, { value: 'enabled', label: 'Four times the stream rate' }, { value: 'vrr', label: '1000 Hz' }, { value: 'disabled', label: 'Off' }] },
-    aliases: { match: 'letters', spellings: { '0': 'disabled', '1': 'enabled', '1000': 'vrr', '2x': 'legacy', 'fixed-2x': 'legacy', enable: 'enabled', true: 'enabled', yes: 'enabled', on: 'enabled', smooth: 'enabled', smoother: 'enabled', 'fixed-1000hz': 'vrr', '1000hz': 'vrr', disable: 'disabled', false: 'disabled', no: 'disabled', off: 'disabled' } },
+    control: { kind: 'select', options: [{ value: 'legacy', label: 'Twice the stream rate' }, { value: 'enabled', label: 'Four times the stream rate' }, { value: '480hz', label: '480 Hz' }, { value: 'vrr', label: '1000 Hz' }, { value: 'disabled', label: 'Off' }] },
+    aliases: { match: 'letters', spellings: { '0': 'disabled', '1': 'enabled', '480': '480hz', '1000': 'vrr', '2x': 'legacy', 'fixed-2x': 'legacy', '8x': '480hz', 'fixed-480hz': '480hz', enable: 'enabled', true: 'enabled', yes: 'enabled', on: 'enabled', smooth: 'enabled', smoother: 'enabled', 'fixed-1000hz': 'vrr', '1000hz': 'vrr', disable: 'disabled', false: 'disabled', no: 'disabled', off: 'disabled' } },
     default: 'legacy',
   },
   {

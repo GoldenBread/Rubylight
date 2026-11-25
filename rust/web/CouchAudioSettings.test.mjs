@@ -11,6 +11,8 @@ const { toDraft, changes, validCouchHold, COUCH_OPEN_WITH_OPTIONS } = await serv
 const { render } = await server.ssrLoadModule('svelte/server');
 const DeviceEditor = (await server.ssrLoadModule('/src/components/devices/DeviceEditor.svelte')).default;
 const CouchSettings = (await server.ssrLoadModule('/src/components/library/CouchSettings.svelte')).default;
+const VideoSettings = (await server.ssrLoadModule('/src/components/library/VideoSettings.svelte')).default;
+const { session } = await server.ssrLoadModule('/src/lib/session.svelte.ts');
 const { AppDraft } = await server.ssrLoadModule('/src/components/library/draft.svelte.ts');
 const shipped = new Map(schema.settings.map(setting => [setting.key, setting]));
 const client = extra => ({ uuid: 'u', name: 'TV', perm: 0x071f1f00, enabled: true, connected: false, ...extra });
@@ -44,18 +46,58 @@ test('night mode and headphone surround are host-wide defaults under Sound', () 
   }
 });
 
-test('a device sets night mode and headphone surround beside its other overrides', () => {
+test('a device sets sound overrides (stream audio, passthrough, sink, night mode and surround) beside its other overrides', () => {
   const before = toDraft(client({ config_overrides: { max_bitrate: 20000 } }));
-  assert.deepEqual(before.audio, { audio_night_mode: '', audio_headphone_surround: '' });
-  assert.deepEqual(changes(before, { ...before, audio: { ...before.audio, audio_night_mode: 'on' } }), {
-    config_overrides: { max_bitrate: 20000, audio_night_mode: true },
+  assert.deepEqual(before.audio, {
+    stream_audio: '',
+    audio_passthrough: '',
+    audio_night_mode: '',
+    audio_headphone_surround: '',
   });
-  const stored = toDraft(client({ config_overrides: { audio_headphone_surround: false } }));
+  assert.equal(before.audio_sink, '');
+  assert.deepEqual(
+    changes(before, {
+      ...before,
+      audio: { ...before.audio, stream_audio: 'off', audio_passthrough: 'on', audio_night_mode: 'on' },
+      audio_sink: ' {sink-1} ',
+    }),
+    {
+      config_overrides: {
+        max_bitrate: 20000,
+        stream_audio: false,
+        audio_passthrough: true,
+        audio_night_mode: true,
+        audio_sink: '{sink-1}',
+      },
+    },
+  );
+  const stored = toDraft(
+    client({
+      config_overrides: {
+        stream_audio: 'false',
+        audio_passthrough: true,
+        audio_headphone_surround: false,
+        audio_sink: '{sink-hdmi}',
+      },
+    }),
+  );
+  assert.equal(stored.audio.stream_audio, 'off');
+  assert.equal(stored.audio.audio_passthrough, 'on');
   assert.equal(stored.audio.audio_headphone_surround, 'off');
-  assert.equal('audio_headphone_surround' in stored.other_overrides, false);
+  assert.equal(stored.audio_sink, '{sink-hdmi}');
+  for (const key of ['stream_audio', 'audio_passthrough', 'audio_headphone_surround', 'audio_sink']) {
+    assert.equal(key in stored.other_overrides, false, key);
+  }
+  // Untouched values go back as stored without spurious config_overrides diff.
   assert.deepEqual(changes(stored, { ...stored, name: 'Cube' }), { name: 'Cube' });
-  assert.deepEqual(changes(stored, { ...stored, audio: { ...stored.audio, audio_headphone_surround: '' } }),
-    { config_overrides: null });
+  assert.deepEqual(
+    changes(stored, {
+      ...stored,
+      audio: { ...stored.audio, stream_audio: '', audio_passthrough: '', audio_headphone_surround: '' },
+      audio_sink: '',
+    }),
+    { config_overrides: null },
+  );
 });
 
 test('a device sets the couch menu beside its other overrides', () => {
@@ -87,17 +129,47 @@ test('a couch menu hold is empty or a whole number inside the host range', () =>
   assert.equal(COUCH_OPEN_WITH_OPTIONS.at(-1).value, 'controller,keyboard,touch');
 });
 
-test('the device editor has Sound and Couch menu groups that open on a saved value', () => {
-  const body = extra => render(DeviceEditor, { props: { client: client(extra), sleepUnavailable: null } }).body;
-  const section = (html, name) => new RegExp(`<details class="override[^>]*><summary[^>]*>${name}<`).exec(html)[0];
-  for (const label of ['Night mode', 'Headphone surround', 'Open the couch menu with', 'Controller chord hold', 'Corner hold', 'Keyboard chord']) {
-    assert.match(body({}), new RegExp(label), label);
+test('the device editor has Sound and Couch menu groups that open on a saved value', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const prevMetadata = session.metadata;
+  session.metadata = {
+    audio_sinks: [{ id: '{sink-avr}', name: 'HDMI AVR', description: 'HDMI AVR', adapter: 'GPU', default: true, virtual_sink: false }],
+  };
+  try {
+    const body = extra => render(DeviceEditor, { props: { client: client(extra), sleepUnavailable: null } }).body;
+    const section = (html, name) => new RegExp(`<details class="override[^>]*><summary[^>]*>${name}<`).exec(html)[0];
+    for (const label of [
+      'Stream audio', 'PCM and Dolby Digital audio', 'Audio device', 'HDMI AVR · default',
+      'Night mode', 'Headphone surround', 'Open the couch menu with', 'Controller chord hold', 'Corner hold', 'Keyboard chord',
+    ]) {
+      assert.match(body({}), new RegExp(label), label);
+    }
+    assert.doesNotMatch(section(body({}), 'Couch menu'), /\sopen/);
+    assert.match(section(body({ config_overrides: { couch_menu: false } }), 'Couch menu'), /\sopen/);
+    assert.doesNotMatch(section(body({ config_overrides: { couch_menu: false } }), 'Sound'), /\sopen/);
+    assert.match(section(body({ config_overrides: { audio_night_mode: true } }), 'Sound'), /\sopen/);
+    assert.match(section(body({ config_overrides: { stream_audio: false } }), 'Sound'), /\sopen/);
+    assert.match(section(body({ config_overrides: { audio_sink: '{sink-avr}' } }), 'Sound'), /\sopen/);
+    assert.match(section(body({ config_overrides: { couch_menu_hold_ms: 'soon' } }), 'Couch menu'), /\sopen/);
+    const editorSource = await readFile(new URL('./src/components/devices/DeviceEditor.svelte', import.meta.url), 'utf8');
+    assert.match(editorSource, /disabled=\{!changed \|\| nameMissing \|\| modeInvalid \|\| delayInvalid \|\| couchInvalid \|\| disabled\}/);
+  } finally {
+    session.metadata = prevMetadata;
   }
-  assert.doesNotMatch(section(body({}), 'Couch menu'), /\sopen/);
-  assert.match(section(body({ config_overrides: { couch_menu: false } }), 'Couch menu'), /\sopen/);
-  assert.doesNotMatch(section(body({ config_overrides: { couch_menu: false } }), 'Sound'), /\sopen/);
-  assert.match(section(body({ config_overrides: { audio_night_mode: true } }), 'Sound'), /\sopen/);
-  assert.match(section(body({ config_overrides: { couch_menu_hold_ms: 'soon' } }), 'Couch menu'), /\sopen/);
+});
+
+test('an app sets native pen and touch as a tristate override in VideoSettings', () => {
+  const app = extra => ({ name: 'Game', cmd: 'game.exe', 'working-dir': '', 'prep-cmd': [], uuid: 'a', ...extra });
+  const draft = new AppDraft(app({}));
+  const html = render(VideoSettings, { props: { draft } }).body;
+  assert.match(html, /Native pen and touch/);
+  assert.equal(draft.tristate('native-pen-touch'), '');
+  draft.setTristate('native-pen-touch', 'off');
+  assert.equal(draft.record()['native-pen-touch'], false);
+  draft.setTristate('native-pen-touch', 'on');
+  assert.equal(draft.record()['native-pen-touch'], true);
+  draft.setTristate('native-pen-touch', '');
+  assert.ok(!('native-pen-touch' in draft.record()));
 });
 
 test('an app sets night mode, headphone surround and the couch menu for itself', () => {

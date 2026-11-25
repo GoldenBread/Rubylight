@@ -135,8 +135,8 @@ fn generated_console_catalog_preserves_layers_and_choice_labels() {
 
     assert_eq!(GRIPS.len(), 20);
     assert_eq!(GLOBAL.len(), 186);
-    assert_eq!(APP.len(), 40);
-    assert_eq!(CLIENT.len(), 19);
+    assert_eq!(APP.len(), 41);
+    assert_eq!(CLIENT.len(), 22);
 
     let global_keys: BTreeSet<&str> = GLOBAL.iter().map(|s| s.key).collect();
     assert_eq!(global_keys.len(), GLOBAL.len());
@@ -149,6 +149,10 @@ fn generated_console_catalog_preserves_layers_and_choice_labels() {
     assert_eq!(
         choice_label("virtual_display_refresh", "enabled"),
         Some("Four times the stream frame rate")
+    );
+    assert_eq!(
+        choice_label("virtual_display_refresh", "480hz"),
+        Some("480 Hz")
     );
     assert_eq!(choice_label("amd_split_frame", "enabled"), Some("On"));
     assert_eq!(

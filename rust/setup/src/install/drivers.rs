@@ -44,7 +44,8 @@ pub(super) fn run_drivers(
         let script = install.join("drivers\\usbip\\install.ps1");
         if script.is_file() {
             progress.set("Installing Steam Deck and DualSense USB audio and haptics…");
-            restart_needed |= run_driver_script(&script, &[], notes, "USB audio and haptics");
+            restart_needed |=
+                run_driver_script(install, &script, &[], notes, "USB audio and haptics");
         } else {
             notes.push("The USB audio and haptics package is missing. Run the complete Rubylight installer to add it.".into());
         }
@@ -88,7 +89,13 @@ pub(super) fn rubylight_gamepad_driver(
         return false;
     }
     progress.set("Installing the virtual gamepad driver…");
-    run_driver_script(&script, &["-InstallerBestEffort"], notes, "virtual gamepad")
+    run_driver_script(
+        install,
+        &script,
+        &["-InstallerBestEffort"],
+        notes,
+        "virtual gamepad",
+    )
 }
 
 pub(super) fn remove_libvirtualgamepad(progress: &Progress, notes: &mut Vec<String>) -> bool {
@@ -135,7 +142,13 @@ pub(super) fn rubylight_display_driver(
         return false;
     }
     progress.set("Installing the virtual display driver…");
-    run_driver_script(&script, &["-InstallerBestEffort"], notes, "virtual display")
+    run_driver_script(
+        install,
+        &script,
+        &["-InstallerBestEffort"],
+        notes,
+        "virtual display",
+    )
 }
 /// Whether Rubylight's display driver step left a running device: no note
 /// (a refusing policy, a failed install, a missing package) and no restart
@@ -175,6 +188,7 @@ pub(super) fn driver_removal_note(
 /// fatal: the host still starts without the driver. Returns whether Windows
 /// needs a restart.
 pub(super) fn run_driver_script(
+    install: &Path,
     script: &Path,
     args: &[&str],
     notes: &mut Vec<String>,
@@ -192,6 +206,7 @@ pub(super) fn run_driver_script(
     ];
     arguments.extend_from_slice(args);
     let result = system::run_as_system(
+        install,
         &format!(
             "{}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
             std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".into())
@@ -313,6 +328,10 @@ pub fn repair_drivers(progress: &Progress, by_hand: bool) -> Result<bool> {
     let exe = std::env::current_exe()?;
     let install = system::win32_path(exe.parent().context("setup folder unavailable")?)?;
     let profile = profile();
+    // Verify and lock down ProgramData\Butterpollo before reading or writing
+    // driver-setup.lock / driver-repair.json as SYSTEM.
+    super::prepare_profile(&profile, true)
+        .context("checking the Rubylight settings folder before repairing drivers")?;
     let record = profile.join(REPAIR_RECORD);
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)?

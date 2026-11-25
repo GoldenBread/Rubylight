@@ -174,7 +174,8 @@ pub fn uninstall(options: &Options, progress: &Progress) -> Result<Removed> {
                 "-Uninstall",
                 "-InstallerBestEffort",
             ];
-            let result = system::run_as_system(&powershell, &arguments, Duration::from_secs(600));
+            let result =
+                system::run_as_system(&install, &powershell, &arguments, Duration::from_secs(600));
             let fallback =
                 format!("Its device ({device_id}) or driver package may still be installed");
             notes.extend(removal_note(name, &fallback, result));
@@ -211,8 +212,12 @@ pub fn uninstall(options: &Options, progress: &Progress) -> Result<Removed> {
                     path.as_str(),
                 ];
                 arguments.extend(args);
-                let result =
-                    system::run_as_system(&powershell, &arguments, Duration::from_secs(600));
+                let result = system::run_as_system(
+                    &install,
+                    &powershell,
+                    &arguments,
+                    Duration::from_secs(600),
+                );
                 notes.extend(removal_note(name, "It may still be installed", result));
             }
         }

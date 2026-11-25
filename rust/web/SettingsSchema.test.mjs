@@ -146,6 +146,10 @@ test('spellings the host reads as an option show as that option', () => {
     ['amd_split_frame', 'Yes', 'enabled'],
     ['amd_av1_screen_content', 1, 'enabled'],
     // framegen.rs reads letters and digits only.
+    ['virtual_display_refresh', 'fixed-480hz', '480hz'],
+    ['virtual_display_refresh', 'fixed-480-hz', '480hz'],
+    ['virtual_display_refresh', 480, '480hz'],
+    ['virtual_display_refresh', '8x', '480hz'],
     ['virtual_display_refresh', 'fixed-1000hz', 'vrr'],
     ['virtual_display_refresh', 'fixed-1000-hz', 'vrr'],
     ['virtual_display_refresh', 1000, 'vrr'],

@@ -347,6 +347,31 @@ pub fn apply(archive: &Archive, directory: &Path, fresh: impl FnMut() -> String)
                 files.credentials.clone()
             };
             atomic_write(&target, bytes)?;
+        } else if archive.files.contains_key(PAIRED) && files.credentials != files.paired {
+            // The backup keeps console sign-in credentials inside sunshine_state.json;
+            // a stale separate credentials file on this PC would otherwise shadow them
+            // when ProfileFiles::new loads after restart.
+            if config.values.contains_key("credentials_file") {
+                let mut creds = serde_json::Map::new();
+                if let Some(paired) = archive.json(PAIRED) {
+                    for key in ["username", "password", "salt"] {
+                        if let Some(value) = paired.get(key) {
+                            creds.insert(key.into(), value.clone());
+                        }
+                    }
+                }
+                crate::state::write_json(&files.credentials, &Value::Object(creds))?;
+            } else {
+                match std::fs::remove_file(&files.credentials) {
+                    Ok(()) => {}
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(error) => {
+                        return Err(error).with_context(|| {
+                            format!("removing stale {}", files.credentials.display())
+                        });
+                    }
+                }
+            }
         }
         for (name, bytes) in archive.under(CREDENTIALS_DIR) {
             atomic_write(&folder_target(directory, name), bytes)?;

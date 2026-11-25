@@ -100,7 +100,7 @@ pub const GLOBAL: &[Setting] = console_settings! {
         "frame_limiter_enable", "Enable frame limiter", Bool;
         "frame_limiter_provider", "Limiter provider", Choice(&["auto", "rtss", "none"]);
         "frame_limiter_fps_limit", "Frame limit (0 uses the device rate)", Number;
-        "virtual_display_refresh", "Virtual display refresh", Choice(&["legacy", "enabled", "fixed-1000hz", "disabled"]);
+        "virtual_display_refresh", "Virtual display refresh", Choice(&["legacy", "enabled", "480hz", "fixed-1000hz", "disabled"]);
         "rtss_install_path", "RTSS installation directory", Text;
         "rtss_frame_limit_type", "RTSS limiter mode", Choice(&["async", "front-edge-sync", "back-edge-sync", "nvidia-reflex"]);
         "rtss_allow_virtual_display_override", "Allow virtual display limiter overrides", Bool;

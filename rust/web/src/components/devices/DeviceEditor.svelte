@@ -27,6 +27,7 @@
     type Draft,
   } from './device';
   import { readFolders, type SharedFolder } from '../../lib/shared-folders';
+  import { session } from '../../lib/session.svelte';
   import { presets } from '../../lib/stream-presets';
 
   let {
@@ -157,6 +158,33 @@
     return options;
   });
 
+  const audioSinkOptions = $derived.by(() => {
+    const current = draft.audio_sink;
+    const same = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
+    const options: { value: string; label: string }[] = [];
+    const sinks = session.metadata?.audio_sinks;
+    for (const sink of sinks ?? []) {
+      const matches =
+        current !== '' &&
+        [sink.id, sink.name, sink.description, sink.adapter].some((field) => field && same(field, current));
+      const choice = matches ? current : sink.id;
+      if (!choice || options.some((option) => option.value === choice)) continue;
+      const marks: string[] = [];
+      if (sink.default) marks.push('default');
+      if (sink.virtual_sink && !sink.name.toLowerCase().includes('steam streaming speakers')) {
+        marks.push('Steam Streaming Speakers');
+      }
+      options.push({
+        value: choice,
+        label: [sink.name || sink.description || 'Unnamed audio device', ...marks].join(' · '),
+      });
+    }
+    if (current && !options.some((option) => option.value === current)) {
+      options.unshift({ value: current, label: sinks ? `${current} (not found)` : current });
+    }
+    return options;
+  });
+
   const presetHint = $derived(
     presets.find((preset) => preset.id === draft.stream_preset)?.description ??
       'Fills in the encoder settings you have not set yourself, for this device’s streams. Leave it on Use the host setting, which follows the preset in Settings, unless this device needs its own.',
@@ -168,7 +196,7 @@
   let presetOpen = $state(untrack(() => presetUnknown));
   const gamepadUnknown = $derived(draft.gamepad !== '' && !GAMEPAD_OPTIONS.some((option) => option.value === draft.gamepad));
   let controllerOpen = $state(untrack(() => gamepadUnknown));
-  let soundOpen = $state(untrack(() => Object.values(draft.audio).some((value) => value !== '')));
+  let soundOpen = $state(untrack(() => Object.values(draft.audio).some((value) => value !== '') || draft.audio_sink !== ''));
   const openWithUnknown = $derived(
     draft.couch.couch_menu_open_with !== '' &&
       !COUCH_OPEN_WITH_OPTIONS.some((option) => option.value === draft.couch.couch_menu_open_with),
@@ -282,6 +310,44 @@
   <details class="override" bind:open={soundOpen}><summary>Sound</summary>
   <section>
     <div class="form-grid">
+      <Field
+        label="Stream audio"
+        id="{uid}-stream-audio"
+        hint="Send this PC's sound to this device, in place of Stream audio in Settings. Choose Off when this device is only used as an extra monitor."
+      >
+        <select id="{uid}-stream-audio" class="select" bind:value={draft.audio.stream_audio}>
+          <option value="">Use the host setting</option>
+          <option value="on">On</option>
+          <option value="off">Off</option>
+        </select>
+      </Field>
+      <Field
+        label="PCM and Dolby Digital audio"
+        id="{uid}-passthrough"
+        hint="Offer uncompressed PCM, Dolby Digital and Dolby Digital Plus to this device, in place of Settings. Other devices keep Opus."
+      >
+        <select id="{uid}-passthrough" class="select" bind:value={draft.audio.audio_passthrough}>
+          <option value="">Use the host setting</option>
+          <option value="on">On</option>
+          <option value="off">Off</option>
+        </select>
+      </Field>
+      <Field
+        label="Audio device"
+        id="{uid}-audio-sink"
+        hint="The audio output captured for this device when sound stays on this PC or no virtual speakers exist, in place of Audio device in Settings."
+        error={session.metadata?.audio_error ? `Could not list audio devices: ${session.metadata.audio_error}` : undefined}
+      >
+        <select id="{uid}-audio-sink" class="select" bind:value={draft.audio_sink}>
+          <option value="">Use the host setting</option>
+          {#if session.metadata === null}
+            <option disabled value="-">Loading audio devices…</option>
+          {/if}
+          {#each audioSinkOptions as option (option.value)}
+            <option value={option.value}>{option.label}</option>
+          {/each}
+        </select>
+      </Field>
       <Field
         label="Night mode"
         id="{uid}-night"
@@ -478,7 +544,7 @@
   </details>
 
   <footer>
-    <Button type="submit" variant="primary" busy={saving} disabled={!changed || nameMissing || modeInvalid || delayInvalid || disabled}>Save</Button>
+    <Button type="submit" variant="primary" busy={saving} disabled={!changed || nameMissing || modeInvalid || delayInvalid || couchInvalid || disabled}>Save</Button>
     <Button disabled={!changed || saving} onclick={discard}>Discard</Button>
     <span class="status muted">
       {#if savingEndsStream(client.connected, saved, draft)}

@@ -164,8 +164,8 @@ fn device_identity_key(key: &str) -> bool {
             | "coop_join"
             | "shared_folders"
             | "allow_client_commands"
-            | "invited"
-    ) || key.contains("secret")
+    ) || key == crate::invites::MARKER
+        || key.contains("secret")
         || key.contains("token")
         || key.contains("password")
 }

@@ -17,6 +17,7 @@ pub(crate) use side_by_side::{SIDE_BY_SIDE_MARK, ensure_idle, probe, streaming, 
 pub use side_by_side::{pc_address, side_by_side_result, web_port};
 pub(crate) use staging::{
     prepare_staging_root, register, remove_legacy_staging, replace_file, secure_install,
+    staging_root,
 };
 
 use drivers::remember_driver_choice;
@@ -688,8 +689,6 @@ use drivers::*;
 use profile::*;
 #[cfg(test)]
 use side_by_side::*;
-#[cfg(test)]
-pub(crate) use staging::staging_root;
 #[cfg(test)]
 use staging::*;
 #[cfg(test)]

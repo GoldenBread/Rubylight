@@ -189,11 +189,15 @@ fn main() {
         std::process::exit(system::relaunch_elevated().unwrap_or(1));
     }
     if args.repair_drivers {
-        // Run as SYSTEM, whose %TEMP% nobody looks in: log with the host.
-        log::open_at(
-            install::profile().join("logs").join("driver-repair.log"),
-            true,
-        );
+        // Run as SYSTEM, whose %TEMP% nobody looks in: log with the host once
+        // the profile folder is verified as Rubylight's (never follow an
+        // untrusted junction as SYSTEM).
+        let profile = install::profile();
+        if install::prepare_profile(&profile, true).is_ok() {
+            log::open_at(profile.join("logs").join("driver-repair.log"), true);
+        } else {
+            log::open();
+        }
     } else {
         log::open();
     }

@@ -75,6 +75,21 @@
       placeholder="10"
       unit="ms"
     />
+    <Field
+      label="Native pen and touch"
+      id="{uid}-native-pen-touch"
+      hint="Send pen and touch input from paired devices to Windows as pen and touch. Turn it off for games that handle them badly; devices then send touch as mouse input."
+    >
+      <select
+        id="{uid}-native-pen-touch"
+        class="select"
+        bind:value={() => draft.tristate('native-pen-touch'), (value) => draft.setTristate('native-pen-touch', value)}
+      >
+        <option value="">Use the host setting</option>
+        <option value="on">On</option>
+        <option value="off">Off</option>
+      </select>
+    </Field>
   </div>
 
   <div class="toggles">

@@ -272,16 +272,16 @@ fn the_base_port_needs_its_whole_range_free_with_a_fallback_then_an_error() {
 }
 #[test]
 fn a_port_a_program_holds_is_not_free() -> Result<()> {
-    let tcp = std::net::TcpListener::bind(("0.0.0.0", 0))?;
+    let tcp = std::net::TcpListener::bind(("127.0.0.1", 0))?;
     assert!(!port_free(tcp.local_addr()?.port()));
-    let udp = std::net::UdpSocket::bind(("0.0.0.0", 0))?;
+    let udp = std::net::UdpSocket::bind(("127.0.0.1", 0))?;
     assert!(!port_free(udp.local_addr()?.port()));
     // A port just let go can be taken at once by another test or program (CI flaked on it),
     // so a free one is looked for among a few released ones.
     let mut free = false;
     for _ in 0..20 {
         let port = {
-            let probe = std::net::TcpListener::bind(("0.0.0.0", 0))?;
+            let probe = std::net::TcpListener::bind(("127.0.0.1", 0))?;
             probe.local_addr()?.port()
         };
         if port_free(port) {

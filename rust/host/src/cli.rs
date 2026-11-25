@@ -261,17 +261,11 @@ pub fn run() -> Result<()> {
                 }
             }
         };
-        let h = state::Host::load(directory, assets, args.port)?;
-        let credentials =
-            butterpollo_session::state::Credentials::new(creds[0].clone(), &creds[1])?;
-        // As with a password change in the console, signed-in browsers sign
-        // in again.
-        h.save_web_sessions(&Default::default())?;
-        h.save_credentials(&credentials)
-            .context("saving the credentials (an installed host needs an administrator)")?;
+        let saved_dir =
+            reset_credentials(directory, assets, args.port, creds[0].clone(), &creds[1])?;
         println!(
             "Saved the web console sign-in in {}. Sign in with it now; a running Rubylight takes it up without a restart.",
-            h.directory.display()
+            saved_dir.display()
         );
         return Ok(());
     }
@@ -279,6 +273,23 @@ pub fn run() -> Result<()> {
         .enable_all()
         .build()?
         .block_on(crate::server::run(args, assets))
+}
+
+fn reset_credentials(
+    directory: PathBuf,
+    assets: PathBuf,
+    port: Option<u16>,
+    username: String,
+    password: &str,
+) -> Result<PathBuf> {
+    let h = state::Host::load(directory, assets, port)?;
+    let credentials = butterpollo_session::state::Credentials::new(username, password)?;
+    // As with a password change in the console, signed-in browsers and API
+    // tokens sign in again: a token is bound only to the username.
+    h.revoke_sign_ins()?;
+    h.save_credentials(&credentials)
+        .context("saving the credentials (an installed host needs an administrator)")?;
+    Ok(h.directory.clone())
 }
 
 fn smoke(args: &Args) -> Result<()> {
@@ -365,5 +376,40 @@ mod tests {
         ])
         .unwrap();
         assert!(args.child_session_restore);
+    }
+
+    #[test]
+    fn cli_creds_reset_revokes_both_browser_sessions_and_api_tokens() {
+        let fixture = butterpollo_stream::state::test_support::Fixture::new();
+        let initial =
+            butterpollo_session::state::Credentials::new("admin".into(), "oldpassword").unwrap();
+        fixture.host.save_credentials(&initial).unwrap();
+        let seeded = serde_json::json!({
+            "root": {
+                "session_tokens": [{"hash": "session-1", "username": "admin"}],
+                "api_tokens": [{"hash": "token-1", "username": "admin", "scopes": []}],
+            }
+        });
+        butterpollo_session::state::write_json(&fixture.host.aliases_path, &seeded).unwrap();
+
+        let dir = fixture.host.directory.clone();
+        let assets = fixture.host.assets.clone();
+        super::reset_credentials(
+            dir.clone(),
+            assets.clone(),
+            None,
+            "admin".into(),
+            "newpassword",
+        )
+        .unwrap();
+
+        let reloaded = butterpollo_stream::state::Host::load(dir, assets, None).unwrap();
+        let creds = reloaded.credentials.read().unwrap();
+        let creds = creds.as_ref().expect("updated credentials");
+        assert!(creds.verifies("admin", "newpassword"));
+        assert!(!creds.verifies("admin", "oldpassword"));
+        let aliases = reloaded.aliases.lock().unwrap();
+        assert_eq!(aliases["root"]["session_tokens"], serde_json::json!([]));
+        assert_eq!(aliases["root"]["api_tokens"], serde_json::json!([]));
     }
 }

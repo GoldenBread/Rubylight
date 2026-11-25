@@ -151,9 +151,99 @@ impl std::error::Error for StillRunning {}
 /// its exit code and output. Vibepollo's driver scripts run as SYSTEM under
 /// Windows Installer: as an administrator, the display driver's health
 /// check cannot open the driver and needlessly reinstalls it.
-pub fn run_as_system(program: &str, args: &[&str], timeout: Duration) -> Result<(i32, String)> {
-    let work = program_data().join("Butterpollo").join("setup-tasks");
-    run_as_system_in(&work, program, args, timeout)
+///
+/// Task files live inside an administrators-only directory: `install\.staging\tasks`
+/// when `install` itself is trusted (owned by SYSTEM/Administrators/TrustedInstaller
+/// with no non-admin writer or reparse points), otherwise an ephemeral random
+/// restricted directory created directly under `%ProgramData%` (never under an
+/// unverified `ProgramData\Butterpollo`).
+pub fn run_as_system(
+    install: &Path,
+    program: &str,
+    args: &[&str],
+    timeout: Duration,
+) -> Result<(i32, String)> {
+    if trusted_ancestors(install).is_ok()
+        && security::other_writer(install).ok().flatten().is_none()
+    {
+        let staging = crate::install::staging_root(install);
+        match std::fs::symlink_metadata(&staging) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                create_restricted(&staging, false)?;
+            }
+            Err(error) => return Err(error.into()),
+            Ok(_) => trusted_dir_only(&staging)?,
+        }
+        let work = staging.join("tasks");
+        let result = run_as_system_in(&work, program, args, timeout);
+        let _ = std::fs::remove_dir(&work);
+        let _ = std::fs::remove_dir(&staging);
+        return result;
+    }
+    let root = program_data();
+    trusted_ancestors(&root)?;
+    let ephemeral = root.join(random_task_id()?);
+    let result = run_as_system_in(&ephemeral, program, args, timeout);
+    let _ = std::fs::remove_dir_all(&ephemeral);
+    result
+}
+/// Non-recursive trust check for an existing directory: must be a real
+/// directory (no reparse point), owned by SYSTEM/Administrators/TrustedInstaller,
+/// and writable by no other account.
+fn trusted_dir_only(folder: &Path) -> Result<()> {
+    use std::os::windows::fs::MetadataExt;
+    let metadata = std::fs::symlink_metadata(folder)?;
+    if metadata.file_attributes() & 0x400 != 0 {
+        return Err(Untrusted(format!("{} is a reparse point", folder.display())).into());
+    }
+    ensure!(metadata.is_dir(), "{} is not a directory", folder.display());
+    security::trusted_owner(folder, false)?;
+    if let Some(writer) = security::other_writer(folder)? {
+        return Err(Untrusted(format!(
+            "{} may be changed by {writer}, not only Administrators, SYSTEM or TrustedInstaller",
+            folder.display()
+        ))
+        .into());
+    }
+    Ok(())
+}
+/// Prepare `work` as a verified administrators-only root for SYSTEM task files.
+/// A missing folder is created atomically with restricted permissions; an
+/// existing one must pass [`trusted_tree`] (no reparse points, trusted owner,
+/// no non-admin writers).
+fn prepare_task_root(work: &Path) -> Result<()> {
+    match std::fs::symlink_metadata(work) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            create_restricted(work, false)
+        }
+        Err(error) => Err(error.into()),
+        Ok(_) => trusted_tree(work, &[]),
+    }
+}
+/// Cryptographically random task identifier so local users cannot pre-create
+/// or guess task script / XML filenames.
+fn random_task_id() -> Result<String> {
+    // SAFETY: CoCreateGuid takes no inputs and returns a fresh 128-bit GUID.
+    let guid = unsafe { windows::Win32::System::Com::CoCreateGuid() }
+        .context("generating a setup task identifier")?;
+    let [d0, d1, d2, d3, d4, d5, d6, d7] = guid.data4;
+    Ok(format!(
+        "ButterpolloSetup-{:08x}{:04x}{:04x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+        guid.data1, guid.data2, guid.data3, d0, d1, d2, d3, d4, d5, d6, d7
+    ))
+}
+/// Create a brand-new file (`create_new(true)`) so an existing file or symlink
+/// is never opened or overwritten.
+fn write_new_file(path: &Path, bytes: &[u8]) -> Result<()> {
+    use std::io::Write;
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .with_context(|| format!("creating {}", path.display()))?;
+    file.write_all(bytes)
+        .with_context(|| format!("writing {}", path.display()))?;
+    Ok(())
 }
 fn run_as_system_in(
     work: &Path,
@@ -161,72 +251,69 @@ fn run_as_system_in(
     args: &[&str],
     timeout: Duration,
 ) -> Result<(i32, String)> {
-    static COUNTER: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-    std::fs::create_dir_all(work)?;
-    let id = format!(
-        "ButterpolloSetup-{}-{}",
-        std::process::id(),
-        COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-    );
-    let log = work.join(format!("{id}.log"));
-    let script = work.join(format!("{id}.cmd"));
-    let definition = work.join(format!("{id}.xml"));
-    let _ = std::fs::remove_file(&log);
-    std::fs::write(&script, task_script(program, args, &log))?;
-    std::fs::write(&definition, task_definition(&script))?;
-    line(format!("as SYSTEM> {program} {args:?}"));
-    let schtasks = system32("schtasks.exe");
-    let (created, _) = run(
-        &schtasks,
-        &[
-            "/Create",
-            "/TN",
-            &id,
-            "/XML",
-            &definition.display().to_string(),
-            "/F",
-        ],
-        Duration::from_secs(60),
-    )?;
-    if created != 0 {
-        bail!("creating the setup task failed ({created})");
-    }
+    prepare_task_root(work)?;
+    let id = random_task_id()?;
+    let run_dir = work.join(&id);
+    create_restricted(&run_dir, false)?;
+    let log = run_dir.join("run.log");
+    let script = run_dir.join("run.cmd");
+    let definition = run_dir.join("task.xml");
     let result = (|| -> Result<(i32, String)> {
-        if run(&schtasks, &["/Run", "/TN", &id], Duration::from_secs(60))?.0 != 0 {
-            bail!("starting the setup task failed");
+        write_new_file(&script, task_script(program, args, &log).as_bytes())?;
+        write_new_file(&definition, &task_definition(&script))?;
+        line(format!("as SYSTEM> {program} {args:?}"));
+        let schtasks = system32("schtasks.exe");
+        let (created, _) = run(
+            &schtasks,
+            &[
+                "/Create",
+                "/TN",
+                &id,
+                "/XML",
+                &definition.display().to_string(),
+                "/F",
+            ],
+            Duration::from_secs(60),
+        )?;
+        if created != 0 {
+            bail!("creating the setup task failed ({created})");
         }
-        let deadline = Instant::now() + timeout;
-        loop {
-            let text = std::fs::read(&log)
-                .map(|b| String::from_utf8_lossy(&b).into_owned())
-                .unwrap_or_default();
-            if let Some(index) = text.rfind("BUTTERPOLLO-EXIT=") {
-                let code = text[index + 17..].trim().parse().unwrap_or(-1);
-                let output = text[..index].to_owned();
-                if !output.trim().is_empty() {
-                    line(output.trim_end());
-                }
-                line(format!("  exit code {code}"));
-                return Ok((code, output));
+        let outcome = (|| -> Result<(i32, String)> {
+            if run(&schtasks, &["/Run", "/TN", &id], Duration::from_secs(60))?.0 != 0 {
+                bail!("starting the setup task failed");
             }
-            if Instant::now() >= deadline {
-                return Err(StillRunning {
-                    program: program.to_owned(),
-                    seconds: timeout.as_secs(),
+            let deadline = Instant::now() + timeout;
+            loop {
+                let text = std::fs::read(&log)
+                    .map(|b| String::from_utf8_lossy(&b).into_owned())
+                    .unwrap_or_default();
+                if let Some(index) = text.rfind("BUTTERPOLLO-EXIT=") {
+                    let code = text[index + 17..].trim().parse().unwrap_or(-1);
+                    let output = text[..index].to_owned();
+                    if !output.trim().is_empty() {
+                        line(output.trim_end());
+                    }
+                    line(format!("  exit code {code}"));
+                    return Ok((code, output));
                 }
-                .into());
+                if Instant::now() >= deadline {
+                    return Err(StillRunning {
+                        program: program.to_owned(),
+                        seconds: timeout.as_secs(),
+                    }
+                    .into());
+                }
+                std::thread::sleep(Duration::from_millis(500));
             }
-            std::thread::sleep(Duration::from_millis(500));
-        }
+        })();
+        let _ = run(
+            &schtasks,
+            &["/Delete", "/TN", &id, "/F"],
+            Duration::from_secs(60),
+        );
+        outcome
     })();
-    let _ = run(
-        &schtasks,
-        &["/Delete", "/TN", &id, "/F"],
-        Duration::from_secs(60),
-    );
-    let _ = std::fs::remove_file(&script);
-    let _ = std::fs::remove_file(&definition);
-    let _ = std::fs::remove_file(&log);
+    let _ = std::fs::remove_dir_all(&run_dir);
     result
 }
 /// The task file for schtasks /XML: UTF-16 with a byte order mark, as Task

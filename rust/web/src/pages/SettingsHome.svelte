@@ -195,8 +195,9 @@
       for (const [key, value] of Object.entries(submitted)) {
         if (has(edits, key) && sameValue(edits[key], value)) delete edits[key];
       }
-      saved = result.restart_required !== false;
-      if (!saved) notify('Settings saved.', 'ok');
+      const needsRestart = result.restart_required !== false;
+      if (needsRestart) saved = true;
+      else notify(saved ? 'Settings saved. Restart Rubylight for earlier changes to apply.' : 'Settings saved.', 'ok');
       if (result.warning) notify(result.warning, 'warn', 8000);
       void load();
     } catch (error) {

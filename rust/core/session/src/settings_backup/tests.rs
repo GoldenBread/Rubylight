@@ -428,7 +428,7 @@ fn non_secret_backup_does_not_leak_or_overwrite_device_grants_or_invites() {
     let source = profile();
     write(
         &source.path().join(PAIRED),
-        r#"{"root":{"named_devices":[{"name":"Phone","cert":"PEM","uuid":"d1","perm":7,"enabled":true,"host_control":true,"pairing_approve":true,"allow_sleep":true,"allow_restart_shutdown":true,"allow_usb":true,"coop_join":true,"shared_folders":["s"],"allow_client_commands":true,"invited":{"until":999},"display_mode":"1920x1080x60"}]}}"#,
+        r#"{"root":{"named_devices":[{"name":"Phone","cert":"PEM","uuid":"d1","perm":7,"enabled":true,"host_control":true,"pairing_approve":true,"allow_sleep":true,"allow_restart_shutdown":true,"allow_usb":true,"coop_join":true,"shared_folders":["s"],"allow_client_commands":true,"invited_guest":{"until":999,"permission":"view"},"display_mode":"1920x1080x60"}]}}"#,
     );
     let bytes = backup(source.path(), false);
     let archive = read(Cursor::new(&bytes)).unwrap();
@@ -444,7 +444,7 @@ fn non_secret_backup_does_not_leak_or_overwrite_device_grants_or_invites() {
         "coop_join",
         "shared_folders",
         "allow_client_commands",
-        "invited",
+        crate::invites::MARKER,
     ] {
         assert!(settings.get(restricted).is_none(), "{restricted}");
     }
@@ -452,7 +452,7 @@ fn non_secret_backup_does_not_leak_or_overwrite_device_grants_or_invites() {
     let target = profile();
     write(
         &target.path().join(PAIRED),
-        r#"{"root":{"named_devices":[{"name":"Old","cert":"TARGET","uuid":"d1","perm":3,"enabled":true,"host_control":false,"allow_usb":false,"display_mode":"1280x720x60"}]}}"#,
+        r#"{"root":{"named_devices":[{"name":"Old","cert":"TARGET","uuid":"d1","perm":3,"enabled":true,"host_control":false,"allow_usb":false,"invited_guest":{"until":12345,"permission":"view"},"display_mode":"1280x720x60"}]}}"#,
     );
     apply(&archive, target.path(), String::new).unwrap();
     let paired: Value =
@@ -462,5 +462,64 @@ fn non_secret_backup_does_not_leak_or_overwrite_device_grants_or_invites() {
     assert_eq!(device["host_control"], false);
     assert_eq!(device["allow_usb"], false);
     assert!(device.get("pairing_approve").is_none());
-    assert!(device.get("invited").is_none());
+    assert_eq!(
+        device[crate::invites::MARKER],
+        json!({"until": 12345, "permission": "view"}),
+        "a non-secret restore must keep an invited guest's expiry and permission"
+    );
+}
+
+#[test]
+fn settings_backup_restore_with_secrets_replaces_stale_separate_credentials_file() {
+    use crate::state::{Credentials, ProfileFiles};
+
+    let source = profile();
+    let src_creds = Credentials::new("source_user".into(), "sourcepass123").unwrap();
+    let mut src_paired = json!({"root": {"named_devices": []}});
+    for (k, v) in serde_json::to_value(&src_creds)
+        .unwrap()
+        .as_object()
+        .unwrap()
+    {
+        src_paired[k] = v.clone();
+    }
+    write(
+        &source.path().join(PAIRED),
+        &serde_json::to_string(&src_paired).unwrap(),
+    );
+    let archive = read(Cursor::new(backup(source.path(), true))).unwrap();
+    assert!(!archive.files.contains_key(CREDENTIALS_FILE));
+
+    // Case 1: target has default sunshine_credentials.json shadowing sunshine_state.json.
+    let target = profile();
+    let target_creds = Credentials::new("old_user".into(), "oldpassword1").unwrap();
+    crate::state::write_json(&target.path().join(CREDENTIALS_FILE), &target_creds).unwrap();
+    apply(&archive, target.path(), String::new).unwrap();
+    assert!(!target.path().join(CREDENTIALS_FILE).exists());
+    let cfg = Config::load(&target.path().join(CONFIG)).unwrap();
+    let loaded = Credentials::load(&ProfileFiles::new(&cfg, target.path()).credentials)
+        .unwrap()
+        .expect("restored credentials");
+    assert!(loaded.verifies("source_user", "sourcepass123"));
+    assert!(!loaded.verifies("old_user", "oldpassword1"));
+
+    // Case 2: target configures an explicit credentials_file preserved by LOCATION_KEYS.
+    let custom_target = profile();
+    write(
+        &custom_target.path().join(CONFIG),
+        "credentials_file = custom_creds.json\n",
+    );
+    crate::state::write_json(
+        &custom_target.path().join("custom_creds.json"),
+        &target_creds,
+    )
+    .unwrap();
+    apply(&archive, custom_target.path(), String::new).unwrap();
+    let custom_cfg = Config::load(&custom_target.path().join(CONFIG)).unwrap();
+    let loaded_custom =
+        Credentials::load(&ProfileFiles::new(&custom_cfg, custom_target.path()).credentials)
+            .unwrap()
+            .expect("restored custom credentials");
+    assert!(loaded_custom.verifies("source_user", "sourcepass123"));
+    assert!(!loaded_custom.verifies("old_user", "oldpassword1"));
 }

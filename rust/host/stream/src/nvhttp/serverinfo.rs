@@ -94,6 +94,9 @@ pub(super) async fn serverinfo(
     h.wait_for_startup_packed(deadline).await;
     let config = h.config_snapshot();
     let client = authenticated(&h, &connection, 0).ok();
+    let device_config = client
+        .as_ref()
+        .and_then(|client| crate::stream::device_config(&h, client).ok());
     if let Some(client) = &client {
         note_client_agent(
             &h,
@@ -148,7 +151,8 @@ pub(super) async fn serverinfo(
         }
     };
     let windows_11 = butterpollo_win_display::display::virtual_display_os();
-    if let Err(error) = crate::extensions::probe_serverinfo_audio(&config).await {
+    let offered_config = device_config.as_ref().unwrap_or(&config);
+    if let Err(error) = crate::extensions::probe_serverinfo_audio(offered_config).await {
         tracing::warn!(error = %format!("{error:#}"), "Dolby Digital audio is not offered: FFmpeg was not probed");
     }
     serverinfo_response(
@@ -451,7 +455,85 @@ pub fn serverinfo_response(
                 .to_string(),
         ));
     }
-    fields.extend(crate::extensions::offered(h, config).serverinfo_fields());
+    let device_config = client.and_then(|client| crate::stream::device_config(h, client).ok());
+    let offered_config = device_config.as_ref().unwrap_or(config);
+    fields.extend(crate::extensions::offered(h, offered_config).serverinfo_fields());
     fields.extend(commands.into_iter().map(|name| ("ServerCommand", name)));
     xml(200, &fields, None)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::to_bytes;
+
+    async fn serverinfo_xml(h: &Shared, client: Option<&Client>) -> String {
+        let connection = Connection {
+            local: "127.0.0.1:47984".parse().unwrap(),
+            peer: "127.0.0.1:50000".parse().unwrap(),
+            certificate: None,
+            tls: true,
+            second_screen: false,
+        };
+        let config = h.config_snapshot();
+        let response = serverinfo_response(
+            h,
+            &connection,
+            &config,
+            client,
+            true,
+            "00:00:00:00:00:00".into(),
+            1000,
+            true,
+        );
+        let bytes = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
+        String::from_utf8(bytes.to_vec()).unwrap()
+    }
+
+    #[tokio::test]
+    async fn serverinfo_extensions_follow_per_device_audio_passthrough_override() {
+        let tag = format!(
+            "<{}>",
+            rubylight_protocol::audio_ext::CODECS_SERVERINFO_FIELD
+        );
+        let f = crate::state::test_support::Fixture::new();
+        *f.host.config.write().unwrap() =
+            butterpollo_config::config::Config::parse("audio_passthrough = false\n").unwrap();
+        let plain = f.client(u32::MAX);
+        let mut passthrough = plain.clone();
+        passthrough.extra.insert(
+            "config_overrides".into(),
+            json!({"audio_passthrough": true}),
+        );
+
+        let unpaired_body = serverinfo_xml(&f.host, None).await;
+        assert!(
+            !unpaired_body.contains(&tag),
+            "host off should not offer {tag} to unpaired: {unpaired_body}"
+        );
+        let plain_body = serverinfo_xml(&f.host, Some(&plain)).await;
+        assert!(
+            !plain_body.contains(&tag),
+            "host off should not offer {tag} without override: {plain_body}"
+        );
+        let device_body = serverinfo_xml(&f.host, Some(&passthrough)).await;
+        assert!(
+            device_body.contains(&tag),
+            "device audio_passthrough=true must advertise {tag}: {device_body}"
+        );
+
+        // And the reverse: host on, device turns passthrough off.
+        *f.host.config.write().unwrap() =
+            butterpollo_config::config::Config::parse("audio_passthrough = true\n").unwrap();
+        let mut muted = plain.clone();
+        muted.extra.insert(
+            "config_overrides".into(),
+            json!({"audio_passthrough": false}),
+        );
+        let muted_body = serverinfo_xml(&f.host, Some(&muted)).await;
+        assert!(
+            !muted_body.contains(&tag),
+            "device audio_passthrough=false must omit {tag}: {muted_body}"
+        );
+    }
 }

@@ -54,6 +54,7 @@ export type FlagKey = keyof typeof FLAGS;
 /** Switches whose missing key means the host setting, so on and off are both stored. */
 export type TristateKey =
   | 'prefer-10bit-sdr'
+  | 'native-pen-touch'
   | 'terminate-on-pause'
   | 'lossless-scaling-legacy-auto-detect'
   | 'rtx-video'

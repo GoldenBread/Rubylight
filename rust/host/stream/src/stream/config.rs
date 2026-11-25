@@ -89,8 +89,10 @@ pub fn effective_config(h: &Shared, launch: &Launch) -> Result<Config> {
             ("dd-configuration-option", "dd_configuration_option"),
             ("prefer-10bit-sdr", "prefer_sdr_10bit"),
             // How long a touch or pen tap holds its left-button release back
-            // (the host's `absolute_left_release_delay`).
+            // (the host's `absolute_left_release_delay`), and whether native
+            // pen/touch injection is used for this app (`native_pen_touch`).
             ("absolute-left-release-delay", "absolute_left_release_delay"),
+            ("native-pen-touch", "native_pen_touch"),
             // Night mode, headphone surround and the couch menu for this app
             // (the console's Sound and couch menu panel).
             ("audio-night-mode", "audio_night_mode"),
@@ -556,5 +558,64 @@ mod tests {
         let text = reason(&warnings).expect("capped again");
         assert!(text.contains("2560x1440"), "{text}");
         assert!(text.contains("3840x2160"), "{text}");
+    }
+
+    #[test]
+    fn an_app_can_override_native_pen_touch_over_host_and_device() {
+        let f = crate::state::test_support::Fixture::new();
+        *f.host.config.write().unwrap() = Config::parse("native_pen_touch = true\n").unwrap();
+        let mut client = f.client(u32::MAX);
+        client.extra.insert(
+            "config_overrides".into(),
+            serde_json::json!({"native_pen_touch": true}),
+        );
+        // App turns native pen/touch off -> effective_config + input policy + pen barrel roll follow.
+        f.host.apps.write().unwrap()[0]
+            .extra
+            .insert("native-pen-touch".into(), serde_json::json!(false));
+        let launch = f.launch(client.clone(), Role::Stream);
+        let config = effective_config(&f.host, &launch).unwrap();
+        assert!(!config.boolean("native_pen_touch", true));
+        assert!(!crate::extensions::offered(&f.host, &config).pen_barrel_roll);
+        let policy = butterpollo_input_policy::input_policy::Policy::resolve(&config).unwrap();
+        assert!(!policy.native_pen_touch);
+
+        // Host off, app turns native pen/touch back on.
+        *f.host.config.write().unwrap() = Config::parse("native_pen_touch = false\n").unwrap();
+        client.extra.remove("config_overrides");
+        f.host.apps.write().unwrap()[0]
+            .extra
+            .insert("native-pen-touch".into(), serde_json::json!(true));
+        let config = effective_config(&f.host, &f.launch(client, Role::Stream)).unwrap();
+        assert!(config.boolean("native_pen_touch", false));
+        assert!(crate::extensions::offered(&f.host, &config).pen_barrel_roll);
+        let policy = butterpollo_input_policy::input_policy::Policy::resolve(&config).unwrap();
+        assert!(policy.native_pen_touch);
+    }
+
+    #[test]
+    fn a_device_can_override_stream_audio_passthrough_and_sink() {
+        let f = crate::state::test_support::Fixture::new();
+        *f.host.config.write().unwrap() = Config::parse(
+            "stream_audio = true\naudio_passthrough = false\naudio_sink = Host Speaker\n",
+        )
+        .unwrap();
+        let mut client = f.client(u32::MAX);
+        client.extra.insert(
+            "config_overrides".into(),
+            serde_json::json!({
+                "stream_audio": false,
+                "audio_passthrough": true,
+                "audio_sink": "HDMI AVR",
+            }),
+        );
+        let dev = device_config(&f.host, &client).unwrap();
+        assert!(!dev.boolean("stream_audio", true));
+        assert!(dev.audio_passthrough());
+        assert_eq!(dev.get("audio_sink", ""), "HDMI AVR");
+        let eff = effective_config(&f.host, &f.launch(client, Role::Stream)).unwrap();
+        assert!(!eff.boolean("stream_audio", true));
+        assert!(eff.audio_passthrough());
+        assert_eq!(eff.get("audio_sink", ""), "HDMI AVR");
     }
 }

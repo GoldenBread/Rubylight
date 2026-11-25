@@ -37,6 +37,7 @@ pub const APP: &[Setting] = console_settings! {
         "capture-window-frame", "Window's frame", Choice(&["full", "client"]);
         "prefer-10bit-sdr", "Prefer 10-bit SDR", Bool;
         "absolute-left-release-delay", "Touch and pen click delay (milliseconds, 0 to 1000; empty uses the host's 10)", Number;
+        "native-pen-touch", "Native pen and touch (empty uses the host's)", Bool;
         "frame-generation-mode", "Frame generation", Choice(&["none", "game-provided"]);
         "gen1-framegen-fix", "Legacy frame generation capture fix (only while Frame generation is Use default)", Bool;
     ]
@@ -67,6 +68,9 @@ pub const CLIENT: &[Setting] = console_settings! {
         "undo", "Disconnect commands", Json;
     ]
     "Sound" => [
+        "stream_audio", "Stream audio (empty uses the host's)", Bool;
+        "audio_passthrough", "PCM and Dolby Digital audio (empty uses the host's)", Bool;
+        "audio_sink", "Audio device (empty uses the host's)", Text;
         "audio_night_mode", "Night mode (evens out loud and quiet sound)", Bool;
         "audio_headphone_surround", "Headphone surround (surround sound rendered for headphones on a stereo device)", Bool;
     ]
@@ -124,6 +128,7 @@ pub fn choice_label(key: &str, choice: &str) -> Option<&'static str> {
         (_, "force_off") => Some("Always off"),
         (_, "rtss") => Some("RivaTuner Statistics Server (RTSS)"),
         (_, "legacy") => Some("Twice the stream frame rate"),
+        (_, "480hz") => Some("480 Hz"),
         (_, "fixed-1000hz") => Some("1000 Hz"),
         (_, "async") => Some("Asynchronous"),
         (_, "front-edge-sync") => Some("Front edge sync"),

@@ -466,6 +466,84 @@ fn system_tasks_run_from_folders_with_spaces_and_unicode() -> Result<()> {
 }
 
 #[test]
+fn system_tasks_use_random_ids_create_new_files_and_refuse_untrusted_roots() -> Result<()> {
+    // Task identifiers must be random 128-bit hex (never PID + counter).
+    let first = random_task_id()?;
+    let second = random_task_id()?;
+    assert_ne!(first, second);
+    for id in [&first, &second] {
+        let hex = id
+            .strip_prefix("ButterpolloSetup-")
+            .expect("ButterpolloSetup- prefix");
+        assert_eq!(hex.len(), 32, "{id}");
+        assert!(hex.bytes().all(|b| b.is_ascii_hexdigit()), "{id}");
+    }
+
+    // write_new_file refuses pre-existing files (create_new(true)).
+    let root = tempfile::tempdir()?;
+    let existing = root.path().join("run.cmd");
+    std::fs::write(&existing, b"original")?;
+    assert!(write_new_file(&existing, b"tampered").is_err());
+    assert_eq!(std::fs::read(&existing)?, b"original");
+
+    // prepare_task_root / run_as_system_in refuse a directory junction.
+    let target = root.path().join("target");
+    std::fs::create_dir(&target)?;
+    let junction = root.path().join("setup-tasks");
+    let (code, output) = run(
+        &system32("cmd.exe"),
+        &[
+            "/c",
+            "mklink",
+            "/J",
+            &junction.display().to_string(),
+            &target.display().to_string(),
+        ],
+        Duration::from_secs(10),
+    )?;
+    assert_eq!(code, 0, "{output}");
+    let err = run_as_system_in(
+        &junction,
+        &system32("whoami.exe"),
+        &[],
+        Duration::from_secs(5),
+    )
+    .unwrap_err();
+    assert!(
+        err.downcast_ref::<Untrusted>().is_some() && err.to_string().contains("reparse point"),
+        "{err:#}"
+    );
+    assert_eq!(std::fs::read_dir(&target)?.count(), 0);
+
+    // A pre-existing directory writable by Everyone is refused too.
+    if elevated() {
+        let writable = root.path().join("writable");
+        std::fs::create_dir(&writable)?;
+        let (code, output) = run(
+            &system32("icacls.exe"),
+            &[
+                &writable.display().to_string(),
+                "/grant:r",
+                "*S-1-1-0:(F)",
+                "/Q",
+            ],
+            Duration::from_secs(10),
+        )?;
+        assert_eq!(code, 0, "{output}");
+        let err = run_as_system_in(
+            &writable,
+            &system32("whoami.exe"),
+            &[],
+            Duration::from_secs(5),
+        )
+        .unwrap_err();
+        assert!(err.downcast_ref::<Untrusted>().is_some(), "{err:#}");
+        assert_eq!(std::fs::read_dir(&writable)?.count(), 0);
+    }
+    Ok(())
+}
+
+#[test]
 fn windows_consumers_receive_drive_and_unc_paths_without_verbatim_prefixes() -> Result<()> {
     for (input, expected) in [
         (
