@@ -84,14 +84,21 @@ pub fn read() -> Result<String> {
     // SAFETY: the clipboard stays open for `_open`, so the handle stays valid, and the locked
     // memory is read only within its GlobalSize bytes before it is unlocked.
     unsafe {
+        let excluded = RegisterClipboardFormatW(w!("ExcludeClipboardContentFromMonitorProcessing"));
+        if excluded != 0 && IsClipboardFormatAvailable(excluded).is_ok() {
+            return Ok(String::new());
+        }
         if IsClipboardFormatAvailable(CF_UNICODETEXT).is_err() {
             return Ok(String::new());
         }
         let handle = GetClipboardData(CF_UNICODETEXT)?;
         let global = HGLOBAL(handle.0);
         let size = GlobalSize(global);
-        if size > MAX_BYTES || !size.is_multiple_of(2) {
+        if size > MAX_BYTES {
             bail!("clipboard text exceeds the limit");
+        }
+        if !size.is_multiple_of(2) {
+            bail!("clipboard text has an odd byte length");
         }
         let pointer = GlobalLock(global).cast::<u16>();
         if pointer.is_null() {
@@ -99,9 +106,9 @@ pub fn read() -> Result<String> {
         }
         let text = std::slice::from_raw_parts(pointer, size / 2);
         let end = text.iter().position(|c| *c == 0).unwrap_or(text.len());
-        let result = String::from_utf16(&text[..end]);
+        let result = String::from_utf16_lossy(&text[..end]);
         let _ = GlobalUnlock(global);
-        Ok(result?)
+        Ok(result)
     }
 }
 pub fn write(text: &str) -> Result<()> {

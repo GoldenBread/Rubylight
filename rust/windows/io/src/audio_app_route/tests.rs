@@ -95,11 +95,19 @@ fn the_game_plays_on_the_sink_and_goes_back_to_the_default_when_the_stream_ends(
     let directory = tempfile::tempdir()?;
     let (fake, mut state) = (Fake::default(), State::default());
     started(&fake, 7);
-    route_with(&fake, &mut state, directory.path(), 7, GAME, SINK)?;
+    let Routed::Sink(id) = route_with(&fake, &mut state, directory.path(), 7, GAME, SINK)? else {
+        anyhow::bail!("expected Routed::Sink");
+    };
     for role in ROLES {
         assert_eq!(fake.device(GAME, role), SINK);
     }
-    assert!(!release_with(&fake, &mut state, directory.path(), GAME)?);
+    assert!(!release_with(
+        &fake,
+        &mut state,
+        directory.path(),
+        GAME,
+        id
+    )?);
     for role in ROLES {
         assert_eq!(
             fake.device(GAME, role),
@@ -121,8 +129,14 @@ fn a_game_the_host_stops_is_put_back_before_it_stops() -> Result<()> {
     started(&fake, 7);
     fake.set(7, eConsole, HEADSET)?;
     // The session's route and its stream's.
-    route_with(&fake, &mut state, directory.path(), 7, GAME, SINK)?;
-    route_with(&fake, &mut state, directory.path(), 7, GAME, SINK)?;
+    let Routed::Sink(first) = route_with(&fake, &mut state, directory.path(), 7, GAME, SINK)?
+    else {
+        anyhow::bail!("expected Routed::Sink");
+    };
+    let Routed::Sink(second) = route_with(&fake, &mut state, directory.path(), 7, GAME, SINK)?
+    else {
+        anyhow::bail!("expected Routed::Sink");
+    };
     assert!(!put_back_with(
         &fake,
         &mut state,
@@ -135,8 +149,14 @@ fn a_game_the_host_stops_is_put_back_before_it_stops() -> Result<()> {
     exited(&fake);
     started(&fake, 9);
     fake.set(9, eMultimedia, HEADSET)?;
-    for _ in 0..2 {
-        assert!(!release_with(&fake, &mut state, directory.path(), GAME)?);
+    for id in [first, second] {
+        assert!(!release_with(
+            &fake,
+            &mut state,
+            directory.path(),
+            GAME,
+            id
+        )?);
     }
     assert_eq!(fake.device(GAME, eMultimedia), HEADSET);
     Ok(())
@@ -171,15 +191,18 @@ fn a_restore_lists_the_processes_without_the_lock() -> Result<()> {
     let directory = tempfile::tempdir()?;
     let fake = Fake::default();
     started(&fake, 7);
-    route_with(
+    let Routed::Sink(id) = route_with(
         &fake,
         &mut LISTED.lock().unwrap(),
         directory.path(),
         7,
         GAME,
         SINK,
-    )?;
-    assert!(release(&mut LISTED.lock().unwrap(), GAME));
+    )?
+    else {
+        anyhow::bail!("expected Routed::Sink");
+    };
+    assert!(release(&mut LISTED.lock().unwrap(), GAME, id));
     let (state, restored) = restore_unlocked(&fake, &LISTED, directory.path());
     assert!(!restored?);
     assert_eq!(*fake.listed.borrow(), [true]);
@@ -217,10 +240,10 @@ fn a_game_the_host_stops_is_not_routed_again_until_it_stopped() -> Result<()> {
     assert_eq!(load(directory.path())?, Journal::default());
     closing.unmark(&mut state);
     std::mem::forget(closing);
-    assert_eq!(
+    assert!(matches!(
         route_with(&fake, &mut state, directory.path(), 7, GAME, SINK)?,
-        Routed::Sink
-    );
+        Routed::Sink(_)
+    ));
     Ok(())
 }
 
@@ -253,10 +276,12 @@ fn a_game_that_exited_is_put_back_when_it_next_runs() -> Result<()> {
     let (fake, mut state) = (Fake::default(), State::default());
     started(&fake, 7);
     fake.set(7, eConsole, HEADSET)?;
-    route_with(&fake, &mut state, directory.path(), 7, GAME, SINK)?;
+    let Routed::Sink(id) = route_with(&fake, &mut state, directory.path(), 7, GAME, SINK)? else {
+        anyhow::bail!("expected Routed::Sink");
+    };
     exited(&fake);
     assert!(
-        release_with(&fake, &mut state, directory.path(), GAME)?,
+        release_with(&fake, &mut state, directory.path(), GAME, id)?,
         "Windows keeps the sink for the program: the restore waits for it"
     );
     assert!(restore_with(&fake, &state, directory.path())?);
@@ -295,14 +320,32 @@ fn a_new_stream_before_the_restore_keeps_the_users_device() -> Result<()> {
     let (fake, mut state) = (Fake::default(), State::default());
     started(&fake, 7);
     fake.set(7, eConsole, HEADSET)?;
-    route_with(&fake, &mut state, directory.path(), 7, GAME, SINK)?;
+    let Routed::Sink(first) = route_with(&fake, &mut state, directory.path(), 7, GAME, SINK)?
+    else {
+        anyhow::bail!("expected Routed::Sink");
+    };
     exited(&fake);
-    assert!(release_with(&fake, &mut state, directory.path(), GAME)?);
+    assert!(release_with(
+        &fake,
+        &mut state,
+        directory.path(),
+        GAME,
+        first
+    )?);
     // Started for the next stream: it reads the sink as the game's device.
     started(&fake, 9);
-    route_with(&fake, &mut state, directory.path(), 9, GAME, SINK)?;
+    let Routed::Sink(second) = route_with(&fake, &mut state, directory.path(), 9, GAME, SINK)?
+    else {
+        anyhow::bail!("expected Routed::Sink");
+    };
     assert_eq!(fake.device(GAME, eConsole), SINK);
-    assert!(!release_with(&fake, &mut state, directory.path(), GAME)?);
+    assert!(!release_with(
+        &fake,
+        &mut state,
+        directory.path(),
+        GAME,
+        second
+    )?);
     assert_eq!(fake.device(GAME, eConsole), HEADSET);
     Ok(())
 }
@@ -312,9 +355,17 @@ fn a_device_the_user_chose_during_the_stream_stays() -> Result<()> {
     let directory = tempfile::tempdir()?;
     let (fake, mut state) = (Fake::default(), State::default());
     started(&fake, 7);
-    route_with(&fake, &mut state, directory.path(), 7, GAME, SINK)?;
+    let Routed::Sink(id) = route_with(&fake, &mut state, directory.path(), 7, GAME, SINK)? else {
+        anyhow::bail!("expected Routed::Sink");
+    };
     fake.set(7, eConsole, HEADSET)?;
-    assert!(!release_with(&fake, &mut state, directory.path(), GAME)?);
+    assert!(!release_with(
+        &fake,
+        &mut state,
+        directory.path(),
+        GAME,
+        id
+    )?);
     assert_eq!(fake.device(GAME, eConsole), HEADSET);
     assert_eq!(fake.device(GAME, eMultimedia), "");
     Ok(())
@@ -326,9 +377,21 @@ fn the_last_of_two_streams_of_one_game_puts_it_back() -> Result<()> {
     let (fake, mut state) = (Fake::default(), State::default());
     started(&fake, 7);
     started(&fake, 8);
-    route_with(&fake, &mut state, directory.path(), 7, GAME, SINK)?;
-    route_with(&fake, &mut state, directory.path(), 8, GAME, SINK)?;
-    assert!(!release_with(&fake, &mut state, directory.path(), GAME)?);
+    let Routed::Sink(first) = route_with(&fake, &mut state, directory.path(), 7, GAME, SINK)?
+    else {
+        anyhow::bail!("expected Routed::Sink");
+    };
+    let Routed::Sink(second) = route_with(&fake, &mut state, directory.path(), 8, GAME, SINK)?
+    else {
+        anyhow::bail!("expected Routed::Sink");
+    };
+    assert!(!release_with(
+        &fake,
+        &mut state,
+        directory.path(),
+        GAME,
+        first
+    )?);
     assert_eq!(
         fake.device(GAME, eConsole),
         SINK,
@@ -339,7 +402,13 @@ fn the_last_of_two_streams_of_one_game_puts_it_back() -> Result<()> {
         "the watcher leaves a playing game alone"
     );
     assert_eq!(fake.device(GAME, eConsole), SINK);
-    assert!(!release_with(&fake, &mut state, directory.path(), GAME)?);
+    assert!(!release_with(
+        &fake,
+        &mut state,
+        directory.path(),
+        GAME,
+        second
+    )?);
     assert_eq!(fake.device(GAME, eConsole), "");
     Ok(())
 }
@@ -351,8 +420,16 @@ fn a_game_found_on_the_sink_without_a_record_goes_back_to_the_default() -> Resul
     started(&fake, 7);
     // The record was lost while the game was routed.
     fake.set(7, eConsole, &SINK.to_lowercase())?;
-    route_with(&fake, &mut state, directory.path(), 7, GAME, SINK)?;
-    assert!(!release_with(&fake, &mut state, directory.path(), GAME)?);
+    let Routed::Sink(id) = route_with(&fake, &mut state, directory.path(), 7, GAME, SINK)? else {
+        anyhow::bail!("expected Routed::Sink");
+    };
+    assert!(!release_with(
+        &fake,
+        &mut state,
+        directory.path(),
+        GAME,
+        id
+    )?);
     assert_eq!(fake.device(GAME, eConsole), "");
     Ok(())
 }
@@ -363,9 +440,17 @@ fn a_device_that_is_gone_does_not_block_the_restore() -> Result<()> {
     let (fake, mut state) = (Fake::default(), State::default());
     started(&fake, 7);
     fake.set(7, eConsole, HEADSET)?;
-    route_with(&fake, &mut state, directory.path(), 7, GAME, SINK)?;
+    let Routed::Sink(id) = route_with(&fake, &mut state, directory.path(), 7, GAME, SINK)? else {
+        anyhow::bail!("expected Routed::Sink");
+    };
     *fake.gone.borrow_mut() = Some(HEADSET.into());
-    assert!(!release_with(&fake, &mut state, directory.path(), GAME)?);
+    assert!(!release_with(
+        &fake,
+        &mut state,
+        directory.path(),
+        GAME,
+        id
+    )?);
     assert_eq!(fake.device(GAME, eConsole), "", "it follows the default");
     assert_eq!(load(directory.path())?, Journal::default());
     Ok(())
@@ -376,10 +461,12 @@ fn a_device_the_user_chose_is_kept_when_the_game_starts_again() -> Result<()> {
     let directory = tempfile::tempdir()?;
     let (fake, mut state) = (Fake::default(), State::default());
     started(&fake, 7);
-    route_with(&fake, &mut state, directory.path(), 7, GAME, SINK)?;
+    let Routed::Sink(id) = route_with(&fake, &mut state, directory.path(), 7, GAME, SINK)? else {
+        anyhow::bail!("expected Routed::Sink");
+    };
     fake.set(7, eConsole, HEADSET)?;
     exited(&fake);
-    assert!(release_with(&fake, &mut state, directory.path(), GAME)?);
+    assert!(release_with(&fake, &mut state, directory.path(), GAME, id)?);
     started(&fake, 9);
     assert_eq!(
         route_with(&fake, &mut state, directory.path(), 9, GAME, SINK)?,
@@ -430,23 +517,35 @@ fn changing_virtual_sink_does_not_mistake_previous_sink_for_a_user_device() -> R
     started(&fake, 7);
     fake.set(7, eConsole, HEADSET)?;
     // Routed to SINK_1, then game exits while restore waits.
-    assert_eq!(
-        route_with(&fake, &mut state, directory.path(), 7, GAME, SINK)?,
-        Routed::Sink
-    );
+    let Routed::Sink(first) = route_with(&fake, &mut state, directory.path(), 7, GAME, SINK)?
+    else {
+        anyhow::bail!("expected Routed::Sink");
+    };
     exited(&fake);
-    assert!(release_with(&fake, &mut state, directory.path(), GAME)?);
+    assert!(release_with(
+        &fake,
+        &mut state,
+        directory.path(),
+        GAME,
+        first
+    )?);
     // User switches virtual_sink setting from SINK to SINK_2 before next stream.
     started(&fake, 9);
-    assert_eq!(
-        route_with(&fake, &mut state, directory.path(), 9, GAME, SINK_2)?,
-        Routed::Sink
-    );
+    let Routed::Sink(second) = route_with(&fake, &mut state, directory.path(), 9, GAME, SINK_2)?
+    else {
+        anyhow::bail!("expected Routed::Sink");
+    };
     for role in ROLES {
         assert_eq!(fake.device(GAME, role), SINK_2);
     }
     // Teardown restores the original HEADSET, not SINK_1.
-    assert!(!release_with(&fake, &mut state, directory.path(), GAME)?);
+    assert!(!release_with(
+        &fake,
+        &mut state,
+        directory.path(),
+        GAME,
+        second
+    )?);
     assert_eq!(fake.device(GAME, eConsole), HEADSET);
     assert_eq!(fake.device(GAME, eMultimedia), "");
     Ok(())
@@ -458,24 +557,36 @@ fn volume_mixer_reset_to_default_updates_before_and_routes_to_virtual_sink() -> 
     let (fake, mut state) = (Fake::default(), State::default());
     started(&fake, 7);
     fake.set(7, eConsole, HEADSET)?;
-    assert_eq!(
-        route_with(&fake, &mut state, directory.path(), 7, GAME, SINK)?,
-        Routed::Sink
-    );
+    let Routed::Sink(first) = route_with(&fake, &mut state, directory.path(), 7, GAME, SINK)?
+    else {
+        anyhow::bail!("expected Routed::Sink");
+    };
     exited(&fake);
-    assert!(release_with(&fake, &mut state, directory.path(), GAME)?);
+    assert!(release_with(
+        &fake,
+        &mut state,
+        directory.path(),
+        GAME,
+        first
+    )?);
     // User resets game to Windows Default ("") in Volume Mixer before next stream.
     started(&fake, 9);
     fake.set(9, eConsole, "")?;
     fake.set(9, eMultimedia, "")?;
-    assert_eq!(
-        route_with(&fake, &mut state, directory.path(), 9, GAME, SINK)?,
-        Routed::Sink
-    );
+    let Routed::Sink(second) = route_with(&fake, &mut state, directory.path(), 9, GAME, SINK)?
+    else {
+        anyhow::bail!("expected Routed::Sink");
+    };
     assert_eq!(fake.device(GAME, eConsole), SINK);
     assert_eq!(fake.device(GAME, eMultimedia), SINK);
     // Teardown restores Default ("") rather than the old HEADSET.
-    assert!(!release_with(&fake, &mut state, directory.path(), GAME)?);
+    assert!(!release_with(
+        &fake,
+        &mut state,
+        directory.path(),
+        GAME,
+        second
+    )?);
     assert_eq!(fake.device(GAME, eConsole), "");
     assert_eq!(fake.device(GAME, eMultimedia), "");
     Ok(())
@@ -491,11 +602,55 @@ fn app_route_users_device_distinguishes_sink_closing_and_users() {
         sink: "Steam".into(),
         routed,
     };
-    let sink = make(Routed::Sink);
+    let sink = make(Routed::Sink(1));
     let closing = make(Routed::Closing);
     let users = make(Routed::Users(HEADSET.into()));
     assert_eq!(sink.users_device(), None);
     assert_eq!(closing.users_device(), None);
     assert_eq!(users.users_device(), Some(HEADSET));
     std::mem::forget((sink, closing, users));
+}
+
+#[test]
+fn stale_route_dropped_after_put_back_and_new_stream_never_restores_games_speakers() -> Result<()> {
+    let directory = tempfile::tempdir()?;
+    let (fake, mut state) = (Fake::default(), State::default());
+    started(&fake, 7);
+    fake.set(7, eConsole, HEADSET)?;
+    let Routed::Sink(old_id) = route_with(&fake, &mut state, directory.path(), 7, GAME, SINK)?
+    else {
+        panic!("expected Routed::Sink");
+    };
+    assert_eq!(fake.device(GAME, eConsole), SINK);
+    // Stream 1 ends / game restarts: put_back forgets old active tokens, then Stream 2 routes it.
+    forget(&mut state, &[GAME.into()]);
+    started(&fake, 9);
+    let Routed::Sink(new_id) = route_with(&fake, &mut state, directory.path(), 9, GAME, SINK)?
+    else {
+        panic!("expected Routed::Sink");
+    };
+    assert_ne!(old_id, new_id);
+    // Old AppRoute dropping after Stream 2 started must NOT decrement Stream 2 or restore speakers.
+    assert!(!release_with(
+        &fake,
+        &mut state,
+        directory.path(),
+        GAME,
+        old_id
+    )?);
+    assert_eq!(fake.device(GAME, eConsole), SINK);
+    // Stream 2's own drop restores when the game next starts (or immediately if still running).
+    exited(&fake);
+    assert!(release_with(
+        &fake,
+        &mut state,
+        directory.path(),
+        GAME,
+        new_id
+    )?);
+    assert_eq!(fake.device(GAME, eConsole), SINK);
+    started(&fake, 11);
+    assert!(!restore_with(&fake, &state, directory.path())?);
+    assert_eq!(fake.device(GAME, eConsole), HEADSET);
+    Ok(())
 }

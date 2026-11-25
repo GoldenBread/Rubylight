@@ -7,10 +7,10 @@
 //! while used.
 
 use anyhow::{Context, Result, bail, ensure};
-use butterpollo_session::neural::{Rights, Security, security_verdict};
+use butterpollo_session::neural::{Rights, Security};
 use std::{
     fs::{File, OpenOptions},
-    io::{Read, Write},
+    io::{Read, Seek, SeekFrom, Write},
     os::windows::{
         ffi::OsStrExt,
         fs::{MetadataExt, OpenOptionsExt},
@@ -86,19 +86,96 @@ pub(super) fn strip_verbatim(path: &Path) -> PathBuf {
     path.to_path_buf()
 }
 
-/// Resolve an account SID to `DOMAIN\name`, or `"another account"` if unknown.
+/// Resolve an account SID to `DOMAIN\name`, falling back to the raw SID if lookup fails.
 fn account_label(sid: &str) -> String {
-    crate::process::account_name(sid).unwrap_or_else(|| "another account".into())
+    crate::process::account_name(sid).unwrap_or_else(|| sid.to_owned())
 }
 
-/// Pure verdict matching `neural::security_verdict` for RTSS trust checks.
+/// Drive letter in uppercase ASCII if `path` uses a local disk prefix (`C:\...` or `\\?\C:\...`).
+pub(super) fn disk_drive_letter(path: &Path) -> Option<u8> {
+    use std::path::{Component, Prefix};
+    match path.components().next() {
+        Some(Component::Prefix(prefix)) => match prefix.kind() {
+            Prefix::Disk(drive) | Prefix::VerbatimDisk(drive) => Some(drive.to_ascii_uppercase()),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn system_drive_letter() -> Option<u8> {
+    std::env::var_os("SystemDrive")
+        .and_then(|v| v.to_str()?.as_bytes().first().copied())
+        .map(|b| b.to_ascii_uppercase())
+}
+
+/// Effective validation mode for an ancestor in `root`'s chain: on a secondary (non-system) drive,
+/// parent directories strictly above `root` often grant Authenticated Users or the user owner
+/// rights by Windows default, so those ancestors only enforce non-reparse (`ReparseOnly`) while
+/// `root` itself, `Profiles`, `Global`, and every executable/DLL still require `mode`.
+pub(super) fn ancestor_mode(
+    root: &Path,
+    dir: &Path,
+    is_root: bool,
+    system_drive: Option<u8>,
+    mode: TrustMode,
+) -> TrustMode {
+    if mode == TrustMode::AdministratorsOnly
+        && !is_root
+        && system_drive.is_some_and(|sys| disk_drive_letter(root).is_some_and(|d| d != sys))
+    {
+        return TrustMode::ReparseOnly;
+    }
+    let _ = dir;
+    mode
+}
+
+/// Pure verdict matching `neural::security_verdict` for RTSS trust checks, listing all non-admin
+/// writers cleanly with remediation guidance.
 pub(super) fn check_security(path: &Path, security: &Security, mode: TrustMode) -> Result<()> {
     if security.link {
         bail!("{} is a link to elsewhere", path.display());
     }
     if mode == TrustMode::AdministratorsOnly {
-        security_verdict(&path.display().to_string(), security, account_label)
-            .map_err(|problem| anyhow::anyhow!("untrusted RTSS path: {problem}"))?;
+        if !butterpollo_session::neural::ADMINISTRATORS.contains(&security.owner.as_str()) {
+            bail!(
+                "untrusted RTSS path {}: owned by {}, not by SYSTEM or Administrators (install RTSS under Program Files or restrict its folder and binaries to Administrators)",
+                path.display(),
+                account_label(&security.owner)
+            );
+        }
+        let non_admin_writers: Vec<String> = security
+            .writers
+            .iter()
+            .filter(|sid| !butterpollo_session::neural::ADMINISTRATORS.contains(&sid.as_str()))
+            .map(|sid| account_label(sid))
+            .collect();
+        if !non_admin_writers.is_empty() {
+            bail!(
+                "untrusted RTSS path {}: can be changed by {} (install RTSS under Program Files or restrict its folder and binaries to Administrators)",
+                path.display(),
+                non_admin_writers.join(", ")
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Pure verdict over a whole ancestor chain for `root` given `system_drive`.
+#[cfg(test)]
+pub(super) fn check_chain(
+    root: &Path,
+    chain: &[(&Path, &Security)],
+    system_drive: Option<u8>,
+    mode: TrustMode,
+) -> Result<()> {
+    for (index, &(dir, security)) in chain.iter().enumerate() {
+        let is_root = index + 1 == chain.len();
+        check_security(
+            dir,
+            security,
+            ancestor_mode(root, dir, is_root, system_drive, mode),
+        )?;
     }
     Ok(())
 }
@@ -151,7 +228,7 @@ fn verify_final_path(file: &File, expected: &Path, shown: &Path) -> Result<()> {
 /// Whether `path` explicitly starts with a non-local-disk Windows prefix (UNC share,
 /// verbatim UNC, device namespace `\\.\...`, or verbatim non-disk prefix). Checked
 /// before any filesystem syscall so UNC/device paths never trigger outbound SMB or device opens.
-fn has_non_disk_prefix(path: &Path) -> bool {
+pub(super) fn has_non_disk_prefix(path: &Path) -> bool {
     use std::path::{Component, Prefix};
     matches!(
         path.components().next(),
@@ -194,8 +271,10 @@ pub(super) fn pin_root(root: &Path, mode: TrustMode) -> Result<PinnedRoot> {
         root.display()
     );
     ancestors.reverse();
+    let system_drive = system_drive_letter();
     let mut handles = Vec::with_capacity(ancestors.len());
-    for dir in &ancestors {
+    for (index, dir) in ancestors.iter().enumerate() {
+        let is_root = index + 1 == ancestors.len();
         let handle = crate::process::open_unfollowed(dir, true)
             .with_context(|| format!("opening RTSS path {}", dir.display()))?;
         let attrs = handle
@@ -217,7 +296,8 @@ pub(super) fn pin_root(root: &Path, mode: TrustMode) -> Result<PinnedRoot> {
         } else {
             Rights::Change
         };
-        verify_handle(&handle, dir, rights, mode)?;
+        let check_mode = ancestor_mode(&absolute, dir, is_root, system_drive, mode);
+        verify_handle(&handle, dir, rights, check_mode)?;
         handles.push(handle);
     }
     let root_handle = handles.last().expect("ancestors is non-empty");
@@ -383,7 +463,13 @@ fn read_global_in(profiles_resolved: &Path, root: &Path, mode: TrustMode) -> Res
         bytes.len() as u64 <= MAX_PROFILE_BYTES,
         "RTSS Global profile is unreadable or exceeds its size limit"
     );
-    String::from_utf8(bytes).with_context(|| format!("{} is not valid UTF-8", shown.display()))
+    match String::from_utf8(bytes) {
+        Ok(text) => Ok(text),
+        Err(error) => {
+            tracing::debug!(path = %shown.display(), "RTSS Global profile contains non-UTF-8 bytes; reading lossily");
+            Ok(String::from_utf8_lossy(error.as_bytes()).into_owned())
+        }
+    }
 }
 
 /// Read `<root>\Profiles\Global` after handle-pinned validation.
@@ -445,15 +531,17 @@ fn atomic_replace_global(
         .share_mode(0)
         .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT.0)
         .open(&tmp_path)?;
+    let mut renamed = false;
     let replaced = (|| -> std::io::Result<()> {
         verify_final_path(&file, &tmp_path, &shown).map_err(std::io::Error::other)?;
         let mut writer = &file;
         writer.write_all(content)?;
         file.sync_all()?;
         rename_replace(&file, &target_path)?;
+        renamed = true;
         verify_final_path(&file, &target_path, &shown).map_err(std::io::Error::other)
     })();
-    if replaced.is_err() {
+    if replaced.is_err() && !renamed {
         let _ = crate::user_folder::delete_on_close(&file);
     }
     replaced
@@ -540,9 +628,20 @@ pub(super) fn write_profile_checked(
         ensure!(meta.is_file(), "{} is not a file", shown.display());
         verify_final_path(&file, &target, &shown)?;
         verify_handle(&file, &shown, Rights::Change, mode)?;
-        file.write_all(content.as_bytes())?;
-        file.set_len(content.len() as u64)?;
-        file.sync_all()?;
+        let write = (|| -> std::io::Result<()> {
+            file.write_all(content.as_bytes())?;
+            file.set_len(content.len() as u64)?;
+            file.sync_all()
+        })();
+        if let Err(write_error) = write {
+            let _ = (|| -> std::io::Result<()> {
+                file.seek(SeekFrom::Start(0))?;
+                file.write_all(original.as_bytes())?;
+                file.set_len(original.len() as u64)?;
+                file.sync_all()
+            })();
+            return Err(write_error).with_context(|| format!("writing {}", shown.display()));
+        }
     }
     Ok(())
 }

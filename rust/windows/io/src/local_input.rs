@@ -22,7 +22,8 @@ use windows::{
             },
             WindowsAndMessaging::{
                 CreateWindowExW, DestroyWindow, DispatchMessageW, GetMessageW, HWND_MESSAGE, MSG,
-                PostThreadMessageW, WINDOW_EX_STYLE, WINDOW_STYLE, WM_INPUT, WM_QUIT,
+                PostThreadMessageW, SetTimer, WINDOW_EX_STYLE, WINDOW_STYLE, WM_INPUT, WM_QUIT,
+                WM_TIMER,
             },
         },
     },
@@ -34,14 +35,20 @@ const NOTICE_EVERY: Duration = Duration::from_millis(100);
 
 /// Watches until dropped.
 pub struct Watch {
-    thread_id: u32,
+    control: std::sync::Arc<std::sync::Mutex<(bool, Option<u32>)>>,
     thread: Option<thread::JoinHandle<()>>,
 }
 
 impl Drop for Watch {
     fn drop(&mut self) {
-        // SAFETY: posts a message to the watcher's own thread, which exits its loop on WM_QUIT.
-        let _ = unsafe { PostThreadMessageW(self.thread_id, WM_QUIT, WPARAM(0), LPARAM(0)) };
+        {
+            let mut guard = self.control.lock().unwrap();
+            guard.0 = true;
+            if let Some(tid) = guard.1.take() {
+                // SAFETY: posts WM_QUIT to the active pump thread so it exits GetMessageW.
+                let _ = unsafe { PostThreadMessageW(tid, WM_QUIT, WPARAM(0), LPARAM(0)) };
+            }
+        }
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();
         }
@@ -51,72 +58,170 @@ impl Drop for Watch {
 /// Calls `on_input` when someone uses the PC's own keyboard or mouse, at most every
 /// [`NOTICE_EVERY`]. Input a program injects never calls it.
 pub fn watch(on_input: impl Fn() + Send + 'static) -> Result<Watch> {
-    let (ready_tx, ready_rx) = mpsc::sync_channel::<Result<u32, String>>(1);
+    use std::sync::{Arc, Mutex};
+    const DESKTOP_CHECK_TIMER: usize = 1;
+    // SAFETY: Creates and cleans up a message-only window owned by the calling pump thread.
+    let create_window = || unsafe {
+        let window = CreateWindowExW(
+            WINDOW_EX_STYLE(0),
+            w!("STATIC"),
+            w!("Rubylight local input"),
+            WINDOW_STYLE(0),
+            0,
+            0,
+            0,
+            0,
+            Some(HWND_MESSAGE),
+            None,
+            None,
+            None,
+        )?;
+        if let Err(error) = register(window) {
+            let _ = DestroyWindow(window);
+            return Err(error);
+        }
+        let _ = SetTimer(Some(window), DESKTOP_CHECK_TIMER, 2000, None);
+        Ok(window)
+    };
+    let control = Arc::new(Mutex::new((false, None::<u32>)));
+    let thread_control = Arc::clone(&control);
+    let mut on_input_slot = Some(on_input);
+    let (ready_tx, ready_rx) = mpsc::sync_channel::<Result<(), String>>(1);
     let thread = thread::Builder::new()
         .name("local-input".into())
         .spawn(move || {
-            let _ = crate::input::follow_input_desktop();
-            // SAFETY: a message-only window of the system's STATIC class, owned by this thread and
-            // destroyed below on every path.
-            let window = match unsafe {
-                CreateWindowExW(
-                    WINDOW_EX_STYLE(0),
-                    w!("STATIC"),
-                    w!("Rubylight local input"),
-                    WINDOW_STYLE(0),
-                    0,
-                    0,
-                    0,
-                    0,
-                    Some(HWND_MESSAGE),
-                    None,
-                    None,
-                    None,
-                )
-            } {
-                Ok(window) => window,
-                Err(error) => {
-                    let _ = ready_tx.send(Err(format!("creating its window: {error}")));
-                    return;
-                }
-            };
-            if let Err(error) = register(window) {
-                // SAFETY: the window was created above by this thread.
-                let _ = unsafe { DestroyWindow(window) };
-                let _ = ready_tx.send(Err(format!("registering for raw input: {error}")));
-                return;
-            }
-            // SAFETY: reads the calling thread's id.
-            let _ = ready_tx.send(Ok(unsafe { GetCurrentThreadId() }));
+            let mut ready_tx = Some(ready_tx);
             let mut last: Option<Instant> = None;
-            // Whether each device handle seen is the PC's own (not one of the host's).
             let mut known = HashMap::new();
-            let mut message = MSG::default();
-            // SAFETY: `message` is a local MSG; GetMessageW returns 0 on WM_QUIT and -1 on error.
-            while unsafe { GetMessageW(&mut message, None, 0, 0) }.0 > 0 {
-                if message.message == WM_INPUT
-                    && from_local_device(HRAWINPUT(message.lParam.0 as *mut _), &mut known)
-                    && last.is_none_or(|at| at.elapsed() >= NOTICE_EVERY)
-                {
-                    last = Some(Instant::now());
-                    on_input();
+            loop {
+                if thread_control.lock().unwrap().0 {
+                    break;
                 }
-                // SAFETY: dispatches the message this loop received; the system frees the raw
-                // input's buffer in DefWindowProc.
-                unsafe { DispatchMessageW(&message) };
+                let Some(pump_input) = on_input_slot.take() else {
+                    break;
+                };
+                let desktop_at_start = crate::input::input_desktop_name();
+                let pump_control = Arc::clone(&thread_control);
+                let mut pump_last = last;
+                let mut pump_known = std::mem::take(&mut known);
+                let (pump_ready_tx, pump_ready_rx) = mpsc::sync_channel::<Result<(), String>>(1);
+                let Ok(pump) = thread::Builder::new()
+                    .name("local-input-pump".into())
+                    .spawn(move || {
+                        let _ = crate::input::follow_input_desktop();
+                        // SAFETY: a message-only window owned by this fresh thread.
+                        let window = match create_window() {
+                            Ok(window) => window,
+                            Err(error) => {
+                                let _ = pump_ready_tx
+                                    .send(Err(format!("registering local input watcher: {error}")));
+                                return (false, pump_last, pump_known, pump_input);
+                            }
+                        };
+                        {
+                            let mut guard = pump_control.lock().unwrap();
+                            if guard.0 {
+                                drop(guard);
+                                // SAFETY: `window` was created on this pump thread and is not yet destroyed.
+                                let _ = unsafe { DestroyWindow(window) };
+                                let _ = pump_ready_tx.send(Ok(()));
+                                return (false, pump_last, pump_known, pump_input);
+                            }
+                            // SAFETY: reads the calling thread's id.
+                            guard.1 = Some(unsafe { GetCurrentThreadId() });
+                        }
+                        let _ = pump_ready_tx.send(Ok(()));
+                        let mut switch_desktop = false;
+                        let mut message = MSG::default();
+                        // SAFETY: `message` is a local MSG; GetMessageW returns 0 on WM_QUIT and -1 on error.
+                        while unsafe { GetMessageW(&mut message, None, 0, 0) }.0 > 0 {
+                            if pump_control.lock().unwrap().0 {
+                                break;
+                            }
+                            if message.message == WM_INPUT
+                                && from_local_device(
+                                    HRAWINPUT(message.lParam.0 as *mut _),
+                                    &mut pump_known,
+                                )
+                                && pump_last.is_none_or(|at| at.elapsed() >= NOTICE_EVERY)
+                            {
+                                pump_last = Some(Instant::now());
+                                pump_input();
+                            } else if message.message == WM_TIMER
+                                && message.wParam.0 == DESKTOP_CHECK_TIMER
+                            {
+                                let current = crate::input::input_desktop_name();
+                                if current.is_some()
+                                    && desktop_at_start
+                                        .as_ref()
+                                        .zip(current.as_ref())
+                                        .is_none_or(|(a, b)| !a.eq_ignore_ascii_case(b))
+                                {
+                                    switch_desktop = true;
+                                    break;
+                                }
+                            }
+                            // SAFETY: dispatches the message; DefWindowProc frees raw input buffer.
+                            unsafe { DispatchMessageW(&message) };
+                        }
+                        pump_control.lock().unwrap().1 = None;
+                        // SAFETY: window was created above on this thread.
+                        let _ = unsafe { DestroyWindow(window) };
+                        (switch_desktop, pump_last, pump_known, pump_input)
+                    })
+                else {
+                    if let Some(tx) = ready_tx.take() {
+                        let _ = tx.send(Err("starting the local input pump".into()));
+                    }
+                    break;
+                };
+                if let Some(tx) = ready_tx.take() {
+                    let result = pump_ready_rx
+                        .recv_timeout(Duration::from_secs(5))
+                        .unwrap_or_else(|e| Err(e.to_string()));
+                    let failed = result.is_err();
+                    let _ = tx.send(result);
+                    if failed {
+                        let _ = pump.join();
+                        break;
+                    }
+                }
+                match pump.join() {
+                    Ok((true, next_last, next_known, returned_input)) => {
+                        last = next_last;
+                        known = next_known;
+                        on_input_slot = Some(returned_input);
+                        thread::sleep(Duration::from_millis(200));
+                    }
+                    _ => break,
+                }
             }
-            // SAFETY: the window was created above by this thread.
-            let _ = unsafe { DestroyWindow(window) };
         })
         .context("starting the local input watcher")?;
-    let thread_id = ready_rx
-        .recv_timeout(Duration::from_secs(5))
-        .context("the local input watcher did not start")?
-        .map_err(anyhow::Error::msg)?;
-    Ok(Watch {
-        thread_id,
-        thread: Some(thread),
-    })
+    let shutdown = |thread: thread::JoinHandle<()>| {
+        let mut guard = control.lock().unwrap();
+        guard.0 = true;
+        if let Some(tid) = guard.1.take() {
+            // SAFETY: `tid` is the active pump thread's Win32 ID captured from GetCurrentThreadId.
+            let _ = unsafe { PostThreadMessageW(tid, WM_QUIT, WPARAM(0), LPARAM(0)) };
+        }
+        drop(guard);
+        let _ = thread.join();
+    };
+    match ready_rx.recv_timeout(Duration::from_secs(5)) {
+        Ok(Ok(())) => Ok(Watch {
+            control,
+            thread: Some(thread),
+        }),
+        Ok(Err(err)) => {
+            shutdown(thread);
+            Err(anyhow::Error::msg(err))
+        }
+        Err(error) => {
+            shutdown(thread);
+            Err(anyhow::Error::from(error).context("the local input watcher did not start"))
+        }
+    }
 }
 
 /// Raw input for the mouse and keyboard, also while another window has the focus.

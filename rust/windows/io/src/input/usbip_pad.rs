@@ -17,7 +17,7 @@ const COMMAND_WAIT: Duration = Duration::from_secs(15);
 const PORT_NOT_FOUND: &str = "requested port(s) not found";
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
-/// usbip-win2's client: registered install folder, default folder, then PATH.
+/// usbip-win2's client: registered install folder or default folder (never PATH).
 pub(super) fn usbip_exe() -> Option<PathBuf> {
     let mut folders: Vec<PathBuf> = [
         r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{199505b0-b93d-4521-a8c7-897818e0205a}_is1",
@@ -40,13 +40,26 @@ pub(super) fn usbip_exe() -> Option<PathBuf> {
             .filter_map(std::env::var_os)
             .map(|folder| PathBuf::from(folder).join("USBip")),
     );
-    if let Some(path) = std::env::var_os("PATH") {
-        folders.extend(std::env::split_paths(&path));
-    }
     folders
         .into_iter()
         .map(|folder| folder.join("usbip.exe"))
         .find(|exe| exe.is_file())
+}
+
+/// Cached check for [`usbip_exe`] so periodic capability polls don't re-walk registry/disk.
+pub(super) fn usbip_available_cached() -> bool {
+    const TTL: Duration = Duration::from_secs(10);
+    static CACHE: std::sync::Mutex<Option<(std::time::Instant, bool)>> =
+        std::sync::Mutex::new(None);
+    let mut cache = CACHE.lock().unwrap();
+    if let Some((at, present)) = *cache
+        && at.elapsed() < TTL
+    {
+        return present;
+    }
+    let present = usbip_exe().is_some();
+    *cache = Some((std::time::Instant::now(), present));
+    present
 }
 
 /// Runs usbip.exe and returns what it printed.
@@ -116,7 +129,14 @@ impl<D: Device> UsbPad<D> {
         let export = Export::listen_started(device, period, input_priority)
             .context("starting the USB/IP server")?;
         let tcp = export.port().to_string();
-        let port = attach(exe, &tcp, BUS_ID)?;
+        let port = match attach(exe, &tcp, BUS_ID) {
+            Ok(port) => port,
+            Err(error) => {
+                drop(export);
+                let _ = stop(exe, &tcp, BUS_ID);
+                return Err(error);
+            }
+        };
         Ok(Self {
             export: Some(export),
             exe: exe.to_owned(),

@@ -36,7 +36,12 @@ fn wifi_streaming_mode() -> Option<usize> {
     // SAFETY: Each pointer is resolved from wlanapi.dll, never freed, with its documented
     // signature; `list` is non-null and freed only after its dwNumberOfItems entries are read.
     unsafe {
-        let module = LoadLibraryW(windows::core::w!("wlanapi.dll")).ok()?;
+        let module = LoadLibraryExW(
+            windows::core::w!("wlanapi.dll"),
+            None,
+            LOAD_LIBRARY_SEARCH_SYSTEM32,
+        )
+        .ok()?;
         let open: Open =
             std::mem::transmute(GetProcAddress(module, windows::core::s!("WlanOpenHandle"))?);
         let enumerate: Enumerate = std::mem::transmute(GetProcAddress(

@@ -2,7 +2,204 @@
 
 use super::*;
 
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub(in crate::input) enum AttachKind {
+    Deck,
+    Switch2,
+    DualSense,
+}
+
+pub(super) enum AttachOutcome {
+    SteamNotRunning,
+    Deck(Result<steam_deck_pad::DeckPad>),
+    Switch2(Result<switch2_pad::Switch2Pad>),
+    DualSense(Result<dualsense_pad::DualSensePad>),
+}
+
+pub(in crate::input) struct CompletedAttach {
+    kind: AttachKind,
+    id: u16,
+    generation: u64,
+    outcome: AttachOutcome,
+}
+
 impl Gamepads {
+    fn next_generation(&mut self) -> u64 {
+        self.next_attach_gen += 1;
+        self.next_attach_gen
+    }
+
+    fn spawn_attach(
+        &mut self,
+        kind: AttachKind,
+        id: u16,
+        work: impl FnOnce() -> AttachOutcome + Send + 'static,
+    ) -> Result<()> {
+        let generation = self.next_generation();
+        self.attaching.insert((kind, id), generation);
+        let attaches = std::sync::Arc::clone(&self.attaches);
+        let wake = self.wake.clone();
+        std::thread::Builder::new()
+            .name("usbip-attach".into())
+            .spawn(move || {
+                let outcome = work();
+                attaches.lock().unwrap().push_back(CompletedAttach {
+                    kind,
+                    id,
+                    generation,
+                    outcome,
+                });
+                if let Some(wake) = wake {
+                    wake();
+                }
+            })
+            .map(|_| ())
+            .map_err(|error| {
+                self.attaching.remove(&(kind, id));
+                anyhow::anyhow!(error).context("could not spawn USB/IP attachment thread")
+            })
+    }
+
+    /// Removes controller `id`'s temporary VHF pad before switching to a USB/IP pad.
+    /// A failed non-driver-lost unplug strands the VHF slot rather than failing
+    /// and leaving the controller stuck in an attach/detach loop (`HW-L17`).
+    pub(super) fn retire_vhf_for_usbip(&mut self, id: u16) {
+        let Some(global) = self.active.get(&id).copied() else {
+            return;
+        };
+        self.active.remove(&id);
+        self.recreated_at.remove(&id);
+        self.dropped.remove(&id);
+        self.profiles.remove(&id);
+        self.states.remove(&id);
+        self.last_feedback.remove(&id);
+        self.feedback_failures.remove(&id);
+        self.pointers.retain(|(pad, _), _| u16::from(*pad) != id);
+        match self.backend.unplug(u32::from(global)) {
+            Ok(()) => {
+                SLOTS.lock().unwrap()[global as usize] = false;
+            }
+            Err(error) => {
+                if gamepad_backend::driver_lost(&error) {
+                    self.lost = true;
+                    SLOTS.lock().unwrap()[global as usize] = false;
+                } else {
+                    STRANDED.lock().unwrap().insert(global);
+                    tracing::warn!(
+                        controller = id,
+                        slot = global,
+                        error = format!("{error:#}"),
+                        "virtual controller removal failed while switching to USB/IP pad"
+                    );
+                }
+            }
+        }
+    }
+
+    /// Applies any USB/IP pads whose background attachment finished since the last tick.
+    pub(super) fn finish_attaches(&mut self) -> Result<()> {
+        use butterpollo_input_policy::input_policy::{
+            USBIP_DUALSENSE, USBIP_SWITCH2, VHF_DUALSENSE,
+        };
+        let completed: Vec<_> = self.attaches.lock().unwrap().drain(..).collect();
+        let mut forced_error = None;
+        for item in completed {
+            let current = self.attaching.get(&(item.kind, item.id)).copied();
+            if current != Some(item.generation) {
+                match item.outcome {
+                    AttachOutcome::Deck(Ok(pad)) => {
+                        std::thread::spawn(move || drop(pad));
+                    }
+                    AttachOutcome::Switch2(Ok(pad)) => {
+                        std::thread::spawn(move || drop(pad));
+                    }
+                    AttachOutcome::DualSense(Ok(pad)) => {
+                        std::thread::spawn(move || drop(pad));
+                    }
+                    _ => {}
+                }
+                continue;
+            }
+            self.attaching.remove(&(item.kind, item.id));
+            let id = item.id;
+            match item.outcome {
+                AttachOutcome::SteamNotRunning => {
+                    tracing::info!(
+                        controller = id,
+                        "Steam is not running; the Steam Deck's controls use a virtual pad"
+                    );
+                    self.deck_failed.insert(id);
+                }
+                AttachOutcome::Deck(Ok(deck)) => {
+                    self.warnings.clear("input_steam_deck");
+                    tracing::info!(
+                        controller = id,
+                        port = deck.port(),
+                        "Steam Deck controller attached through usbip-win2"
+                    );
+                    self.retire_vhf_for_usbip(id);
+                    self.forget_steam_fallback(id);
+                    self.decks.insert(id, deck);
+                }
+                AttachOutcome::Deck(Err(error)) => {
+                    self.warnings.set("input_steam_deck", format!("Steam Deck controller unavailable ({error:#}); the Deck's controls arrive as a virtual pad. Check that usbip-win2 is installed and working, then reconnect."));
+                    self.deck_failed.insert(id);
+                }
+                AttachOutcome::Switch2(Ok(pad)) => {
+                    self.warnings.clear("input_switch2");
+                    tracing::info!(
+                        controller = id,
+                        port = pad.port(),
+                        "Switch 2 Pro Controller attached through usbip-win2"
+                    );
+                    self.retire_vhf_for_usbip(id);
+                    self.forget_steam_fallback(id);
+                    self.switch2s.insert(id, pad);
+                }
+                AttachOutcome::Switch2(Err(error)) => {
+                    let forced = self.profile == USBIP_SWITCH2;
+                    self.switch2_failed.insert(id);
+                    let instead = if forced {
+                        "the controller does not work until it does"
+                    } else {
+                        "the controller arrives as a Switch Pro controller instead"
+                    };
+                    tracing::warn!(
+                        controller = id,
+                        error = format!("{error:#}"),
+                        "Switch 2 Pro Controller attachment failed"
+                    );
+                    self.warnings.set("input_switch2", format!("Switch 2 Pro Controller unavailable ({error:#}); {instead}. Install usbip-win2 on the host and check that it works, then reconnect."));
+                    if forced {
+                        forced_error.get_or_insert(error);
+                    }
+                }
+                AttachOutcome::DualSense(Ok(pad)) => {
+                    self.retire_vhf_for_usbip(id);
+                    if let Some((kind, caps)) = self.arrivals.get(&id).copied() {
+                        pad.capabilities(caps);
+                        self.note_steam_controls(id, kind, caps, VHF_DUALSENSE);
+                    }
+                    self.dualsenses.insert(id, pad);
+                    self.warnings.clear("input_dualsense");
+                    tracing::info!(
+                        controller = id,
+                        "Composite DualSense HID and audio attached through usbip-win2"
+                    );
+                }
+                AttachOutcome::DualSense(Err(error)) => {
+                    let forced = self.profile == USBIP_DUALSENSE;
+                    self.dualsense_failed.insert(id);
+                    self.warnings.set("input_dualsense", format!("DualSense waveform haptics unavailable ({error:#}). Install usbip-win2 on the host and reconnect. Automatic controller selection keeps ordinary rumble and adaptive triggers through the VHF driver."));
+                    if forced {
+                        forced_error.get_or_insert(error);
+                    }
+                }
+            }
+        }
+        forced_error.map_or(Ok(()), Err)
+    }
+
     /// Attaches a real Steam Deck controller for a Steam Deck client when
     /// the `steam_deck_controller` setting and the host allow it. Returns
     /// whether controller `id` is one.
@@ -24,60 +221,52 @@ impl Gamepads {
             .arrivals
             .get(&id)
             .is_some_and(|(kind, _)| *kind == CTYPE_STEAM);
-        if !steam || self.deck_failed.contains(&id) {
+        if !steam
+            || self.deck_failed.contains(&id)
+            || self.switch2s.contains_key(&id)
+            || self.attaching.contains_key(&(AttachKind::Switch2, id))
+            || self.attaching.contains_key(&(AttachKind::Deck, id))
+        {
             return Ok(false);
         }
         let mode = self.policy.steam_deck;
-        let exe = match mode {
-            DeckPad::VirtualPad => None,
-            _ => steam_deck_pad::usbip_exe(),
-        };
-        let Some(exe) = exe else {
+        if mode == DeckPad::VirtualPad {
+            self.deck_failed.insert(id);
+            return Ok(false);
+        }
+        #[cfg(test)]
+        if let Some(hook) = &self.test_attach_hook {
+            let hook = std::sync::Arc::clone(hook);
+            if let Err(error) = self.spawn_attach(AttachKind::Deck, id, move || {
+                AttachOutcome::Deck(
+                    hook(AttachKind::Deck, id)
+                        .and_then(|()| anyhow::bail!("simulated Deck attach hook")),
+                )
+            }) {
+                self.warnings.set("input_steam_deck", format!("Steam Deck controller unavailable ({error:#}); the Deck's controls arrive as a virtual pad."));
+                self.deck_failed.insert(id);
+            }
+            return Ok(false);
+        }
+        let Some(exe) = steam_deck_pad::usbip_exe() else {
             if mode == DeckPad::SteamDeck {
                 self.warnings.set("input_steam_deck", "Steam Deck controller unavailable: usbip-win2 is not installed, so the Deck's controls arrive as a virtual pad. Install usbip-win2 on the host to pass the Deck through as a Steam Deck, then reconnect.");
             }
             self.deck_failed.insert(id);
             return Ok(false);
         };
-        if mode == DeckPad::Auto && !steam_deck_pad::steam_running() {
-            tracing::info!(
-                controller = id,
-                "Steam is not running; the Steam Deck's controls use a virtual pad"
-            );
-            self.deck_failed.insert(id);
-            return Ok(false);
-        }
-        let deck = match Slot::reserve().and_then(|slot| steam_deck_pad::DeckPad::plug(&exe, slot))
-        {
-            Ok(deck) => deck,
-            Err(error) => {
-                self.warnings.set("input_steam_deck", format!("Steam Deck controller unavailable ({error:#}); the Deck's controls arrive as a virtual pad. Check that usbip-win2 is installed and working, then reconnect."));
-                self.deck_failed.insert(id);
-                return Ok(false);
+        if let Err(error) = self.spawn_attach(AttachKind::Deck, id, move || {
+            if mode == DeckPad::Auto && !steam_deck_pad::steam_running() {
+                return AttachOutcome::SteamNotRunning;
             }
-        };
-        self.warnings.clear("input_steam_deck");
-        tracing::info!(
-            controller = id,
-            port = deck.port(),
-            "Steam Deck controller attached through usbip-win2"
-        );
-        // A VHF pad plugged before the arrival made way for it. A pad the driver refuses to
-        // unplug stays in `active`, so its slot is still tracked and released with the session.
-        if let Some(global) = self.active.get(&id).copied() {
-            self.backend.unplug(u32::from(global))?;
-            self.active.remove(&id);
-            self.recreated_at.remove(&id);
-            self.dropped.remove(&id);
-            self.profiles.remove(&id);
-            self.states.remove(&id);
-            self.last_feedback.remove(&id);
-            self.feedback_failures.remove(&id);
-            self.pointers.retain(|(pad, _), _| u16::from(*pad) != id);
-            SLOTS.lock().unwrap()[global as usize] = false;
+            AttachOutcome::Deck(
+                Slot::reserve().and_then(|slot| steam_deck_pad::DeckPad::plug(&exe, slot)),
+            )
+        }) {
+            self.warnings.set("input_steam_deck", format!("Steam Deck controller unavailable ({error:#}); the Deck's controls arrive as a virtual pad. Check that usbip-win2 is installed and working, then reconnect."));
+            self.deck_failed.insert(id);
         }
-        self.decks.insert(id, deck);
-        Ok(true)
+        Ok(false)
     }
     /// Attaches a Switch 2 Pro Controller over usbip-win2 for a client's
     /// Switch 2 Pro Controller, or for every controller when `gamepad =
@@ -99,52 +288,55 @@ impl Gamepads {
             }
             return Ok(false);
         }
-        let attached = (|| -> Result<_> {
-            let exe = steam_deck_pad::usbip_exe().context("usbip-win2 is not installed")?;
-            switch2_pad::Switch2Pad::plug(&exe, Slot::reserve()?)
-        })();
-        let pad = match attached {
-            Ok(pad) => pad,
-            Err(error) => {
+        if self.attaching.contains_key(&(AttachKind::Switch2, id)) {
+            return Ok(forced);
+        }
+        #[cfg(test)]
+        if let Some(hook) = &self.test_attach_hook {
+            let hook = std::sync::Arc::clone(hook);
+            if let Err(error) = self.spawn_attach(AttachKind::Switch2, id, move || {
+                AttachOutcome::Switch2(
+                    hook(AttachKind::Switch2, id)
+                        .and_then(|()| anyhow::bail!("simulated Switch2 attach hook")),
+                )
+            }) {
                 self.switch2_failed.insert(id);
-                let instead = if forced {
-                    "the controller does not work until it does"
-                } else {
-                    "the controller arrives as a Switch Pro controller instead"
-                };
-                tracing::warn!(
-                    controller = id,
-                    error = format!("{error:#}"),
-                    "Switch 2 Pro Controller attachment failed"
-                );
-                self.warnings.set("input_switch2", format!("Switch 2 Pro Controller unavailable ({error:#}); {instead}. Install usbip-win2 on the host and check that it works, then reconnect."));
                 if forced {
                     return Err(error);
                 }
-                return Ok(false);
             }
-        };
-        self.warnings.clear("input_switch2");
-        tracing::info!(
-            controller = id,
-            port = pad.port(),
-            "Switch 2 Pro Controller attached through usbip-win2"
-        );
-        // A VHF pad plugged before the arrival makes way for it, as for a Steam Deck.
-        if let Some(global) = self.active.get(&id).copied() {
-            self.backend.unplug(u32::from(global))?;
-            self.active.remove(&id);
-            self.recreated_at.remove(&id);
-            self.dropped.remove(&id);
-            self.profiles.remove(&id);
-            self.states.remove(&id);
-            self.last_feedback.remove(&id);
-            self.feedback_failures.remove(&id);
-            self.pointers.retain(|(pad, _), _| u16::from(*pad) != id);
-            SLOTS.lock().unwrap()[global as usize] = false;
+            return Ok(forced);
         }
-        self.switch2s.insert(id, pad);
-        Ok(true)
+        let Some(exe) = steam_deck_pad::usbip_exe() else {
+            let error = anyhow::anyhow!("usbip-win2 is not installed");
+            self.switch2_failed.insert(id);
+            let instead = if forced {
+                "the controller does not work until it does"
+            } else {
+                "the controller arrives as a Switch Pro controller instead"
+            };
+            tracing::warn!(
+                controller = id,
+                error = format!("{error:#}"),
+                "Switch 2 Pro Controller attachment failed"
+            );
+            self.warnings.set("input_switch2", format!("Switch 2 Pro Controller unavailable ({error:#}); {instead}. Install usbip-win2 on the host and check that it works, then reconnect."));
+            if forced {
+                return Err(error);
+            }
+            return Ok(false);
+        };
+        if let Err(error) = self.spawn_attach(AttachKind::Switch2, id, move || {
+            AttachOutcome::Switch2(
+                Slot::reserve().and_then(|slot| switch2_pad::Switch2Pad::plug(&exe, slot)),
+            )
+        }) {
+            self.switch2_failed.insert(id);
+            if forced {
+                return Err(error);
+            }
+        }
+        Ok(forced)
     }
     /// Whether Steam was running when controller `id` connected, for the policy's choice of
     /// pad. Asked once per connection, and only for on-screen Steam Controller controls under
@@ -352,6 +544,13 @@ impl Gamepads {
         if self.dualsenses.contains_key(&id) {
             return Ok(true);
         }
+        if self.switch2s.contains_key(&id)
+            || self.decks.contains_key(&id)
+            || self.attaching.contains_key(&(AttachKind::Switch2, id))
+            || self.attaching.contains_key(&(AttachKind::Deck, id))
+        {
+            return Ok(false);
+        }
         let forced = self.profile == USBIP_DUALSENSE;
         if self.dualsense_failed.contains(&id) {
             if forced {
@@ -367,46 +566,47 @@ impl Gamepads {
         if !forced && (caps & haptics::CAPABILITY == 0 || selected != Some(VHF_DUALSENSE)) {
             return Ok(false);
         }
-        let attached = (|| -> Result<_> {
-            let exe = steam_deck_pad::usbip_exe().context("usbip-win2 is not installed")?;
-            dualsense_pad::DualSensePad::plug(
-                &exe,
-                Slot::reserve()?,
-                id,
-                caps,
-                self.policy.dualsense_haptics_gain,
-            )
-        })();
-        let pad = match attached {
-            Ok(pad) => pad,
-            Err(error) => {
+        if self.attaching.contains_key(&(AttachKind::DualSense, id)) {
+            return Ok(forced);
+        }
+        #[cfg(test)]
+        if let Some(hook) = &self.test_attach_hook {
+            let hook = std::sync::Arc::clone(hook);
+            if let Err(error) = self.spawn_attach(AttachKind::DualSense, id, move || {
+                AttachOutcome::DualSense(
+                    hook(AttachKind::DualSense, id)
+                        .and_then(|()| anyhow::bail!("simulated DualSense attach hook")),
+                )
+            }) {
                 self.dualsense_failed.insert(id);
-                self.warnings.set("input_dualsense", format!("DualSense waveform haptics unavailable ({error:#}). Install usbip-win2 on the host and reconnect. Automatic controller selection keeps ordinary rumble and adaptive triggers through the VHF driver."));
                 if forced {
                     return Err(error);
                 }
-                return Ok(false);
             }
-        };
-        // Arrival may follow the first state; replace the temporary VHF pad.
-        if let Some(global) = self.active.get(&id).copied() {
-            self.backend.unplug(u32::from(global))?;
-            self.active.remove(&id);
-            self.recreated_at.remove(&id);
-            self.dropped.remove(&id);
-            SLOTS.lock().unwrap()[global as usize] = false;
-            self.profiles.remove(&id);
-            self.last_feedback.remove(&id);
-            self.feedback_failures.remove(&id);
-            self.pointers.retain(|(pad, _), _| u16::from(*pad) != id);
+            return Ok(forced);
         }
-        self.dualsenses.insert(id, pad);
-        self.warnings.clear("input_dualsense");
-        tracing::info!(
-            controller = id,
-            "Composite DualSense HID and audio attached through usbip-win2"
-        );
-        Ok(true)
+        let Some(exe) = steam_deck_pad::usbip_exe() else {
+            let error = anyhow::anyhow!("usbip-win2 is not installed");
+            self.dualsense_failed.insert(id);
+            self.warnings.set("input_dualsense", format!("DualSense waveform haptics unavailable ({error:#}). Install usbip-win2 on the host and reconnect. Automatic controller selection keeps ordinary rumble and adaptive triggers through the VHF driver."));
+            if forced {
+                return Err(error);
+            }
+            return Ok(false);
+        };
+        let gain = self.policy.dualsense_haptics_gain;
+        if let Err(error) = self.spawn_attach(AttachKind::DualSense, id, move || {
+            AttachOutcome::DualSense(
+                Slot::reserve()
+                    .and_then(|slot| dualsense_pad::DualSensePad::plug(&exe, slot, id, caps, gain)),
+            )
+        }) {
+            self.dualsense_failed.insert(id);
+            if forced {
+                return Err(error);
+            }
+        }
+        Ok(forced)
     }
 }
 

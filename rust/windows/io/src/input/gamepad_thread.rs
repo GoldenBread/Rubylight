@@ -137,6 +137,12 @@ pub(super) trait Pads {
     fn motion_supported(&self, id: u16) -> bool;
     /// Whether any pad is plugged in, and so feedback needs polling.
     fn plugged(&self) -> bool;
+    /// Registers a wake callback invoked when background pad attachment finishes.
+    fn set_wake(&mut self, _wake: Arc<dyn Fn() + Send + Sync>) {}
+    /// Whether any completed background pad attachment is ready to finish.
+    fn attach_ready(&self) -> bool {
+        false
+    }
     fn release_all(&mut self) -> Result<()>;
     /// Whether the driver refused these pads' handle: the thread closes them
     /// and opens the driver again (#138).
@@ -218,6 +224,12 @@ impl Pads for Gamepads {
             || !self.decks.is_empty()
             || !self.dualsenses.is_empty()
             || !self.switch2s.is_empty()
+    }
+    fn set_wake(&mut self, wake: Arc<dyn Fn() + Send + Sync>) {
+        Gamepads::set_wake(self, wake);
+    }
+    fn attach_ready(&self) -> bool {
+        Gamepads::attach_ready(self)
     }
     fn release_all(&mut self) -> Result<()> {
         let released = Gamepads::release_all(self);

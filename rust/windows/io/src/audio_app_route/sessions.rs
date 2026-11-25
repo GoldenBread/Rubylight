@@ -93,14 +93,32 @@ fn sessions(active: bool) -> Result<Vec<(u32, String)>> {
         let list = enumerator.EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE)?;
         let mut sessions = vec![];
         for index in 0..list.GetCount()? {
-            let device = list.Item(index)?;
-            let id = crate::audio_route::device_id(&device)?;
-            let manager: IAudioSessionManager2 =
-                device.Activate(windows::Win32::System::Com::CLSCTX_ALL, None)?;
-            let all = manager.GetSessionEnumerator()?;
-            for at in 0..all.GetCount()? {
-                let control: IAudioSessionControl2 = all.GetSession(at)?.cast()?;
-                if !active || control.GetState()? == AudioSessionStateActive {
+            let Ok(device) = list.Item(index) else {
+                continue;
+            };
+            let Ok(id) = crate::audio_route::device_id(&device) else {
+                continue;
+            };
+            let Ok(manager): Result<IAudioSessionManager2, _> =
+                device.Activate(windows::Win32::System::Com::CLSCTX_ALL, None)
+            else {
+                continue;
+            };
+            let Ok(all) = manager.GetSessionEnumerator() else {
+                continue;
+            };
+            for at in 0..all.GetCount().unwrap_or(0) {
+                let Ok(session) = all.GetSession(at) else {
+                    continue;
+                };
+                let Ok(control): Result<IAudioSessionControl2, _> = session.cast() else {
+                    continue;
+                };
+                if !active
+                    || control
+                        .GetState()
+                        .is_ok_and(|state| state == AudioSessionStateActive)
+                {
                     sessions.push((control.GetProcessId().unwrap_or(0), id.clone()));
                 }
             }

@@ -517,3 +517,81 @@ fn a_failed_plug_reports_the_drivers_error_not_full_slots() {
     assert!(!error.contains("no free"), "{error}");
     assert!(pads.active.is_empty());
 }
+
+#[test]
+fn usbip_attach_offloads_off_calling_thread_and_strands_unpluggable_temporary_pad() {
+    use butterpollo_input_policy::input_policy::CTYPE_STEAM;
+    use std::sync::{
+        Arc, Condvar, Mutex,
+        atomic::{AtomicBool, Ordering},
+    };
+
+    let gate = Arc::new((Mutex::new(false), Condvar::new()));
+    let woke = Arc::new(AtomicBool::new(false));
+
+    let mut pads = scripted_pads();
+    pads.profile = 0;
+    pads.set_wake({
+        let woke = Arc::clone(&woke);
+        Arc::new(move || woke.store(true, Ordering::SeqCst))
+    });
+    pads.test_attach_hook = Some({
+        let gate = Arc::clone(&gate);
+        Arc::new(move |_kind, _id| {
+            let (lock, cvar) = &*gate;
+            let mut open = lock.lock().unwrap();
+            while !*open {
+                open = cvar.wait(open).unwrap();
+            }
+            Ok(())
+        })
+    });
+
+    // `ensure_deck` returns immediately without blocking on the slow attach hook.
+    let arrival = Event::Arrival {
+        id: 0,
+        kind: CTYPE_STEAM,
+        capabilities: 0x608,
+        buttons: 0x0f_0000,
+    };
+    pads.apply(&arrival).unwrap();
+    assert!(
+        pads.attaching.contains_key(&(attach::AttachKind::Deck, 0)),
+        "USB/IP attach should run in background while apply returns immediately"
+    );
+    assert!(!pads.attach_ready());
+    assert!(!woke.load(Ordering::SeqCst));
+
+    // Unblock background attach and wait for completion + wake.
+    {
+        let (lock, cvar) = &*gate;
+        *lock.lock().unwrap() = true;
+        cvar.notify_all();
+    }
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while !pads.attach_ready() && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    assert!(pads.attach_ready());
+    assert!(woke.load(Ordering::SeqCst));
+    pads.finish_attaches().unwrap();
+    assert!(!pads.attaching.contains_key(&(attach::AttachKind::Deck, 0)));
+    assert!(pads.deck_failed.contains(&0));
+    pads.active.clear();
+
+    // HW-L17: when a temporary VHF pad cannot be unplugged while switching to USB/IP,
+    // `retire_vhf_for_usbip` retires it from `active` and strands its slot instead of failing.
+    let _stranded = stranded_slots();
+    let slot = Slot::reserve().unwrap();
+    let global = slot.id();
+    std::mem::forget(slot);
+    let mut broken = broken_pads();
+    broken.active.insert(0, global);
+    broken.profiles.insert(0, 6);
+    broken.retire_vhf_for_usbip(0);
+    assert!(!broken.active.contains_key(&0));
+    assert!(SLOTS.lock().unwrap()[global as usize]);
+    assert!(STRANDED.lock().unwrap().contains(&global));
+    STRANDED.lock().unwrap().remove(&global);
+    SLOTS.lock().unwrap()[global as usize] = false;
+}

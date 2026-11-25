@@ -298,13 +298,17 @@ pub fn restrict(folder: &Path, sddl: &str) -> Result<()> {
                 security_info |= OWNER_SECURITY_INFORMATION;
                 base_access |= WRITE_OWNER.0;
             }
-            let open_node = |path: &Path, expect_dir: Option<bool>| -> Result<OwnedHandle> {
+            let open_node = |path: &Path,
+                             expect_dir: Option<bool>|
+             -> Result<(OwnedHandle, bool)> {
                 let name = wide(path.as_os_str())?;
                 let share = FILE_SHARE_READ | FILE_SHARE_WRITE;
                 let flags = FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS;
-                let access = match expect_dir {
-                    Some(false) => base_access,
-                    Some(true) | None => base_access | FILE_LIST_DIRECTORY.0,
+                let list_access = expect_dir != Some(false);
+                let access = if list_access {
+                    base_access | FILE_LIST_DIRECTORY.0
+                } else {
+                    base_access
                 };
                 match CreateFileW(
                     PCWSTR(name.as_ptr()),
@@ -315,7 +319,7 @@ pub fn restrict(folder: &Path, sddl: &str) -> Result<()> {
                     flags,
                     None,
                 ) {
-                    Ok(handle) => Ok(owned(handle)),
+                    Ok(handle) => Ok((owned(handle), list_access)),
                     Err(error)
                         if expect_dir.is_none()
                             && error.code()
@@ -330,7 +334,7 @@ pub fn restrict(folder: &Path, sddl: &str) -> Result<()> {
                             flags,
                             None,
                         )
-                        .map(owned)
+                        .map(|handle| (owned(handle), false))
                         .with_context(|| format!("opening {}", path.display()))
                     }
                     Err(error) => Err(error).with_context(|| format!("opening {}", path.display())),
@@ -359,17 +363,30 @@ pub fn restrict(folder: &Path, sddl: &str) -> Result<()> {
             };
             struct Frame {
                 dir: std::path::PathBuf,
-                _handle: OwnedHandle,
                 children: std::vec::IntoIter<(std::ffi::OsString, u32)>,
             }
-            let root_handle = open_node(folder, None)?;
+            let (root_handle, root_list_access) = open_node(folder, None)?;
             let root_is_dir = restrict_handle(folder, raw(&root_handle))?;
             let mut stack = Vec::new();
             if root_is_dir {
-                let entries = list_directory_by_handle(raw(&root_handle), folder)?;
+                let list_handle = if root_list_access {
+                    root_handle
+                } else {
+                    drop(root_handle);
+                    let (reopened, _) = open_node(folder, Some(true))?;
+                    let mut info =
+                        windows::Win32::Storage::FileSystem::BY_HANDLE_FILE_INFORMATION::default();
+                    GetFileInformationByHandle(raw(&reopened), &mut info)
+                        .with_context(|| format!("reading attributes of {}", folder.display()))?;
+                    if info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT.0 != 0 {
+                        bail!("{} is a reparse point", folder.display());
+                    }
+                    reopened
+                };
+                let entries = list_directory_by_handle(raw(&list_handle), folder)?;
+                drop(list_handle);
                 stack.push(Frame {
                     dir: folder.to_path_buf(),
-                    _handle: root_handle,
                     children: entries.into_iter(),
                 });
             }
@@ -383,13 +400,13 @@ pub fn restrict(folder: &Path, sddl: &str) -> Result<()> {
                     bail!("{} is a reparse point", child_path.display());
                 }
                 let expect_dir = entry_attrs & FILE_ATTRIBUTE_DIRECTORY.0 != 0;
-                let child_handle = open_node(&child_path, Some(expect_dir))?;
+                let (child_handle, _) = open_node(&child_path, Some(expect_dir))?;
                 let is_dir = restrict_handle(&child_path, raw(&child_handle))?;
                 if is_dir {
                     let entries = list_directory_by_handle(raw(&child_handle), &child_path)?;
+                    drop(child_handle);
                     stack.push(Frame {
                         dir: child_path,
-                        _handle: child_handle,
                         children: entries.into_iter(),
                     });
                 }

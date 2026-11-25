@@ -24,9 +24,12 @@ use butterpollo_config::config::Config;
 #[cfg(test)]
 use std::time::{Duration, Instant};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
-    sync::{Mutex, MutexGuard},
+    sync::{
+        Mutex, MutexGuard,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 use windows::Win32::Media::Audio::*;
 
@@ -61,10 +64,12 @@ pub fn no_sound_yet(error: &anyhow::Error) -> bool {
     error.is::<NoSoundYet>()
 }
 
+static NEXT_ROUTE_ID: AtomicU64 = AtomicU64::new(1);
+
 #[derive(Default)]
 struct State {
-    /// Streams playing each program (by path) on the sink right now.
-    active: BTreeMap<String, usize>,
+    /// Active route tokens playing each program (by path) on the sink right now.
+    active: BTreeMap<String, BTreeSet<u64>>,
     /// Programs the host is stopping, put back already ([`put_back`]): not
     /// routed again until they stopped, by how many stops.
     closing: BTreeMap<String, usize>,
@@ -79,8 +84,8 @@ static STATE: Mutex<State> = Mutex::new(State {
 /// How [`route_with`] left the process.
 #[derive(Debug, PartialEq)]
 enum Routed {
-    /// On the sink, read back from Windows.
-    Sink,
+    /// On the sink with route token `u64`, read back from Windows.
+    Sink(u64),
     /// On a device the user chose for the game during this stream: kept.
     Users(String),
     /// Left alone: the host is stopping the program.
@@ -156,8 +161,9 @@ fn route_with(
             applied: sink.into(),
         }),
     }
+    let id = NEXT_ROUTE_ID.fetch_add(1, Ordering::Relaxed);
     save(directory, &journal)?;
-    *state.active.entry(exe.into()).or_default() += 1;
+    state.active.entry(exe.into()).or_default().insert(id);
     let applied = ROLES.into_iter().try_for_each(|role| {
         apps.set(pid, role, sink)?;
         let read = apps.get(pid, role)?;
@@ -174,7 +180,7 @@ fn route_with(
     });
     if let Err(error) = applied {
         // Whatever this set goes back now, or when the program next runs.
-        if let Err(restore) = release_with(apps, state, directory, exe) {
+        if let Err(restore) = release_with(apps, state, directory, exe, id) {
             tracing::warn!(exe, error = %format!("{restore:#}"), "game audio device could not be restored after a failed route");
         }
         // Not tried again as if nothing changed: it was journalled.
@@ -185,26 +191,35 @@ fn route_with(
         }
         return Err(error);
     }
-    Ok(Routed::Sink)
+    Ok(Routed::Sink(id))
 }
 
-/// One stream stopped playing `exe` on the sink; the last puts it back.
+/// One stream stopped playing `exe` (`route_id`) on the sink; the last puts it back.
 /// Returns whether a restore still waits for the program to run.
-fn release_with(apps: &dyn Apps, state: &mut State, directory: &Path, exe: &str) -> Result<bool> {
-    if !release(state, exe) {
+fn release_with(
+    apps: &dyn Apps,
+    state: &mut State,
+    directory: &Path,
+    exe: &str,
+    route_id: u64,
+) -> Result<bool> {
+    if !release(state, exe, route_id) {
         return Ok(false);
     }
     restore_with(apps, state, directory)
 }
-/// One stream stopped playing `exe`: whether it was the last.
-fn release(state: &mut State, exe: &str) -> bool {
-    if let Some(users) = state.active.get_mut(exe) {
-        *users -= 1;
-        if *users > 0 {
-            return false;
-        }
-        state.active.remove(exe);
+/// One stream stopped playing `exe`: whether it owned the last active token.
+fn release(state: &mut State, exe: &str, route_id: u64) -> bool {
+    let Some(ids) = state.active.get_mut(exe) else {
+        return false;
+    };
+    if !ids.remove(&route_id) {
+        return false;
     }
+    if !ids.is_empty() {
+        return false;
+    }
+    state.active.remove(exe);
     true
 }
 
@@ -405,14 +420,14 @@ impl AppRoute {
             &format!("{MMDEVAPI}{}{RENDER_INTERFACE}", sink.id),
         );
         let routed = match routed {
-            Ok(Routed::Sink) => {
+            Ok(Routed::Sink(id)) => {
                 tracing::info!(
                     exe,
                     pid,
                     sink = sink.name,
                     "game audio plays on the virtual sink"
                 );
-                Routed::Sink
+                Routed::Sink(id)
             }
             Ok(Routed::Closing) => {
                 tracing::info!(
@@ -455,7 +470,7 @@ impl AppRoute {
     pub fn users_device(&self) -> Option<&str> {
         match &self.routed {
             Routed::Users(device) => Some(device.as_str()),
-            Routed::Sink | Routed::Closing => None,
+            Routed::Sink(_) | Routed::Closing => None,
         }
     }
     /// Which of these routes' processes, and of the game's processes left
@@ -464,13 +479,13 @@ impl AppRoute {
     pub fn plays_elsewhere(routes: &[&AppRoute], unrouted: &[u32]) -> Result<OnThePc> {
         let Some(first) = routes
             .iter()
-            .find(|route| matches!(route.routed, Routed::Sink))
+            .find(|route| matches!(route.routed, Routed::Sink(_)))
         else {
             return Ok(OnThePc::default());
         };
         let pids: Vec<u32> = routes
             .iter()
-            .filter(|r| matches!(r.routed, Routed::Sink))
+            .filter(|r| matches!(r.routed, Routed::Sink(_)))
             .map(|r| r.pid)
             .chain(unrouted.iter().copied())
             .collect();
@@ -496,10 +511,10 @@ impl AppRoute {
 }
 impl Drop for AppRoute {
     fn drop(&mut self) {
-        if !matches!(self.routed, Routed::Sink) {
+        let Routed::Sink(id) = self.routed else {
             return;
-        }
-        if !release(&mut STATE.lock().unwrap(), &self.exe) {
+        };
+        if !release(&mut STATE.lock().unwrap(), &self.exe, id) {
             return;
         }
         let (state, result) = restore_now(&self.directory);

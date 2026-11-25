@@ -381,7 +381,9 @@ impl Keeper {
                 pass.trees.push(BTreeSet::new());
                 continue;
             };
-            slot.tree = tree(&processes, root);
+            let mut seeds = std::mem::take(&mut slot.tree);
+            seeds.insert(root);
+            slot.tree = live_descendants(&processes, &seeds);
             let pids: BTreeSet<u32> = slot.tree.iter().map(|id| id.pid).collect();
             processes_of_instances.extend(pids.iter().copied());
             let current = slot

@@ -48,10 +48,14 @@ fn taskbar_creation_restarts_retries_only_when_it_gave_up_without_a_taskbar() {
         log.attempt(false, start + Duration::from_secs(180)),
         Some(AddReport::StillRefused)
     );
-    // Once it gave up with the taskbar present, another TaskbarCreated does not warn again.
+    // Once it gave up with the taskbar present, another TaskbarCreated does not warn again,
+    // yet still resets the retry budget so the new taskbar gets fresh attempts instead of giving
+    // up after a single try.
     log.note_still_refused(true);
     log.on_taskbar_created();
     assert_eq!(log.attempt(false, start + Duration::from_secs(240)), None);
+    assert!(!log.gave_up(start + Duration::from_secs(240)));
+    assert!(log.gave_up(start + Duration::from_secs(240) + ADD_REFUSED_LONG));
 }
 
 #[test]

@@ -20,9 +20,9 @@ use feedback::FeedbackFailure;
 #[cfg(test)]
 use feedback::{FEEDBACK_DRAIN, poll_feedback};
 pub use slots::open_interface;
-use slots::{SLOTS, device_removed, plug_in_free_slot, reclaim_until_lost};
 #[cfg(test)]
-use slots::{STRANDED, reclaim};
+use slots::reclaim;
+use slots::{SLOTS, STRANDED, device_removed, plug_in_free_slot, reclaim_until_lost};
 pub(super) use slots::{Slot, interface_present, request};
 #[cfg(test)]
 use submit::profile_button_word;
@@ -101,7 +101,22 @@ pub struct Gamepads {
     /// The driver refused this handle ([`gamepad_backend::DriverLost`]): the
     /// gamepad thread closes these pads and opens the driver again (#138).
     lost: bool,
+    /// Completed background USB/IP pad attaches waiting to be installed.
+    pub(super) attaches:
+        std::sync::Arc<std::sync::Mutex<std::collections::VecDeque<attach::CompletedAttach>>>,
+    /// In-flight USB/IP pad attaches keyed by kind and controller ID -> generation.
+    pub(super) attaching: BTreeMap<(attach::AttachKind, u16), u64>,
+    next_attach_gen: u64,
+    /// Wakes the owning gamepad thread when a background attach finishes.
+    wake: Option<std::sync::Arc<dyn Fn() + Send + Sync>>,
+    /// Test hook overriding USB/IP background plug without calling `usbip.exe`.
+    #[cfg(test)]
+    pub(super) test_attach_hook: Option<TestAttachHook>,
 }
+
+#[cfg(test)]
+pub(super) type TestAttachHook =
+    std::sync::Arc<dyn Fn(attach::AttachKind, u16) -> Result<()> + Send + Sync>;
 
 /// What pads closed after the driver refused their handle hand to the pads
 /// opened next (#138).
@@ -173,9 +188,16 @@ impl Gamepads {
             steam_haptics: Vec::new(),
             steam_attributes_unsupported: false,
             lost: false,
+            attaches: Default::default(),
+            attaching: BTreeMap::new(),
+            next_attach_gen: 0,
+            wake: None,
+            #[cfg(test)]
+            test_attach_hook: None,
         })
     }
     pub fn apply(&mut self, event: &Event) -> Result<()> {
+        self.finish_attaches()?;
         match event {
             Event::Controller {
                 id,
@@ -192,6 +214,7 @@ impl Gamepads {
                 self.dualsenses.retain(|i, _| active & (1 << *i) != 0);
                 self.switch2s.retain(|i, _| active & (1 << *i) != 0);
                 self.switch2_failed.retain(|i| active & (1 << *i) != 0);
+                self.attaching.retain(|(_, i), _| active & (1 << *i) != 0);
                 self.arrivals.retain(|i, _| active & (1 << *i) != 0);
                 self.steam_at_arrival.retain(|i, _| active & (1 << *i) != 0);
                 self.carried_steam.retain(|i, _| active & (1 << *i) != 0);
@@ -237,7 +260,9 @@ impl Gamepads {
                 }
                 // It has grip buttons of its own: no back grip mapping.
                 if self.ensure_switch2(*id)? {
-                    self.switch2s[id].apply(event);
+                    if let Some(pad) = self.switch2s.get(id) {
+                        pad.apply(event);
+                    }
                     return Ok(());
                 }
                 self.ensure(*id)?;
@@ -284,6 +309,13 @@ impl Gamepads {
                 {
                     self.decks.remove(&id);
                     self.dualsenses.remove(&id);
+                    self.attaching.retain(|(k, i), _| {
+                        *i != id
+                            || !matches!(
+                                k,
+                                attach::AttachKind::Deck | attach::AttachKind::DualSense
+                            )
+                    });
                 }
                 // A controller that is no longer a Switch 2 Pro Controller
                 // (another one in its place) gets its own pad.
@@ -294,6 +326,7 @@ impl Gamepads {
                     )
                 {
                     self.switch2s.remove(&id);
+                    self.attaching.remove(&(attach::AttachKind::Switch2, id));
                 }
                 self.arrivals.insert(id, (*kind, *capabilities));
                 // A Steam Controller sends its attributes after each arrival.
@@ -434,6 +467,7 @@ impl Gamepads {
                     .is_some_and(|old| old != new)
                 {
                     self.switch2s.remove(&id);
+                    self.attaching.remove(&(attach::AttachKind::Switch2, id));
                 }
             }
             _ => {}
@@ -595,6 +629,12 @@ impl Gamepads {
     pub(super) fn audio_ready(&self) -> u16 {
         // DualSensePad::plug returns only after HID/audio enumeration succeeds.
         self.dualsenses.keys().fold(0, |mask, id| mask | (1 << id))
+    }
+    pub(super) fn set_wake(&mut self, wake: std::sync::Arc<dyn Fn() + Send + Sync>) {
+        self.wake = Some(wake);
+    }
+    pub(super) fn attach_ready(&self) -> bool {
+        !self.attaches.lock().unwrap().is_empty()
     }
 }
 

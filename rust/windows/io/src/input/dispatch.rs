@@ -23,19 +23,21 @@ impl Injector {
                 }
             }
         }
+        let order = SEND_ORDER.lock().unwrap();
         for e in events {
-            if let Err(error) = self.stage(e) {
+            if let Err(error) = self.stage(e, &order) {
                 self.pending.errors.push(error);
             }
         }
         if let Err(error) = self.flush_touch_moves() {
             self.pending.errors.push(error);
         }
-        self.flush_and_sync();
+        self.flush_and_sync_locked(&order);
+        drop(order);
         std::mem::take(&mut self.pending.errors)
     }
     /// Add an event's keyboard and mouse input to the pass, or apply it.
-    fn stage(&mut self, e: &Event) -> Result<()> {
+    fn stage(&mut self, e: &Event, order: &std::sync::MutexGuard<'_, ()>) -> Result<()> {
         if !self.policy.allows(e) {
             return Ok(());
         }
@@ -72,7 +74,7 @@ impl Injector {
                 std::time::Instant::now(),
             );
             for input in &inputs {
-                if let Err(error) = self.stage(input) {
+                if let Err(error) = self.stage(input, order) {
                     self.pending.errors.push(error);
                 }
             }
@@ -81,17 +83,17 @@ impl Injector {
         match e {
             // How a key or button is sent depends on the keys or buttons held,
             // including those pressed earlier in the pass.
-            Keyboard { .. } if self.press_pending(true) => self.flush_and_sync(),
-            MouseButton { .. } if self.press_pending(false) => self.flush_and_sync(),
+            Keyboard { .. } if self.press_pending(true) => self.flush_and_sync_locked(order),
+            MouseButton { .. } if self.press_pending(false) => self.flush_and_sync_locked(order),
             // Finish the absolute-mode click before relative input can press again.
             Relative { .. } if self.left_release.is_some() => {
-                self.flush_and_sync();
-                if let Err(error) = self.release_deferred_left(false) {
+                self.flush_and_sync_locked(order);
+                if let Err(error) = self.release_deferred_left_locked(order, false) {
                     self.pending.errors.push(error);
                 }
             }
             // Touch and pen go through another call: keep them in order.
-            Touch { .. } | Pen { .. } => self.flush_and_sync(),
+            Touch { .. } | Pen { .. } => self.flush_and_sync_locked(order),
             _ => {}
         }
         let start = self.pending.inputs.len();

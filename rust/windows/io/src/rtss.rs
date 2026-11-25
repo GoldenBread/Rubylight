@@ -189,6 +189,7 @@ pub fn read(root: &Path) -> Result<String> {
 }
 pub fn properties(text: &str) -> Result<BTreeMap<String, Option<u32>>> {
     let mut in_section = false;
+    let mut seen = std::collections::BTreeSet::new();
     let mut result: BTreeMap<_, _> = KEYS.iter().map(|k| (k.to_string(), None)).collect();
     for line in text.lines() {
         let line = line.trim();
@@ -203,16 +204,13 @@ pub fn properties(text: &str) -> Result<BTreeMap<String, Option<u32>>> {
             continue;
         };
         if let Some(key) = KEYS.iter().find(|k| k.eq_ignore_ascii_case(key.trim())) {
-            if result[*key].is_some() {
+            if !seen.insert(*key) {
                 bail!("RTSS profile has a duplicate {key}");
             }
-            let value = value
-                .split([';', '#'])
-                .next()
-                .unwrap_or("")
-                .trim()
-                .parse()?;
-            result.insert(key.to_string(), Some(value));
+            let raw = value.split([';', '#']).next().unwrap_or("").trim();
+            if !raw.is_empty() {
+                result.insert(key.to_string(), Some(raw.parse()?));
+            }
         }
     }
     Ok(result)
@@ -571,7 +569,12 @@ fn property(key: &str) -> Option<&'static CStr> {
 fn default_value(key: &str) -> u32 {
     u32::from(key == "LimitDenominator")
 }
-/// RTSS.exe's file version: major, minor, build, revision.
+/// Whether `path` points to a local disk path (without touching UNC shares or devices).
+pub(crate) fn is_local_path(path: &Path) -> bool {
+    !trust::has_non_disk_prefix(path) && trust::disk_drive_letter(path).is_some()
+}
+/// RTSS.exe's file version: major, minor, build, revision, cached by executable path and
+/// file stamp so status polls don't re-read binary resources unchanged on disk.
 pub fn version(root: &Path) -> Option<[u16; 4]> {
     use windows::{
         Win32::Storage::FileSystem::{
@@ -579,32 +582,58 @@ pub fn version(root: &Path) -> Option<[u16; 4]> {
         },
         core::{HSTRING, w},
     };
-    let path = HSTRING::from(executable(root)?.as_os_str());
+    type CachedVersion = (
+        PathBuf,
+        Option<(u64, std::time::SystemTime)>,
+        Option<[u16; 4]>,
+    );
+    static CACHE: std::sync::Mutex<Option<CachedVersion>> = std::sync::Mutex::new(None);
+    let exe = executable(root)?;
+    let stamp = std::fs::symlink_metadata(&exe)
+        .ok()
+        .and_then(|meta| Some((meta.len(), meta.modified().ok()?)));
+    if stamp.is_some()
+        && let Some((cached_exe, cached_stamp, cached_version)) = CACHE.lock().unwrap().as_ref()
+        && *cached_exe == exe
+        && *cached_stamp == stamp
+    {
+        return *cached_version;
+    }
+    let path = HSTRING::from(exe.as_os_str());
     // SAFETY: `data` has the size Windows reported, VerQueryValueW returns a pointer into it
     // with the length checked here, and the structure is read unaligned before `data` drops.
-    unsafe {
+    let version = unsafe {
         let size = GetFileVersionInfoSizeW(&path, None);
         if size == 0 {
-            return None;
+            None
+        } else {
+            let mut data = vec![0u8; size as usize];
+            if GetFileVersionInfoW(&path, None, size, data.as_mut_ptr().cast()).is_err() {
+                None
+            } else {
+                let mut info = std::ptr::null_mut();
+                let mut length = 0;
+                if !VerQueryValueW(data.as_ptr().cast(), w!("\\"), &mut info, &mut length).as_bool()
+                    || info.is_null()
+                    || (length as usize) < size_of::<VS_FIXEDFILEINFO>()
+                {
+                    None
+                } else {
+                    let info = std::ptr::read_unaligned(info.cast::<VS_FIXEDFILEINFO>());
+                    Some([
+                        (info.dwFileVersionMS >> 16) as u16,
+                        info.dwFileVersionMS as u16,
+                        (info.dwFileVersionLS >> 16) as u16,
+                        info.dwFileVersionLS as u16,
+                    ])
+                }
+            }
         }
-        let mut data = vec![0u8; size as usize];
-        GetFileVersionInfoW(&path, None, size, data.as_mut_ptr().cast()).ok()?;
-        let mut info = std::ptr::null_mut();
-        let mut length = 0;
-        if !VerQueryValueW(data.as_ptr().cast(), w!("\\"), &mut info, &mut length).as_bool()
-            || info.is_null()
-            || (length as usize) < size_of::<VS_FIXEDFILEINFO>()
-        {
-            return None;
-        }
-        let info = std::ptr::read_unaligned(info.cast::<VS_FIXEDFILEINFO>());
-        Some([
-            (info.dwFileVersionMS >> 16) as u16,
-            info.dwFileVersionMS as u16,
-            (info.dwFileVersionLS >> 16) as u16,
-            info.dwFileVersionLS as u16,
-        ])
+    };
+    if stamp.is_some() {
+        *CACHE.lock().unwrap() = Some((exe, stamp, version));
     }
+    version
 }
 /// RTSS 7.3.7 keeps running the Global profile it has open: UpdateProfiles
 /// after a direct file edit leaves the live limit unchanged (Vibepollo #378,

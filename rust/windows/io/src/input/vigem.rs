@@ -77,46 +77,79 @@ fn packet(size: usize, serial: u32) -> Vec<u8> {
     data
 }
 
-fn control(bus: HANDLE, code: u32, data: &[u8]) -> Result<()> {
-    control_with(bus, &event()?, code, data)
+const REPORT_TIMEOUT_MS: u32 = 2_000;
+const CONTROL_TIMEOUT_MS: u32 = 5_000;
+const CANCEL_WAIT_MS: u32 = 200;
+
+struct PendingIo(OVERLAPPED, #[allow(dead_code)] Vec<u8>);
+// SAFETY: `PendingIo` is only moved to a reaper thread while the kernel still owns an abandoned
+// async IOCTL buffer after `CancelIoEx`; nothing accesses its fields until `WaitForSingleObject`
+// on the associated event finishes.
+unsafe impl Send for PendingIo {}
+
+fn control(bus: HANDLE, code: u32, data: Vec<u8>) -> Result<()> {
+    let mut ev = event()?;
+    control_with(bus, &mut ev, code, data, CONTROL_TIMEOUT_MS)
 }
 /// One request on `event`, which the request resets as it starts; the
 /// client reuses one for every report instead of creating one each time.
-fn control_with(bus: HANDLE, event: &OwnedHandle, code: u32, data: &[u8]) -> Result<()> {
-    let mut overlapped = OVERLAPPED {
-        hEvent: handle(event),
-        ..Default::default()
-    };
+fn control_with(
+    bus: HANDLE,
+    event: &mut OwnedHandle,
+    code: u32,
+    data: Vec<u8>,
+    timeout_ms: u32,
+) -> Result<()> {
+    let mut pending = Box::new(PendingIo(
+        OVERLAPPED {
+            hEvent: handle(event),
+            ..Default::default()
+        },
+        data,
+    ));
     let mut transferred = 0;
-    // SAFETY: `data`, `overlapped` and `event` outlive the request: every path
-    // leaves only after it completed, a timeout through the blocking wait below.
+    // SAFETY: `pending` lives on the heap for the entire IRP; if cancellation does not finish
+    // within `CANCEL_WAIT_MS`, ownership of both `pending` and the replaced event handle moves to
+    // a detached waiter thread rather than blocking the caller or freeing in-flight kernel buffers.
     unsafe {
         let started = DeviceIoControl(
             bus,
             code,
-            Some(data.as_ptr().cast()),
-            data.len() as u32,
+            Some(pending.1.as_ptr().cast()),
+            pending.1.len() as u32,
             None,
             0,
             None,
-            Some(&mut overlapped),
+            Some(&mut pending.0),
         );
         if let Err(error) = started
             && error.code() != ERROR_IO_PENDING.to_hresult()
         {
             return Err(error.into());
         }
-        if WaitForSingleObject(handle(event), 10_000) != WAIT_OBJECT_0 {
-            let _ = CancelIoEx(bus, Some(&overlapped));
-            // Cancellation is asynchronous: the kernel must release the input
-            // buffer and OVERLAPPED before their storage goes away. A request
-            // that finished meanwhile did what it asked, late.
-            if GetOverlappedResult(bus, &overlapped, &mut transferred, true).is_ok() {
-                return Ok(());
+        if WaitForSingleObject(handle(event), timeout_ms) != WAIT_OBJECT_0 {
+            let _ = CancelIoEx(bus, Some(&pending.0));
+            if WaitForSingleObject(handle(event), CANCEL_WAIT_MS) == WAIT_OBJECT_0 {
+                if GetOverlappedResult(bus, &pending.0, &mut transferred, false).is_ok() {
+                    return Ok(());
+                }
+                bail!("ViGEmBus request {code:#x} timed out");
+            }
+            if let Ok(fresh) = self::event() {
+                let stale = std::mem::replace(event, fresh);
+                let _ = std::thread::Builder::new()
+                    .name("vigem-cancel".into())
+                    .spawn(move || {
+                        let _ = WaitForSingleObject(handle(&stale), INFINITE);
+                        drop(pending);
+                        drop(stale);
+                    });
+            } else {
+                std::mem::forget(pending);
             }
             bail!("ViGEmBus request {code:#x} timed out");
         }
-        GetOverlappedResult(bus, &overlapped, &mut transferred, false)?;
+        GetOverlappedResult(bus, &pending.0, &mut transferred, false)?;
     }
     Ok(())
 }
@@ -199,7 +232,7 @@ fn open_bus() -> Result<OwnedHandle> {
                         )?
                         .0,
                     );
-                    control(handle(&bus), CHECK_VERSION, &packet(8, 1))
+                    control(handle(&bus), CHECK_VERSION, packet(8, 1))
                         .context("incompatible ViGEmBus protocol")?;
                     Ok(bus)
                 })();
@@ -386,13 +419,19 @@ struct Target {
 }
 impl Target {
     /// Sends a DualShock 4's report as it is at `now`, on `event`.
-    fn send_ds4(&mut self, event: &OwnedHandle, now: Instant) -> Result<()> {
+    fn send_ds4(&mut self, event: &mut OwnedHandle, now: Instant) -> Result<()> {
         let ds4 = self.ds4.as_mut().context("not a ViGEmBus DualShock 4")?;
         let data = ds4.packet(self.serial, now);
-        report_result(control_with(self.bus, event, DS4_SUBMIT, &data))
+        report_result(control_with(
+            self.bus,
+            event,
+            DS4_SUBMIT,
+            data.to_vec(),
+            REPORT_TIMEOUT_MS,
+        ))
     }
     fn unplug(&mut self) -> Result<()> {
-        control(self.bus, UNPLUG, &packet(8, self.serial))?;
+        control(self.bus, UNPLUG, packet(8, self.serial))?;
         self.notification = None;
         self.serial = 0;
         Ok(())
@@ -436,12 +475,12 @@ impl Client {
         self.parts(slot).map(|(target, _)| target)
     }
     /// A slot's target with the event its reports wait on.
-    fn parts(&mut self, slot: u32) -> Result<(&mut Target, &OwnedHandle)> {
+    fn parts(&mut self, slot: u32) -> Result<(&mut Target, &mut OwnedHandle)> {
         let target = self
             .targets
             .get_mut(&slot)
             .with_context(|| format!("no ViGEmBus pad in slot {slot}"))?;
-        Ok((target, &self.submitted))
+        Ok((target, &mut self.submitted))
     }
     pub(super) fn plug(&mut self, slot: u32, profile: u16) -> Result<()> {
         // One pad per slot: try to take the old target out before the new one
@@ -475,14 +514,14 @@ impl Client {
         let mut last_error = anyhow::anyhow!("no free ViGEmBus serial numbers");
         for serial in 1..=u16::MAX as u32 {
             request[4..8].copy_from_slice(&serial.to_le_bytes());
-            if let Err(error) = control(bus, PLUGIN, &request) {
+            if let Err(error) = control(bus, PLUGIN, request.clone()) {
                 // Bus_PlugInDevice uses INVALID_PARAMETER for a serial collision.
                 if !error
                     .downcast_ref::<windows::core::Error>()
                     .is_some_and(|error| error.code() == ERROR_INVALID_PARAMETER.to_hresult())
                 {
                     // A refused request may still have got as far as a pad.
-                    if let Err(undo) = control(bus, UNPLUG, &packet(8, serial)) {
+                    if let Err(undo) = control(bus, UNPLUG, packet(8, serial)) {
                         tracing::debug!(%undo, serial, "no ViGEm target to take back");
                     }
                     return Err(error.context("could not plug ViGEm target"));
@@ -497,7 +536,7 @@ impl Client {
                 ds4: None,
             };
             // Before v1.17 the plug request itself waited for readiness.
-            if let Err(error) = control(bus, WAIT_READY, &packet(8, serial))
+            if let Err(error) = control(bus, WAIT_READY, packet(8, serial))
                 && !error
                     .downcast_ref::<windows::core::Error>()
                     .is_some_and(|error| error.code() == ERROR_INVALID_PARAMETER.to_hresult())
@@ -509,7 +548,7 @@ impl Client {
                 let now = Instant::now();
                 target.ds4 = Some(Ds4::new(now));
                 // At rest from the start, held flat rather than in free fall.
-                target.send_ds4(&self.submitted, now)?;
+                target.send_ds4(&mut self.submitted, now)?;
             }
             self.targets.insert(slot, target);
             return Ok(());
@@ -535,7 +574,13 @@ impl Client {
             return target.send_ds4(submitted, Instant::now());
         }
         let data = submit_packet(target.serial, buttons, left, right, sticks);
-        report_result(control_with(target.bus, submitted, XUSB_SUBMIT, &data))
+        report_result(control_with(
+            target.bus,
+            submitted,
+            XUSB_SUBMIT,
+            data.to_vec(),
+            REPORT_TIMEOUT_MS,
+        ))
     }
     /// Moonlight motion for a DualShock 4; an Xbox 360 pad has no sensors.
     pub(super) fn motion(&mut self, slot: u32, kind: u8, xyz: &[f32; 3]) -> Result<()> {
@@ -591,7 +636,7 @@ impl Client {
                 .ds4
                 .as_ref()
                 .is_some_and(|ds4| now.saturating_duration_since(ds4.sent) >= DS4_KEEPALIVE)
-                && let Err(error) = target.send_ds4(&self.submitted, now)
+                && let Err(error) = target.send_ds4(&mut self.submitted, now)
             {
                 result = Err(error);
             }

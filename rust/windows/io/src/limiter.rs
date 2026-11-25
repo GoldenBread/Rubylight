@@ -147,6 +147,18 @@ pub fn recover(directory: &Path) -> Result<()> {
 fn restore(directory: &Path, owned: &mut Option<(PathBuf, crate::process::Process)>) -> Result<()> {
     let mut journal = load(directory)?;
     if let Some(change) = journal.rtss.as_ref() {
+        let missing_dir = rtss::is_local_path(&change.root)
+            && std::fs::symlink_metadata(&change.root)
+                .is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound);
+        if missing_dir && !rtss::running(&change.root) {
+            tracing::info!(
+                root = %change.root.display(),
+                "RTSS installation folder is gone; clearing stale frame limiter recovery entry"
+            );
+            journal.rtss = None;
+            butterpollo_session::state::write_json(&path(directory), &journal)?;
+            return Ok(());
+        }
         let text = rtss::read(&change.root)?;
         let current = rtss::properties(&text)?;
         let mut restore = BTreeMap::new();
@@ -370,11 +382,12 @@ impl Lease {
         }
         state.directory = directory.into();
         state.active = "none".into();
-        state.rate = policy.enabled.then_some(policy.rate);
+        state.rate = None;
         state.message.clear();
         state.follow = None;
         if let Err(error) = recover(directory) {
             state.active = "rtss".into();
+            state.rate = None;
             state.message = format!("{error:#}");
             tracing::warn!(error = %state.message, "frame limiter recovery remains pending; retaining exclusive limiter ownership");
             state.users = 1;
@@ -404,6 +417,7 @@ impl Lease {
             match applied {
                 Ok(unsupported) => {
                     state.active = "rtss".into();
+                    state.rate = Some(policy.rate);
                     state.follow = policy.follows_display.then(|| Follow {
                         id: next_follow(),
                         root: root.clone(),
@@ -528,17 +542,20 @@ pub fn active_rate() -> Option<Rate> {
 }
 pub fn status(config: &Config) -> Json {
     let root = rtss::root(config);
-    let available = rtss::available(&root);
-    let state = state().lock().unwrap();
     let configured = config.get("rtss_install_path", "");
+    let (active, message) = {
+        let state = state().lock().unwrap();
+        (state.active.clone(), state.message.clone())
+    };
+    let available = rtss::available(&root);
     json!({"status":true,"enabled":config.boolean("frame_limiter_enable",false),
         "configured_provider":Provider::parse(config.get("frame_limiter_provider","auto")).name(),
-        "active_provider":if state.active.is_empty(){"none"}else{&state.active},
+        "active_provider":if active.is_empty(){"none"}else{&active},
         "rtss_available":available,"configured_path":configured,"path_configured":!configured.is_empty(),
         "resolved_path":root,"path_exists":root.is_dir(),"hooks_found":available,
         "rtss_version":rtss::version(&root).map(|v| v.map(|part| part.to_string()).join(".")),"profile_found":root.join("Profiles/Global").is_file(),
         "can_bootstrap_profile":available,"process_running":rtss::running(&root),
-        "message":if state.message.is_empty(){"Limiter settings apply during streaming and restore after the last stream."}else{&state.message}})
+        "message":if message.is_empty(){"Limiter settings apply during streaming and restore after the last stream."}else{&message}})
 }
 
 #[cfg(test)]

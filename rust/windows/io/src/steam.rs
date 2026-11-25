@@ -98,13 +98,17 @@ fn installations(candidates: Vec<PathBuf>) -> Vec<PathBuf> {
         }
     }
     // canonicalize gives \\?\ paths; keep the form Steam and users write.
-    roots
-        .into_iter()
-        .map(|path| {
-            let text = path.to_string_lossy();
-            PathBuf::from(text.strip_prefix(r"\\?\").unwrap_or(&text))
-        })
-        .collect()
+    let mut normalized = Vec::new();
+    for path in roots {
+        let text = path.to_string_lossy();
+        let clean = PathBuf::from(text.strip_prefix(r"\\?\").unwrap_or(&text));
+        if !normalized.iter().any(|existing: &PathBuf| {
+            crate::user_folder::same_name(existing.as_os_str(), clean.as_os_str())
+        }) {
+            normalized.push(clean);
+        }
+    }
+    normalized
 }
 
 #[cfg(test)]

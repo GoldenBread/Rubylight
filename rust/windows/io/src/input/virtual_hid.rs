@@ -43,9 +43,18 @@ pub enum Availability {
 enum State<D: Device> {
     Unplugged,
     Plugging,
-    Plugged(UsbPad<D>),
-    NoDriver { at: Instant },
-    Failed { at: Instant, error: String },
+    Plugged {
+        pad: UsbPad<D>,
+        attached_at: Instant,
+        seen_imported: bool,
+    },
+    NoDriver {
+        at: Instant,
+    },
+    Failed {
+        at: Instant,
+        error: String,
+    },
 }
 
 struct Inner<D: Device> {
@@ -58,6 +67,8 @@ struct Inner<D: Device> {
 pub struct Slot<D: Device> {
     name: &'static str,
     inner: Mutex<Inner<D>>,
+    /// Serializes USB/IP detach and a subsequent replug of the same device serial.
+    unplug_lock: Mutex<()>,
 }
 
 pub static MOUSE: Slot<HidMouse> = Slot::new("virtual mouse");
@@ -71,6 +82,21 @@ impl<D: Device> Slot<D> {
                 state: State::Unplugged,
                 users: 0,
             }),
+            unplug_lock: Mutex::new(()),
+        }
+    }
+    fn drop_off_thread(&'static self, pad: UsbPad<D>, reason: &'static str) {
+        let name = self.name;
+        let unplug = move || {
+            let _unplug = self.unplug_lock.lock().unwrap();
+            drop(pad);
+            tracing::info!(device = name, "{reason}");
+        };
+        if let Err(error) = std::thread::Builder::new()
+            .name("virtual HID unplug".into())
+            .spawn(unplug)
+        {
+            tracing::warn!(device = name, %error, "the unplug thread did not start");
         }
     }
     /// A stream wants the device; [`Self::release`] when it ends.
@@ -85,23 +111,14 @@ impl<D: Device> Slot<D> {
             return;
         }
         match &inner.state {
-            State::Plugged(_) => {
-                let State::Plugged(pad) = std::mem::replace(&mut inner.state, State::Unplugged)
+            State::Plugged { .. } => {
+                let State::Plugged { pad, .. } =
+                    std::mem::replace(&mut inner.state, State::Unplugged)
                 else {
                     unreachable!();
                 };
                 drop(inner);
-                let name = self.name;
-                let unplug = move || {
-                    drop(pad);
-                    tracing::info!(device = name, "unplugged");
-                };
-                if let Err(error) = std::thread::Builder::new()
-                    .name("virtual HID unplug".into())
-                    .spawn(unplug)
-                {
-                    tracing::warn!(device = name, %error, "the unplug thread did not start");
-                }
+                self.drop_off_thread(pad, "unplugged");
             }
             // Keep Plugging intact: when the plug thread finishes and sees users == 0,
             // it cleans up the pad itself outside the mutex.
@@ -114,15 +131,41 @@ impl<D: Device> Slot<D> {
     /// 250 ms later and delivers its reports about 100 ms after that, and input routed to it
     /// before then waited and arrived merged, so until then it is injected.
     pub fn ready(&self) -> bool {
-        matches!(&self.inner.lock().unwrap().state, State::Plugged(pad)
+        matches!(&self.inner.lock().unwrap().state, State::Plugged { pad, .. }
             if pad.export.as_ref().and_then(|export| export.polled_for()).is_some_and(settled))
     }
     /// Plugs in the device `make` builds, on a thread of its own, unless it is plugged in,
     /// on its way, or failed less than [`RETRY`] ago. Returns where it stands.
     pub fn plug(&'static self, make: impl FnOnce() -> D + Send + 'static) -> Availability {
         let mut inner = self.inner.lock().unwrap();
-        match &inner.state {
-            State::Plugged(_) => return Availability::Ready,
+        match &mut inner.state {
+            State::Plugged {
+                pad,
+                attached_at,
+                seen_imported,
+            } => {
+                let imported = pad.export.as_ref().is_some_and(|export| export.imported());
+                if imported {
+                    *seen_imported = true;
+                    return Availability::Ready;
+                }
+                if !*seen_imported && attached_at.elapsed() < Duration::from_secs(3) {
+                    return Availability::Plugging;
+                }
+                let error = "the device disconnected from Windows".to_owned();
+                let State::Plugged { pad, .. } = std::mem::replace(
+                    &mut inner.state,
+                    State::Failed {
+                        at: Instant::now(),
+                        error: error.clone(),
+                    },
+                ) else {
+                    unreachable!();
+                };
+                drop(inner);
+                self.drop_off_thread(pad, "detached mid-stream; cleaned up");
+                return Availability::Failed(error);
+            }
             State::Plugging => return Availability::Plugging,
             State::NoDriver { at } if at.elapsed() < RETRY => return Availability::NoDriver,
             State::Failed { at, error } if at.elapsed() < RETRY => {
@@ -141,24 +184,35 @@ impl<D: Device> Slot<D> {
         };
         let name = self.name;
         let plug = move || {
+            let _unplug = self.unplug_lock.lock().unwrap();
             let started = Instant::now();
             let result = UsbPad::plug(&exe, make(), POLL);
+            drop(_unplug);
             let mut inner = self.inner.lock().unwrap();
             let prev = match result {
                 Ok(pad) if inner.users > 0 => {
+                    let imported = pad.export.as_ref().is_some_and(|export| export.imported());
                     tracing::info!(
                         device = name,
                         port = pad.port(),
                         ms = started.elapsed().as_millis() as u64,
                         "plugged in"
                     );
-                    std::mem::replace(&mut inner.state, State::Plugged(pad))
+                    std::mem::replace(
+                        &mut inner.state,
+                        State::Plugged {
+                            pad,
+                            attached_at: Instant::now(),
+                            seen_imported: imported,
+                        },
+                    )
                 }
                 Ok(pad) => {
                     // The streams that wanted it ended meanwhile.
                     let prev = std::mem::replace(&mut inner.state, State::Unplugged);
                     drop(inner);
                     drop(prev);
+                    let _unplug = self.unplug_lock.lock().unwrap();
                     drop(pad);
                     return;
                 }
@@ -200,14 +254,18 @@ impl<D: Device> Slot<D> {
     /// Runs `f` on the plugged-in device and tells the USB/IP server it changed; None when it
     /// is not plugged in. The device lock is taken once for the change and the update.
     pub fn with<R>(&self, f: impl FnOnce(&mut D) -> R) -> Option<R> {
-        let inner = self.inner.lock().unwrap();
-        let State::Plugged(pad) = &inner.state else {
+        let mut inner = self.inner.lock().unwrap();
+        let State::Plugged {
+            pad, seen_imported, ..
+        } = &mut inner.state
+        else {
             return None;
         };
         let export = pad.export.as_ref()?;
         if !export.imported() {
             return None;
         }
+        *seen_imported = true;
         Some(export.with_changed(f))
     }
 }
