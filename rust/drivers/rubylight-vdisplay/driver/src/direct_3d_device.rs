@@ -11,6 +11,7 @@
 
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use windows::{
     Win32::{
@@ -18,16 +19,22 @@ use windows::{
         Graphics::{
             Direct3D::D3D_DRIVER_TYPE_UNKNOWN,
             Direct3D11::{
-                D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_CREATE_DEVICE_FLAG,
+                D3D11_ASYNC_GETDATA_DONOTFLUSH, D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+                D3D11_CREATE_DEVICE_FLAG,
                 D3D11_CREATE_DEVICE_PREVENT_ALTERING_LAYER_SETTINGS_FROM_REGISTRY,
-                D3D11_SDK_VERSION, D3D11CreateDevice, ID3D11Device, ID3D11DeviceContext,
-                ID3D11Multithread,
+                D3D11_QUERY_DESC, D3D11_QUERY_EVENT, D3D11_SDK_VERSION, D3D11CreateDevice,
+                ID3D11Device, ID3D11DeviceContext, ID3D11Multithread, ID3D11Query,
             },
             Dxgi::{CreateDXGIFactory2, DXGI_CREATE_FACTORY_FLAGS, IDXGIAdapter1, IDXGIFactory5},
         },
     },
     core::{Error, Interface},
 };
+
+/// Bounded wait for GPU completion before releasing shared frame-ring resources. Shorter than
+/// `Monitor`'s ring-clear wait so a slow GPU drain finishes and drops resources before the
+/// control-plane IOCTL times out.
+const GPU_DRAIN_BUDGET: Duration = Duration::from_millis(1500);
 
 pub struct Direct3DDevice {
     _dxgi_factory: IDXGIFactory5,
@@ -57,6 +64,108 @@ impl Direct3DDevice {
                 "[rlvd] D3D device epoch {} removed; workers stop, the pool recreates",
                 self.epoch
             );
+        }
+    }
+
+    /// Flush the immediate context and wait (bounded) for a `D3D11_QUERY_EVENT` query to
+    /// complete on the GPU so all prior commands referencing shared ring textures or fences
+    /// have finished before those resources are dropped. `cached_query` is owned per worker
+    /// thread so two monitors sharing one [`Direct3DDevice`] never collide on a query object.
+    pub fn drain_gpu(&self, cached_query: &mut Option<ID3D11Query>) {
+        if self.is_removed() {
+            *cached_query = None;
+            return;
+        }
+        // SAFETY: a plain status query on the live device.
+        if unsafe { self.device.GetDeviceRemovedReason() }.is_err() {
+            self.mark_removed();
+            *cached_query = None;
+            return;
+        }
+        if cached_query.is_none() {
+            let desc = D3D11_QUERY_DESC {
+                Query: D3D11_QUERY_EVENT,
+                MiscFlags: 0,
+            };
+            let mut query = None;
+            // SAFETY: `desc` and `query` are live locals; `self.device` is live.
+            match unsafe { self.device.CreateQuery(&desc, Some(&mut query)) } {
+                Ok(()) => *cached_query = query,
+                Err(e) => {
+                    dbglog!("[rlvd] D3D11 CreateQuery(EVENT) failed: {e:?}");
+                    // SAFETY: a plain status query on the live device.
+                    if unsafe { self.device.GetDeviceRemovedReason() }.is_err() {
+                        self.mark_removed();
+                    } else {
+                        // SAFETY: plain flush of the multithread-protected immediate context.
+                        unsafe { self.device_context.Flush() };
+                    }
+                    return;
+                }
+            }
+        }
+        let Some(query) = cached_query.as_ref() else {
+            // SAFETY: plain flush of the multithread-protected immediate context.
+            unsafe { self.device_context.Flush() };
+            return;
+        };
+        // SAFETY: `query` belongs to `self.device`, and `self.device_context` is
+        // multithread-protected; `End` + `Flush` submits all prior work and the event query.
+        unsafe {
+            self.device_context.End(query);
+            self.device_context.Flush();
+        }
+        let started = Instant::now();
+        let mut spins: u32 = 0;
+        loop {
+            let mut done = BOOL(0);
+            // SAFETY: `query` is a live `D3D11_QUERY_EVENT` on this device; `GetData` writes
+            // one `BOOL` into the live local `done` only when it returns `S_OK`.
+            let res = unsafe {
+                self.device_context.GetData(
+                    query,
+                    Some((&raw mut done).cast()),
+                    size_of::<BOOL>() as u32,
+                    D3D11_ASYNC_GETDATA_DONOTFLUSH.0 as u32,
+                )
+            };
+            match res {
+                Ok(()) if done.as_bool() => return,
+                Ok(()) => {}
+                Err(e) => {
+                    dbglog!("[rlvd] D3D11 GetData(EVENT) failed: {e:?}");
+                    // SAFETY: a plain status query on the live device.
+                    if unsafe { self.device.GetDeviceRemovedReason() }.is_err() {
+                        self.mark_removed();
+                        *cached_query = None;
+                    }
+                    return;
+                }
+            }
+            if self.is_removed() {
+                *cached_query = None;
+                return;
+            }
+            if started.elapsed() >= GPU_DRAIN_BUDGET {
+                dbglog!(
+                    "[rlvd] D3D11 GPU drain timed out after {} ms (epoch {})",
+                    started.elapsed().as_millis(),
+                    self.epoch
+                );
+                return;
+            }
+            if spins < 8 {
+                spins += 1;
+                std::thread::yield_now();
+            } else {
+                // SAFETY: a plain status query on the live device.
+                if unsafe { self.device.GetDeviceRemovedReason() }.is_err() {
+                    self.mark_removed();
+                    *cached_query = None;
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(1));
+            }
         }
     }
 

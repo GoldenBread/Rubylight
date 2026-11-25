@@ -24,6 +24,7 @@ mod frame_ring;
 mod lifecycle;
 mod monitor;
 mod registry;
+mod ring_handoff;
 mod swap_chain_processor;
 mod watchdog;
 mod wdf;

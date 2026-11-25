@@ -24,6 +24,7 @@ use wdk_sys::{NTSTATUS, WDFOBJECT, call_unsafe_wdf_function_binding, iddcx};
 
 use crate::frame_ring::RingHandles;
 use crate::registry::{self, lock};
+use crate::ring_handoff::RingHandoff;
 use crate::swap_chain_processor::SwapChainProcessor;
 use crate::worker::Sendable;
 
@@ -72,8 +73,10 @@ pub struct Monitor {
     swap: Mutex<Option<SwapChainProcessor>>,
     /// The frame ring the host handed over, shared with the worker that has it open.
     ring: Mutex<Option<Arc<RingHandles>>>,
-    /// Bumped by every ring install or removal; the worker re-reads the ring only then.
-    pub ring_gen: AtomicU32,
+    /// Bumped by every ring install or removal under `ring`; the worker re-reads only then.
+    pub ring_gen: AtomicU64,
+    /// Tracks active swap-chain workers so ring clears wait until GPU reads drain and drop.
+    ring_handoff: RingHandoff,
     /// Render LUID of the last swap-chain assignment, packed; `0` = none yet.
     render_luid: AtomicI64,
     pub stats: Stats,
@@ -87,11 +90,12 @@ pub struct DdiGuard<'a>(&'a Monitor);
 
 impl Drop for DdiGuard<'_> {
     fn drop(&mut self) {
-        self.0.ddi_inflight.fetch_sub(1, Ordering::AcqRel);
+        self.0.ddi_inflight.fetch_sub(1, Ordering::SeqCst);
     }
 }
 
 const DDI_DRAIN_BUDGET: Duration = Duration::from_secs(2);
+const RING_CLEAR_WAIT_BUDGET: Duration = Duration::from_secs(2);
 
 fn take<T>(slot: &Mutex<Option<T>>) -> Option<T> {
     lock(slot).take()
@@ -110,7 +114,8 @@ impl Monitor {
             modes: Mutex::new(modes),
             swap: Mutex::new(None),
             ring: Mutex::new(None),
-            ring_gen: AtomicU32::new(0),
+            ring_gen: AtomicU64::new(0),
+            ring_handoff: RingHandoff::new(),
             render_luid: AtomicI64::new(0),
             stats: Stats::default(),
             gone: AtomicBool::new(false),
@@ -119,12 +124,12 @@ impl Monitor {
     }
 
     /// Hold while calling a DDI against this monitor's handle. `None` once teardown began:
-    /// the increment lands before the `gone` read, so a teardown that saw zero cannot be
-    /// passed by a caller that saw `!gone`.
+    /// Dekker `SeqCst` ordering guarantees either teardown sees `ddi_inflight > 0` or this
+    /// call sees `gone == true`, so a departed handle is never passed to a DDI.
     pub fn ddi(&self) -> Option<DdiGuard<'_>> {
-        self.ddi_inflight.fetch_add(1, Ordering::AcqRel);
-        if self.gone.load(Ordering::Acquire) {
-            self.ddi_inflight.fetch_sub(1, Ordering::AcqRel);
+        self.ddi_inflight.fetch_add(1, Ordering::SeqCst);
+        if self.gone.load(Ordering::SeqCst) {
+            self.ddi_inflight.fetch_sub(1, Ordering::SeqCst);
             return None;
         }
         Some(DdiGuard(self))
@@ -161,10 +166,16 @@ impl Monitor {
     #[must_use]
     pub fn set_swap(&self, proc: SwapChainProcessor) -> Option<SwapChainProcessor> {
         let mut slot = lock(&self.swap);
-        if self.gone.load(Ordering::Acquire) || !crate::adapter::powered() {
+        if self.gone.load(Ordering::SeqCst) || !crate::adapter::powered() {
             return Some(proc);
         }
-        slot.replace(proc)
+        let displaced = slot.replace(proc);
+        // Wake once installed so a ring change that raced before `set_swap` does not wait
+        // for the worker's idle timeout.
+        if let Some(p) = slot.as_ref() {
+            p.wake();
+        }
+        displaced
     }
 
     #[must_use]
@@ -181,47 +192,85 @@ impl Monitor {
     ) -> Result<Option<Arc<RingHandles>>, Arc<RingHandles>> {
         let displaced = {
             let mut slot = lock(&self.ring);
-            if self.gone.load(Ordering::Acquire) {
+            if self.gone.load(Ordering::SeqCst) {
                 return Err(ring);
             }
-            slot.replace(ring)
+            let displaced = slot.replace(ring);
+            self.ring_gen.fetch_add(1, Ordering::AcqRel);
+            self.stats.ring_open.store(false, Ordering::Release);
+            displaced
         };
-        self.bump_ring_gen();
+        self.wake_swap();
         Ok(displaced)
     }
 
     pub fn take_ring(&self) -> Option<Arc<RingHandles>> {
-        let ring = take(&self.ring);
-        if ring.is_some() {
-            self.bump_ring_gen();
-        }
-        ring
+        self.take_ring_with_seq().map(|(ring, _)| ring)
     }
 
-    /// [`Self::take_ring`], only while the ring is the one of `generation`.
-    pub fn take_ring_generation(&self, generation: u32) -> Option<Arc<RingHandles>> {
-        let ring = {
+    fn take_ring_with_seq(&self) -> Option<(Arc<RingHandles>, u64)> {
+        let cleared = {
+            let mut slot = lock(&self.ring);
+            let ring = slot.take()?;
+            let seq = self.ring_gen.fetch_add(1, Ordering::AcqRel) + 1;
+            self.stats.ring_open.store(false, Ordering::Release);
+            (ring, seq)
+        };
+        self.wake_swap();
+        Some(cleared)
+    }
+
+    /// [`Self::take_ring_with_seq`], only while the ring is the one of `generation`.
+    fn take_ring_generation_with_seq(&self, generation: u32) -> Option<(Arc<RingHandles>, u64)> {
+        let cleared = {
             let mut slot = lock(&self.ring);
             if slot.as_ref().map(|r| r.generation) != Some(generation) {
                 return None;
             }
-            slot.take()
+            let ring = slot.take()?;
+            let seq = self.ring_gen.fetch_add(1, Ordering::AcqRel) + 1;
+            self.stats.ring_open.store(false, Ordering::Release);
+            (ring, seq)
         };
-        self.bump_ring_gen();
-        ring
+        self.wake_swap();
+        Some(cleared)
     }
 
-    /// The ring generation counter and the ring, read together.
-    pub fn ring(&self) -> (u32, Option<Arc<RingHandles>>) {
+    /// The ring generation counter and the ring, read atomically together under `self.ring`.
+    pub fn ring(&self) -> (u64, Option<Arc<RingHandles>>) {
         let slot = lock(&self.ring);
         (self.ring_gen.load(Ordering::Acquire), slot.clone())
     }
 
-    fn bump_ring_gen(&self) {
-        self.ring_gen.fetch_add(1, Ordering::AcqRel);
-        self.stats.ring_open.store(false, Ordering::Release);
+    fn wake_swap(&self) {
         if let Some(p) = &*lock(&self.swap) {
             p.wake();
+        }
+    }
+
+    pub fn enter_ring_worker(&self) -> u64 {
+        self.ring_handoff.enter_worker()
+    }
+
+    pub fn note_ring_settled(&self, worker_id: u64, active_ring_gen: Option<u32>, seq: u64) {
+        self.ring_handoff
+            .note_settled(worker_id, active_ring_gen, seq);
+    }
+
+    pub fn exit_ring_worker(&self, worker_id: u64) {
+        self.ring_handoff.exit_worker(worker_id);
+    }
+
+    fn wait_ring_cleared(&self, generation: u32, cleared_seq: u64) {
+        if !self
+            .ring_handoff
+            .wait_cleared(cleared_seq, RING_CLEAR_WAIT_BUDGET)
+        {
+            dbglog!(
+                "[rlvd] frame ring {generation} clear wait timed out after {} ms (target={})",
+                RING_CLEAR_WAIT_BUDGET.as_millis(),
+                self.target_id()
+            );
         }
     }
 
@@ -266,13 +315,13 @@ impl Monitor {
     /// the swap-chain worker (it may be using the ring), then the ring, whose drop closes the
     /// host's handles. `gone` is set first, so a racing install hands its value back.
     pub fn teardown(&self) {
-        self.gone.store(true, Ordering::Release);
+        self.gone.store(true, Ordering::SeqCst);
         let started = Instant::now();
-        while self.ddi_inflight.load(Ordering::Acquire) != 0 {
+        while self.ddi_inflight.load(Ordering::SeqCst) != 0 {
             if started.elapsed() > DDI_DRAIN_BUDGET {
                 dbglog!(
                     "[rlvd] monitor teardown: {} DDI call(s) still in flight after {} ms",
-                    self.ddi_inflight.load(Ordering::Acquire),
+                    self.ddi_inflight.load(Ordering::SeqCst),
                     DDI_DRAIN_BUDGET.as_millis()
                 );
                 break;
@@ -289,7 +338,7 @@ impl Monitor {
 }
 
 /// Tear every removed monitor down, then depart the ones this call claims.
-fn depart(removed: Vec<Arc<Monitor>>) {
+pub(crate) fn depart(removed: Vec<Arc<Monitor>>) {
     for m in &removed {
         m.teardown();
     }
@@ -303,12 +352,11 @@ fn depart(removed: Vec<Arc<Monitor>>) {
     }
 }
 
-/// Depart every monitor of `owner` older than `grace` (the watchdog reap). Returns the count.
-pub fn reap_owner(owner: u32, grace: Duration) -> usize {
-    let removed = registry::remove(|m| m.owner == owner && m.created_at.elapsed() >= grace);
-    let n = removed.len();
-    depart(removed);
-    n
+/// Unlink every monitor of `owner` older than `grace` without departing them yet.
+/// Callers serializing selection against owner/handle state call this under that lock
+/// and pass the returned monitors to [`depart`] after releasing it.
+pub(crate) fn take_owner_monitors(owner: u32, grace: Duration) -> Vec<Arc<Monitor>> {
+    registry::remove(|m| m.owner == owner && m.created_at.elapsed() >= grace)
 }
 
 /// [`modes::signal_info`] stamped into the OS struct. Monitor modes pass divider 0, target
@@ -466,7 +514,7 @@ pub fn create_monitor(owner: u32, req: &AddRequest) -> Result<(u32, u32, u32, i3
     let st = unsafe { wdk_iddcx::IddCxMonitorCreate(adapter, &create_in, &mut create_out) };
     dbglog!("[rlvd] IddCxMonitorCreate(id={id}) -> {st:#x}");
     if !wdk_iddcx::nt_success(st) {
-        remove_by_id(id);
+        remove_entry(&monitor);
         return Err(st);
     }
     let object = create_out.MonitorObject;
@@ -478,7 +526,7 @@ pub fn create_monitor(owner: u32, req: &AddRequest) -> Result<(u32, u32, u32, i3
     dbglog!("[rlvd] IddCxMonitorArrival(id={id}) -> {st:#x}");
     if !wdk_iddcx::nt_success(st) {
         monitor.state.store(DEPARTED, Ordering::Release);
-        remove_by_id(id);
+        remove_entry(&monitor);
         // SAFETY: `object` never arrived, so no departure ran on it, and only this thread
         // deletes it.
         unsafe {
@@ -595,8 +643,8 @@ pub fn suspend_capture() {
     }
 }
 
-fn remove_by_id(id: u32) {
-    for m in registry::remove(|m| m.id == id) {
+fn remove_entry(target: &Arc<Monitor>) {
+    if let Some(m) = registry::remove_entry(target) {
         m.teardown();
     }
 }
@@ -611,16 +659,81 @@ pub fn alive(owner: u32, session_id: u64) -> bool {
     find_session(owner, session_id).is_some()
 }
 
-/// Drop `owner`'s ring for `session_id`. True if there was one.
+/// Drop `owner`'s ring for `session_id` and wait until the swap-chain worker has drained
+/// GPU reads and released it. True if there was one.
 pub fn clear_frame_ring(owner: u32, session_id: u64) -> bool {
-    find_session(owner, session_id)
-        .and_then(|m| m.take_ring())
-        .is_some()
+    let Some(monitor) = find_session(owner, session_id) else {
+        return false;
+    };
+    let Some((ring, seq)) = monitor.take_ring_with_seq() else {
+        return false;
+    };
+    let generation = ring.generation;
+    drop(ring);
+    monitor.wait_ring_cleared(generation, seq);
+    true
 }
 
-/// Drop `owner`'s ring for `session_id` if it is still the ring of `generation`.
+/// Drop `owner`'s ring for `session_id` if it is still the ring of `generation`, and wait
+/// until the swap-chain worker has drained GPU reads and released it.
 pub fn clear_frame_ring_generation(owner: u32, session_id: u64, generation: u32) -> bool {
-    find_session(owner, session_id)
-        .and_then(|m| m.take_ring_generation(generation))
-        .is_some()
+    let Some(monitor) = find_session(owner, session_id) else {
+        return false;
+    };
+    let Some((ring, seq)) = monitor.take_ring_generation_with_seq(generation) else {
+        return false;
+    };
+    drop(ring);
+    monitor.wait_ring_cleared(generation, seq);
+    true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Barrier;
+    use std::thread;
+
+    #[test]
+    fn dekker_ddi_guard_and_teardown_never_overlap() {
+        for _ in 0..200 {
+            let monitor = Arc::new(Monitor::pending(1, 1, 100, Vec::new()));
+            let in_ddi = Arc::new(AtomicU32::new(0));
+            let departed = Arc::new(AtomicBool::new(false));
+            let start = Arc::new(Barrier::new(3));
+
+            let mut callers = Vec::new();
+            for _ in 0..2 {
+                let m = monitor.clone();
+                let in_ddi = in_ddi.clone();
+                let departed = departed.clone();
+                let start = start.clone();
+                callers.push(thread::spawn(move || {
+                    start.wait();
+                    for _ in 0..50 {
+                        let Some(_guard) = m.ddi() else {
+                            break;
+                        };
+                        in_ddi.fetch_add(1, Ordering::SeqCst);
+                        assert!(
+                            !departed.load(Ordering::SeqCst),
+                            "DDI entered after teardown/departure"
+                        );
+                        thread::yield_now();
+                        in_ddi.fetch_sub(1, Ordering::SeqCst);
+                    }
+                }));
+            }
+
+            start.wait();
+            monitor.teardown();
+            departed.store(true, Ordering::SeqCst);
+            assert_eq!(in_ddi.load(Ordering::SeqCst), 0);
+            assert!(monitor.ddi().is_none());
+
+            for handle in callers {
+                handle.join().unwrap();
+            }
+        }
+    }
 }

@@ -173,11 +173,12 @@ struct Fences {
     context: ID3D11DeviceContext4,
 }
 
-/// The ring's textures opened on one device.
+/// The ring's textures opened on one device. Field order drops D3D11 textures and fences
+/// before `handles` closes the duplicated NT handles and header view.
 pub struct OpenRing {
-    handles: Arc<RingHandles>,
     slots: Vec<Slot>,
     fences: Option<Fences>,
+    handles: Arc<RingHandles>,
 }
 
 /// Why a ring did not open: a `ring::STATUS_*` and its detail for the header.
@@ -264,6 +265,11 @@ impl OpenRing {
         Arc::ptr_eq(&self.handles, handles)
     }
 
+    /// Whether this ring uses the D3D12/D3D11 GPU fence transport (no keyed mutexes).
+    pub fn is_fenced(&self) -> bool {
+        self.fences.is_some()
+    }
+
     pub fn header(&self) -> Header<'_> {
         self.handles.header()
     }
@@ -311,11 +317,14 @@ impl OpenRing {
         self.publish(device, image, desc, frame, false)
     }
 
-    /// Copy the newest published texture into `into` (same size and format) and return its
-    /// timing. In a keyed-mutex ring it is skipped, never waited for, while the host
-    /// holds that texture; in a fence ring only this producer writes, so a texture the host
-    /// may be reading is read here too, after this device's own copy into it.
+    /// Copy the newest published texture of a keyed-mutex ring into `into` (same size and
+    /// format) and return its timing. Returns `None` for fence rings (which have no keyed
+    /// mutex to synchronize cross-process reads against host teardown) and whenever the host
+    /// holds the texture's keyed mutex.
     pub fn copy_newest(&self, device: &Direct3DDevice, into: &ID3D11Texture2D) -> Option<Frame> {
+        if self.is_fenced() {
+            return None;
+        }
         let index = self
             .handles
             .picker
@@ -323,25 +332,18 @@ impl OpenRing {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .newest()?;
         let slot = &self.slots[index];
+        let mutex = slot.mutex.as_ref()?;
         // Consumed textures are back under KEY_DRIVER, unconsumed ones under KEY_HOST; the
         // mutex goes back with the key it was taken with, so the host's view is unchanged.
-        let key = match &slot.mutex {
-            Some(mutex) => Some(
-                [ring::KEY_DRIVER, ring::KEY_HOST]
-                    .into_iter()
-                    .find(|&key| try_acquire(mutex, key))?,
-            ),
-            None => None,
-        };
+        let key = [ring::KEY_DRIVER, ring::KEY_HOST]
+            .into_iter()
+            .find(|&key| try_acquire(mutex, key))?;
         let meta = self.handles.header().slot(index);
         // SAFETY: both textures are live on this device with the ring's size and format (the
-        // caller checked `into` with `fits`); this thread holds the slot's mutex, or the slot
-        // is a fence ring's, which only this thread writes.
+        // caller checked `into` with `fits`), and this thread holds the slot's keyed mutex.
         unsafe { device.device_context.CopyResource(into, &slot.texture) };
-        if let (Some(mutex), Some(key)) = (&slot.mutex, key) {
-            // SAFETY: taken above with `key` on this thread.
-            let _ = unsafe { mutex.ReleaseSync(key) };
-        }
+        // SAFETY: taken above with `key` on this thread.
+        let _ = unsafe { mutex.ReleaseSync(key) };
         Some(Frame {
             present_qpc: meta.present_qpc,
             acquire_qpc: meta.acquire_qpc,

@@ -92,6 +92,9 @@ pub unsafe extern "C" fn adapter_init_finished(
 /// then release every monitor's worker and ring. The framework departs the monitors.
 pub unsafe extern "C" fn device_cleanup(_object: WDFOBJECT) {
     dbglog!("[rlvd] device cleanup; releasing monitors");
+    let _requests = crate::adapter::POWER_GATE
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     crate::adapter::suspend();
     crate::watchdog::stop();
     crate::monitor::cleanup_for_device_removal();

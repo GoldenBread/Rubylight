@@ -25,7 +25,7 @@ use wdk_sys::iddcx::{
 use wdk_sys::{HANDLE, NTSTATUS, WDFOBJECT, call_unsafe_wdf_function_binding};
 use windows::Win32::Foundation::{HANDLE as WHANDLE, WAIT_OBJECT_0, WAIT_TIMEOUT};
 use windows::Win32::Graphics::Direct3D11::{
-    D3D11_TEXTURE2D_DESC, D3D11_USAGE_DEFAULT, ID3D11Texture2D,
+    D3D11_TEXTURE2D_DESC, D3D11_USAGE_DEFAULT, ID3D11Query, ID3D11Texture2D,
 };
 use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT, DXGI_SAMPLE_DESC};
 use windows::Win32::Graphics::Dxgi::{IDXGIDevice, IDXGIResource};
@@ -184,6 +184,10 @@ impl SwapChainProcessor {
         }
         drop(dxgi_device);
 
+        let Some(worker_guard) = WorkerRingGuard::enter(monitor) else {
+            return;
+        };
+        let worker_id = worker_guard.worker_id;
         let mut rings = RingState::default();
         let mut logged_frame = false;
         loop {
@@ -202,7 +206,7 @@ impl SwapChainProcessor {
             let Some(owner) = monitor.upgrade() else {
                 break;
             };
-            rings.refresh(&owner, device);
+            rings.refresh(&owner, device, worker_id);
             // Hand the strong count back before anything blocks.
             drop(owner);
             rings.beat();
@@ -291,6 +295,10 @@ impl SwapChainProcessor {
                 break;
             }
         }
+        // Drain any in-flight GPU work and drop OpenRing/RingHandles before unregistering
+        // this worker from the monitor's ring-clear handoff condvar.
+        rings.teardown(device);
+        drop(worker_guard);
     }
 }
 
@@ -305,13 +313,41 @@ impl Drop for SwapChainProcessor {
     }
 }
 
+/// Tracks one swap-chain worker's presence in `Monitor`'s ring-clear handoff. Entered before
+/// the first `monitor.ring()` read and dropped only after `RingState::teardown` drained D3D11
+/// and dropped `OpenRing`/`RingHandles`.
+struct WorkerRingGuard {
+    monitor: Weak<Monitor>,
+    worker_id: u64,
+}
+
+impl WorkerRingGuard {
+    fn enter(monitor: &Weak<Monitor>) -> Option<Self> {
+        let owner = monitor.upgrade()?;
+        let worker_id = owner.enter_ring_worker();
+        Some(Self {
+            monitor: monitor.clone(),
+            worker_id,
+        })
+    }
+}
+
+impl Drop for WorkerRingGuard {
+    fn drop(&mut self) {
+        if let Some(owner) = self.monitor.upgrade() {
+            owner.exit_ring_worker(self.worker_id);
+        }
+    }
+}
+
 /// The worker's view of the monitor's ring: the generation it last read and the ring opened
 /// on this worker's device.
 #[derive(Default)]
 struct RingState {
-    seen: Option<u32>,
+    seen: Option<u64>,
     handles: Option<Arc<RingHandles>>,
     open: Option<OpenRing>,
+    drain_query: Option<ID3D11Query>,
     retained: Retained,
 }
 
@@ -452,24 +488,45 @@ impl Retained {
 }
 
 impl RingState {
+    /// Drain all GPU work submitted against the open ring, then release `OpenRing` and
+    /// `RingHandles` so no cross-process shared textures or fences stay in flight on drop.
+    fn close_open_ring(&mut self, device: &Direct3DDevice) {
+        if self.open.is_some() {
+            device.drain_gpu(&mut self.drain_query);
+        }
+        self.open = None;
+        self.handles = None;
+    }
+
+    fn teardown(&mut self, device: &Direct3DDevice) {
+        self.close_open_ring(device);
+        self.drain_query = None;
+    }
+
     /// Re-read the ring when its generation moved, and open it on `device` once per ring.
-    fn refresh(&mut self, monitor: &Monitor, device: &Direct3DDevice) {
+    fn refresh(&mut self, monitor: &Monitor, device: &Direct3DDevice, worker_id: u64) {
         if self.seen == Some(monitor.ring_gen.load(Ordering::Acquire)) {
             return;
         }
-        let (generation, handles) = monitor.ring();
-        self.seen = Some(generation);
+        let (seq, handles) = monitor.ring();
+        self.seen = Some(seq);
         if let (Some(open), Some(h)) = (&self.open, &handles)
             && open.is(h)
         {
+            monitor.note_ring_settled(worker_id, Some(h.generation), seq);
             return;
         }
-        if let (Some(open), Some(old)) = (&self.open, &self.handles)
+        // Never touch host textures on ring clear (`handles` is `None`) or for a fence ring
+        // (no keyed mutex to synchronize cross-process reads against host teardown).
+        if handles.is_some()
+            && let (Some(open), Some(old)) = (&self.open, &self.handles)
+            && !open.is_fenced()
             && self.retained.pending.current().is_none()
         {
             self.retained.take_from(device, open, old);
         }
-        self.open = None;
+        self.close_open_ring(device);
+        monitor.note_ring_settled(worker_id, None, seq);
         self.handles = handles;
         let Some(h) = &self.handles else {
             return;
@@ -487,7 +544,9 @@ impl RingState {
                 );
                 monitor.stats.ring_open.store(true, Ordering::Release);
                 self.retained.seed(device, &mut open);
+                let generation = h.generation;
                 self.open = Some(open);
+                monitor.note_ring_settled(worker_id, Some(generation), seq);
             }
             Err((status, detail)) => {
                 dbglog!(
