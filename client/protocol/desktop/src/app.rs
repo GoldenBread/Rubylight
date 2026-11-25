@@ -309,9 +309,13 @@ pub(crate) fn remove_host(
     save_hosts(store, hosts)
 }
 
-/// Minimum analog stick/trigger magnitude treated as real controller activity for `PadPoll`
-/// active-hold and launcher idle wakeup (filters resting stick drift / noise, Nightjar #179).
-pub(crate) const GAMEPAD_ACTIVITY_AXIS_THRESHOLD: u16 = 4000;
+/// Minimum analog stick/trigger magnitude treated as real controller activity for streaming
+/// `PadPoll` active-hold (~3%, matching `direct_motion.rs`, Nightjar #179).
+pub(crate) const GAMEPAD_ACTIVITY_AXIS_THRESHOLD: u16 = 1024;
+
+/// Minimum analog stick/trigger magnitude that breaks an idle launcher out of
+/// `wait_launcher_events` when no navigation stick is held (~12%, filters stick drift, #179).
+pub(crate) const LAUNCHER_AXIS_WAKE_THRESHOLD: u16 = 4000;
 
 /// Minimum gyro angular velocity (rad/s, ~14 deg/s) treated as real controller motion; passive
 /// resting gyro bias and accelerometer gravity ticks do not hold 500 Hz polling active (#179).
@@ -359,8 +363,9 @@ pub(crate) fn is_gamepad_activity(event: &SDL_Event) -> bool {
 }
 
 /// Whether a launcher event should break out of [`App::wait_launcher_events`] and redraw a frame
-/// immediately. Passive controller sensor ticks and sub-threshold stick noise stay inside the
-/// wait loop when Controller Test is not open (Nightjar #179).
+/// immediately. Passive controller sensor ticks, raw joystick/update-complete events ignored by
+/// the launcher, and sub-threshold stick noise stay inside the wait loop when Controller Test is
+/// not open (Nightjar #179).
 pub(crate) fn launcher_event_wakes_frame(
     event: &SDL_Event,
     controller_test: bool,
@@ -372,10 +377,23 @@ pub(crate) fn launcher_event_wakes_frame(
     // SAFETY: union members read according to SDL event type.
     unsafe {
         match SDL_EventType(event.r#type) {
-            SDL_EVENT_GAMEPAD_SENSOR_UPDATE => false,
+            SDL_EVENT_GAMEPAD_SENSOR_UPDATE
+            | SDL_EVENT_SENSOR_UPDATE
+            | SDL_EVENT_GAMEPAD_UPDATE_COMPLETE
+            | SDL_EVENT_GAMEPAD_REMAPPED
+            | SDL_EVENT_GAMEPAD_STEAM_HANDLE_UPDATED
+            | SDL_EVENT_JOYSTICK_AXIS_MOTION
+            | SDL_EVENT_JOYSTICK_BALL_MOTION
+            | SDL_EVENT_JOYSTICK_HAT_MOTION
+            | SDL_EVENT_JOYSTICK_BUTTON_DOWN
+            | SDL_EVENT_JOYSTICK_BUTTON_UP
+            | SDL_EVENT_JOYSTICK_ADDED
+            | SDL_EVENT_JOYSTICK_REMOVED
+            | SDL_EVENT_JOYSTICK_BATTERY_UPDATED
+            | SDL_EVENT_JOYSTICK_UPDATE_COMPLETE => false,
             SDL_EVENT_GAMEPAD_AXIS_MOTION => {
                 stick_held.iter().any(|&held| held)
-                    || event.gaxis.value.unsigned_abs() > GAMEPAD_ACTIVITY_AXIS_THRESHOLD
+                    || event.gaxis.value.unsigned_abs() > LAUNCHER_AXIS_WAKE_THRESHOLD
             }
             _ => true,
         }

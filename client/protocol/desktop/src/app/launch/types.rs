@@ -59,19 +59,21 @@ pub(crate) fn base_probe_sticky(key: ProbeKey, found: &stream::color_probe::Base
     !v4l2_in_play
 }
 
-/// Reads the cached base probe for `key`, consuming a one-shot (`!sticky`) entry so the launch
-/// that ran the probe proceeds immediately while the next launch re-probes.
-pub(crate) fn take_or_get_base_probe(
-    cache: &mut Option<CachedBaseProbe>,
+/// Peeks the cached base probe for `key` without consuming a one-shot (`!sticky`) entry yet, so
+/// an intermediate probe (e.g. `ProbeWork::Packed`) on the same launch does not re-run
+/// `ColorAndBase`. Call [`consume_non_sticky_base_probe`] once `launch_ready` commits the launch.
+pub(crate) fn peek_base_probe(
+    cache: &Option<CachedBaseProbe>,
     key: ProbeKey,
 ) -> Option<stream::color_probe::Base> {
-    if !cache.as_ref().is_some_and(|entry| entry.key == key) {
-        return None;
-    }
-    if cache.as_ref().is_some_and(|entry| entry.sticky) {
-        cache.as_ref().map(|entry| entry.result.clone())
-    } else {
-        cache.take().map(|entry| entry.result)
+    cache.as_ref().filter(|entry| entry.key == key).map(|entry| entry.result.clone())
+}
+
+/// Clears a one-shot (`!sticky`) base probe entry for `key` once the triggering launch commits,
+/// leaving sticky entries cached for subsequent launches.
+pub(crate) fn consume_non_sticky_base_probe(cache: &mut Option<CachedBaseProbe>, key: ProbeKey) {
+    if cache.as_ref().is_some_and(|entry| entry.key == key && !entry.sticky) {
+        *cache = None;
     }
 }
 

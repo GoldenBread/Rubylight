@@ -312,7 +312,7 @@ pub(in crate::ui) fn resume_target(host: &Host) -> Option<i32> {
 /// settings ("Frame rate set for this PC").
 pub(in crate::ui) fn summary_sources(profile: Option<&crate::config::Profile>, pc: Option<&Overrides>, game: Option<&Overrides>) -> Vec<String> {
     use crate::config::{source, Source as Layer};
-    let rows: [(&str, &[&str]); 3] = [(en("Resolution"), &["width", "height"]), (en("Frame rate"), &["fps"]), (en("Bitrate"), &["bitrate_kbps"])];
+    let rows: [(&str, &[&str]); 3] = [(en("Resolution"), &["width", "height", "native_scale"]), (en("Frame rate"), &["fps"]), (en("Bitrate"), &["bitrate_kbps"])];
     rows.into_iter()
         .filter_map(|(name, keys)| match source(keys, profile, pc, game) {
             Layer::Main => None,

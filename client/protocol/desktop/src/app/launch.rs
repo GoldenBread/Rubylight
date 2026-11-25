@@ -552,7 +552,7 @@ impl App {
         let color_decodable = if color_asked { cached_color.unwrap_or_default() } else { (0, String::new()) };
         let plain_decodable = match hardware {
             Hardware::None => stream::color_probe::Base::software(),
-            _ => take_or_get_base_probe(&mut self.base_probed, base_key)
+            _ => peek_base_probe(&self.base_probed, base_key)
                 .unwrap_or_else(stream::color_probe::Base::software),
         };
         // An update on either side since the PC refused full chroma: it is asked again. Written
@@ -613,6 +613,9 @@ impl App {
         let (Some(identity), Some(host)) = (identity, self.hosts.get(host_id)) else {
             return;
         };
+        // All probe/guard early returns passed: consume any one-shot V4L2 base probe so the next
+        // launch probes again while this launch proceeds with `base_decodable`.
+        consume_non_sticky_base_probe(&mut self.base_probed, base_key);
         let display = display_of(self.window);
         log_display(self.window, display);
         self.launcher.display = display;

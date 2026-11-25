@@ -179,7 +179,7 @@ impl App {
         let frame = Duration::from_secs_f32(1.0 / display_of(self.window).refresh_hz.max(30.0));
         // SAFETY: a live window, read on the main thread.
         let seen = animations_seen(unsafe { SDL_GetWindowFlags(self.window) });
-        let timeout = if self.is_renderer_lost() { 0 } else if seen { self.gui.repaint_in(frame).map_or(timeout, |wait| timeout.min(wait.as_millis() as i32)) } else { timeout };
+        let timeout = if self.is_renderer_lost() { 0 } else if seen { self.gui.repaint_in(frame).map_or(timeout, |wait| timeout.min(ceil_ms(wait))) } else { timeout };
         self.wait_launcher_events(timeout, seen);
         if !self.running {
             return;

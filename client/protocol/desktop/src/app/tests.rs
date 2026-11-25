@@ -91,9 +91,9 @@ fn gamepad_activity_ignores_stick_jitter_and_passive_sensors() {
     assert!(is_gamepad_activity_parts(SDL_EVENT_GAMEPAD_TOUCHPAD_MOTION, None, None));
     assert!(is_gamepad_activity_parts(SDL_EVENT_GAMEPAD_ADDED, None, None));
     assert!(!is_gamepad_activity_parts(SDL_EVENT_GAMEPAD_AXIS_MOTION, Some(0), None));
-    assert!(!is_gamepad_activity_parts(SDL_EVENT_GAMEPAD_AXIS_MOTION, Some(4000), None));
-    assert!(!is_gamepad_activity_parts(SDL_EVENT_GAMEPAD_AXIS_MOTION, Some(-4000), None));
-    assert!(is_gamepad_activity_parts(SDL_EVENT_GAMEPAD_AXIS_MOTION, Some(4001), None));
+    assert!(!is_gamepad_activity_parts(SDL_EVENT_GAMEPAD_AXIS_MOTION, Some(1024), None));
+    assert!(!is_gamepad_activity_parts(SDL_EVENT_GAMEPAD_AXIS_MOTION, Some(-1024), None));
+    assert!(is_gamepad_activity_parts(SDL_EVENT_GAMEPAD_AXIS_MOTION, Some(1025), None));
     assert!(is_gamepad_activity_parts(SDL_EVENT_GAMEPAD_AXIS_MOTION, Some(-12000), None));
     assert!(!is_gamepad_activity_parts(SDL_EVENT_GAMEPAD_SENSOR_UPDATE, None, None), "accel ignored");
     assert!(!is_gamepad_activity_parts(SDL_EVENT_GAMEPAD_SENSOR_UPDATE, None, Some(0.02)), "resting gyro ignored");
@@ -101,17 +101,48 @@ fn gamepad_activity_ignores_stick_jitter_and_passive_sensors() {
     assert!(is_gamepad_activity_parts(SDL_EVENT_GAMEPAD_SENSOR_UPDATE, None, Some(0.5)), "active gyro wakes");
 
     // SAFETY: zero-initialized SDL_Event is valid plain data.
-    let mut sensor: SDL_Event = unsafe { std::mem::zeroed() };
-    sensor.r#type = SDL_EVENT_GAMEPAD_SENSOR_UPDATE.0;
-    assert!(!launcher_event_wakes_frame(&sensor, false, [false; 4]));
-    assert!(launcher_event_wakes_frame(&sensor, true, [false; 4]));
+    let make_event = |kind: SDL_EventType| -> SDL_Event {
+        let mut ev: SDL_Event = unsafe { std::mem::zeroed() };
+        ev.r#type = kind.0;
+        ev
+    };
+    for idle_kind in [
+        SDL_EVENT_GAMEPAD_SENSOR_UPDATE,
+        SDL_EVENT_SENSOR_UPDATE,
+        SDL_EVENT_GAMEPAD_UPDATE_COMPLETE,
+        SDL_EVENT_GAMEPAD_REMAPPED,
+        SDL_EVENT_GAMEPAD_STEAM_HANDLE_UPDATED,
+        SDL_EVENT_JOYSTICK_AXIS_MOTION,
+        SDL_EVENT_JOYSTICK_BALL_MOTION,
+        SDL_EVENT_JOYSTICK_HAT_MOTION,
+        SDL_EVENT_JOYSTICK_BUTTON_DOWN,
+        SDL_EVENT_JOYSTICK_BUTTON_UP,
+        SDL_EVENT_JOYSTICK_ADDED,
+        SDL_EVENT_JOYSTICK_REMOVED,
+        SDL_EVENT_JOYSTICK_BATTERY_UPDATED,
+        SDL_EVENT_JOYSTICK_UPDATE_COMPLETE,
+    ] {
+        let ev = make_event(idle_kind);
+        assert!(!launcher_event_wakes_frame(&ev, false, [false; 4]), "idle launcher ignores {}", idle_kind.0);
+        assert!(launcher_event_wakes_frame(&ev, true, [false; 4]), "controller test wakes on {}", idle_kind.0);
+    }
+    for wake_kind in [
+        SDL_EVENT_GAMEPAD_ADDED,
+        SDL_EVENT_GAMEPAD_REMOVED,
+        SDL_EVENT_GAMEPAD_BUTTON_DOWN,
+        SDL_EVENT_GAMEPAD_BUTTON_UP,
+        SDL_EVENT_GAMEPAD_TOUCHPAD_DOWN,
+    ] {
+        assert!(launcher_event_wakes_frame(&make_event(wake_kind), false, [false; 4]), "launcher wakes on {}", wake_kind.0);
+    }
 
-    let mut jitter: SDL_Event = unsafe { std::mem::zeroed() };
-    jitter.r#type = SDL_EVENT_GAMEPAD_AXIS_MOTION.0;
+    let mut jitter = make_event(SDL_EVENT_GAMEPAD_AXIS_MOTION);
     jitter.gaxis.value = 300;
     assert!(!launcher_event_wakes_frame(&jitter, false, [false; 4]));
+    jitter.gaxis.value = 4000;
+    assert!(!launcher_event_wakes_frame(&jitter, false, [false; 4]));
     assert!(launcher_event_wakes_frame(&jitter, false, [true, false, false, false]));
-    jitter.gaxis.value = 25_000;
+    jitter.gaxis.value = 4001;
     assert!(launcher_event_wakes_frame(&jitter, false, [false; 4]));
 }
 
@@ -136,8 +167,11 @@ fn v4l2_incomplete_base_probe_is_one_shot_not_sticky() {
     };
     assert!(!base_probe_sticky(key, &failed));
     let mut cache = Some(CachedBaseProbe { key, result: failed.clone(), sticky: false });
-    assert_eq!(take_or_get_base_probe(&mut cache, key), Some(failed), "triggering launch consumes result");
-    assert_eq!(take_or_get_base_probe(&mut cache, key), None, "next launch re-probes V4L2");
+    // Peeking survives intermediate early returns (e.g. ProbeWork::Packed) on the same launch.
+    assert_eq!(peek_base_probe(&cache, key), Some(failed.clone()));
+    assert_eq!(peek_base_probe(&cache, key), Some(failed), "peek preserves non-sticky probe until launch commits");
+    consume_non_sticky_base_probe(&mut cache, key);
+    assert_eq!(peek_base_probe(&cache, key), None, "next launch re-probes V4L2 after commit");
 
     let passed = stream::color_probe::Base {
         decodable: wanted,
@@ -146,8 +180,9 @@ fn v4l2_incomplete_base_probe_is_one_shot_not_sticky() {
     };
     assert!(base_probe_sticky(key, &passed));
     let mut sticky_cache = Some(CachedBaseProbe { key, result: passed.clone(), sticky: true });
-    assert_eq!(take_or_get_base_probe(&mut sticky_cache, key), Some(passed.clone()));
-    assert_eq!(take_or_get_base_probe(&mut sticky_cache, key), Some(passed), "full pass stays cached");
+    assert_eq!(peek_base_probe(&sticky_cache, key), Some(passed.clone()));
+    consume_non_sticky_base_probe(&mut sticky_cache, key);
+    assert_eq!(peek_base_probe(&sticky_cache, key), Some(passed), "full pass stays cached");
 
     let non_v4l2_key = (Hardware::Vaapi, VIDEO_FORMAT_AV1_MAIN8, false);
     let non_v4l2_fail = stream::color_probe::Base {
