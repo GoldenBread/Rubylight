@@ -79,7 +79,7 @@ public class AndroidAudioRenderer implements AudioRenderer {
     private int nativeStalls;
     static final int MAX_NATIVE_STALLS = 3;
 
-    private static native long nativeOpenAudio(int sampleRate, long concealer);
+    private static native long nativeOpenAudio(int sampleRate, int channels, int channelMask, long concealer);
     /**
      * nativeWriteAudio's answers: the buffer is in the ring; the AAudio callback took nothing for
      * 100 ms while the stream still runs (a short stall: the rest of the buffer is dropped, the
@@ -147,7 +147,8 @@ public class AndroidAudioRenderer implements AudioRenderer {
         if (!AudioBufferPolicy.useAAudio(Build.VERSION.SDK_INT, channels, enableAudioFx, sampleRate, nativeRate)) {
             return false;
         }
-        long opened = nativeOpenAudio(sampleRate, MoonBridge.audioConcealer());
+        // AAudio takes the native positional mask: AudioFormat's, shifted down two bits.
+        long opened = nativeOpenAudio(sampleRate, channels, channelConfig >>> 2, MoonBridge.audioConcealer());
         synchronized (nativeLock) {
             nativeAudio = opened;
         }

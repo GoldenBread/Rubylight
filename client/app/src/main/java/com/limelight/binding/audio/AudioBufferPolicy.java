@@ -252,7 +252,8 @@ final class AudioBufferPolicy {
     }
 
     static boolean useAAudio(int sdk, int channels, boolean effects, int sampleRate, int nativeRate) {
-        // Android 8.0's first AAudio implementation and surround/effects retain AudioTrack.
-        return sdk >= 27 && channels == 2 && !effects && sampleRate == nativeRate;
+        // Android 8.0's first AAudio implementation, surround before Android 12L (no positional
+        // channel mask), and effects retain AudioTrack.
+        return sdk >= (channels == 2 ? 27 : 32) && channels >= 2 && !effects && sampleRate == nativeRate;
     }
 }

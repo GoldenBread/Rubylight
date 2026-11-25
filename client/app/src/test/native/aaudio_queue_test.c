@@ -115,12 +115,32 @@ static void differentPacketAndCallbackCadencesRemainContinuous(void) {
     assert(atomic_load(&queue.underruns) == 0);
 }
 
+static void surroundFramesKeepTheirChannelsAcrossTheRingSeam(void) {
+    const uint32_t layouts[] = {6, 8, 12};
+    for (size_t idx = 0; idx < sizeof(layouts) / sizeof(layouts[0]); idx++) {
+        uint32_t channels = layouts[idx];
+        AudioQueue queue;
+        int16_t ring[16 * 12], input[12 * 12], output[12 * 12];
+        for (uint32_t i = 0; i < 12 * channels; i++) input[i] = (int16_t)(i + 1);
+        audioQueueInitChannels(&queue, ring, 16, 12, channels);
+        atomic_store(&queue.readFrames, 10);
+        atomic_store(&queue.writtenFrames, 10);
+        assert(audioQueueWrite(&queue, input, 12) == 12);
+        audioQueueRead(&queue, output, 12);
+        assert(memcmp(output, input, (size_t)12 * channels * sizeof(int16_t)) == 0);
+        audioQueueRead(&queue, output, 12);
+        for (uint32_t i = 0; i < 12 * channels; i++) assert(output[i] == 0);
+        assert(atomic_load(&queue.underruns) == 1);
+    }
+}
+
 int main(void) {
     startupWaitsForTheReserve();
     underrunRebuildsTheReserve();
     ringAndFrameCountersWrapWithoutChangingPcm();
     partialUnderrunWaitsForTheNewTarget();
     differentPacketAndCallbackCadencesRemainContinuous();
+    surroundFramesKeepTheirChannelsAcrossTheRingSeam();
     puts("AAudio queue tests passed");
     return 0;
 }

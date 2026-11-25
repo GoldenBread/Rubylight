@@ -15,9 +15,12 @@
 // One concealment call at most: 120 ms at 48 kHz, the longest an Opus decode may be.
 #define CONCEAL_MAX_FRAMES 5760
 #define FADE_MAX_FRAMES 480
+// The most channels a stream has: 7.1.4.
+#define AUDIO_MAX_CHANNELS 12
 // Stereo frames nativeWriteAudio copies out of the Java array at a time (4 KiB of stack): a
 // 10 ms packet at 48 kHz in one piece.
 #define AUDIO_WRITE_CHUNK_FRAMES 1024
+#define AUDIO_WRITE_CHUNK_SAMPLES (AUDIO_WRITE_CHUNK_FRAMES * 2)
 // How long nativeWriteAudio waits, in 1 ms steps, for the callback to make room before it calls
 // the output stalled.
 #define AUDIO_WRITE_STALL_WAITS 100
@@ -134,20 +137,28 @@ static uint32_t audioConceal(AudioOutput* output, int16_t* pcm, uint32_t frames)
 // cover them are skipped when they come, so latency returns to the reserve instead of growing.
 // When the ring plays again, its audio fades in from the concealment over 5 ms.
 static void audioFill(AudioOutput* output, int16_t* pcm, uint32_t frames) {
+    uint32_t channels = output->queue.channels;
     uint32_t played = audioQueueRead(&output->queue, pcm, frames);
     uint32_t limit = output->rate / 1000 * MAX_CONCEAL_MS;
     if (played) {
         if (output->concealing) {
-            int16_t tail[FADE_MAX_FRAMES * 2] = {0};
             uint32_t fade = output->rate / 200;
             if (fade > FADE_MAX_FRAMES) fade = FADE_MAX_FRAMES;
             if (fade > played) fade = played;
-            // Only what is left of the last concealment: the decoder is busy with the stalled packets.
-            uint32_t left = output->concealCount < fade ? output->concealCount : fade;
-            memcpy(tail, output->concealPcm + output->concealStart * 2, left * 2 * sizeof(int16_t));
-            for (uint32_t i = 0; i < fade * 2; i++) {
-                int32_t step = (int32_t)(i / 2);
-                pcm[i] = (int16_t)((pcm[i] * step + tail[i] * ((int32_t)fade - step)) / (int32_t)fade);
+            // Only what is left of the last concealment (stereo only): the decoder is busy with the stalled packets.
+            uint32_t left = channels == 2 ? (output->concealCount < fade ? output->concealCount : fade) : 0;
+            if (left > 0) {
+                const int16_t* tail = output->concealPcm + output->concealStart * 2;
+                for (uint32_t i = 0; i < fade * 2; i++) {
+                    int32_t step = (int32_t)(i / 2);
+                    int32_t from = (i / 2 < left) ? tail[i] : 0;
+                    pcm[i] = (int16_t)((pcm[i] * step + from * ((int32_t)fade - step)) / (int32_t)fade);
+                }
+            } else {
+                for (uint32_t i = 0; i < fade * channels; i++) {
+                    int32_t step = (int32_t)(i / channels);
+                    pcm[i] = (int16_t)((pcm[i] * step) / (int32_t)fade);
+                }
             }
             output->concealing = false;
             output->concealRun = output->concealCount = 0;
@@ -174,7 +185,7 @@ static void audioFill(AudioOutput* output, int16_t* pcm, uint32_t frames) {
     }
     if (output->concealRun < limit) {
         uint32_t room = limit - output->concealRun;
-        uint32_t concealed = audioConceal(output, pcm + played * 2, missing < room ? missing : room);
+        uint32_t concealed = audioConceal(output, pcm + (size_t)played * channels, missing < room ? missing : room);
         atomic_fetch_add_explicit(&output->concealedFrames, concealed, memory_order_relaxed);
     }
     output->concealRun += missing;
@@ -240,7 +251,7 @@ static void closeAudio(AudioOutput* output) {
 
 JNIEXPORT jlong JNICALL
 Java_com_limelight_binding_audio_AndroidAudioRenderer_nativeOpenAudio(JNIEnv* env, jclass clazz, jint rate,
-        jlong concealer) {
+        jint channels, jint channelMask, jlong concealer) {
     AudioOutput* output = calloc(1, sizeof(*output));
     if (!output) return 0;
     atomic_init(&output->stopped, false);
@@ -251,32 +262,39 @@ Java_com_limelight_binding_audio_AndroidAudioRenderer_nativeOpenAudio(JNIEnv* en
     atomic_init(&output->jitterGaps, 0);
     atomic_init(&output->stallGaps, 0);
     output->rate = (uint32_t)rate;
-    output->conceal = (int (*)(int16_t*, int))(intptr_t)concealer;
+    // The concealer decodes stereo only; a surround stall plays silence.
+    output->conceal = channels == 2 ? (int (*)(int16_t*, int))(intptr_t)concealer : NULL;
+    if (channels < 2 || channels > AUDIO_MAX_CHANNELS) goto failed;
     // Loading at runtime keeps API 25 installations (AAudio is API 26) independent of libaaudio.
     output->library = dlopen("libaaudio.so", RTLD_NOW | RTLD_LOCAL);
     if (!output->library) goto failed;
 #define AUDIO_LOAD(name) output->name = dlsym(output->library, #name); if (!output->name) goto failed;
     AUDIO_FUNCTIONS(AUDIO_LOAD)
 #undef AUDIO_LOAD
+    // API 32: without it AAudio cannot place surround channels, and AudioTrack plays the stream.
+    void (*setChannelMask)(AAudioStreamBuilder*, int32_t) = dlsym(output->library, "AAudioStreamBuilder_setChannelMask");
+    if (channels != 2 && (!setChannelMask || channelMask <= 0)) goto failed;
     AAudioStreamBuilder* builder = NULL;
     if (output->AAudio_createStreamBuilder(&builder) != AAUDIO_OK) goto failed;
     output->AAudioStreamBuilder_setDirection(builder, AAUDIO_DIRECTION_OUTPUT);
     output->AAudioStreamBuilder_setPerformanceMode(builder, AAUDIO_PERFORMANCE_MODE_LOW_LATENCY);
     output->AAudioStreamBuilder_setFormat(builder, AAUDIO_FORMAT_PCM_I16);
-    output->AAudioStreamBuilder_setChannelCount(builder, 2);
+    if (channels == 2) output->AAudioStreamBuilder_setChannelCount(builder, channels);
+    else setChannelMask(builder, channelMask);
     output->AAudioStreamBuilder_setSampleRate(builder, rate);
     void (*setUsage)(AAudioStreamBuilder*, aaudio_usage_t) = dlsym(output->library, "AAudioStreamBuilder_setUsage");
     if (setUsage) setUsage(builder, AAUDIO_USAGE_GAME);
     output->AAudioStreamBuilder_setDataCallback(builder, audioData, output);
     output->AAudioStreamBuilder_setErrorCallback(builder, audioError, output);
-    for (int attempt = 0; attempt < 2; attempt++) {
+    // Some TV HALs never answer an exclusive request for surround, so only stereo tries it.
+    for (int attempt = channels == 2 ? 0 : 1; attempt < 2; attempt++) {
         output->AAudioStreamBuilder_setSharingMode(builder, attempt == 0 ? AAUDIO_SHARING_MODE_EXCLUSIVE : AAUDIO_SHARING_MODE_SHARED);
         if (output->AAudioStreamBuilder_openStream(builder, &output->stream) != AAUDIO_OK) {
             output->stream = NULL;
             continue;
         }
         if (output->AAudioStream_getSampleRate(output->stream) == rate &&
-                output->AAudioStream_getChannelCount(output->stream) == 2 &&
+                output->AAudioStream_getChannelCount(output->stream) == channels &&
                 output->AAudioStream_getFormat(output->stream) == AAUDIO_FORMAT_PCM_I16 &&
                 output->AAudioStream_getPerformanceMode(output->stream) == AAUDIO_PERFORMANCE_MODE_LOW_LATENCY) break;
         output->AAudioStream_close(output->stream);
@@ -290,11 +308,11 @@ Java_com_limelight_binding_audio_AndroidAudioRenderer_nativeOpenAudio(JNIEnv* en
     // A power-of-two ring also preserves the index when the 32-bit counters wrap.
     uint32_t ringCapacity = 1;
     while (ringCapacity < (uint32_t)burst * 16) ringCapacity *= 2;
-    output->queue.samples = calloc(ringCapacity * 2, sizeof(int16_t));
+    output->queue.samples = calloc((size_t)ringCapacity * (size_t)channels, sizeof(int16_t));
     if (!output->queue.samples) goto failed;
     int target = output->AAudioStream_setBufferSizeInFrames(output->stream, burst * 2);
     if (target <= 0) goto failed;
-    audioQueueInit(&output->queue, output->queue.samples, ringCapacity, (uint32_t)burst * 2);
+    audioQueueInitChannels(&output->queue, output->queue.samples, ringCapacity, (uint32_t)burst * 2, (uint32_t)channels);
     if (output->AAudioStream_requestStart(output->stream) != AAUDIO_OK) goto failed;
     return (jlong)(intptr_t)output;
 failed:
@@ -313,9 +331,11 @@ static bool audioStreamStopped(AudioOutput* output) {
 }
 
 static uint32_t writeAudioFrames(AudioOutput* output, const int16_t* pcm, uint32_t frames, int* waits) {
+    uint32_t channels = output->queue.channels;
+    if (!channels) return 0;
     uint32_t done = 0;
     while (done < frames && !atomic_load(&output->stopped)) {
-        uint32_t count = audioQueueWrite(&output->queue, pcm + done * 2, frames - done);
+        uint32_t count = audioQueueWrite(&output->queue, pcm + (size_t)done * channels, frames - done);
         if (!count) {
             // Counted since the callback last made room: a reserve smaller than a packet
             // waits for it on every write, and only a callback that stops draining stalls.
@@ -334,17 +354,19 @@ JNIEXPORT jint JNICALL
 Java_com_limelight_binding_audio_AndroidAudioRenderer_nativeWriteAudio(JNIEnv* env, jclass clazz,
         jlong handle, jshortArray samples, jint length) {
     AudioOutput* output = (AudioOutput*)(intptr_t)handle;
-    if (!output || !samples || length < 0 || length > (*env)->GetArrayLength(env, samples) || length % 2) return AUDIO_WRITE_STOPPED;
+    uint32_t channels = output ? output->queue.channels : 0;
+    if (!output || !samples || channels == 0 || channels > AUDIO_MAX_CHANNELS || length < 0 ||
+            length > (*env)->GetArrayLength(env, samples) || length % (jint)channels) return AUDIO_WRITE_STOPPED;
     // The samples come over in stack-sized pieces (GetShortArrayRegion): GetShortArrayElements on
     // a movable array has ART allocate a copy and free it again for every packet.
-    jshort chunk[AUDIO_WRITE_CHUNK_FRAMES * 2];
-    uint32_t frames = (uint32_t)length / 2;
+    jshort chunk[AUDIO_WRITE_CHUNK_SAMPLES];
+    uint32_t frames = (uint32_t)length / channels;
     uint32_t position = 0;
     int waits = 0;
     while (position < frames && !atomic_load(&output->stopped)) {
         uint32_t pieceFrames = frames - position;
-        if (pieceFrames > AUDIO_WRITE_CHUNK_FRAMES) pieceFrames = AUDIO_WRITE_CHUNK_FRAMES;
-        (*env)->GetShortArrayRegion(env, samples, (jsize)(position * 2), (jsize)(pieceFrames * 2), chunk);
+        if (pieceFrames > AUDIO_WRITE_CHUNK_SAMPLES / channels) pieceFrames = AUDIO_WRITE_CHUNK_SAMPLES / channels;
+        (*env)->GetShortArrayRegion(env, samples, (jsize)(position * channels), (jsize)(pieceFrames * channels), chunk);
         uint32_t done = writeAudioFrames(output, chunk, pieceFrames, &waits);
         position += done;
         if (done < pieceFrames) break;
@@ -354,7 +376,7 @@ Java_com_limelight_binding_audio_AndroidAudioRenderer_nativeWriteAudio(JNIEnv* e
     return audioStreamStopped(output) ? AUDIO_WRITE_STOPPED : AUDIO_WRITE_STALLED;
 }
 
-// Writes stereo PCM directly from native memory into the lock-free AAudio ring without a Java short[] copy.
+// Writes interleaved PCM directly from native memory into the lock-free AAudio ring without a Java short[] copy.
 JNIEXPORT jint JNICALL
 Java_com_limelight_binding_audio_AndroidAudioRenderer_nativeWriteAudioDirect(JNIEnv* env, jclass clazz,
         jlong handle, jlong pcmPtr, jint frames) {
@@ -362,7 +384,7 @@ Java_com_limelight_binding_audio_AndroidAudioRenderer_nativeWriteAudioDirect(JNI
     (void)clazz;
     AudioOutput* output = (AudioOutput*)(intptr_t)handle;
     const int16_t* pcm = (const int16_t*)(intptr_t)pcmPtr;
-    if (!output || !pcm || frames < 0) return AUDIO_WRITE_STOPPED;
+    if (!output || !pcm || !output->queue.channels || frames < 0) return AUDIO_WRITE_STOPPED;
     int waits = 0;
     uint32_t done = writeAudioFrames(output, pcm, (uint32_t)frames, &waits);
     if (atomic_load(&output->stopped)) return AUDIO_WRITE_STOPPED;

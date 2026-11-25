@@ -284,6 +284,75 @@ static void writesComeOverInPieces(void) {
 static aaudio_stream_state_t streamState = AAUDIO_STREAM_STATE_STARTED;
 static aaudio_stream_state_t fakeState(AAudioStream* stream) { (void)stream; return streamState; }
 
+// Surround streams (5.1 and 7.1.4): Java arrays and direct native pointers keep every channel in
+// order, invalid or uninitialized channel counts are refused safely, and a stall fades back in on
+// every channel from silence without a stereo concealer.
+static void surroundWritesAndFadesKeepEveryChannel(void) {
+    static AudioOutput output, stalled, zeroChannels;
+    static int16_t ring[8192 * 12], stalledRing[8192 * 12], input[1000 * 12], pcm[864 * 12];
+    const struct JNINativeInterface functions = {
+        .GetArrayLength = arrayLength,
+        .GetShortArrayRegion = shortRegion,
+    };
+    JNIEnv env = &functions;
+
+    // Uninitialized output (channels == 0) must be refused without dividing by zero.
+    memset(&zeroChannels, 0, sizeof(zeroChannels));
+    FakeShorts probe = {12, input};
+    assert(Java_com_limelight_binding_audio_AndroidAudioRenderer_nativeWriteAudio(&env, NULL,
+            (jlong)(intptr_t)&zeroChannels, (jshortArray)&probe, 12) == AUDIO_WRITE_STOPPED);
+    assert(Java_com_limelight_binding_audio_AndroidAudioRenderer_nativeWriteAudioDirect(&env, NULL,
+            (jlong)(intptr_t)&zeroChannels, (jlong)(intptr_t)input, 2) == AUDIO_WRITE_STOPPED);
+
+    const uint32_t layouts[] = {6, 12};
+    for (size_t idx = 0; idx < sizeof(layouts) / sizeof(layouts[0]); idx++) {
+        uint32_t channels = layouts[idx];
+        for (uint32_t i = 0; i < 1000 * channels; i++) input[i] = (int16_t)(1000 * (i % channels + 1));
+        FakeShorts packet = {(jsize)(1000 * channels), input};
+
+        memset(&output, 0, sizeof(output));
+        audioQueueInitChannels(&output.queue, ring, 8192, 8192, channels);
+        jlong handle = (jlong)(intptr_t)&output;
+        regionCalls = 0;
+        assert(Java_com_limelight_binding_audio_AndroidAudioRenderer_nativeWriteAudio(&env, NULL, handle,
+                (jshortArray)&packet, (jint)(1000 * channels)) == AUDIO_WRITE_DONE);
+        assert(regionCalls == (int)((1000 + AUDIO_WRITE_CHUNK_SAMPLES / channels - 1) / (AUDIO_WRITE_CHUNK_SAMPLES / channels)));
+        assert(atomic_load(&output.queue.writtenFrames) == 1000);
+        assert(memcmp(ring, input, (size_t)1000 * channels * sizeof(int16_t)) == 0);
+        // A length that is not whole frames is refused.
+        assert(Java_com_limelight_binding_audio_AndroidAudioRenderer_nativeWriteAudio(&env, NULL, handle,
+                (jshortArray)&packet, (jint)(1000 * channels - 1)) == AUDIO_WRITE_STOPPED);
+        assert(atomic_load(&output.queue.writtenFrames) == 1000);
+
+        // Shared writeAudioFrames via nativeWriteAudioDirect uses output->queue.channels too.
+        memset(&output, 0, sizeof(output));
+        audioQueueInitChannels(&output.queue, ring, 8192, 8192, channels);
+        assert(Java_com_limelight_binding_audio_AndroidAudioRenderer_nativeWriteAudioDirect(&env, NULL,
+                (jlong)(intptr_t)&output, (jlong)(intptr_t)input, 1000) == AUDIO_WRITE_DONE);
+        assert(atomic_load(&output.queue.writtenFrames) == 1000);
+        assert(memcmp(ring, input, (size_t)1000 * channels * sizeof(int16_t)) == 0);
+
+        // Played, then dry: silence, then the audio that comes back fades in over 5 ms (240 frames).
+        memset(&stalled, 0, sizeof(stalled));
+        audioQueueInitChannels(&stalled.queue, stalledRing, 8192, 864, channels);
+        stalled.rate = 48000;
+        assert(audioQueueWrite(&stalled.queue, input, 864) == 864);
+        audioFill(&stalled, pcm, 864);
+        assert(!stalled.concealing && pcm[0] == 1000 && pcm[channels - 1] == (int16_t)(1000 * channels));
+        audioFill(&stalled, pcm, 864);
+        assert(stalled.concealing && allEqual(pcm, 864 * channels, 0));
+        assert(audioQueueWrite(&stalled.queue, input, 864) == 864);
+        audioFill(&stalled, pcm, 864);
+        assert(!stalled.concealing);
+        for (uint32_t channel = 0; channel < channels; channel++) {
+            assert(pcm[channel] == 0);
+            assert(pcm[channels * 120 + channel] == (int16_t)(500 * (channel + 1)));
+            assert(pcm[channels * 240 + channel] == (int16_t)(1000 * (channel + 1)));
+            assert(pcm[channels * 863 + channel] == (int16_t)(1000 * (channel + 1)));
+        }
+    }
+}
+
 // An AAudio callback that drains 50 frames every 40 ms, four times: slower than one write's
 // 100 ms of waiting in total, but never 100 ms without room.
 static void* slowCallback(void* context) {
@@ -440,6 +509,7 @@ int main(void) {
     stallsAreConcealedAndTheirPacketsSkipped();
     gapsAreJitterOrStalls();
     writesComeOverInPieces();
+    surroundWritesAndFadesKeepEveryChannel();
     stallsAreToldApartFromStoppedStreams();
     anAbortEndsAWriteWaitingOnAFullRing();
     puts("AAudio output tests passed");
