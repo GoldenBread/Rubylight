@@ -91,7 +91,16 @@ final class AudioEncodedOutput {
                 .setTransferMode(AudioTrack.MODE_STREAM)
                 .setBufferSizeInBytes(bufferBytes)
                 .build();
-        created.play();
+        return startTrack(created);
+    }
+
+    static AudioTrack startTrack(AudioTrack created) {
+        try {
+            created.play();
+        } catch (RuntimeException e) {
+            created.release();
+            throw e;
+        }
         return created;
     }
 

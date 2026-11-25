@@ -181,9 +181,9 @@ public class AndroidAudioOutputTest {
         renderer.cleanup();
     }
 
-    // Surround never takes AAudio, and the fast path is not granted to a 6 or 8 channel track: it runs on the
-    // normal mixer. On a Retroid Pocket 6 the 5.1 minimum is 3844 frames; the old two-packet buffer underran
-    // 118 times a minute there.
+    // With effects on (or before Android 12L), surround takes AudioTrack, and the fast path is not granted
+    // to a 6 or 8 channel track: it runs on the normal mixer. On a Retroid Pocket 6 the 5.1 minimum is 3844
+    // frames; the old two-packet buffer underran 118 times a minute there.
     @Test public void surroundTracksRefusedTheFastPathKeepTheirMinimumAndSizeBytesPerChannel() {
         int[][] layouts = {{6, 0x3F}, {8, 0x63F}};
         for (int[] layout : layouts) {
@@ -334,5 +334,45 @@ public class AndroidAudioOutputTest {
         renderer.stop();
         renderer.playEncodedAudio(new byte[2560], 2560);
         assertTrue(renderer.writes.isEmpty());
+    }
+
+    @Test public void aaudioPositionalMasksShiftDownFromAndroidChannelConfigs() {
+        assertEquals(0x3, AudioOutputSupport.channelConfig(2) >>> 2);
+        assertEquals(0x33, AudioOutputSupport.channelConfig(4) >>> 2);
+        assertEquals(0x3F, AudioOutputSupport.channelConfig(6) >>> 2);
+        assertEquals(0x63F, AudioOutputSupport.channelConfig(8) >>> 2);
+    }
+
+    @Test
+    @Config(sdk = 32)
+    public void aaudioPositionalMaskIncludesSevenOneFourFromApi32() {
+        assertEquals(0x2D63F, AudioOutputSupport.channelConfig(Surround714.CHANNELS) >>> 2);
+    }
+
+    @Test public void passthroughTrackIsReleasedWhenPlayThrows() {
+        boolean[] released = {false};
+        AudioTrack failing = new AudioTrack(
+                AudioPassthrough.attributes(),
+                AudioPassthrough.format(android.media.AudioFormat.ENCODING_AC3,
+                        android.media.AudioFormat.CHANNEL_OUT_5POINT1),
+                2 * AudioPassthrough.MAX_FRAME_BYTES,
+                AudioTrack.MODE_STREAM,
+                android.media.AudioManager.AUDIO_SESSION_ID_GENERATE) {
+            @Override public void play() {
+                throw new IllegalStateException("HDMI route changed");
+            }
+
+            @Override public void release() {
+                released[0] = true;
+                super.release();
+            }
+        };
+        try {
+            AudioEncodedOutput.startTrack(failing);
+            fail("Expected play() failure to propagate");
+        } catch (IllegalStateException expected) {
+            assertEquals("HDMI route changed", expected.getMessage());
+        }
+        assertTrue("Exclusive passthrough AudioTrack must be released when play() throws", released[0]);
     }
 }
