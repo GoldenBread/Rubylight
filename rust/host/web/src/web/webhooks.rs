@@ -26,8 +26,7 @@ pub(super) fn handle(h: &Shared, method: &str, path: &str, data: &Value) -> anyh
         }
         ("POST", "/api/webhooks/delete") => {
             let url = text("url");
-            super::config::save_setting(h, "webhooks", |stored| {
-                let mut hooks = stored_hooks(stored)?;
+            save_webhooks(h, |hooks| {
                 let before = hooks.len();
                 hooks.retain(|hook| hook.url != url);
                 if hooks.len() == before {
@@ -36,14 +35,14 @@ pub(super) fn handle(h: &Shared, method: &str, path: &str, data: &Value) -> anyh
                         butterpollo_stream::webhooks::origin(url)
                     );
                 }
-                Ok(serde_json::to_string(&hooks)?)
+                Ok(())
             })?;
             h.webhooks.forget(url);
             json!({"status": true})
         }
         ("POST", "/api/webhooks/test") => {
             let url = text("url");
-            let hook = butterpollo_session::webhook::from_config(&h.config.read().unwrap())
+            let hook = webhook::load_from_profile(&h.config.read().unwrap(), &h.directory)
                 .into_iter()
                 .find(|hook| hook.url == url)
                 .ok_or_else(|| {
@@ -70,7 +69,7 @@ pub(super) fn handle(h: &Shared, method: &str, path: &str, data: &Value) -> anyh
 
 fn list(h: &Shared) -> Value {
     let stored = h.config.read().unwrap().get("webhooks", "[]").to_owned();
-    let (hooks, error) = match webhook::parse_webhooks(&stored) {
+    let (hooks, error) = match webhook::parse_webhooks_allow_empty_secrets(&stored) {
         Ok(hooks) => (hooks, None),
         Err(error) => (Vec::new(), Some(error.to_string())),
     };
@@ -93,14 +92,54 @@ fn list(h: &Shared) -> Value {
     })
 }
 
-/// The saved hooks, refusing to overwrite a value that does not parse: it
-/// could hold hooks the user still wants.
-fn stored_hooks(stored: Option<&str>) -> anyhow::Result<Vec<Webhook>> {
-    webhook::parse_webhooks(stored.unwrap_or("[]")).map_err(|error| {
-        anyhow::anyhow!(
-            "the saved webhooks setting is broken ({error}): fix or remove it in the host config"
-        )
-    })
+/// The saved hooks with their secrets resolved from the secret store (falling back to inline
+/// secrets only for pre-migration configs), refusing to overwrite a value that does not parse.
+fn stored_hooks(stored: Option<&str>, directory: &std::path::Path) -> anyhow::Result<Vec<Webhook>> {
+    let mut hooks = webhook::parse_webhooks_allow_empty_secrets(stored.unwrap_or("[]")).map_err(
+        |error| {
+            anyhow::anyhow!(
+                "the saved webhooks setting is broken ({error}): fix or remove it in the host config"
+            )
+        },
+    )?;
+    let secrets = webhook::load_secrets(&webhook::secrets_path(directory))?;
+    for hook in &mut hooks {
+        if let Some(secret) = secrets.get(&hook.url).filter(|s| !s.is_empty()) {
+            hook.secret = secret.clone();
+        }
+    }
+    Ok(hooks)
+}
+
+/// Applies `edit` to the stored hooks, writes secret-free metadata to `sunshine.conf`, and
+/// saves webhook secrets in the protected secret store.
+fn save_webhooks(
+    h: &Shared,
+    edit: impl FnOnce(&mut Vec<Webhook>) -> anyhow::Result<()>,
+) -> anyhow::Result<()> {
+    let mut secrets_to_save = None;
+    let mut edit = Some(edit);
+    super::config::save_setting(h, "webhooks", |stored| {
+        let mut hooks = stored_hooks(stored, &h.directory)?;
+        edit.take().unwrap()(&mut hooks)?;
+        for hook in &hooks {
+            if hook.secret.is_empty() {
+                anyhow::bail!(
+                    "webhook for {} has no signing secret; replace or rotate its secret first",
+                    butterpollo_stream::webhooks::origin(&hook.url)
+                );
+            }
+        }
+        let (text, secrets) = webhook::split_for_storage(&hooks)?;
+        // Run the same event/URL validation the host uses when reading the setting.
+        webhook::parse_webhooks_allow_empty_secrets(&text)?;
+        secrets_to_save = Some(secrets);
+        Ok(text)
+    })?;
+    if let Some(secrets) = secrets_to_save {
+        webhook::save_secrets(&webhook::secrets_path(&h.directory), &secrets)?;
+    }
+    Ok(())
 }
 
 /// Whether `host` is this PC or a link-local address: services there (the
@@ -143,8 +182,7 @@ fn save(
         );
     }
     let mut revealed = None;
-    super::config::save_setting(h, "webhooks", |stored| {
-        let mut hooks = stored_hooks(stored)?;
+    save_webhooks(h, |hooks| {
         let at = match previous {
             Some(previous) => Some(
                 hooks
@@ -170,11 +208,16 @@ fn save(
         match at {
             Some(at) => {
                 let hook = &mut hooks[at];
-                let moved =
-                    !url::Url::parse(&hook.url).is_ok_and(|before| before.host() == parsed.host());
+                // Comparing scheme, host and effective port ensures switching scheme or port
+                // rotates the signing secret rather than sharing it across different endpoints (`HS-L28`).
+                let moved = !url::Url::parse(&hook.url).is_ok_and(|before| {
+                    before.scheme() == parsed.scheme()
+                        && before.host() == parsed.host()
+                        && before.port_or_known_default() == parsed.port_or_known_default()
+                });
                 hook.url = url.to_owned();
                 hook.events = events;
-                if rotate || moved {
+                if rotate || moved || hook.secret.is_empty() {
                     hook.secret = fresh();
                     revealed = Some(hook.secret.clone());
                 }
@@ -195,10 +238,7 @@ fn save(
                 });
             }
         }
-        let text = serde_json::to_string(&hooks)?;
-        // The same checks the host applies when it reads the setting.
-        webhook::parse_webhooks(&text)?;
-        Ok(text)
+        Ok(())
     })?;
     if let Some(previous) = previous
         && previous != url

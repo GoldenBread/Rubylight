@@ -20,7 +20,11 @@ async fn list(f: &Fixture) -> Value {
 
 fn stored(f: &Fixture) -> Vec<butterpollo_session::webhook::Webhook> {
     let saved = Config::load(&f.host.config_path).unwrap();
-    butterpollo_session::webhook::parse_webhooks(saved.get("webhooks", "[]")).unwrap()
+    assert!(
+        !saved.get("webhooks", "[]").contains("\"secret\""),
+        "webhook secrets must not be stored in sunshine.conf"
+    );
+    butterpollo_session::webhook::load_from_profile(&saved, &f.host.directory)
 }
 
 #[tokio::test]
@@ -39,7 +43,11 @@ async fn a_hook_is_added_edited_and_deleted_and_its_secret_shown_once() {
     assert!(secret.chars().all(|c| c.is_ascii_hexdigit()));
     assert_eq!(stored(&f)[0].secret, secret);
     assert_eq!(
-        butterpollo_session::webhook::from_config(&f.host.config.read().unwrap())[0].secret,
+        butterpollo_session::webhook::load_from_profile(
+            &f.host.config.read().unwrap(),
+            &f.host.directory
+        )[0]
+        .secret,
         secret
     );
 
@@ -96,10 +104,50 @@ async fn a_hook_is_added_edited_and_deleted_and_its_secret_shown_once() {
     assert_eq!(stored(&f)[0].secret, fresh);
     let moved = elsewhere;
 
+    // Moved to another scheme or port on the same host also rotates the secret (HS-L28).
+    let same_origin_default = "http://192.168.1.20:8123/other";
+    let (status, same_origin) = post(
+        &f,
+        "/api/webhooks",
+        json!({"url": same_origin_default, "events": ["pairing.paired"], "previous": moved}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{same_origin}");
+    assert!(
+        same_origin["secret"].is_null(),
+        "same scheme+host+port keeps secret"
+    );
+    let moved = same_origin_default;
+
+    let other_port = "http://192.168.1.20:9000/api/webhook/rubylight";
+    let (status, port_changed) = post(
+        &f,
+        "/api/webhooks",
+        json!({"url": other_port, "events": ["pairing.paired"], "previous": moved}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{port_changed}");
+    let fresh_port = port_changed["secret"].as_str().unwrap().to_owned();
+    assert_ne!(fresh_port, fresh);
+    let moved = other_port;
+
+    let other_scheme = "https://192.168.1.20:9000/api/webhook/rubylight";
+    let (status, scheme_changed) = post(
+        &f,
+        "/api/webhooks",
+        json!({"url": other_scheme, "events": ["pairing.paired"], "previous": moved}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{scheme_changed}");
+    let fresh_scheme = scheme_changed["secret"].as_str().unwrap().to_owned();
+    assert_ne!(fresh_scheme, fresh_port);
+    let moved = other_scheme;
+
     let (status, _) = post(&f, "/api/webhooks/delete", json!({"url": moved})).await;
     assert_eq!(status, StatusCode::OK);
     assert!(stored(&f).is_empty());
     assert_eq!(list(&f).await["hooks"], json!([]));
+
     let (status, _) = post(&f, "/api/webhooks/delete", json!({"url": moved})).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 }

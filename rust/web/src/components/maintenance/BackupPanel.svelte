@@ -6,6 +6,7 @@
   import Toggle from '../Toggle.svelte';
   import { api, type BackupInspection } from '../../lib/api';
   import { confirm, failed, notify } from '../../lib/feedback.svelte';
+  import { session } from '../../lib/session.svelte';
   import { backupFileName, changeLabel, fileProblem, restoreNote } from './backup';
   import { backAfterRestart } from './host';
   import { reason } from './util';
@@ -91,8 +92,17 @@
     if (!alive) return;
     restoring = false;
     inspection = null;
-    if (back) notify('Settings restored. Rubylight restarted.', 'ok');
-    else late = true;
+    if (back) {
+      const restoreWarning = session.metadata?.warnings.find((w) => w.code === 'settings_restore');
+      if (restoreWarning) {
+        problem = restoreWarning.message;
+        failed('Settings restore failed', restoreWarning.message);
+      } else {
+        notify('Settings restored. Rubylight restarted.', 'ok');
+      }
+    } else {
+      late = true;
+    }
   }
 </script>
 

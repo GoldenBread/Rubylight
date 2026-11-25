@@ -8,6 +8,7 @@
   import Toggle from '../Toggle.svelte';
   import NumberField from './NumberField.svelte';
   import type { NvidiaEnhancements } from '../../lib/api';
+  import { link } from '../../lib/router.svelte';
   import type { AppDraft } from './draft.svelte';
 
   let { draft, offered }: { draft: AppDraft; offered: NvidiaEnhancements } = $props();
@@ -18,7 +19,7 @@
 <div class="rtx">
   {#if !offered.component.installed}
     <Banner tone="info" title="Needs the NVIDIA components">
-      Download them in <a href="/settings/picture#integrations">Settings › Picture › Integrations</a>; RTX HDR and RTX
+      Download them in <a href="/settings/picture#integrations" use:link>Settings › Picture › Integrations</a>; RTX HDR and RTX
       Video enhancement show here once they are installed.
     </Banner>
   {:else}

@@ -13,6 +13,9 @@ pub async fn request(f: &Fixture, method: &str, path: &str, data: Value) -> Resp
     request_with(f, method, path, data, &[]).await
 }
 
+/// Cached parity credentials so test helpers don't re-run 600k-round PBKDF2 per request.
+static PARITY_CREDENTIALS: std::sync::OnceLock<Credentials> = std::sync::OnceLock::new();
+
 /// [`request`] with extra request headers.
 pub async fn request_with(
     f: &Fixture,
@@ -21,15 +24,44 @@ pub async fn request_with(
     data: Value,
     headers: &[(&str, &str)],
 ) -> Response {
-    // On disk too: the host takes up the sign-in the file holds.
-    let credentials = Credentials::new("parity".into(), "parity-test").unwrap();
-    f.host.save_credentials(&credentials).unwrap();
-    *f.host.credentials.write().unwrap() = Some(credentials);
+    // On disk too: the host takes up the sign-in the file holds (unless already parity).
+    let already_parity = f
+        .host
+        .credentials
+        .read()
+        .unwrap()
+        .as_ref()
+        .is_some_and(|c| c.username == "parity");
+    if !already_parity {
+        let credentials = PARITY_CREDENTIALS
+            .get_or_init(|| Credentials::new("parity".into(), "parity-test").unwrap())
+            .clone();
+        f.host.save_credentials(&credentials).unwrap();
+        *f.host.credentials.write().unwrap() = Some(credentials);
+    }
+    let has_auth = headers.iter().any(|(name, _)| {
+        name.eq_ignore_ascii_case(header::AUTHORIZATION.as_str())
+            || name.eq_ignore_ascii_case(header::COOKIE.as_str())
+    });
     let mut builder = Request::builder()
         .method(method)
         .uri(path)
-        .header(header::AUTHORIZATION, "Basic cGFyaXR5OnBhcml0eS10ZXN0")
         .header(header::CONTENT_TYPE, "application/json");
+    if !has_auth {
+        let (access, _, csrf, _) = f
+            .host
+            .new_web_session(
+                "parity".into(),
+                false,
+                "test".into(),
+                "127.0.0.1".into(),
+                None,
+            )
+            .unwrap();
+        builder = builder
+            .header(header::COOKIE, format!("__Host-apollo_session={access}"))
+            .header("X-CSRF-Token", csrf);
+    }
     for (name, value) in headers {
         builder = builder.header(*name, *value);
     }

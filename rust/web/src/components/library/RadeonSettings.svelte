@@ -14,6 +14,7 @@
     clampTo,
     controlsOf,
     currentOf,
+    defaultFrameCap,
     effectiveSettings,
     formatValue,
     nvidiaOf,
@@ -181,7 +182,7 @@
                 const frameCap = event.currentTarget.value as FrameCap;
                 change({
                   frameCap,
-                  fps: frameCap === 'fps' ? (controls.fps ?? currentOf(setting(capId))) : controls.fps,
+                  fps: frameCap === 'fps' ? (controls.fps && controls.fps > 0 ? controls.fps : defaultFrameCap(setting(capId))) : controls.fps,
                 });
               }}
             >

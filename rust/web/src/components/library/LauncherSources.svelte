@@ -207,11 +207,20 @@
       if (run?.error) failed('Syncing Playnite failed', run.error);
       return run?.result ?? null;
     };
+    let steamError: unknown = null;
     try {
-      const [steam, launchers] = await Promise.all([api.steam.sync().catch(() => null), api.library.sync()]);
+      const [steam, launchers] = await Promise.all([
+        api.steam.sync().catch((err: unknown) => {
+          steamError = err;
+          return null;
+        }),
+        api.library.sync(),
+      ]);
       const played = await reportPlaynite();
       onsynced?.();
-      if (announce) {
+      if (steamError) {
+        failed('Syncing Steam failed', steamError);
+      } else if (announce) {
         const changed = (steam?.changed ?? false) || launchers.added + launchers.removed > 0 || (played?.changed ?? false);
         notify(changed ? 'Your library is up to date with your launchers.' : 'Nothing new: your library already has every game.', 'ok');
       }

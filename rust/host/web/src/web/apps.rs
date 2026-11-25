@@ -126,11 +126,7 @@ pub(super) fn handle(h: &Shared, method: &str, path: &str, data: &Value) -> anyh
             let _transition = h.launch_transition.lock().unwrap();
             // While the stream a move waited for still runs: see `Host::stop_app`.
             h.settle_move();
-            let canceled = h
-                .sessions
-                .lock()
-                .unwrap()
-                .stop_role(butterpollo_session::session::Role::Stream, None);
+            let canceled = h.sessions.lock().unwrap().stop_host_streams();
             drop(canceled);
             h.stop_app(butterpollo_stream::state::AppStop::WebUi);
             json!({"status":true})

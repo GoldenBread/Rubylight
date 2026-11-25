@@ -254,4 +254,7 @@ test('NVIDIA settings get their own controls and a frame cap', () => {
     nvidia: { 'nvidia_low_latency.mode': 'ultra' },
   });
   assert.equal(competitive.profile, 'competitive');
+  // Switching NVIDIA frame cap from Off (driver reports 0 with range min 0) picks a non-zero cap.
+  const capSetting = nvidiaSettings.find((item) => item.id === 'nvidia_frame_rate_limit.fps');
+  assert.equal(radeon.defaultFrameCap(capSetting), 60);
 });

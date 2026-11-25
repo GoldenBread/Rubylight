@@ -139,6 +139,10 @@
               ? 'The PC does not answer. Check that Rubylight is running.'
               : 'The PC refused this page’s connection.';
     }
+    attempt = null;
+    cancelPairing?.();
+    cancelPairing = null;
+    stream?.close();
     stream = null;
     message = text;
     phase = 'error';

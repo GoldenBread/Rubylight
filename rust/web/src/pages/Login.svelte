@@ -30,7 +30,7 @@
     busy = true;
     error = '';
     try {
-      await api.auth.login(String(form.get('username') ?? ''), String(form.get('password') ?? ''), remember);
+      await api.auth.login(String(form.get('username') ?? '').trim(), String(form.get('password') ?? ''), remember);
       const next = query('next');
       navigate(next && next.startsWith('/') && !next.startsWith('//') ? next : '/', { replace: true });
       await checkSession();

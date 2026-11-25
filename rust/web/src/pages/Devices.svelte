@@ -30,6 +30,7 @@
   /** `action:uuid` of the request in flight. */
   let busy = $state('');
   const acting = $derived(busy !== '' || editorSaving);
+  const editedRemoved = $derived(!!editing && !!clients && !clients.some((client) => client.uuid === editing));
   let latestLoad = 0;
   let knownDevices: Set<string> | null = null;
   let usbDevices = $state<UsbAttachment[]>([]);
@@ -274,6 +275,12 @@
     </div>
   {/if}
 
+  {#if editedRemoved}
+    <div class="notice warn load-error" role="alert">
+      <span>This device is no longer paired, so your unsaved edits cannot be saved.</span>
+      <Button size="sm" onclick={closeEditor}>Discard changes</Button>
+    </div>
+  {/if}
   {#if clients === null}
     {#if !loadError}<p class="placeholder muted">Loading devices…</p>{/if}
   {:else if clients.length === 0}

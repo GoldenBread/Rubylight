@@ -19,6 +19,7 @@
   let loadError = $state('');
   let busy = $state(false);
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let alive = true;
 
   const busyStates = ['download', 'check', 'remove'];
   const working = $derived(!!component && busyStates.includes(component.state));
@@ -36,10 +37,14 @@
     clearTimeout(timer);
     const was = component?.state;
     try {
-      component = await api.nvidiaComponent.status();
+      const next = await api.nvidiaComponent.status();
+      if (!alive) return;
+      component = next;
       loadError = '';
     } catch (error) {
+      if (!alive) return;
       loadError = reason(error);
+      if (was && busyStates.includes(was)) timer = setTimeout(load, 2000);
       return;
     }
     if (busyStates.includes(component.state)) {
@@ -85,7 +90,10 @@
   }
 
   onMount(load);
-  onDestroy(() => clearTimeout(timer));
+  onDestroy(() => {
+    alive = false;
+    clearTimeout(timer);
+  });
 </script>
 
 {#snippet feature(name: string, on: boolean | undefined, why: string | undefined)}
@@ -99,6 +107,9 @@
 <Panel title="NVIDIA components" level={3} description={ABOUT}>
   {#if component}
     <div class="stack">
+      {#if loadError}
+        <p class="error" role="alert">{loadError}</p>
+      {/if}
       {#if working}
         <p class="lead" role="status">{labels[component.state]}</p>
         <div

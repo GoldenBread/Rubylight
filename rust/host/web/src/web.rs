@@ -434,13 +434,20 @@ pub(crate) async fn api(
         return logs::export_crash(&h).await;
     }
     if method == Method::GET && path == "/api/logs/tail" {
-        return logs::tail(&h, &uri);
+        let h = h.clone();
+        return tokio::task::spawn_blocking(move || logs::tail(&h, &uri))
+            .await
+            .unwrap_or_else(|e| error(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()));
     }
     if method == Method::GET && path == "/api/logs/analysis" {
         return logs::analysis(&h).await;
     }
     if method == Method::GET && matches!(path, "/api/logs" | "/api/logs/export") {
-        return logs::export(&h, path);
+        let h = h.clone();
+        let path = path.to_owned();
+        return tokio::task::spawn_blocking(move || logs::export(&h, &path))
+            .await
+            .unwrap_or_else(|e| error(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()));
     }
     if method == Method::GET
         && ((path.starts_with("/api/apps/") && path.ends_with("/cover"))

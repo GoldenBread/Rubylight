@@ -57,8 +57,8 @@ pub fn handle(h: &Shared, method: &str, path: &str, data: &Value) -> anyhow::Res
             })
         }
         ("POST", "/api/clients/unpair") => {
-            butterpollo_stream::nvhttp::end_device(h, text("uuid"));
             h.unpair_with_network_history(Some(text("uuid")))?;
+            butterpollo_stream::nvhttp::end_device(h, text("uuid"));
             h.notify_webrtc_clients_changed();
             // The device is gone; its session may linger for the grace period, its Radeon
             // settings and game file keys do not, its second screen's neither.
@@ -66,10 +66,10 @@ pub fn handle(h: &Shared, method: &str, path: &str, data: &Value) -> anyhow::Res
             json!({"status":true})
         }
         ("POST", "/api/clients/unpair-all") => {
+            h.unpair_with_network_history(None)?;
             let canceled = h.sessions.lock().unwrap().request_stop(None);
             drop(canceled);
             butterpollo_stream::remote_display::disconnect(h, None);
-            h.unpair_with_network_history(None)?;
             h.notify_webrtc_clients_changed();
             h.radeon.release_all();
             h.game_files.release_all(&h.directory);

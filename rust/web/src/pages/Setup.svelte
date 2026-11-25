@@ -35,9 +35,10 @@
     }
     busy = true;
     error = '';
+    const trimmed = username.trim();
     try {
-      await api.auth.setPassword({ newUsername: username, newPassword: password, confirmNewPassword: confirmation });
-      await api.auth.login(username, password, true);
+      await api.auth.setPassword({ newUsername: trimmed, newPassword: password, confirmNewPassword: confirmation });
+      await api.auth.login(trimmed, password, true);
       navigate('/', { replace: true });
       await checkSession();
     } catch (failure) {

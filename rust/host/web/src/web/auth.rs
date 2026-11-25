@@ -51,23 +51,27 @@ impl SignIns {
     const LIMIT: u32 = 10;
     const WINDOW: Duration = Duration::from_secs(60);
     pub(super) const TRACKED: usize = 1024;
-    fn key(peer: std::net::IpAddr) -> Option<std::net::IpAddr> {
+    fn key(peer: std::net::IpAddr) -> std::net::IpAddr {
         let peer = peer.to_canonical();
-        if peer.is_loopback() {
-            return None;
-        }
-        Some(match peer {
-            std::net::IpAddr::V6(address) => {
+        match peer {
+            std::net::IpAddr::V6(address) if !address.is_loopback() => {
                 std::net::Ipv6Addr::from(u128::from(address) & (u128::MAX << 64)).into()
             }
-            v4 => v4,
-        })
+            other => other,
+        }
     }
-    /// Count an attempt; false when the address has to wait.
-    pub(super) fn attempt(&mut self, peer: std::net::IpAddr, now: Instant) -> bool {
-        let Some(key) = Self::key(peer) else {
-            return true;
-        };
+    /// Whether `peer` may attempt sign-in without counting against the limit (`R1-HN3`).
+    pub(super) fn allowed(&mut self, peer: std::net::IpAddr, now: Instant) -> bool {
+        let key = Self::key(peer);
+        self.attempts
+            .retain(|_, (since, _)| now.saturating_duration_since(*since) < Self::WINDOW);
+        self.attempts
+            .get(&key)
+            .is_none_or(|(_, count)| *count < Self::LIMIT)
+    }
+    /// Record a failed sign-in attempt for `peer`.
+    pub(super) fn failed(&mut self, peer: std::net::IpAddr, now: Instant) {
+        let key = Self::key(peer);
         self.attempts
             .retain(|_, (since, _)| now.saturating_duration_since(*since) < Self::WINDOW);
         // Full: forget the oldest address instead of refusing every new
@@ -83,13 +87,21 @@ impl SignIns {
             self.attempts.remove(&oldest);
         }
         let (_, count) = self.attempts.entry(key).or_insert((now, 0));
-        *count += 1;
-        *count <= Self::LIMIT
+        *count = count.saturating_add(1);
     }
     pub(super) fn succeeded(&mut self, peer: std::net::IpAddr) {
-        if let Some(key) = Self::key(peer) {
-            self.attempts.remove(&key);
-        }
+        let key = Self::key(peer);
+        self.attempts.remove(&key);
+    }
+}
+
+fn rehash_if_needed(h: &Shared, username: String, password: &str) {
+    match Credentials::new(username, password) {
+        Ok(upgraded) => match h.save_credentials(&upgraded) {
+            Ok(()) => *h.credentials.write().unwrap() = Some(upgraded),
+            Err(error) => tracing::warn!(%error, "could not save upgraded password hash"),
+        },
+        Err(error) => tracing::warn!(%error, "could not upgrade password hash"),
     }
 }
 
@@ -131,17 +143,26 @@ pub(crate) fn authenticated(
         && let Some((user, pass)) = text.split_once(':')
     {
         let peer = peer.unwrap_or(std::net::Ipv4Addr::UNSPECIFIED.into());
-        if !SIGN_INS.lock().unwrap().attempt(peer, Instant::now()) {
+        let now = Instant::now();
+        if !SIGN_INS.lock().unwrap().allowed(peer, now) {
             return false;
         }
-        let verified = h
-            .credentials
-            .read()
-            .unwrap()
-            .as_ref()
-            .is_some_and(|c| c.verifies(user, pass));
+        let (verified, upgrade_user) = {
+            let guard = h.credentials.read().unwrap();
+            match guard.as_ref() {
+                Some(c) if c.verifies(user, pass) => {
+                    (true, c.needs_rehash().then(|| c.username.clone()))
+                }
+                _ => (false, None),
+            }
+        };
         if verified {
             SIGN_INS.lock().unwrap().succeeded(peer);
+            if let Some(username) = upgrade_user {
+                rehash_if_needed(h, username, pass);
+            }
+        } else {
+            SIGN_INS.lock().unwrap().failed(peer, now);
         }
         return verified;
     }
@@ -360,28 +381,34 @@ pub(super) fn login(
     if *method != Method::POST {
         return error(StatusCode::METHOD_NOT_ALLOWED, "POST required");
     }
-    if !SIGN_INS
-        .lock()
-        .unwrap()
-        .attempt(connection.peer.ip(), Instant::now())
-    {
+    let now = Instant::now();
+    if !SIGN_INS.lock().unwrap().allowed(connection.peer.ip(), now) {
         return error(StatusCode::TOO_MANY_REQUESTS, "try again in one minute");
     }
     let text = |k: &str| data.get(k).and_then(Value::as_str).unwrap_or("");
     let username = text("username");
-    if h.credentials
-        .read()
-        .unwrap()
-        .as_ref()
-        .is_some_and(|c| c.verifies(username, text("password")))
-    {
+    let password = text("password");
+    let (verified, upgrade_user) = {
+        let guard = h.credentials.read().unwrap();
+        match guard.as_ref() {
+            Some(c) if c.verifies(username, password) => {
+                (true, c.needs_rehash().then(|| c.username.clone()))
+            }
+            _ => (false, None),
+        }
+    };
+    if verified {
         SIGN_INS.lock().unwrap().succeeded(connection.peer.ip());
+        if let Some(stored_user) = upgrade_user {
+            rehash_if_needed(h, stored_user, password);
+        }
         let remember = data.get("remember_me").is_some_and(|v| {
             v.as_bool()
                 .unwrap_or_else(|| matches!(v.as_str(), Some("true" | "1" | "on")))
         });
         return issued(h, username.into(), remember, headers, connection, None);
     }
+    SIGN_INS.lock().unwrap().failed(connection.peer.ip(), now);
     error(StatusCode::UNAUTHORIZED, "invalid username or password")
 }
 

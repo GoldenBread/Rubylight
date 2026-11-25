@@ -113,6 +113,7 @@
       }
       notify('Rubylight is restarting.');
       if (await backAfterRestart()) notify('Rubylight restarted.', 'ok');
+      else notify('Rubylight is taking longer than usual to restart. Refresh if it does not come back.', 'danger');
     } else if (action === 'sync') {
       await sync();
     }

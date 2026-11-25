@@ -127,7 +127,7 @@ fn configured(h: &Shared) -> String {
 /// if any. What sessions left in the Nucleus Co-op left behind is put back
 /// first ([`butterpollo_stream::nucleus::Registry::change_folder`]). A settings save that
 /// changes `nucleus_path` comes here too.
-pub(super) fn choose(h: &Shared, path: &str) -> Result<Value, Refusal> {
+pub(super) fn validate_choice(h: &Shared, path: &str) -> Result<Option<Install>, Refusal> {
     // The settings file takes # as the start of a comment.
     if path.contains('#') {
         return Err(Refusal {
@@ -135,19 +135,20 @@ pub(super) fn choose(h: &Shared, path: &str) -> Result<Value, Refusal> {
             message: "Rubylight can't keep a folder with # in its path: rename the folder, or unpack the release into another one".into(),
         });
     }
-    let checked = if path.is_empty() {
+    Ok(if path.is_empty() {
         None
     } else {
         Some(h.nucleus.check_folder(path)?)
-    };
-    h.nucleus.change_folder(&configured(h), path, || {
-        super::config::save_setting(h, "nucleus_path", |_| Ok(path.to_string())).map_err(|e| {
-            Refusal {
-                status: 500,
-                message: format!("Saving the Nucleus Co-op folder failed: {e:#}"),
-            }
-        })
-    })?;
+    })
+}
+
+pub(super) fn choose_with(
+    h: &Shared,
+    path: &str,
+    save: impl FnOnce() -> Result<(), Refusal>,
+) -> Result<Value, Refusal> {
+    let checked = validate_choice(h, path)?;
+    h.nucleus.change_folder(&configured(h), path, save)?;
     let install = checked.unwrap_or_else(|| h.nucleus.install(path));
     if path.is_empty() {
         tracing::info!("Nucleus Co-op: folder forgotten in the console");
@@ -155,6 +156,17 @@ pub(super) fn choose(h: &Shared, path: &str) -> Result<Value, Refusal> {
         tracing::info!(folder = path, "Nucleus Co-op: folder chosen in the console");
     }
     Ok(install_json(&install, path, h.nucleus.notice(path)))
+}
+
+pub(super) fn choose(h: &Shared, path: &str) -> Result<Value, Refusal> {
+    choose_with(h, path, || {
+        super::config::save_setting(h, "nucleus_path", |_| Ok(path.to_string())).map_err(|e| {
+            Refusal {
+                status: 500,
+                message: format!("Saving the Nucleus Co-op folder failed: {e:#}"),
+            }
+        })
+    })
 }
 
 /// Where Nucleus Co-op stands, as the panels show it: `chosen` is

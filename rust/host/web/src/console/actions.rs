@@ -99,7 +99,24 @@ fn payload(h: &Shared, fields: &Fields) -> Result<Value, String> {
             "confirmNewPassword",
         ])),
         "config" => {
-            let mut config = object(fields, "advanced")?;
+            let edited = object(fields, "advanced")?;
+            let mut config = if fields.contains_key("advanced_original") {
+                let original = object(fields, "advanced_original")?;
+                let mut diff = Map::new();
+                for (key, value) in &edited {
+                    if original.get(key) != Some(value) {
+                        diff.insert(key.clone(), value.clone());
+                    }
+                }
+                for key in original.keys() {
+                    if !edited.contains_key(key) {
+                        diff.insert(key.clone(), Value::Null);
+                    }
+                }
+                diff
+            } else {
+                edited
+            };
             super::settings::apply("cfg_", super::settings::GLOBAL, fields, &mut config)?;
             for key in [
                 "sunshine_name",
@@ -216,11 +233,14 @@ fn payload(h: &Shared, fields: &Fields) -> Result<Value, String> {
     })
 }
 fn notice(path: &str, message: &str) -> Response {
+    let target = return_path(path);
+    let sig = super::sign_notice(target, message);
+    let token = format!("{sig}.{message}");
     (
         StatusCode::SEE_OTHER,
         [(
             header::LOCATION,
-            format!("{}?notice={}", return_path(path), encoded(message)),
+            format!("{target}?notice={}", encoded(&token)),
         )],
     )
         .into_response()

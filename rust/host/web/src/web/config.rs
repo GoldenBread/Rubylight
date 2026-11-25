@@ -57,8 +57,30 @@ pub(super) fn handle(h: &Shared, method: &str, path: &str, data: &Value) -> anyh
                     "webhooks are saved on the Webhooks page (/api/webhooks), which keeps their secrets"
                 );
             }
-            if let Some(folder) = object.remove("nucleus_path") {
-                choose_nucleus_folder(h, &folder, &object)?;
+            let nucleus_folder = match object.remove("nucleus_path") {
+                Some(Value::String(text)) => {
+                    let trimmed = text.trim().to_owned();
+                    super::coop::validate_choice(h, &trimmed)?;
+                    let current =
+                        butterpollo_stream::nucleus::configured(&h.config.read().unwrap());
+                    if trimmed == current {
+                        None
+                    } else {
+                        Some(trimmed)
+                    }
+                }
+                Some(Value::Null) => {
+                    let current =
+                        butterpollo_stream::nucleus::configured(&h.config.read().unwrap());
+                    (!current.is_empty()).then(String::new)
+                }
+                Some(_) => {
+                    anyhow::bail!("nucleus_path must be the folder Nucleus Co-op was unpacked into")
+                }
+                None => None,
+            };
+            if let Some(folder) = &nucleus_folder {
+                object.insert("nucleus_path".into(), Value::String(folder.clone()));
             }
             let _save = h.config_save.lock().unwrap();
             let mut next = if h.port_override.is_some() {
@@ -76,10 +98,22 @@ pub(super) fn handle(h: &Shared, method: &str, path: &str, data: &Value) -> anyh
                     "the SteamGridDB API key could not be moved out of sunshine.conf"
                 );
             }
-            // The key follows a saved configuration: a failed write must not
-            // change what this PC sends to SteamGridDB. Once the settings are
-            // written they still apply if the key cannot be stored.
-            state::atomic_write(&h.config_path, next.text().as_bytes())?;
+            // Apply the Nucleus folder change together with (or only if) writing
+            // the config succeeds (`R1-HS3`), never mutating the folder before save.
+            if let Some(folder) = &nucleus_folder {
+                let path = &h.config_path;
+                let text = next.text();
+                super::coop::choose_with(h, folder, || {
+                    state::atomic_write(path, text.as_bytes()).map_err(|error| {
+                        butterpollo_stream::nucleus::Refusal {
+                            status: 500,
+                            message: format!("Saving configuration failed: {error:#}"),
+                        }
+                    })
+                })?;
+            } else {
+                state::atomic_write(&h.config_path, next.text().as_bytes())?;
+            }
             let mut warnings = Vec::new();
             if let Some(key) = &steamgriddb_key {
                 match butterpollo_stream::steamgriddb::store_key(h, Some(key)) {
@@ -134,32 +168,6 @@ pub(super) fn handle(h: &Shared, method: &str, path: &str, data: &Value) -> anyh
         }
         _ => return Err(anyhow::anyhow!("unknown API endpoint")),
     })
-}
-
-/// A save's `nucleus_path` (`folder`), kept as the console's Choose folder
-/// keeps it ([`super::coop::choose`]): checked first, refused with the
-/// reason and status the panels give (409 while a session runs), and what
-/// sessions left in the folder before it put back. The save's other
-/// settings (`rest`) are checked first, so a refused one keeps no folder.
-fn choose_nucleus_folder(
-    h: &Shared,
-    folder: &Value,
-    rest: &serde_json::Map<String, Value>,
-) -> anyhow::Result<()> {
-    let folder = match folder {
-        Value::String(text) => text.trim(),
-        Value::Null => "",
-        _ => anyhow::bail!("nucleus_path must be the folder Nucleus Co-op was unpacked into"),
-    };
-    let current = butterpollo_stream::nucleus::configured(&h.config.read().unwrap());
-    if folder == current {
-        return Ok(());
-    }
-    let mut trial = h.config.read().unwrap().clone();
-    trial.update(rest)?;
-    trial.check_saved(rest.keys())?;
-    super::coop::choose(h, folder)?;
-    Ok(())
 }
 
 /// The settings the host reads only when it starts, by their current names.

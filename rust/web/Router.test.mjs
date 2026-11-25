@@ -231,3 +231,10 @@ test('a leave answered with no guard in the way keeps working: Back moves the pa
   assert.equal(b.shown(), '/b');
   inStep(b);
 });
+
+test('trailing slashes are stripped except on root', async () => {
+  const b = await browser(['/'], 0);
+  assert.equal(b.router.canonical('/'), '/');
+  assert.equal(b.router.canonical('/devices/'), '/devices');
+  assert.equal(b.router.canonical('/maintenance/?tab=1#top'), '/help?tab=1#top');
+});

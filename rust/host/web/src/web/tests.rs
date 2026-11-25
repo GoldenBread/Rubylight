@@ -15,7 +15,7 @@ fn cover_requests_name_their_app_and_short_paths_do_not_panic() {
 }
 
 #[test]
-fn sign_ins_are_limited_per_address_but_never_on_this_pc() {
+fn sign_ins_throttle_only_failed_attempts_including_loopback_peers() {
     use std::net::IpAddr;
     let fresh = || super::SignIns {
         attempts: Default::default(),
@@ -23,36 +23,59 @@ fn sign_ins_are_limited_per_address_but_never_on_this_pc() {
     let now = Instant::now();
     let lan: IpAddr = "192.168.1.20".parse().unwrap();
     let mut sign_ins = fresh();
-    for _ in 0..10 {
-        assert!(sign_ins.attempt(lan, now));
+    // Pre-checks without recording failures never lock out the address.
+    for _ in 0..50 {
+        assert!(sign_ins.allowed(lan, now));
     }
-    assert!(!sign_ins.attempt(lan, now), "the 11th attempt in a minute");
-    assert!(sign_ins.attempt("192.168.1.21".parse().unwrap(), now));
+    for _ in 0..10 {
+        assert!(sign_ins.allowed(lan, now));
+        sign_ins.failed(lan, now);
+    }
     assert!(
-        sign_ins.attempt(lan, now + Duration::from_secs(61)),
+        !sign_ins.allowed(lan, now),
+        "the 11th attempt after 10 failures"
+    );
+    assert!(sign_ins.allowed("192.168.1.21".parse().unwrap(), now));
+    assert!(
+        sign_ins.allowed(lan, now + Duration::from_secs(61)),
         "a minute later"
     );
     sign_ins.succeeded(lan);
     assert!(!sign_ins.attempts.contains_key(&lan));
-    for local in ["127.0.0.1", "::1", "::ffff:127.0.0.1"] {
-        let local: IpAddr = local.parse().unwrap();
-        assert!((0..50).all(|_| sign_ins.attempt(local, now)), "{local}");
+    // Loopback (including internet-play tunnel peers) is also throttled on repeated failures,
+    // while canonical v4-mapped IPv6 maps to 127.0.0.1.
+    for local in ["127.0.0.1", "::1"] {
+        let mut s = fresh();
+        let addr: IpAddr = local.parse().unwrap();
+        for _ in 0..10 {
+            assert!(s.allowed(addr, now), "{local}");
+            s.failed(addr, now);
+        }
+        assert!(!s.allowed(addr, now), "{local} blocked after 10 failures");
     }
+    let mut s = fresh();
+    for _ in 0..10 {
+        s.failed("::ffff:127.0.0.1".parse().unwrap(), now);
+    }
+    assert!(!s.allowed("127.0.0.1".parse().unwrap(), now));
     // One LAN host can take any address in its /64.
     let mut sign_ins = fresh();
     for host in 0..10 {
-        assert!(sign_ins.attempt(format!("fe80::{host:x}").parse().unwrap(), now));
+        let ip: IpAddr = format!("fe80::{host:x}").parse().unwrap();
+        assert!(sign_ins.allowed(ip, now));
+        sign_ins.failed(ip, now);
     }
-    assert!(!sign_ins.attempt("fe80::abcd".parse().unwrap(), now));
-    assert!(sign_ins.attempt("fd00:1:2:3::1".parse().unwrap(), now));
+    assert!(!sign_ins.allowed("fe80::abcd".parse().unwrap(), now));
+    assert!(sign_ins.allowed("fd00:1:2:3::1".parse().unwrap(), now));
     // A full table forgets the oldest address instead of refusing new ones.
     let mut sign_ins = fresh();
     for host in 0..super::SignIns::TRACKED as u32 {
         let address = IpAddr::from(std::net::Ipv4Addr::from(0x0a00_0000 + host));
-        assert!(sign_ins.attempt(address, now + Duration::from_millis(u64::from(host))));
+        sign_ins.failed(address, now + Duration::from_millis(u64::from(host)));
     }
     let newcomer: IpAddr = "172.16.0.1".parse().unwrap();
-    assert!(sign_ins.attempt(newcomer, now + Duration::from_secs(2)));
+    assert!(sign_ins.allowed(newcomer, now + Duration::from_secs(2)));
+    sign_ins.failed(newcomer, now + Duration::from_secs(2));
     assert_eq!(sign_ins.attempts.len(), super::SignIns::TRACKED);
     assert!(
         !sign_ins
@@ -220,4 +243,70 @@ fn web_app_files_stay_in_their_folder() {
         StatusCode::METHOD_NOT_ALLOWED
     );
     std::fs::remove_dir_all(&base).ok();
+}
+
+#[tokio::test]
+async fn login_and_basic_auth_rehash_legacy_credentials_on_signin() {
+    use axum::{Extension, body::Body, http::Request};
+    use butterpollo_crypto::crypto;
+    use tower::ServiceExt;
+
+    let legacy_creds = |user: &str, pass: &str| {
+        let salt = "0123456789abcdef0123456789abcdef".to_owned();
+        let digest = hex::encode(crypto::hash(format!("{pass}{salt}").as_bytes()));
+        Credentials {
+            username: user.to_owned(),
+            password: digest,
+            salt,
+        }
+    };
+
+    // Browser sign-in (`POST /api/auth/login`) transparently upgrades legacy hashes to PBKDF2-HMAC-SHA256.
+    let f = butterpollo_stream::state::test_support::Fixture::new();
+    let legacy = legacy_creds("user", "password1");
+    f.host.save_credentials(&legacy).unwrap();
+    *f.host.credentials.write().unwrap() = Some(legacy);
+    let response = router(f.host.clone())
+        .layer(Extension(f.connection(true)))
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/auth/login")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({"username": "user", "password": "password1", "remember_me": false})
+                        .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let saved = f.host.credentials.read().unwrap().clone().unwrap();
+    assert!(saved.password.starts_with("pbkdf2-sha256$600000$"));
+    assert!(!saved.needs_rehash());
+    assert!(saved.verifies("user", "password1"));
+
+    // HTTP Basic auth also upgrades legacy hashes transparently.
+    let f2 = butterpollo_stream::state::test_support::Fixture::new();
+    let legacy2 = legacy_creds("user", "password1");
+    f2.host.save_credentials(&legacy2).unwrap();
+    *f2.host.credentials.write().unwrap() = Some(legacy2);
+    let response2 = router(f2.host.clone())
+        .layer(Extension(f2.connection(true)))
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/config")
+                .header(header::AUTHORIZATION, "Basic dXNlcjpwYXNzd29yZDE=")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response2.status(), StatusCode::OK);
+    let saved2 = f2.host.credentials.read().unwrap().clone().unwrap();
+    assert!(saved2.password.starts_with("pbkdf2-sha256$600000$"));
+    assert!(!saved2.needs_rehash());
+    assert!(saved2.verifies("user", "password1"));
 }

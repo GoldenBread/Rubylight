@@ -78,9 +78,21 @@ pub(super) fn tail(h: &Shared, uri: &axum::http::Uri) -> Response {
             Err(e) => return Err(e),
         };
         let size = file.metadata()?.len();
-        // A negative offset asks for the tail; an offset past the end
-        // means the log was rotated.
-        let reset = offset < 0 || offset as u64 > size;
+        let head = if size >= 64 {
+            use sha2::Digest;
+            let mut prefix = [0u8; 64];
+            file.read_exact(&mut prefix)?;
+            hex::encode(&sha2::Sha256::digest(prefix)[..16])
+        } else {
+            String::new()
+        };
+        // A negative offset asks for the tail; an offset past the end or a
+        // changed file prefix (`head`) means the log was rotated (`HS-L29`).
+        let rotated = !head.is_empty()
+            && query
+                .get("head")
+                .is_some_and(|expected| !expected.is_empty() && expected != &head);
+        let reset = offset < 0 || offset as u64 > size || rotated;
         let start = if reset {
             size.saturating_sub(max)
         } else {
@@ -100,6 +112,7 @@ pub(super) fn tail(h: &Shared, uri: &axum::http::Uri) -> Response {
             "offset": start + bytes.len() as u64,
             "size": size,
             "reset": reset,
+            "head": head,
             "text": String::from_utf8_lossy(&bytes),
         }))
     })();
@@ -240,5 +253,47 @@ mod tests {
         assert_eq!(cut["findings"].as_array().unwrap().len(), 1);
         assert_eq!(cut["findings"][0]["id"], "client_timeout");
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn tail_detects_log_rotation_even_when_new_file_grows_past_old_offset() {
+        let f = butterpollo_stream::state::test_support::Fixture::new();
+        std::fs::create_dir_all(&f.host.directory).unwrap();
+        let path = butterpollo_stream::maintenance::log_path(&f.host);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        let first_line = "2026-10-20T12:40:20.000001Z  INFO old_log: started session alpha with enough padding bytes\n";
+        std::fs::write(&path, first_line).unwrap();
+        let read_tail = |uri: &str| {
+            let resp = super::tail(&f.host, &uri.parse().unwrap());
+            let body = futures_block(resp.into_body());
+            serde_json::from_slice::<serde_json::Value>(&body).unwrap()
+        };
+        let initial = read_tail("/api/logs/tail?offset=-1");
+        let offset = initial["offset"].as_u64().unwrap();
+        let head = initial["head"].as_str().unwrap().to_owned();
+        assert!(!head.is_empty());
+
+        // Rotate: new file has a different first line and already grew past `offset`.
+        let rotated = format!(
+            "2026-10-20T12:45:00.000002Z  INFO new_log: rotated file header line padded cleanly\n{}",
+            "2026-10-20T12:45:01.000003Z  INFO new_log: extra line\n".repeat(4)
+        );
+        assert!(rotated.len() as u64 > offset);
+        std::fs::write(&path, &rotated).unwrap();
+        let after = read_tail(&format!("/api/logs/tail?offset={offset}&head={head}"));
+        assert_eq!(after["reset"], true);
+        assert_ne!(after["head"].as_str().unwrap(), head);
+        assert!(after["text"].as_str().unwrap().contains("new_log"));
+    }
+
+    fn futures_block(body: axum::body::Body) -> Vec<u8> {
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap()
+            .block_on(axum::body::to_bytes(body, 1024 * 1024))
+            .unwrap()
+            .to_vec()
     }
 }
