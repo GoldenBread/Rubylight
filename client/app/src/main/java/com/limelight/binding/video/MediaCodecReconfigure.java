@@ -104,7 +104,7 @@ final class MediaCodecReconfigure {
 
     boolean runUnlessRebuilding(Runnable action) {
         synchronized (reconfigureGate) {
-            if (reconfigureLimitsPending()) return false;
+            if (r.reconfigureLimitsPending()) return false;
             action.run();
             return true;
         }

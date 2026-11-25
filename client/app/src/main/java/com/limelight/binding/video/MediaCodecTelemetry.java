@@ -327,9 +327,9 @@ final class MediaCodecTelemetry {
         int hostStage = hostReports ? FrameLatencyStats.HOST_SENT_STAGE : 4;
         float hostP95Ms = timing[hostStage][0] > 0 ? (float) timing[hostStage][2] : -1;
         return new com.limelight.utils.StreamHealth.Sample(nowMs, r.hasRecentVideoFrames(nowMs), fps,
-                (r.videoFormat & MoonBridge.VIDEO_FORMAT_MASK_PYROWAVE) != 0 ? getPyroWaveLossPercent() : networkFrameLossPercent,
-                jitterMs, decodeTimeMs, hostP95Ms,
-                timing[2][0] > 0 ? (float) timing[2][2] : -1, rates[0], rates[1], rates[2], r.thermalLevel,
+                (r.videoFormat & MoonBridge.VIDEO_FORMAT_MASK_PYROWAVE) != 0 ? r.getPyroWaveLossPercent() : r.getNetworkFrameLossPercent(),
+                jitterMs, r.getDecodeTimeMs(), hostP95Ms,
+                timing[2][0] > 0 ? (float) timing[2][2] : -1, rates[0], rates[1], rates[2], r.getThermalLevel(),
                 hostReports, r.lateFrames.tick(lateFramesNowUs(nowNs)),
                 timing[FrameLatencyStats.SCREEN_STAGE][0] > 0 ? (float) timing[FrameLatencyStats.SCREEN_STAGE][2] : -1);
     }
