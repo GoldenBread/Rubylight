@@ -162,7 +162,7 @@ impl TouchProfile {
                             horizontal: true,
                         });
                     }
-                } else if index == 0 {
+                } else if index == 0 && (!settings.gestures || self.most == 1) {
                     if mouse {
                         out.push(absolute(at));
                     } else {
