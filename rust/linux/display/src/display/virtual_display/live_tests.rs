@@ -32,9 +32,10 @@ fn shown(layout: &Layout) -> Vec<String> {
     shown
 }
 
-/// On this PC, with Vibepollo's pool and broker: a 1280x720 display at 60 Hz in the layout
-/// `RUBYLIGHT_LIVE_LAYOUT` names (default exclusive), held `RUBYLIGHT_LIVE_HOLD` seconds
-/// (default 5), then dropped; the monitors must be back as they were. It changes the
+/// On this PC, with a pool and its broker: a display at `RUBYLIGHT_LIVE_MODE` (`WxH@mHz`,
+/// default `1280x720@60000`) in the layout `RUBYLIGHT_LIVE_LAYOUT` names (default exclusive),
+/// held `RUBYLIGHT_LIVE_HOLD` seconds (default 5), then dropped; the monitors must be back as
+/// they were. It changes the
 /// desktop: run it only on a PC whose user agreed.
 #[test]
 #[ignore = "changes this PC's monitors"]
@@ -44,15 +45,23 @@ fn live_a_private_display_comes_and_goes() {
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(5);
+    let mode = std::env::var("RUBYLIGHT_LIVE_MODE").unwrap_or_else(|_| "1280x720@60000".into());
+    let (size, millihz) = mode.split_once('@').expect("WxH@mHz");
+    let (width, height) = size.split_once('x').expect("WxH@mHz");
+    let (width, height, millihz): (u32, u32, u32) = (
+        width.parse().unwrap(),
+        height.parse().unwrap(),
+        millihz.parse().unwrap(),
+    );
     eprintln!("status {}", virtual_display_status());
     assert!(virtual_display_available(), "{}", virtual_display_status());
     let before = kscreen::query().unwrap();
     let started = std::time::Instant::now();
     let display = VirtualDisplay::create_with(&PrivateRequest {
         stable_id: "rubylight-live-test".into(),
-        width: 1280,
-        height: 720,
-        refresh_millihz: 60_000,
+        width,
+        height,
+        refresh_millihz: millihz,
         arrangement: Arrangement::parse(&layout).unwrap(),
         scale_percent: None,
     })
@@ -64,7 +73,7 @@ fn live_a_private_display_comes_and_goes() {
     assert!(output.enabled);
     assert_eq!(
         joinable_mode("rubylight-live-test"),
-        Some((1280, 720, 60_000))
+        Some((width, height, millihz))
     );
     std::thread::sleep(Duration::from_secs(hold));
     let name = display.name.clone();
