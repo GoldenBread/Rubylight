@@ -79,6 +79,17 @@ bool VulkanRenderer::renderFrame(const FramePtr& frame, uint64_t presentId, int6
         noteFailure("waiting for the decoder", VK_TIMEOUT, kFatalFenceTimeouts);
         return false;
     }
+    // If renderFrame exits before vkQueueSubmit consumes decodeDone_[slot] (e.g. acquire timeout
+    // or empty-surface swapchain rebuild), discard the unconsumed temporary sync-FD payload so
+    // the next render reusing this slot does not import onto a pending semaphore.
+    struct DecodeSemGuard {
+        VulkanRenderer* self;
+        int slot;
+        bool active;
+        ~DecodeSemGuard() {
+            if (active) self->resetDecodeSemaphore(slot);
+        }
+    } decodeSemGuard {this, slot, decoderWait};
 
     uint32_t imageIndex = 0;
     // In slices, so stopping doesn't wait out the whole timeout
@@ -277,6 +288,7 @@ bool VulkanRenderer::renderFrame(const FramePtr& frame, uint64_t presentId, int6
         // The image is acquired and its semaphore signalled; start the swapchain over
         ALOGE("vkEndCommandBuffer failed: %d", result);
         swapchainDirty_ = true;
+        decodeSemGuard.active = false;
         recreateSlotSync(slot);
         noteFailure("recording a frame", result, kFatalFailures);
         return false;
@@ -302,6 +314,7 @@ bool VulkanRenderer::renderFrame(const FramePtr& frame, uint64_t presentId, int6
     submit.pSignalSemaphores = &renderDone_[imageIndex];
 
     vk_.vkResetFences(device_, 1, &fences_[slot]);
+    decodeSemGuard.active = false;
     {
         std::lock_guard<std::mutex> lock(queueMutex_);
         result = vk_.vkQueueSubmit(queue_, 1, &submit, fences_[slot]);

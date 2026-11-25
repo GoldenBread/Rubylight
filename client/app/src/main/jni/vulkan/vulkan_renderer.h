@@ -338,6 +338,9 @@ private:
     // After a failed submit: the slot's fence and semaphore are left in a state nothing will
     // signal or wait on, so they're replaced
     void recreateSlotSync(int slot);
+    // Replaces only decodeDone_[slot] when an imported temporary sync-FD payload was never
+    // consumed by a vkQueueSubmit (e.g. acquireImage timed out or swapchain rebuild returned false).
+    void resetDecodeSemaphore(int slot);
     bool syncFdImportable(VkPhysicalDevice device) const;
     // The wait for the frame's decoder before its draw: on the GPU through decodeDone_[slot]
     // (true in gpuWait), or here. False when the decoder never finished the frame.

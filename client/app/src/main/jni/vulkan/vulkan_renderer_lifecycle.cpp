@@ -119,6 +119,20 @@ void VulkanRenderer::recreateSlotSync(int slot) {
     }
 }
 
+void VulkanRenderer::resetDecodeSemaphore(int slot) {
+    if (wedged_ || deviceLost_) {
+        return;
+    }
+    if (decodeDone_[slot]) {
+        vk_.vkDestroySemaphore(device_, decodeDone_[slot], nullptr);
+        decodeDone_[slot] = VK_NULL_HANDLE;
+    }
+    VkSemaphoreCreateInfo semInfo {VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
+    if (gpuDecodeWait_ && vk_.vkCreateSemaphore(device_, &semInfo, nullptr, &decodeDone_[slot]) != VK_SUCCESS) {
+        setFatal("could not reset decoder sync semaphore");
+    }
+}
+
 bool VulkanRenderer::createImageReader() {
     media_status_t status = ndk_->AImageReader_newWithUsage(
             config_.streamWidth, config_.streamHeight, AIMAGE_FORMAT_PRIVATE,
