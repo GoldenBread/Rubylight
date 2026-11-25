@@ -11,7 +11,7 @@ publish = false
 default = []
 # The Android demo's 36 games on the real launcher with no network and no host, driven from stdin
 # for captures (ui/demo.rs). Never in a build that ships.
-demo-library = ["nightjar-desktop-config/demo-library"]
+demo-library = ["nightjar-desktop-config/demo-library", "dep:image"]
 # Test fixtures/helpers used by `nightjar-desktop` unit tests only (`[dev-dependencies]`).
 test-support = ["nightjar-desktop-config/test-support", "dep:image"]
 
