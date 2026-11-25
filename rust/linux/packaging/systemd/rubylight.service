@@ -16,8 +16,9 @@ ConditionEnvironment=|DISPLAY
 
 [Service]
 Type=simple
-# The tray is a Windows feature; the console is the interface here.
-ExecStart=/usr/bin/butterpollo --no-tray
+# The tray icon goes in the desktop's system tray (a StatusNotifierItem), once it runs; the
+# `system_tray` setting turns it off.
+ExecStart=/usr/bin/butterpollo
 Environment=RUST_LOG=info
 # "Restart host" in the console exits with 75 (sysexits EX_TEMPFAIL) under systemd, which
 # Restart=on-failure answers; a stop (SIGTERM) or a clean exit leaves the unit stopped.

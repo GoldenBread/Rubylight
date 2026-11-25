@@ -1348,7 +1348,7 @@ restart = true
 category = "general"
 group = "Tray"
 label = "Tray icon"
-description = "Show a Rubylight icon in the Windows notification area, with a shortcut to this console."
+description = "Show a Rubylight icon in the notification area (the system tray on Linux), with a shortcut to this console."
 control = { kind = "toggle" }
 console = { group = "Network, administration and commands", label = "Show system tray icon", control = "bool" }
 

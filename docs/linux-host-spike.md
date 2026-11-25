@@ -133,7 +133,7 @@ The portable half of the host already builds on Linux: the five `rust/core/` cra
 | Virtual display | Rubylight's display driver | The gamescope session is the display: it takes the client's size and rate. A desktop stream on KDE gets a monitor of its own from Vibepollo's `vibeshine_drm` pool when it is installed (see Virtual display below) | Rubylight's own packaged pool; Mutter |
 | Input | SendInput, the VHF gamepad driver, ViGEm, USB/IP | XTEST keyboard and mouse into the gamescope session's Xwayland, `uinput` Xbox pads | `uhid` DualSense, Switch and Steam Deck pads from the report descriptors the host already has |
 | Audio | WASAPI loopback and routing | PipeWire: a sink per stream, a source for the microphone | Game-only audio by linking nodes |
-| Lifecycle | Windows service, installer, tray | A systemd user unit, a udev rule for `uinput` and `uhid` | Packages; the updater off with its reason shown |
+| Lifecycle | Windows service, installer, tray | A systemd user unit, a udev rule for `uinput` and `uhid`, the tray icon as a StatusNotifierItem (Plasma's system tray) with the Windows menu, and desktop notifications (`rust/linux/io/src/tray.rs`) | Packages; the updater off with its reason shown |
 
 Phases, each with the check that ends it:
 
@@ -194,7 +194,7 @@ The layout a Linux package follows (the Arch one is `rust/linux/packaging/arch/P
 | `/usr/bin/butterpollo` | The host. Without `--assets` it looks for `assets/web` beside the binary, then `../share/rubylight/assets/web` (`rust/host/src/cli.rs`). |
 | `/usr/share/rubylight/assets/` | `web/` (the console build; an empty folder gives the built-in console page), the cover images and `remote-session/`. |
 | `$XDG_CONFIG_HOME/rubylight` (`~/.config/rubylight`) | The profile: `sunshine.conf`, pairings, apps, logs. A `config` folder beside the binary wins, as on Windows (`rust/core/session/src/paths.rs`). |
-| `/usr/lib/systemd/user/rubylight.service` | The user unit (`systemctl --user enable --now rubylight.service`), `--no-tray`, `Restart=on-failure`. SIGTERM stops the host cleanly; as the unit's own process (`SYSTEMD_EXEC_PID` is its pid) "restart host" exits with 75 for the unit to restart it, instead of the host starting a copy that the unit's stop would kill. |
+| `/usr/lib/systemd/user/rubylight.service` | The user unit (`systemctl --user enable --now rubylight.service`), with the tray icon (`system_tray` turns it off), `Restart=on-failure`. SIGTERM stops the host cleanly; as the unit's own process (`SYSTEMD_EXEC_PID` is its pid) "restart host" exits with 75 for the unit to restart it, instead of the host starting a copy that the unit's stop would kill. |
 | `/usr/lib/udev/rules.d/70..72-rubylight-*.rules` | Encoder clock (`video` group), pad devices, and `uaccess` on `/dev/uinput` and `/dev/uhid` for the seat user. |
 | `/usr/lib/modules-load.d/rubylight.conf` | `uinput` and `uhid`. |
 | `/usr/share/licenses/rubylight/` | `LICENSE`, `NOTICE`, `THIRD_PARTY.md`, `Cargo.lock`. |

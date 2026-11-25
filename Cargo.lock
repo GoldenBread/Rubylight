@@ -681,6 +681,7 @@ dependencies = [
  "libc",
  "libloading",
  "pipewire",
+ "png",
  "rubylight-protocol",
  "rubylight-vdisplay-proto",
  "rubylight-vgamepad-proto",

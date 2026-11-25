@@ -25,6 +25,10 @@ x11rb = { version = "0.13", features = ["xtest", "xfixes"] }
 zbus = { version = "5.19", default-features = false, features = ["async-io", "blocking-api"] }
 pipewire = "0.10"
 
+[dev-dependencies]
+# Builds the `.ico` the tray tests read.
+png = "0.18"
+
 [features]
 # `UserFolder::unimpersonated`, for the host's file transfer tests only.
 test-folder = []

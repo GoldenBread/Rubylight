@@ -36,7 +36,7 @@ export const settings: Setting[] = [
   {
     key: 'system_tray',
     label: 'Tray icon',
-    description: 'Show a Rubylight icon in the Windows notification area, with a shortcut to this console.',
+    description: 'Show a Rubylight icon in the notification area (the system tray on Linux), with a shortcut to this console.',
     category: 'general',
     group: 'Tray',
     control: { kind: 'toggle' },

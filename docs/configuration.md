@@ -1178,7 +1178,7 @@ Every setting in the console, with its key and the default an unset key uses, in
 | Sleep and wake: Sleep after idle | `sleep_after_idle_minutes` | `0` min | Put this PC to sleep when nobody has streamed or used it for this many minutes. 0 turns it off. |
 | Sleep and wake: Sleep with a suspended stream | `sleep_while_suspended` | `false` | Also let the PC sleep while a stream is suspended or an app launched from a device still runs. Off, either one keeps the PC awake. |
 | Privacy: Lock Windows when the last device leaves | `lock_on_last_disconnect` | `false` | Lock this PC 10 seconds after the last device leaves, so it is not left signed in. Unlock it with your Windows password or PIN, from the next stream or at the PC. |
-| Tray: Tray icon | `system_tray` | `true` | Show a Rubylight icon in the Windows notification area, with a shortcut to this console. |
+| Tray: Tray icon | `system_tray` | `true` | Show a Rubylight icon in the notification area (the system tray on Linux), with a shortcut to this console. |
 | Tray: Hide tray controls | `hide_tray_controls` | `false` | Remove the disconnect, restart and quit actions from the tray icon's menu, so people at the PC cannot stop Rubylight from there. |
 | Hardware metrics: Send hardware metrics to client | `hardware_metrics` | `true` | Lets a compatible device show this PC's CPU and GPU readings (load, temperatures, power) in its overlay during a stream. Leave it on: readings are taken only while a device asks. |
 | Hardware metrics: Hardware metrics interval | `hardware_metrics_interval` | `1000` ms | The shortest time between two readings a streaming device asks for, from 500 to 10000 milliseconds. |
