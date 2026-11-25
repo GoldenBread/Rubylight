@@ -3,7 +3,17 @@ use crate::roaming::{Rejections, MAX_ATTEMPT};
 use std::cell::Cell;
 
 /// A code [`datagram_lost`] takes for packet loss: network unreachable.
-const UNREACHABLE: i32 = if cfg!(windows) { 10051 } else { 101 };
+const UNREACHABLE: i32 = if cfg!(windows) {
+    10051
+} else if cfg!(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "freebsd"
+)) {
+    51
+} else {
+    101
+};
 
 thread_local! {
     /// Replaces the result of this thread's control socket sends: a byte count, or a raw
