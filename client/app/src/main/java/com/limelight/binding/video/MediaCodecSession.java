@@ -56,6 +56,10 @@ final class MediaCodecSession {
         int error;
     }
 
+    // Asks for a restart with a larger input buffer, the way Moonlight V+ does
+    // (qiin2333/moonlight-vplus, GPL-3.0), instead of ending the stream on the first frame that does
+    // not fit. False when growing cannot help or the recovery attempts are used up; the caller then
+    // fails the stream.
     boolean requestInputBufferGrowth(long requiredBytes, int capacity) {
         int grown = r.recovery.recoveryAttemptsLeft() ?
                 NightjarPolicyJni.videoGrownInputSize(requiredBytes, capacity, r.requiredInputBufferSize) : 0;

@@ -315,7 +315,12 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
     public int getActiveVideoFormat() { return this.videoFormat; }
 
     static int maxInputSize(int bitrateKbps, int fps, int width, int height) { return NightjarPolicyJni.videoMaxInputSize(bitrateKbps, fps, width, height); }
+    // The input buffer size to ask for when a frame of requiredBytes does not fit: twice the buffer,
+    // or the frame if larger. 0 when growing cannot help: the frame fits, or the decoder already
+    // ignored a request this large. From Moonlight V+ (qiin2333/moonlight-vplus, GPL-3.0).
     static int grownInputSize(long requiredBytes, int capacity, int previousRequest) { return NightjarPolicyJni.videoGrownInputSize(requiredBytes, capacity, previousRequest); }
+    // Asks for a restart with a larger input buffer, the way Moonlight V+ does, instead of ending
+    // the stream on the first frame that does not fit.
     boolean requestInputBufferGrowth(long requiredBytes, int capacity) { return session.requestInputBufferGrowth(requiredBytes, capacity); }
     static void applyRequiredInputSize(MediaFormat format, int requiredInputBufferSize) { MediaCodecSession.applyRequiredInputSize(format, requiredInputBufferSize); }
     private MediaFormat createBaseMediaFormat(String mimeType) { return session.createBaseMediaFormat(mimeType); }
