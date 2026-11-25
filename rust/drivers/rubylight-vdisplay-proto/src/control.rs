@@ -97,6 +97,8 @@ pub mod status {
     pub const BUFFER_TOO_SMALL: i32 = 0xC000_0023u32 as i32;
     pub const ACCESS_DENIED: i32 = 0xC000_0022u32 as i32;
     pub const INSUFFICIENT_RESOURCES: i32 = 0xC000_009Au32 as i32;
+    /// `ERROR_SEM_TIMEOUT`: an operation timed out (for example waiting on a ring worker clear).
+    pub const IO_TIMEOUT: i32 = 0xC000_00B5u32 as i32;
     /// A warning status, so `DeviceIoControl` still fails, with `ERROR_BUSY`.
     pub const DEVICE_BUSY: i32 = 0x8000_0011u32 as i32;
 
@@ -104,6 +106,8 @@ pub mod status {
     pub const WIN32_NOT_FOUND: u32 = 1168;
     /// `ERROR_BUSY`: retry; another process still holds the requested monitor id.
     pub const WIN32_BUSY: u32 = 170;
+    /// `ERROR_SEM_TIMEOUT`: wait timed out.
+    pub const WIN32_TIMEOUT: u32 = 121;
     /// `ERROR_NOT_SUPPORTED`: the driver lacks the verb.
     pub const WIN32_NOT_SUPPORTED: u32 = 50;
 }

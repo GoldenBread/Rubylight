@@ -60,10 +60,19 @@ fn rt_gpu_enabled() -> bool {
 
 pub struct SwapChainProcessor {
     terminate: Arc<AtomicBool>,
+    running: Arc<AtomicBool>,
     /// Auto-reset event that ends the worker's idle wait. It closes as a field, after `Drop`
     /// joined the worker, so [`Self::wake`] never signals a closed handle.
     wake: Option<OwnedHandle>,
     thread: Option<JoinHandle<()>>,
+}
+
+struct RunningGuard(Arc<AtomicBool>);
+
+impl Drop for RunningGuard {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
 }
 
 impl SwapChainProcessor {
@@ -74,9 +83,15 @@ impl SwapChainProcessor {
         }
         Self {
             terminate: Arc::new(AtomicBool::new(false)),
+            running: Arc::new(AtomicBool::new(false)),
             wake,
             thread: None,
         }
+    }
+
+    /// Whether the swap-chain worker thread is currently live.
+    pub fn is_running(&self) -> bool {
+        self.running.load(Ordering::Acquire)
     }
 
     /// End the worker's idle wait so it re-reads the ring. Never blocks.
@@ -100,12 +115,15 @@ impl SwapChainProcessor {
         let available_buffer_event = Sendable(available_buffer_event);
         let swap_chain = Sendable(swap_chain);
         let terminate = self.terminate.clone();
+        let running = self.running.clone();
+        running.store(true, Ordering::Release);
         let target_id = monitor.upgrade().map_or(0, |m| m.target_id());
         // A worker that never starts still owns the swap chain and must delete it.
         let sc_raw = swap_chain.0;
         let spawned = thread::Builder::new()
             .name("rlvd-swapchain".into())
             .spawn(move || {
+                let _running = RunningGuard(running);
                 // Rebind the whole wrappers so the closure captures them, not their `!Send`
                 // fields.
                 let swap_chain = swap_chain;
@@ -132,6 +150,7 @@ impl SwapChainProcessor {
         match spawned {
             Ok(join_handle) => self.thread = Some(join_handle),
             Err(e) => {
+                self.running.store(false, Ordering::Release);
                 dbglog!("[rlvd] swap-chain worker did not start: {e}; deleting the swap chain");
                 // SAFETY: the worker never ran, so this is the only reference to the live
                 // swap chain IddCx handed over.
@@ -411,13 +430,36 @@ impl Retained {
         self.texture.as_ref().map(|(t, _)| t)
     }
 
-    /// Keep `surface` as the newest image.
+    /// Keep `surface` as the newest image (queued for active retry on the current ring).
     fn keep(
         &mut self,
         device: &Direct3DDevice,
         surface: &ID3D11Texture2D,
         desc: &D3D11_TEXTURE2D_DESC,
         frame: Frame,
+    ) {
+        self.keep_with(device, surface, desc, frame, true);
+    }
+
+    /// Keep a driver-owned copy of a published `surface` without queueing an immediate retry,
+    /// so a ring clear or fence-ring replace on an idle desktop can still seed the next ring.
+    fn keep_published(
+        &mut self,
+        device: &Direct3DDevice,
+        surface: &ID3D11Texture2D,
+        desc: &D3D11_TEXTURE2D_DESC,
+        frame: Frame,
+    ) {
+        self.keep_with(device, surface, desc, frame, false);
+    }
+
+    fn keep_with(
+        &mut self,
+        device: &Direct3DDevice,
+        surface: &ID3D11Texture2D,
+        desc: &D3D11_TEXTURE2D_DESC,
+        frame: Frame,
+        pending: bool,
     ) {
         // An unretainable newer image must not leave an older image eligible for retry.
         self.pending.clear();
@@ -428,10 +470,14 @@ impl Retained {
             return;
         };
         // SAFETY: both live on this device with the same size, format and sample count. The
-        // copy is queued before FinishedProcessingFrame; later retries read only our owned
-        // texture, never the IddCx surface after its next release/acquire.
+        // copy is queued before FinishedProcessingFrame; later retries/seeds read only our
+        // owned texture, never the IddCx surface or any cleared/fenced host texture.
         unsafe { device.device_context.CopyResource(texture, surface) };
-        self.pending.set(frame);
+        if pending {
+            self.pending.set(frame);
+        } else {
+            self.pending.mark_published(frame);
+        }
     }
 
     /// Take the newest image back from a ring that is going away.
@@ -626,8 +672,9 @@ impl RingState {
         match open.push(device, surface, &desc, frame) {
             Pushed::Published => {
                 stats.pushed.fetch_add(1, Ordering::AcqRel);
-                // The ring holds the newest image now; it is taken back if the ring goes.
-                self.retained.pending.clear();
+                // Keep a driver-owned copy after the host-facing flush so a ring clear or
+                // fence-ring replace can seed the next ring without reading host textures.
+                self.retained.keep_published(device, surface, &desc, frame);
                 false
             }
             Pushed::Dropped => {

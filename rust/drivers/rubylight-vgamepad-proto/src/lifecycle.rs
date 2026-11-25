@@ -235,6 +235,22 @@ impl DeviceState {
     }
 
     pub fn fill_query_info(&self) -> QueryInfoResponse {
+        let mut counters = FeedbackCounters::default();
+        for slot in &self.slots {
+            let slot_counters = slot.counters();
+            counters.haptic_evicted = counters
+                .haptic_evicted
+                .saturating_add(slot_counters.haptic_evicted);
+            counters.settings_evicted = counters
+                .settings_evicted
+                .saturating_add(slot_counters.settings_evicted);
+            counters.transitions_dropped = counters
+                .transitions_dropped
+                .saturating_add(slot_counters.transitions_dropped);
+            counters.unknown_commands = counters
+                .unknown_commands
+                .saturating_add(slot_counters.unknown_commands);
+        }
         QueryInfoResponse {
             header: RequestHeader::new(QueryInfoResponse::WIRE_SIZE as u32),
             minimum_protocol_version: PROTOCOL_VERSION,
@@ -242,7 +258,7 @@ impl DeviceState {
             available_profiles: profiles::available_profiles(),
             available_features: feature_mask::ALL,
             maximum_controllers: MAX_CONTROLLERS,
-            counters: FeedbackCounters::default(),
+            counters,
         }
     }
 

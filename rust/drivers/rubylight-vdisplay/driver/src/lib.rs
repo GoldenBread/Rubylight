@@ -42,6 +42,7 @@ pub(crate) const STATUS_BUFFER_TOO_SMALL: NTSTATUS = status::BUFFER_TOO_SMALL;
 pub(crate) const STATUS_ACCESS_DENIED: NTSTATUS = status::ACCESS_DENIED;
 pub(crate) const STATUS_DEVICE_BUSY: NTSTATUS = status::DEVICE_BUSY;
 pub(crate) const STATUS_INSUFFICIENT_RESOURCES: NTSTATUS = status::INSUFFICIENT_RESOURCES;
+pub(crate) const STATUS_IO_TIMEOUT: NTSTATUS = status::IO_TIMEOUT;
 
 /// IddCx in stub mode requires the driver to export its minimum framework version. `10` is
 /// IddCx 1.10, the truthful floor: the drain loop calls `ReleaseAndAcquireBuffer2` (1.10) and

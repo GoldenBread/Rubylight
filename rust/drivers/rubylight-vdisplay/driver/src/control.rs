@@ -132,30 +132,20 @@ pub unsafe fn dispatch(request: WDFREQUEST, ioctl_code: u32) {
                 Err(st) => request.complete(st),
             }
         }
-        control::IOCTL_CLEAR_FRAME_RING => with_session(request, |s| {
-            if crate::monitor::clear_frame_ring(owner, s) {
-                STATUS_SUCCESS
-            } else {
-                STATUS_NOT_FOUND
-            }
-        }),
+        control::IOCTL_CLEAR_FRAME_RING => {
+            with_session(request, |s| crate::monitor::clear_frame_ring(owner, s))
+        }
         control::IOCTL_CLEAR_FRAME_RING_GENERATION => {
             let st = match read(
                 &request,
                 ClearFrameRingRequest::SIZE,
                 ClearFrameRingRequest::decode,
             ) {
-                Ok(r) => {
-                    if crate::monitor::clear_frame_ring_generation(
-                        owner,
-                        r.session_id,
-                        r.generation,
-                    ) {
-                        STATUS_SUCCESS
-                    } else {
-                        STATUS_NOT_FOUND
-                    }
-                }
+                Ok(r) => crate::monitor::clear_frame_ring_generation(
+                    owner,
+                    r.session_id,
+                    r.generation,
+                ),
                 Err(st) => st,
             };
             request.complete(st);
@@ -266,7 +256,7 @@ fn set_ring(owner: u32, request: Request, req: &SetFrameRingRequest, fences: Opt
         return;
     };
     let handles = match RingHandles::adopt(req, fences) {
-        Ok(h) => std::sync::Arc::new(h),
+        Ok(h) => h,
         Err(st) => {
             request.complete(st);
             return;
@@ -290,10 +280,8 @@ fn set_ring(owner: u32, request: Request, req: &SetFrameRingRequest, fences: Opt
             request.complete(STATUS_SUCCESS);
         }
         Err(handles) => {
-            // Torn down meanwhile: give the handles back for the host to reap.
-            if let Ok(handles) = std::sync::Arc::try_unwrap(handles) {
-                handles.into_unowned();
-            }
+            // Torn down meanwhile: give the handles back for the host to reap without closing.
+            handles.into_unowned();
             request.complete(STATUS_NOT_FOUND);
         }
     }

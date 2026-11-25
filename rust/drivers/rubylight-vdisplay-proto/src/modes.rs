@@ -48,10 +48,14 @@ pub fn flatten(modes: &[Mode]) -> impl Iterator<Item = ModeItem> + '_ {
 
 /// How many resolutions a monitor's list may accumulate across resizes.
 pub const MODE_LIST_CAP: usize = 12;
+/// How many distinct refresh rates any one resolution may retain across resizes and history,
+/// preventing fractional rates from accumulating without bound.
+pub const RATE_LIST_CAP: usize = 8;
 
-/// Append missing resolutions up to [`MODE_LIST_CAP`] and merge missing refresh rates.
-/// Windows pins a monitor's settable set when it arrives, so retain historical rates when
-/// a resolution becomes a fallback. Existing order, including the preferred mode, stays.
+/// Append missing resolutions up to [`MODE_LIST_CAP`] and merge missing refresh rates up to
+/// [`RATE_LIST_CAP`] per resolution. Windows pins a monitor's settable set when it arrives,
+/// so retain historical rates when a resolution becomes a fallback. Existing order, including
+/// the preferred mode, stays.
 pub fn union_modes(into: &mut Vec<Mode>, from: &[Mode]) {
     for m in from {
         if let Some(existing) = into
@@ -59,12 +63,30 @@ pub fn union_modes(into: &mut Vec<Mode>, from: &[Mode]) {
             .find(|e| (e.width, e.height) == (m.width, m.height))
         {
             for &rate in &m.refresh_mhz {
+                if existing.refresh_mhz.len() >= RATE_LIST_CAP {
+                    break;
+                }
                 if !existing.refresh_mhz.contains(&rate) {
                     existing.refresh_mhz.push(rate);
                 }
             }
         } else if into.len() < MODE_LIST_CAP {
-            into.push(m.clone());
+            let mut mode = Mode {
+                width: m.width,
+                height: m.height,
+                refresh_mhz: Vec::new(),
+            };
+            for &rate in &m.refresh_mhz {
+                if mode.refresh_mhz.len() >= RATE_LIST_CAP {
+                    break;
+                }
+                if !mode.refresh_mhz.contains(&rate) {
+                    mode.refresh_mhz.push(rate);
+                }
+            }
+            if !mode.refresh_mhz.is_empty() || m.refresh_mhz.is_empty() {
+                into.push(mode);
+            }
         }
     }
 }
@@ -444,6 +466,14 @@ mod tests {
         );
         assert_eq!(full.len(), MODE_LIST_CAP);
         assert_eq!(full[0], mode(640, 480, &[60_000, 120_000]));
+
+        // Per-resolution refresh rates also stop at RATE_LIST_CAP so fractional rates do not pile up.
+        let history: Vec<u32> = (0..(RATE_LIST_CAP as u32 + 6))
+            .map(|i| 59_000 + i * 10)
+            .collect();
+        let combined = advertised_modes(mode(1920, 1080, &[60_000]), &[mode(1920, 1080, &history)]);
+        assert!(combined[0].refresh_mhz.len() <= RATE_LIST_CAP);
+        assert_eq!(combined[0].refresh_mhz[0], 60_000);
     }
 
     #[test]

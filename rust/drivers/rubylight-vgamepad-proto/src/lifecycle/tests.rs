@@ -268,4 +268,16 @@ fn ntstatus_codes_and_keepalive_parking_and_pid_playing_match_contract() {
     assert!(dev.any_pid_playing());
     dev.stopping = true;
     assert!(!dev.any_pid_playing());
+
+    // Global `fill_query_info` aggregates per-slot feedback counters cleanly with saturation.
+    let mut counter_dev = DeviceState::new();
+    for _ in 0..(crate::steam_haptic_queue::HAPTIC_QUEUE_CAPACITY + 2) {
+        counter_dev.slots[0]
+            .haptic_queue
+            .enqueue(crate::protocol::FeedbackEvent::default());
+    }
+    counter_dev.slots[1].sc26.features.unknown_commands = 3;
+    let info = counter_dev.fill_query_info();
+    assert_eq!(info.counters.haptic_evicted, 2);
+    assert_eq!(info.counters.unknown_commands, 3);
 }
