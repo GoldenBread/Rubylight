@@ -471,3 +471,47 @@ fn receive_errors_only_back_off_when_they_persist() {
     consecutive = 0;
     assert_eq!(recv_error_backoff(&mut consecutive), None);
 }
+
+#[test]
+fn worker_drain_commands_caps_each_pass_and_keeps_wake_armed() {
+    let (handle, rx, _idr) = detached(TransportOptions::default());
+    let shared = handle.shared.clone();
+    let timer = butterpollo_win_graphics::timing::Timer::new().unwrap();
+    let total = MAX_COMMANDS_PER_PASS + 16;
+    for _ in 0..total {
+        handle
+            .tx
+            .send(Command::Control {
+                data: vec![1],
+                binary: false,
+            })
+            .unwrap();
+    }
+
+    shared.wake.reset().unwrap();
+    let mut handled = 0usize;
+    assert!(drain_commands(&rx, &shared, |_| handled += 1));
+    assert_eq!(handled, MAX_COMMANDS_PER_PASS);
+    assert!(
+        timer
+            .until_or_signal(Instant::now() + Duration::from_millis(50), &shared.wake)
+            .unwrap(),
+        "capped pass must keep wake armed"
+    );
+
+    shared.wake.reset().unwrap();
+    assert!(drain_commands(&rx, &shared, |_| handled += 1));
+    assert_eq!(handled, total);
+    assert!(
+        !timer
+            .until_or_signal(Instant::now() + Duration::from_millis(10), &shared.wake)
+            .unwrap(),
+        "uncapped pass should not re-arm wake"
+    );
+
+    handle.tx.send(Command::Stop).unwrap();
+    assert!(!drain_commands(&rx, &shared, |_| {}));
+
+    drop(handle);
+    assert!(!drain_commands(&rx, &shared, |_| {}));
+}

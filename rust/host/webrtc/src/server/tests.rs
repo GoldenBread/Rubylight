@@ -525,5 +525,75 @@ async fn console_revocation_is_not_starved_by_continuous_websocket_pong_frames()
     .expect("console_revoked was starved by continuous Pong frames");
     assert_eq!(close_code, Some(axum::extract::ws::close_code::POLICY));
     flood.abort();
+    let _ = flood.await;
     server.abort();
+}
+
+#[tokio::test]
+async fn send_within_times_out_stalled_send_and_reports_errors() {
+    assert!(send_within(Duration::from_millis(50), async { Ok::<(), ()>(()) }).await);
+    assert!(!send_within(Duration::from_millis(50), async { Err::<(), ()>(()) }).await);
+    let started = std::time::Instant::now();
+    let stalled = send_within(
+        Duration::from_millis(20),
+        std::future::pending::<Result<(), ()>>(),
+    )
+    .await;
+    assert!(!stalled);
+    assert!(started.elapsed() < Duration::from_secs(1));
+}
+
+#[tokio::test]
+async fn full_session_inbox_reports_error_on_answer_and_stop() {
+    let f = Fixture::new();
+    let h = f.host.clone();
+    let clients = crate::WebRtcRuntime::for_host(&h).clients;
+    let peer = Peer {
+        address: ([192, 168, 1, 9], 5000).into(),
+        local: ([192, 168, 1, 2], 8000).into(),
+        this_pc: false,
+    };
+    let Registered {
+        id,
+        closed: _closed,
+    } = clients.open(peer.address.ip()).unwrap();
+    let device = clients.console_device(&h, "owner").unwrap();
+    let mut state = Connection::new(h, clients, Limits::default(), peer, id);
+    state.client = Some(Authenticated {
+        client_id: device.webrtc().unwrap().0.to_owned(),
+        name: device.name,
+    });
+    let (commands, _rx) = crate::session::Commands::test_channel(crate::session::COMMAND_CAP);
+    for _ in 0..crate::session::COMMAND_CAP {
+        assert!(commands.send(crate::session::Command::Stop));
+    }
+    state.session = Some(commands);
+
+    let mut out = Vec::new();
+    state
+        .handle(r#"{"version":2,"type":"stop-session"}"#, &mut out)
+        .await;
+    state
+        .handle(
+            r#"{"version":2,"type":"answer","sessionId":1,"sdp":"v=0"}"#,
+            &mut out,
+        )
+        .await;
+    assert_eq!(out.len(), 2, "{out:?}");
+    assert!(matches!(
+        &out[0],
+        ServerMessage::Error {
+            request_type,
+            code: butterpollo_session::webrtc::protocol::ErrorCode::InternalError,
+            ..
+        } if request_type == "stop-session"
+    ));
+    assert!(matches!(
+        &out[1],
+        ServerMessage::Error {
+            request_type,
+            code: butterpollo_session::webrtc::protocol::ErrorCode::InternalError,
+            ..
+        } if request_type == "answer"
+    ));
 }

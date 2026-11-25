@@ -5,7 +5,7 @@ use super::*;
 use butterpollo_media_policy::{audio::OpusLayout, rtsp::webrtc_audio_kbps};
 use butterpollo_session::session::Role;
 use butterpollo_stream::state::test_support::Fixture;
-use tokio::sync::mpsc::UnboundedReceiver;
+use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
 
 #[test]
 fn the_audio_layout_is_the_answered_one_at_the_bitrate_the_video_budget_paid_for() {
@@ -229,4 +229,102 @@ fn a_transport_that_connected_before_the_session_gets_its_keyframe_when_bound() 
     bridge.event(TransportEvent::Disconnected);
     bridge.event(TransportEvent::Reconnected);
     assert!(!session.stopping());
+}
+
+#[test]
+fn commands_inbox_is_bounded_without_blocking() {
+    let (commands, mut rx) = Commands::test_channel(COMMAND_CAP);
+    for _ in 0..COMMAND_CAP {
+        assert!(commands.send(Command::Stop));
+    }
+    assert!(!commands.send(Command::Stop));
+    assert!(matches!(rx.try_recv(), Ok(Command::Stop)));
+    assert!(commands.send(Command::Stop));
+}
+
+#[tokio::test]
+async fn switch_session_is_refused_when_another_device_owns_remote_session() {
+    use butterpollo_session::webrtc::protocol::{
+        AudioSettings, ErrorCode, ServerMessage, VideoSettings,
+    };
+    let f = Fixture::new();
+    let app0 = f.host.apps.read().unwrap()[0].clone();
+    let other_id = app0.id() + 1;
+    let mut app1 = app0.clone();
+    app1.name = "Second App".into();
+    app1.computed_id = Some(other_id);
+    f.host.apps.write().unwrap().push(app1);
+
+    let mut running =
+        butterpollo_stream::process::RunningApp::with_environment(&app0, Default::default())
+            .unwrap();
+    running.owner = "owner".into();
+    *f.host.current_app.lock().unwrap() = Some(running);
+
+    let monitor = f.session(f.client(u32::MAX), Role::RemoteMonitor);
+    let intruder = crate::WebRtcRuntime::for_host(&f.host)
+        .clients
+        .console_device(&f.host, "intruder")
+        .unwrap();
+    let client_id = intruder.webrtc().unwrap().0.to_owned();
+
+    let base_port = (25000u16..55000)
+        .step_by(20)
+        .find(|&base| {
+            let ports = butterpollo_config::config::Ports::from_base(base);
+            std::net::UdpSocket::bind(("127.0.0.1", ports.video)).is_ok()
+                && std::net::UdpSocket::bind(("127.0.0.1", ports.audio)).is_ok()
+        })
+        .unwrap();
+    *f.host.config.write().unwrap() = butterpollo_config::config::Config::parse(&format!(
+        "port = {base_port}\nstream_mic = false\n"
+    ))
+    .unwrap();
+    let media =
+        butterpollo_stream::stream::Media::new(f.host.clone(), "127.0.0.1".parse().unwrap())
+            .unwrap();
+    let (out_tx, mut out_rx) = tokio::sync::mpsc::channel(8);
+    let commands = spawn(
+        f.host.clone(),
+        media,
+        client_id,
+        "127.0.0.1:5000".parse().unwrap(),
+        "127.0.0.1".parse().unwrap(),
+        false,
+        out_tx,
+    );
+    assert!(commands.send(Command::Switch(Request {
+        app_id: other_id.to_string(),
+        video: VideoSettings {
+            width: 1920,
+            height: 1080,
+            fps: 60,
+            codec: "hevc".into(),
+            bitrate_kbps: 20_000,
+            hdr: false,
+        },
+        audio: AudioSettings {
+            channels: 2,
+            sample_rate: None,
+        },
+    })));
+    let reply = tokio::time::timeout(Duration::from_secs(2), out_rx.recv())
+        .await
+        .expect("timed out waiting for switch-session reply")
+        .expect("actor exited without replying");
+    assert!(
+        matches!(
+            reply,
+            ServerMessage::Error {
+                ref request_type,
+                code: ErrorCode::SessionActive,
+                ..
+            } if request_type == "switch-session"
+        ),
+        "expected switch-session refusal, got {reply:?}"
+    );
+    assert!(f.host.current_app.lock().unwrap().is_some());
+    assert!(!monitor.stopping());
+    drop(commands);
+    f.host.stop.store(true, Ordering::Release);
 }

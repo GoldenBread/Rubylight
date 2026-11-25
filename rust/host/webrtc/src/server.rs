@@ -52,6 +52,8 @@ mod pairing;
 
 use connection::connection;
 #[cfg(test)]
+use connection::send_within;
+#[cfg(test)]
 use connection::{Authenticated, Connection, client_line_is_loud};
 #[cfg(test)]
 use pairing::{Pairing, name_problem};

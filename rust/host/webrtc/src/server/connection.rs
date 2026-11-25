@@ -21,7 +21,7 @@ use butterpollo_stream::{
     network::Throttle, state::Shared, stream::Media, webrtc_bridge::ConsoleSignIn,
 };
 use std::{sync::Arc, time::Duration};
-use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
+use tokio::sync::mpsc::{Sender, channel};
 
 /// What a connection does after a message.
 #[derive(Debug, PartialEq, Eq)]
@@ -51,7 +51,7 @@ pub(super) struct Connection {
     /// The stream pipeline, and where the session actor's replies go.
     streaming: Option<Streaming>,
     /// The session actor, started with the first session request.
-    session: Option<Commands>,
+    pub(super) session: Option<Commands>,
     /// This connection's page has said why this session's peer connection failed
     /// ([`client_line_is_loud`]).
     pub(super) reported_failure: bool,
@@ -77,7 +77,7 @@ static CLIENT_FAILURES: std::sync::Mutex<Throttle> = std::sync::Mutex::new(Throt
 
 struct Streaming {
     media: Arc<Media>,
-    replies: UnboundedSender<ServerMessage>,
+    replies: Sender<ServerMessage>,
 }
 
 impl Connection {
@@ -122,13 +122,13 @@ pub(super) async fn connection(
     };
     let Some(Registered { id, mut closed }) = registered else {
         tracing::debug!(peer = %peer.address, "WebRTC connection refused: this peer has all the unauthenticated connections the host allows");
-        let _ = socket.send(Message::Close(None)).await;
+        let _ = send_frame(&mut socket, Message::Close(None)).await;
         return;
     };
     // Dropping the state frees the connection's slots and pairing request,
     // however the task ends: a normal exit, a panic or an abort.
     let mut state = Connection::new(h.clone(), clients.clone(), limits, peer, id);
-    let (replies, mut replied) = unbounded_channel();
+    let (replies, mut replied) = channel(REPLY_CAP);
     state.streaming = media.map(|media| Streaming { media, replies });
     tracing::debug!(peer = %peer.address, id, "WebRTC connection opened");
     let mut changed = clients.subscribe();
@@ -161,8 +161,9 @@ pub(super) async fn connection(
             break;
         }
         if flow == Flow::Close {
-            let _ = socket.send(Message::Close(close.take())).await;
-            break;
+            drop(state);
+            close_socket(socket, close.take()).await;
+            return;
         }
         let idle_until = state
             .client
@@ -188,14 +189,17 @@ pub(super) async fn connection(
             }
             reason = console_revoked(&h, &mut signed_in) => {
                 tracing::info!(peer = %peer.address, id, reason, "WebRTC console connection closed");
+                drop(state);
                 let _ = send(&mut socket, &mut out).await;
-                let _ = socket
-                    .send(Message::Close(Some(CloseFrame {
+                close_socket(
+                    socket,
+                    Some(CloseFrame {
                         code: close_code::POLICY,
                         reason: reason.into(),
-                    })))
-                    .await;
-                break;
+                    }),
+                )
+                .await;
+                return;
             }
             Some(message) = replied.recv() => out.push(message),
             outcome = state.pairing_outcome() => flow = state.finish_pairing(outcome, &mut out),
@@ -252,14 +256,42 @@ async fn idle(until: Option<tokio::time::Instant>) {
     }
 }
 
-/// Send what is queued. False when the socket is gone.
+const SEND_TIMEOUT: Duration = Duration::from_secs(5);
+const CLOSE_GRACE: Duration = Duration::from_millis(200);
+const REPLY_CAP: usize = 128;
+
+pub(super) async fn send_within<F, E>(limit: Duration, fut: F) -> bool
+where
+    F: std::future::Future<Output = Result<(), E>>,
+{
+    matches!(tokio::time::timeout(limit, fut).await, Ok(Ok(())))
+}
+
+async fn send_frame(socket: &mut WebSocket, message: Message) -> bool {
+    send_within(SEND_TIMEOUT, socket.send(message)).await
+}
+
+async fn close_socket(mut socket: WebSocket, frame: Option<CloseFrame>) {
+    if !send_frame(&mut socket, Message::Close(frame)).await {
+        return;
+    }
+    // Wait briefly while draining in-flight peer frames for close/EOF so dropping the socket on
+    // Windows does not trigger a TCP RST while the Close frame is still unread.
+    let _ = tokio::time::timeout(CLOSE_GRACE, async {
+        loop {
+            match socket.recv().await {
+                Some(Ok(Message::Close(_))) | Some(Err(_)) | None => break,
+                Some(Ok(_)) => {}
+            }
+        }
+    })
+    .await;
+}
+
+/// Send what is queued. False when the socket is gone or stalled.
 async fn send(socket: &mut WebSocket, out: &mut Vec<ServerMessage>) -> bool {
     for message in out.drain(..) {
-        if socket
-            .send(Message::Text(message.to_json().into()))
-            .await
-            .is_err()
-        {
+        if !send_frame(socket, Message::Text(message.to_json().into())).await {
             return false;
         }
     }
@@ -415,7 +447,13 @@ impl Connection {
             }
             ClientMessage::StopSession => match &self.session {
                 Some(session) => {
-                    session.send(Command::Stop);
+                    if !session.send(Command::Stop) {
+                        out.push(Self::error(
+                            ErrorCode::InternalError,
+                            kind,
+                            "The session manager is busy or stopped",
+                        ));
+                    }
                 }
                 None => out.push(ServerMessage::session_status(SessionState::Idle, None)),
             },
@@ -424,7 +462,19 @@ impl Connection {
                 // An answer with no session behind it is late signalling.
                 match &self.session {
                     Some(session) => {
-                        session.send(Command::Answer { session_id, sdp });
+                        if !session.send(Command::Answer { session_id, sdp }) {
+                            tracing::debug!(
+                                id = self.id,
+                                kind,
+                                session_id,
+                                "WebRTC answer dropped: session inbox full or closed"
+                            );
+                            out.push(Self::error(
+                                ErrorCode::InternalError,
+                                kind,
+                                "The session manager is busy or stopped",
+                            ));
+                        }
                     }
                     None => tracing::debug!(
                         id = self.id,
