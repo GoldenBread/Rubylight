@@ -140,8 +140,33 @@ fn bitrates_are_capped_by_the_device_and_the_runtime_cap() {
     let runtime = decide(&request(3, 900_000, 0), &stream(), &config(0));
     assert_eq!(runtime.bitrate_kbps, Some(500_000));
     assert_eq!(runtime.result.bitrate, Outcome::clamped(Reason::HostLimit));
+    // PyroWave allows runtime bitrates above 500 Mbps up to 2 Gbps unless max_bitrate caps it.
+    let pyrowave_launch = Negotiated {
+        codec: 3,
+        ..Negotiated::default()
+    };
+    let pyrowave_stream = Stream {
+        launched: &pyrowave_launch,
+        ..stream()
+    };
+    let fast = decide(&request(4, 900_000, 0), &pyrowave_stream, &config(0));
+    assert_eq!(fast.bitrate_kbps, Some(900_000));
+    assert_eq!(fast.result.bitrate_kbps, 900_000);
+    assert_eq!(fast.result.bitrate, Outcome::APPLIED);
+    let capped_pyrowave = decide(&request(5, 2_500_000, 0), &pyrowave_stream, &config(0));
+    assert_eq!(capped_pyrowave.bitrate_kbps, Some(2_000_000));
+    assert_eq!(
+        capped_pyrowave.result.bitrate,
+        Outcome::clamped(Reason::HostLimit)
+    );
+    let host_capped_pyrowave = decide(&request(6, 900_000, 0), &pyrowave_stream, &config(750_000));
+    assert_eq!(host_capped_pyrowave.bitrate_kbps, Some(750_000));
+    assert_eq!(
+        host_capped_pyrowave.result.bitrate,
+        Outcome::clamped(Reason::HostLimit)
+    );
     // Lowering is always allowed.
-    let low = decide(&request(4, 500, 0), &stream(), &config(50_000));
+    let low = decide(&request(7, 500, 0), &stream(), &config(50_000));
     assert_eq!(low.bitrate_kbps, Some(500));
     assert_eq!(low.result.bitrate, Outcome::APPLIED);
 }

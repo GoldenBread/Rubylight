@@ -64,10 +64,47 @@ pub struct Format {
     color_space: i32,
 }
 #[repr(C)]
+#[derive(Clone, Copy)]
 pub struct Format2 {
     kind: u32,
     next: *mut c_void,
     format: Format,
+}
+const IMAGE_COMPRESSION_PROPERTIES_EXT: u32 = 1000338003;
+#[repr(C)]
+struct VulkanHeader {
+    kind: u32,
+    next: *mut VulkanHeader,
+}
+#[repr(C)]
+struct ImageCompressionProperties {
+    kind: u32,
+    next: *mut VulkanHeader,
+    flags: u32,
+    fixed_rate_flags: u32,
+}
+/// Populate known `VkSurfaceFormat2KHR` `pNext` extension structures on
+/// layer-injected entries so callers do not observe uninitialized values.
+///
+/// # Safety
+/// Every pointer in the `next` chain is null or points to a valid Vulkan output
+/// structure whose `sType` matches its C layout.
+unsafe fn fill_known_pnext(mut next: *mut c_void) {
+    // Bound chain traversal on untrusted/malformed caller chains.
+    for _ in 0..32 {
+        if next.is_null() {
+            break;
+        }
+        // SAFETY: callers guarantee each `pNext` node begins with `{ sType, pNext }`.
+        let header = unsafe { &*(next as *const VulkanHeader) };
+        if header.kind == IMAGE_COMPRESSION_PROPERTIES_EXT {
+            // SAFETY: `sType == VK_STRUCTURE_TYPE_IMAGE_COMPRESSION_PROPERTIES_EXT` identifies `ImageCompressionProperties`.
+            let props = unsafe { &mut *(next as *mut ImageCompressionProperties) };
+            props.flags = 0;
+            props.fixed_rate_flags = 0;
+        }
+        next = header.next.cast();
+    }
 }
 #[repr(C)]
 struct Link {
@@ -76,11 +113,11 @@ struct Link {
     physical_gipa: Function,
 }
 #[repr(C)]
-struct Chain {
+struct Chain<L> {
     kind: u32,
     next: *const c_void,
     function: i32,
-    link: *mut Link,
+    link: *mut L,
 }
 #[repr(C)]
 struct DeviceLink {
@@ -88,12 +125,47 @@ struct DeviceLink {
     gipa: Gipa,
     gdpa: Gipa,
 }
-#[repr(C)]
-struct DeviceChain {
-    kind: u32,
-    next: *const c_void,
-    function: i32,
-    link: *mut DeviceLink,
+#[cfg(test)]
+type DeviceChain = Chain<DeviceLink>;
+trait LinkNext: Sized {
+    fn next_link(&self) -> *mut Self;
+}
+impl LinkNext for Link {
+    fn next_link(&self) -> *mut Self {
+        self.next
+    }
+}
+impl LinkNext for DeviceLink {
+    fn next_link(&self) -> *mut Self {
+        self.next
+    }
+}
+/// Locate the Vulkan loader's layer link node (`kind`, `function == 0`) in
+/// `first` and advance its `link` to the next layer.
+///
+/// # Safety
+/// `first` is null or heads a valid `VkBaseInStructure` `pNext` chain whose
+/// matching `kind` entry is `Chain<L>`.
+unsafe fn take_loader_link<L: LinkNext>(first: *const c_void, kind: u32) -> Option<*mut L> {
+    let mut chain = first as *mut Chain<L>;
+    // SAFETY: callers guarantee each node in `first` begins with `{ sType, pNext }`.
+    unsafe {
+        for _ in 0..128 {
+            if chain.is_null() {
+                return None;
+            }
+            if (*chain).kind == kind && (*chain).function == 0 {
+                let link = (*chain).link;
+                if link.is_null() {
+                    return None;
+                }
+                (*chain).link = (*link).next_link();
+                return Some(link);
+            }
+            chain = (*chain).next as *mut Chain<L>;
+        }
+    }
+    None
 }
 #[repr(C)]
 pub struct Negotiation {
@@ -108,6 +180,7 @@ pub struct Negotiation {
 struct Instance {
     handle: usize,
     next: Gipa,
+    physical_next: Option<Gipa>,
     destroy: Option<Destroy>,
     create_surface: Option<CreateSurface>,
     destroy_surface: Option<DestroySurface>,
@@ -322,26 +395,11 @@ unsafe extern "system" fn create(
         if info.is_null() || result.is_null() {
             return FAILED;
         }
-        let mut chain = (*info).next as *mut Chain;
-        for _ in 0..128 {
-            if chain.is_null() {
-                return FAILED;
-            }
-            if (*chain).kind == 47 && (*chain).function == 0 {
-                break;
-            }
-            chain = (*chain).next as *mut Chain;
-        }
-        if chain.is_null()
-            || (*chain).kind != 47
-            || (*chain).function != 0
-            || (*chain).link.is_null()
-        {
+        let Some(link) = take_loader_link::<Link>((*info).next, 47) else {
             return FAILED;
-        }
-        let link = (*chain).link;
+        };
         let next = (*link).gipa;
-        (*chain).link = (*link).next;
+        let physical_next = std::mem::transmute::<Function, Option<Gipa>>((*link).physical_gipa);
         let Some(next_create) = next(ptr::null_mut(), c"vkCreateInstance".as_ptr()) else {
             return FAILED;
         };
@@ -356,6 +414,7 @@ unsafe extern "system" fn create(
         let data = Instance {
             handle: *result as usize,
             next,
+            physical_next,
             destroy: std::mem::transmute::<Function, Option<Destroy>>(next(
                 *result,
                 c"vkDestroyInstance".as_ptr(),
@@ -447,27 +506,12 @@ unsafe extern "system" fn create_device(
         if info.is_null() || device.is_null() {
             return FAILED;
         }
-        let mut chain = (*(info.cast::<CreateInfo>())).next as *mut DeviceChain;
-        for _ in 0..128 {
-            if chain.is_null() {
-                return FAILED;
-            }
-            if (*chain).kind == 48 && (*chain).function == 0 {
-                break;
-            }
-            chain = (*chain).next as *mut DeviceChain;
-        }
-        if chain.is_null()
-            || (*chain).kind != 48
-            || (*chain).function != 0
-            || (*chain).link.is_null()
-        {
+        let Some(link) = take_loader_link::<DeviceLink>((*(info.cast::<CreateInfo>())).next, 48)
+        else {
             return FAILED;
-        }
-        let link = (*chain).link;
+        };
         let gipa = (*link).gipa;
         let gdpa = (*link).gdpa;
-        (*chain).link = (*link).next;
         let Some(data) = instance(physical) else {
             return FAILED;
         };
@@ -507,19 +551,19 @@ unsafe fn copy_formats(
     count: *mut u32,
     mut write: impl FnMut(usize, Format),
 ) -> i32 {
-    // SAFETY: `count` is valid, and `write` stores only below the count the caller
-    // provided, which is the room its buffer has.
-    unsafe {
+    // SAFETY: `count` is valid, and `write` runs only for indices within `*count`.
+    let written = unsafe {
         let written = (*count as usize).min(formats.len());
         for (i, format) in formats[..written].iter().enumerate() {
             write(i, *format);
         }
         *count = written as u32;
-        if written < formats.len() {
-            INCOMPLETE
-        } else {
-            SUCCESS
-        }
+        written
+    };
+    if written < formats.len() {
+        INCOMPLETE
+    } else {
+        SUCCESS
     }
 }
 unsafe extern "system" fn formats(
@@ -582,28 +626,65 @@ unsafe extern "system" fn formats2(
         if next(device, info, &mut base, ptr::null_mut()) != SUCCESS || base > MAX_FORMATS {
             return next(device, info, count, out);
         }
-        let mut values: Vec<_> = (0..base)
-            .map(|_| Format2 {
-                kind: 1000119002,
-                next: ptr::null_mut(),
-                format: Format::default(),
-            })
-            .collect();
-        let code = next(device, info, &mut base, values.as_mut_ptr());
-        if !matches!(code, SUCCESS | INCOMPLETE) || base as usize > values.len() {
+        if out.is_null() {
+            let mut values = vec![
+                Format2 {
+                    kind: 1000119002,
+                    next: ptr::null_mut(),
+                    format: Format::default(),
+                };
+                base as usize
+            ];
+            let code = next(device, info, &mut base, values.as_mut_ptr());
+            if !matches!(code, SUCCESS | INCOMPLETE) || base as usize > values.len() {
+                return next(device, info, count, out);
+            }
+            let mut values: Vec<_> = values[..base as usize].iter().map(|v| v.format).collect();
+            extend(&mut values);
+            *count = values.len() as u32;
+            return SUCCESS;
+        }
+        let capacity = *count as usize;
+        if capacity == 0 {
+            let mut empty = Vec::new();
+            extend(&mut empty);
+            *count = 0;
+            return if base == 0 && empty.is_empty() {
+                SUCCESS
+            } else {
+                INCOMPLETE
+            };
+        }
+        // Let the next layer fill caller-owned `out` entries directly, including
+        // their `pNext` chains, before appending any injected HDR formats.
+        let mut base_written = capacity as u32;
+        let code = next(device, info, &mut base_written, out);
+        if !matches!(code, SUCCESS | INCOMPLETE) || base_written as usize > capacity {
             return next(device, info, count, out);
         }
-        let mut values: Vec<_> = values[..base as usize].iter().map(|v| v.format).collect();
+        let base_written = base_written as usize;
+        if code == INCOMPLETE || base_written < base as usize {
+            *count = base_written as u32;
+            return INCOMPLETE;
+        }
+        let mut values: Vec<_> = (0..base_written).map(|i| (*out.add(i)).format).collect();
         extend(&mut values);
-        if out.is_null() {
-            *count = values.len() as u32;
-            SUCCESS
-        }
-        // Preserve each caller-owned sType and pNext chain.
-        else {
-            copy_formats(&values, count, |i, format| (*out.add(i)).format = format)
-        }
+        copy_formats(&values, count, |i, format| {
+            if i >= base_written {
+                let entry = out.add(i);
+                (*entry).format = format;
+                fill_known_pnext((*entry).next);
+            }
+        })
     }
+}
+/// Convert a non-null layer entry point pointer to `PFN_vkVoidFunction`.
+///
+/// # Safety
+/// `f` points to an `unsafe extern "system" fn` whose ABI matches the queried Vulkan command.
+unsafe fn proc_fn(f: *const ()) -> Function {
+    // SAFETY: Caller guarantees `f` is a valid `extern "system"` function pointer.
+    Some(unsafe { std::mem::transmute::<*const (), unsafe extern "system" fn()>(f) })
 }
 /// The layer's `vkGetInstanceProcAddr`: its own entry points by name,
 /// everything else from the next layer.
@@ -634,7 +715,7 @@ pub unsafe extern "system" fn vkGetInstanceProcAddr(
             b"vkGetPhysicalDeviceSurfaceFormats2KHR" => formats2 as *const (),
             _ => return instance(handle).and_then(|d| (d.next)(handle, name)),
         };
-        Some(std::mem::transmute::<*const (), unsafe extern "system" fn()>(f))
+        proc_fn(f)
     }
 }
 /// The layer's `vkGetDeviceProcAddr`.
@@ -651,20 +732,8 @@ pub unsafe extern "system" fn vkGetDeviceProcAddr(device: Handle, name: *const c
             return None;
         }
         match CStr::from_ptr(name).to_bytes() {
-            b"vkGetDeviceProcAddr" => {
-                return Some(
-                    std::mem::transmute::<*const (), unsafe extern "system" fn()>(
-                        vkGetDeviceProcAddr as *const (),
-                    ),
-                );
-            }
-            b"vkDestroyDevice" => {
-                return Some(
-                    std::mem::transmute::<*const (), unsafe extern "system" fn()>(
-                        destroy_device as *const (),
-                    ),
-                );
-            }
+            b"vkGetDeviceProcAddr" => return proc_fn(vkGetDeviceProcAddr as *const ()),
+            b"vkDestroyDevice" => return proc_fn(destroy_device as *const ()),
             _ => {}
         }
         let gdpa = key(device).and_then(|key| {
@@ -674,6 +743,35 @@ pub unsafe extern "system" fn vkGetDeviceProcAddr(device: Handle, name: *const c
                 .and_then(|s| s.devices.get(&key).copied())
         });
         gdpa.and_then(|gdpa| gdpa(device, name))
+    }
+}
+/// The layer's `vkGetPhysicalDeviceProcAddr`: physical-device commands it hooks
+/// or the next layer's `pfnNextGetPhysicalDeviceProcAddr`.
+///
+/// # Safety
+/// Called by the Vulkan loader: `handle` is null or a `VkInstance`, and
+/// `name` is null or NUL-terminated.
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn vkGetPhysicalDeviceProcAddr(
+    handle: Handle,
+    name: *const c_char,
+) -> Function {
+    // SAFETY: `name` is NUL-terminated; each returned physical-device entry
+    // point is erased to PFN_vkVoidFunction, as the API defines.
+    unsafe {
+        if name.is_null() {
+            return None;
+        }
+        let f: *const () = match CStr::from_ptr(name).to_bytes() {
+            b"vkGetPhysicalDeviceSurfaceFormatsKHR" => formats as *const (),
+            b"vkGetPhysicalDeviceSurfaceFormats2KHR" => formats2 as *const (),
+            _ => {
+                return instance(handle)
+                    .and_then(|d| d.physical_next)
+                    .and_then(|next| next(handle, name));
+            }
+        };
+        proc_fn(f)
     }
 }
 /// Loader-layer interface negotiation (version 2).
@@ -692,32 +790,11 @@ pub unsafe extern "system" fn vkNegotiateLoaderLayerInterfaceVersion(
         (*info).version = (*info).version.min(2);
         (*info).gipa = Some(vkGetInstanceProcAddr);
         (*info).gdpa = Some(vkGetDeviceProcAddr);
-        (*info).physical_gipa = Some(vkGetInstanceProcAddr);
+        if (*info).version >= 2 {
+            (*info).physical_gipa = Some(vkGetPhysicalDeviceProcAddr);
+        }
         SUCCESS
     }
 }
 #[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn formats_are_not_duplicated_and_short_buffers_are_bounded() {
-        let sdr = Format {
-            format: 44,
-            color_space: 0,
-        };
-        let mut values = vec![sdr];
-        extend(&mut values);
-        extend(&mut values);
-        assert_eq!(values.len(), 3);
-        let mut buffer = [Format::default(); 2];
-        let mut count = 1;
-        assert_eq!(
-            // SAFETY: `count` is a local and the closure indexes a two-entry buffer.
-            unsafe { copy_formats(&values, &mut count, |i, format| buffer[i] = format) },
-            INCOMPLETE
-        );
-        assert_eq!(count, 1);
-        assert_eq!(buffer[0], sdr);
-        assert_eq!(buffer[1], Format::default());
-    }
-}
+mod tests;

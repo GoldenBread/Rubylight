@@ -8,6 +8,7 @@
 //! 880f1ef): `video_hdr_metadata.h`, `video_hdr_metadata.cpp` and `video_hdr_bitstream.cpp`.
 //! Copyright (c) Foundation Sunshine authors, GPL-3.0.
 
+use crate::bitstream::rbsp::Writer as BitWriter;
 use std::time::{Duration, Instant};
 
 /// The maxRGB percentages HDR10+ carries. [`FrameStats::percentiles_pq`] lines up with it.
@@ -204,23 +205,23 @@ impl Hdr10Plus {
         // Country US, provider 0x003C, provider-oriented code 0x0001, application
         // identifier 4 (ST 2094-40), application version 1.
         let mut bits = BitWriter::with_prefix(&[0xB5, 0x00, 0x3C, 0x00, 0x01, 4, 1]);
-        bits.put(2, 1); // num_windows
-        bits.put(27, 0); // targeted_system_display_maximum_luminance: profile A has none
-        bits.put(1, 0); // targeted_system_display_actual_peak_luminance_flag
+        bits.bits(2, 1); // num_windows
+        bits.bits(27, 0); // targeted_system_display_maximum_luminance: profile A has none
+        bits.bits(1, 0); // targeted_system_display_actual_peak_luminance_flag
         for _ in 0..3 {
-            bits.put(17, self.maxscl.min(100_000));
+            bits.bits(17, self.maxscl.min(100_000));
         }
-        bits.put(17, self.average_maxrgb.min(100_000));
-        bits.put(4, PERCENTAGES.len() as u32);
+        bits.bits(17, self.average_maxrgb.min(100_000));
+        bits.bits(4, PERCENTAGES.len() as u32);
         for (&percentage, &percentile) in PERCENTAGES.iter().zip(&self.distribution) {
-            bits.put(7, u32::from(percentage));
-            bits.put(17, percentile.min(100_000));
+            bits.bits(7, u32::from(percentage));
+            bits.bits(17, percentile.min(100_000));
         }
-        bits.put(10, 0); // fraction_bright_pixels
-        bits.put(1, 0); // mastering_display_actual_peak_luminance_flag
-        bits.put(1, 0); // tone_mapping_flag: profile A carries no Bezier curve
-        bits.put(1, 0); // color_saturation_mapping_flag
-        bits.bytes
+        bits.bits(10, 0); // fraction_bright_pixels
+        bits.bits(1, 0); // mastering_display_actual_peak_luminance_flag
+        bits.bits(1, 0); // tone_mapping_flag: profile A carries no Bezier curve
+        bits.bits(1, 0); // color_saturation_mapping_flag
+        bits.into_bytes()
     }
 }
 
@@ -274,44 +275,17 @@ impl Vivid {
             self.variance_maxrgb,
             self.maximum_maxrgb,
         ] {
-            bits.put(12, u32::from(code.min(4095)));
+            bits.bits(12, u32::from(code.min(4095)));
         }
-        bits.put(1, 0); // tone_mapping_mode_flag
-        bits.put(1, 0); // color_saturation_mapping_flag
-        bits.bytes
+        bits.bits(1, 0); // tone_mapping_mode_flag
+        bits.bits(1, 0); // color_saturation_mapping_flag
+        bits.into_bytes()
     }
 }
 
 /// CUVA 005.1 system_start_code of a PQ and of an HLG stream.
 const VIVID_PQ: u8 = 0x01;
 const VIVID_HLG: u8 = 0x02;
-
-/// MSB-first bit writer; the last byte is padded with zeros.
-struct BitWriter {
-    bytes: Vec<u8>,
-    used: u32,
-}
-
-impl BitWriter {
-    fn with_prefix(prefix: &[u8]) -> Self {
-        Self {
-            bytes: prefix.to_vec(),
-            used: 0,
-        }
-    }
-
-    fn put(&mut self, count: u32, value: u32) {
-        debug_assert!(count < 32 && value >> count == 0, "{value} in {count} bits");
-        for shift in (0..count).rev() {
-            if self.used == 0 {
-                self.bytes.push(0);
-            }
-            let last = self.bytes.len() - 1;
-            self.bytes[last] |= (((value >> shift) & 1) as u8) << (7 - self.used);
-            self.used = (self.used + 1) % 8;
-        }
-    }
-}
 
 /// The codecs that carry dynamic HDR metadata.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -512,13 +486,13 @@ impl Writer {
         }
     }
 
-    /// Feed one new analysis sample, as [`StatsSmoother::update`]. Invalid statistics
-    /// return `None` and keep the current units.
     /// Jumps smoothed because a cut had just happened.
     pub fn held_cuts(&self) -> u64 {
         self.smoother.held_cuts()
     }
 
+    /// Feed one new analysis sample, as [`StatsSmoother::update`]. Invalid statistics
+    /// return `None` and keep the current units.
     pub fn sample(&mut self, raw: &FrameStats) -> Option<Smoothed> {
         let smoothed = self.smoother.update(raw)?;
         self.units = self.frame_units(&smoothed.stats)?;

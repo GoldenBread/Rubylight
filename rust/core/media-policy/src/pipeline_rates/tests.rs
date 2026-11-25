@@ -517,16 +517,16 @@ fn virtual_display_limited_distinguishes_true_low_delivery_from_paired_frames() 
     ));
     assert!(virtual_display_limited(true, None, None, 72_000, 144_000));
 
-    // Issue #146: on event-driven idd-push with a virtual display mode >= limit
-    // (e.g. 1000 Hz VRR or 240/288 Hz), a 60 fps game is game-limited, not display-limited.
-    assert!(!virtual_display_limited(
+    // Low capture matching source still blames the virtual display even when the
+    // nominal display mode meets or exceeds `limit_mhz`.
+    assert!(virtual_display_limited(
         true,
         Some(60_000),
         Some(1_000_000),
         60_000,
         144_000
     ));
-    assert!(!virtual_display_limited(
+    assert!(virtual_display_limited(
         true,
         Some(72_000),
         Some(144_000),
@@ -572,6 +572,46 @@ fn virtual_display_limited_distinguishes_true_low_delivery_from_paired_frames() 
         None,
         72_000,
         0
+    ));
+}
+
+#[test]
+fn virtual_display_limited_fires_through_source_rate_window() {
+    let mut watch = SourceRate::default();
+    let start = Instant::now();
+    let display_mhz = Some(144_000);
+    let capture_mhz = Some(72_000);
+    let mut warning = None;
+    for step in 0..LOW_WINDOWS {
+        warning = watch.window(
+            start + Duration::from_secs(5 * u64::from(step)),
+            144_000,
+            display_mhz,
+            Some(72_000),
+        );
+    }
+    let Some(SourceRateWarning::Below {
+        source_mhz,
+        limit_mhz,
+    }) = warning
+    else {
+        panic!("expected SourceRateWarning::Below, got {warning:?}");
+    };
+    assert_eq!(limit_mhz, 144_000);
+    assert!(virtual_display_limited(
+        true,
+        capture_mhz,
+        display_mhz,
+        source_mhz,
+        limit_mhz,
+    ));
+    // Paired high-rate captures remain non-virtual-display-limited through the same flow.
+    assert!(!virtual_display_limited(
+        true,
+        Some(140_000),
+        display_mhz,
+        source_mhz,
+        limit_mhz,
     ));
 }
 

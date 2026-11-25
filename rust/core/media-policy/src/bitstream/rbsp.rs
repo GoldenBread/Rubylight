@@ -127,16 +127,26 @@ impl<'a> Reader<'a> {
 
 #[derive(Default)]
 pub struct Writer {
-    bytes: Vec<u8>,
+    pub(crate) bytes: Vec<u8>,
     at: usize,
 }
 impl Writer {
+    pub fn with_prefix(prefix: &[u8]) -> Self {
+        Self {
+            bytes: prefix.to_vec(),
+            at: prefix.len() * 8,
+        }
+    }
     /// Reset for another header while retaining the allocated backing buffer.
     pub fn clear(&mut self) {
         self.bytes.clear();
         self.at = 0;
     }
     pub fn bits(&mut self, count: u32, value: u32) {
+        self.put(count, u64::from(value));
+    }
+    pub fn put(&mut self, count: u32, value: u64) {
+        debug_assert!(count <= 64 && (count == 64 || value >> count == 0));
         for index in (0..count).rev() {
             if self.at.is_multiple_of(8) {
                 self.bytes.push(0);
@@ -147,17 +157,71 @@ impl Writer {
             self.at += 1;
         }
     }
+    /// Two's complement in `count` bits.
+    pub fn signed(&mut self, count: u32, value: i64) {
+        let mask = if count >= 64 {
+            u64::MAX
+        } else {
+            (1u64 << count) - 1
+        };
+        self.put(count, (value as u64) & mask);
+    }
     pub fn flag(&mut self, on: bool) {
         self.bits(1, u32::from(on));
     }
     pub fn ue(&mut self, value: u32) {
-        let code = u64::from(value) + 1;
+        self.ue64(u64::from(value));
+    }
+    /// Exp-Golomb ue(v) for 64-bit unsigned values.
+    pub fn ue64(&mut self, value: u64) {
+        let code = value + 1;
         let length = 64 - code.leading_zeros();
-        self.bits(length - 1, 0);
-        if length > 32 {
-            self.bits(1, 1);
+        self.put(length - 1, 0);
+        self.put(length, code);
+    }
+    /// Exp-Golomb se(v).
+    pub fn se(&mut self, value: i64) {
+        self.ue64(if value > 0 {
+            (2 * value - 1) as u64
+        } else {
+            (-2 * value) as u64
+        });
+    }
+    /// EMDF variable_bits(`count`): groups of `count` bits, each but the last
+    /// followed by a read_more one bit, every group after the first adding
+    /// one to the value before it is shifted.
+    pub fn variable(&mut self, count: u32, mut value: u64) {
+        let mask = (1 << count) - 1;
+        let mut groups = vec![value & mask];
+        value >>= count;
+        while value > 0 {
+            value -= 1;
+            groups.push(value & mask);
+            value >>= count;
         }
-        self.bits(length.min(32), code as u32);
+        for (index, &group) in groups.iter().rev().enumerate() {
+            self.put(count, group);
+            self.put(1, u64::from(index + 1 < groups.len()));
+        }
+    }
+    /// Pad the trailing partial byte with zeros to a byte boundary.
+    pub fn align(&mut self) {
+        self.at = (self.at + 7) & !7;
+    }
+    pub fn position(&self) -> u64 {
+        self.at as u64
+    }
+    pub fn byte_aligned(&self) -> bool {
+        self.at.is_multiple_of(8)
+    }
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+    pub fn bytes_mut(&mut self) -> &mut Vec<u8> {
+        &mut self.bytes
+    }
+    pub fn into_bytes(self) -> Vec<u8> {
+        self.bytes
     }
     /// Bits `start..end` of `from`, unchanged.
     pub fn copy(&mut self, from: &[u8], start: usize, end: usize) {

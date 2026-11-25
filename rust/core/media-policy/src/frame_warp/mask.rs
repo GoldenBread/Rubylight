@@ -19,15 +19,45 @@ pub(super) struct MaskTracker {
 }
 
 impl MaskTracker {
-    /// Sends the last mask again (a client that just asked has none).
-    pub(super) fn resend(&mut self) {
-        if let Some(mask) = &self.sent {
-            self.pending = mask.encode();
+    /// Sends the last mask again, scaled down to `max_width` if needed (a client
+    /// that asked for width 0 receives no mask).
+    pub(super) fn resend(&mut self, max_width: u16) {
+        if max_width == 0 {
+            self.pending = None;
+            return;
         }
+        let Some(mask) = self.sent.as_ref() else {
+            return;
+        };
+        if mask.width <= max_width {
+            self.pending = mask.encode();
+            return;
+        }
+        let mut mask = mask.clone();
+        while mask.width > max_width {
+            mask = mask.halved();
+        }
+        self.queue(mask, None);
     }
 
     pub(super) fn clear_pending(&mut self) {
         self.pending = None;
+    }
+
+    fn queue(&mut self, mut mask: Mask, now_us: Option<u64>) {
+        self.generation = self.generation.wrapping_add(1);
+        mask.generation = self.generation;
+        let mut wire = mask.encode();
+        while wire.is_none() && mask.width > 1 {
+            mask = mask.halved();
+            wire = mask.encode();
+        }
+        let Some(wire) = wire else { return };
+        self.pending = Some(wire);
+        self.sent = Some(mask);
+        if let Some(now_us) = now_us {
+            self.sent_at_us = Some(now_us);
+        }
     }
 
     /// A HUD mask, already shaped ([`shape`]).
@@ -57,18 +87,7 @@ impl MaskTracker {
         } else if mask.is_clear() {
             return;
         }
-        let mut mask = mask.into_owned();
-        self.generation = self.generation.wrapping_add(1);
-        mask.generation = self.generation;
-        let mut wire = mask.encode();
-        while wire.is_none() && mask.width > 1 {
-            mask = mask.halved();
-            wire = mask.encode();
-        }
-        let Some(wire) = wire else { return };
-        self.pending = Some(wire);
-        self.sent = Some(mask);
-        self.sent_at_us = Some(now_us);
+        self.queue(mask.into_owned(), Some(now_us));
     }
 }
 

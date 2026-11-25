@@ -2,7 +2,8 @@
 //! `rubylight_protocol::rate_change`), for a client that launched with `rlRateChange=1`.
 //!
 //! The control thread decides each request with [`decide`]. A bitrate is capped by the
-//! device's `max_bitrate` and the runtime cap ([`crate::stream_policy::runtime_bitrate_kbps`])
+//! device's `max_bitrate` and the codec's runtime cap
+//! ([`crate::stream_policy::runtime_bitrate_kbps_for`])
 //! and reaches the encoder on its next frame, which AMF takes without a keyframe. It is in
 //! the unit of the launch: for a client that sent the bitrate its user set, the encoder gets
 //! what a launch with that number would have
@@ -126,7 +127,11 @@ pub fn decide(request: &RateChangeRequest, stream: &Stream<'_>, config: &Config)
     }
     let mut bitrate_kbps = None;
     if request.bitrate_kbps != 0 {
-        let applied = crate::stream_policy::runtime_bitrate_kbps(config, request.bitrate_kbps);
+        let applied = crate::stream_policy::runtime_bitrate_kbps_for(
+            config,
+            stream.launched.codec,
+            request.bitrate_kbps,
+        );
         result.bitrate = if applied < request.bitrate_kbps {
             Outcome::clamped(Reason::HostLimit)
         } else {

@@ -220,6 +220,10 @@ fn encoder_share_kbps(stream: &Negotiated, ceiling: u64) -> u32 {
     share_breakdown(stream, ceiling).encoder_kbps
 }
 
+fn codec_runtime_cap_kbps(codec: u8) -> u32 {
+    if codec == 3 { 2_000_000 } else { 500_000 }
+}
+
 /// Explain the effective encoder bitrate and link-rate ceiling at stream start,
 /// matching the calculations in [`apply`] and [`crate::link_rate::LinkRate::new`].
 pub fn explain_bitrate(stream: &Negotiated, config: &Config, max_kbps: u32) -> BitrateBudget {
@@ -230,11 +234,7 @@ pub fn explain_bitrate(stream: &Negotiated, config: &Config, max_kbps: u32) -> B
         breakdown.encoder_kbps
     };
     breakdown.encoder_kbps = encoder_kbps;
-    let codec_cap = if stream.codec == 3 {
-        2_000_000
-    } else {
-        500_000
-    };
+    let codec_cap = codec_runtime_cap_kbps(stream.codec);
     let link_cap = if max_kbps > 0 { max_kbps } else { u32::MAX };
     breakdown.link_ceiling_kbps = encoder_kbps.min(codec_cap).min(link_cap);
     breakdown.ceiling_source = if link_cap < encoder_kbps && link_cap < codec_cap {
@@ -344,11 +344,19 @@ pub fn report_bitrate(
     }
 }
 
-/// The bitrate a client may set during a stream: `max_bitrate` caps it, and
-/// 500 Mbps keeps it inside the encoders' rate fields, as in Vibepollo.
+/// The bitrate a client may set during a stream when the caller does not
+/// differentiate codecs: `max_bitrate` caps it, and 500 Mbps keeps it inside
+/// H.264/HEVC/AV1 rate fields.
 pub fn runtime_bitrate_kbps(config: &Config, requested: u32) -> u32 {
+    runtime_bitrate_kbps_for(config, 0, requested)
+}
+
+/// The bitrate a client may set during a stream for `codec`: `max_bitrate`
+/// caps it, PyroWave allows up to 2 Gbps, and other codecs keep the 500 Mbps
+/// cap inside their encoders' rate fields.
+pub fn runtime_bitrate_kbps_for(config: &Config, codec: u8, requested: u32) -> u32 {
     let ceiling = config.integer("max_bitrate", 0);
-    let applied = requested.min(500_000);
+    let applied = requested.min(codec_runtime_cap_kbps(codec));
     if ceiling > 0 {
         applied.min(ceiling.min(i64::from(u32::MAX)) as u32)
     } else {

@@ -156,7 +156,7 @@ impl FrameWarpHost {
         if self.enabled {
             // The client counts from its request on; so does the model it hears first.
             self.model = Some(self.calibrator.model(self.calibrator_generation()));
-            self.mask.resend();
+            self.mask.resend(self.mask_max_width);
         } else {
             self.tags.clear();
             self.model = None;

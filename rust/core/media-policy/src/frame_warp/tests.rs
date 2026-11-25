@@ -551,3 +551,51 @@ fn thumbnail_height_keeps_the_aspect() {
     assert_eq!(thumbnail_height((3440, 1440)), 107);
     assert_eq!(thumbnail_height((1080, 1920)), 256);
 }
+
+#[test]
+fn a_narrower_or_zero_request_resends_within_its_limit() {
+    let mut host = enabled((1920, 1080));
+    let mut mask = Mask::new(0, 480, 270);
+    for x in 10..20 {
+        for y in 10..20 {
+            mask.set(x, y, true);
+        }
+    }
+    hud(&mut host, &shape(&mask), 0);
+    let initial = Mask::decode(&host.take_mask().unwrap()).unwrap();
+    assert_eq!((initial.width, initial.height), (480, 270));
+
+    // A client re-asking with mask_max_width = 0 gets no mask at all (and clears any pending mask).
+    host.on_request(
+        &FrameWarpRequest {
+            enabled: true,
+            controller: Some(0),
+            mask_max_width: 0,
+            lens: true,
+        }
+        .encode(),
+    );
+    assert_eq!(host.take_mask(), None);
+
+    // Re-enabling with a narrower width halves the retained mask to fit <= 240.
+    host.on_request(
+        &FrameWarpRequest {
+            enabled: false,
+            controller: None,
+            mask_max_width: 0,
+            lens: true,
+        }
+        .encode(),
+    );
+    host.on_request(
+        &FrameWarpRequest {
+            enabled: true,
+            controller: None,
+            mask_max_width: 240,
+            lens: true,
+        }
+        .encode(),
+    );
+    let narrowed = Mask::decode(&host.take_mask().unwrap()).unwrap();
+    assert_eq!((narrowed.width, narrowed.height), (240, 135));
+}

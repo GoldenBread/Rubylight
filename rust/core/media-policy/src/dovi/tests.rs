@@ -253,7 +253,7 @@ const GOLDEN_101: &str = concat!(
 #[test]
 fn emdf_variable_bits_add_one_per_group() {
     let written = |count: u32, value: u64| {
-        let mut bits = Bits::with_prefix(0);
+        let mut bits = Bits::with_prefix(&[0]);
         bits.variable(count, value);
         let used = bits.position() as usize - 8;
         (bits_at(&bits.bytes[1..], 0, used), used)

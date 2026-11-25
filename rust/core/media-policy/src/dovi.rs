@@ -25,6 +25,7 @@
 //! syntax. The AV1 carriage (the T.35 header and the EMDF container around the
 //! RPU) follows the same crate's `av1/mod.rs` and `av1/emdf.rs`, and FFmpeg's
 //! `libavcodec/dovi_rpuenc.c` (`FF_DOVI_WRAP_T35`) writes the same bytes.
+use crate::bitstream::rbsp::Writer as Bits;
 use crate::hdr::Metadata;
 use crate::hdr_dynamic::{FrameStats, Smoothed, av1_t35_obu, escape, nits_to_pq};
 
@@ -166,7 +167,7 @@ impl Frame {
     /// The RPU payload: prefix, header, mapping, display-management data,
     /// CRC-32 and the final byte, before emulation prevention.
     pub fn rpu(&self) -> Vec<u8> {
-        let mut bits = Bits::with_prefix(RPU_PREFIX);
+        let mut bits = Bits::with_prefix(&[RPU_PREFIX]);
         header(&mut bits);
         match self.profile {
             Profile::P81 | Profile::P101 => mapping(&mut bits),
@@ -174,10 +175,11 @@ impl Frame {
         }
         self.dm_data(&mut bits);
         bits.align();
-        let crc = crc32_mpeg2(&bits.bytes[1..]);
-        bits.bytes.extend_from_slice(&crc.to_be_bytes());
-        bits.bytes.push(RPU_FINAL_BYTE);
-        bits.bytes
+        let crc = crc32_mpeg2(&bits.as_bytes()[1..]);
+        let bytes = bits.bytes_mut();
+        bytes.extend_from_slice(&crc.to_be_bytes());
+        bytes.push(RPU_FINAL_BYTE);
+        bits.into_bytes()
     }
 
     /// The RPU as an Annex B NAL unit (four-byte start code, type 62), with
@@ -198,11 +200,7 @@ impl Frame {
     pub fn obu(&self) -> Vec<u8> {
         let rpu = self.rpu();
         let payload = &rpu[1..];
-        let mut bits = Bits {
-            bytes: Vec::with_capacity(AV1_T35_HEADER.len() + payload.len() + 8),
-            used: 0,
-        };
-        bits.bytes.extend_from_slice(&AV1_T35_HEADER);
+        let mut bits = Bits::with_prefix(&AV1_T35_HEADER);
         bits.put(2, 0); // emdf_version
         bits.put(3, 6); // key_id
         bits.put(5, 31); // emdf_payload_id: 31 and an extension
@@ -220,10 +218,10 @@ impl Frame {
         bits.put(2, 1); // protection_length_primary
         bits.put(2, 0); // protection_length_secondary
         bits.put(8, 0); // protection_bits_primary
-        while bits.used != 0 {
+        while !bits.byte_aligned() {
             bits.put(1, 1);
         }
-        av1_t35_obu(&bits.bytes)
+        av1_t35_obu(bits.as_bytes())
     }
 
     /// The RPU in its profile's carriage: [`Frame::nal`] for profile 8,
@@ -239,7 +237,7 @@ impl Frame {
         let metadata = &self.metadata;
         bits.ue(0); // affected_dm_metadata_id
         bits.ue(0); // current_dm_metadata_id
-        bits.ue(u64::from(self.scene_refresh));
+        bits.ue(u32::from(self.scene_refresh));
         for coefficient in YCC_TO_RGB {
             bits.signed(16, coefficient.into());
         }
@@ -422,7 +420,7 @@ fn mapping_84(bits: &mut Bits) {
     bits.ue(0); // vdr_rpu_id
     bits.ue(0); // mapping_color_space
     bits.ue(0); // mapping_chroma_format_idc
-    bits.ue(P84_LUMA_PIVOTS.len() as u64 - 2); // num_pivots_minus2
+    bits.ue(P84_LUMA_PIVOTS.len() as u32 - 2); // num_pivots_minus2
     for pivot in P84_LUMA_PIVOTS {
         bits.put(BL_BIT_DEPTH, pivot);
     }
@@ -457,7 +455,7 @@ fn mapping_84(bits: &mut Bits) {
 
 /// One extension block of `length` bytes, zero-padded after `payload`.
 fn extension_block(bits: &mut Bits, level: u8, length: u64, payload: impl FnOnce(&mut Bits)) {
-    bits.ue(length);
+    bits.ue64(length);
     bits.put(8, level.into());
     let start = bits.position();
     payload(bits);
@@ -567,81 +565,6 @@ impl Writer {
         };
         self.refresh = false;
         frame
-    }
-}
-
-/// MSB-first bit writer; [`Bits::align`] pads the last byte with zeros.
-struct Bits {
-    bytes: Vec<u8>,
-    used: u32,
-}
-
-impl Bits {
-    fn with_prefix(prefix: u8) -> Self {
-        let mut bytes = Vec::with_capacity(160);
-        bytes.push(prefix);
-        Self { bytes, used: 0 }
-    }
-
-    fn put(&mut self, count: u32, value: u64) {
-        debug_assert!(count <= 64 && (count == 64 || value >> count == 0));
-        for shift in (0..count).rev() {
-            if self.used == 0 {
-                self.bytes.push(0);
-            }
-            let last = self.bytes.len() - 1;
-            self.bytes[last] |= (((value >> shift) & 1) as u8) << (7 - self.used);
-            self.used = (self.used + 1) % 8;
-        }
-    }
-
-    /// Two's complement in `count` bits.
-    fn signed(&mut self, count: u32, value: i64) {
-        self.put(count, (value as u64) & ((1 << count) - 1));
-    }
-
-    /// Exp-Golomb ue(v).
-    fn ue(&mut self, value: u64) {
-        let coded = value + 1;
-        let length = 64 - coded.leading_zeros();
-        self.put(length - 1, 0);
-        self.put(length, coded);
-    }
-
-    /// EMDF variable_bits(`count`): groups of `count` bits, each but the last
-    /// followed by a read_more one bit, every group after the first adding
-    /// one to the value before it is shifted.
-    fn variable(&mut self, count: u32, mut value: u64) {
-        let mask = (1 << count) - 1;
-        let mut groups = vec![value & mask];
-        value >>= count;
-        while value > 0 {
-            value -= 1;
-            groups.push(value & mask);
-            value >>= count;
-        }
-        for (index, &group) in groups.iter().rev().enumerate() {
-            self.put(count, group);
-            self.put(1, u64::from(index + 1 < groups.len())); // read_more
-        }
-    }
-
-    /// Exp-Golomb se(v).
-    fn se(&mut self, value: i64) {
-        self.ue(if value > 0 {
-            (2 * value - 1) as u64
-        } else {
-            (-2 * value) as u64
-        });
-    }
-
-    fn align(&mut self) {
-        self.used = 0;
-    }
-
-    fn position(&self) -> u64 {
-        let full = self.bytes.len() as u64 - u64::from(self.used != 0);
-        full * 8 + u64::from(self.used)
     }
 }
 

@@ -375,3 +375,46 @@ fn seven_point_one_downmix_preserves_every_channel_for_a_five_point_one_client()
         }
     }
 }
+
+#[test]
+fn endpoint_front_of_center_and_back_center_fold_into_mix() {
+    // FL, FR, FC, LFE, BL, BR, FLC, FRC, BC
+    let mask = 0x1 | 0x2 | 0x4 | 0x8 | 0x10 | 0x20 | 0x40 | 0x80 | 0x100;
+    for outputs in [2, 6, 8, 12] {
+        let matrix = mix_matrix(9, mask, outputs).unwrap();
+        // FLC/FRC (indices 6, 7) and BC (index 8) are non-zero in every mix.
+        assert!(matrix.iter().any(|row| row[6] > 0.), "{outputs}");
+        assert!(matrix.iter().any(|row| row[7] > 0.), "{outputs}");
+        assert!(matrix.iter().any(|row| row[8] > 0.), "{outputs}");
+        for row in &matrix {
+            assert!(row.iter().sum::<f32>() <= 1. + 1e-6, "{outputs}");
+        }
+    }
+    let surround = mix_matrix(9, mask, 6).unwrap();
+    assert!(surround[0][6] > 0. && surround[2][6] > 0.);
+    assert!(surround[1][7] > 0. && surround[2][7] > 0.);
+    assert!(surround[4][8] > 0. && surround[5][8] > 0.);
+}
+
+#[test]
+fn ninety_six_khz_polyphase_resampler_attenuates_ultrasonic_aliasing() {
+    let measure = |freq_hz: f64| -> f32 {
+        let mut r = Resampler::new(96_000, 2).unwrap();
+        for i in 0..4800 {
+            let v = (2.0 * std::f64::consts::PI * freq_hz * i as f64 / 96_000.0).sin() as f32;
+            r.push(&[v, v]);
+        }
+        let out = r.read(2000).unwrap();
+        out.chunks(2)
+            .skip(100)
+            .map(|f| f[0].abs())
+            .fold(0.0f32, f32::max)
+    };
+    let passband = measure(1_000.0);
+    let ultrasonic = measure(40_000.0);
+    assert!(passband > 0.9, "1 kHz attenuated too much: {passband}");
+    assert!(
+        ultrasonic < 0.05,
+        "40 kHz at 96 kHz should not alias into passband: {ultrasonic}"
+    );
+}
