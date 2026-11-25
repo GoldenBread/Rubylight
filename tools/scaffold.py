@@ -157,7 +157,7 @@ mod tests {{
         f'1. Export `pub mod {name};` in client/protocol/core/src/lib.rs',
         f'2. Reserve `({name}::{upper}_MESSAGE_TYPE, "{name.replace("_", " ")}")` in client/protocol/core/src/ids.rs',
         '3. Offer it in rust/core/media-policy/src/extensions.rs (Offered) & rust/host/stream/src/extensions.rs',
-        '4. Dispatch it in rust/host/stream/src/stream/control.rs (use a worker beside control.rs if stateful)',
+        '4. Dispatch it in a family handler under rust/host/stream/src/stream/control/ (chained in event_loop.rs; a stateful one gets its own worker module)',
         '5. Wire Nightjar in client/protocol/client/src/control/{messages.rs,events.rs,session.rs} + Android/Desktop',
         '6. Document in docs/control-messages.md and check tests/host/tests/reconnect_tests/extension_tests.rs',
     ]
@@ -339,7 +339,7 @@ async fn {name}_enforces_caller_permissions() {{
         f'2. Register `mod {name};` and `.route(&path("{path}"), {method}({name}::{"read" if method == "get" else "write"}).fallback(unknown))` in rust/host/web/src/native_api.rs',
         f'3. Add `mod {name};` in tests/host/tests/nvhttp_parity/native_tests.rs (or parity module)',
         '4. Document the endpoint contract in docs/native-api.md',
-        '5. Wire capability + HTTP client in Nightjar (capabilities.rs, http/native.rs, Android + Desktop)',
+        '5. Wire capability (policy/src/http/capabilities/types.rs Feature) + HTTP client (client/src/http/native.rs) in Nightjar, Android + Desktop',
     ]
     return files, checklist
 

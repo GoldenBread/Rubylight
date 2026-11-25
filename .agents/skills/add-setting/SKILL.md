@@ -10,33 +10,38 @@ Use this skill when adding, changing, renaming, or retiring a setting in Rubylig
 ## Core rules
 
 - **Never read raw `Config` inside `rust/host/stream/src/stream/**`.** Always read effective stream settings through `rust/host/stream/src/stream/config.rs` so override precedence (`app + device > app > device > host > preset`) applies (`tools/arch_check.py` enforces `raw-config-read`).
-- **Never drop a key silently.** Rename or retire keys via `RENAMED_KEYS` / `REMOVED_KEYS` in `rust/core/config/src/config/retired.rs` (host), serde aliases / `migrate` in `client/protocol/desktop-config/src/config.rs` (desktop), or preference migration + `SettingsKeysTest` (Android).
+- **Never drop a key silently.** Rename or retire keys in the `[retired]` table of `rust/core/config/settings.toml` (host; generates `RENAMED_KEYS` / `REMOVED_KEYS`), or in `[[retired]]` / `[[renamed]]` of `client/protocol/policy/settings.toml` plus `migrate` in `client/protocol/desktop-config/src/config/migrate.rs` (desktop; serde aliases for enum values) or `client/app/src/main/java/com/limelight/preferences/PreferenceMigrations.java` and `SettingsKeysTest` (Android).
+- **Never hand-edit generated files** (`*_gen.rs`, `*.gen.ts`, `SettingsCatalogGen.java`, generated doc blocks): edit the `settings.toml` catalog and regenerate.
 - **Copy style:** State what the user gets, what it costs (delay, quality, network, load, or what breaks), and when to change it ("Leave it on unless ..."). Put break-streaming warnings first. Never label shipping features "Experimental".
 - **Fewer settings on Nightjar:** Prefer a safe measured default over a new switch; ship Android and desktop parity in one change.
 
 ## Host setting checklist
 
-1. **Scaffold starter snippets** (optional, dry-run by default):
+1. **Scaffold starter snippets** (optional; use for wording only, its schema and console targets predate the catalog):
    ```powershell
    python tools/scaffold.py setting <key> --type bool --default true --label "..." --description "..." --dry-run
    ```
-2. **Core accessor & validation:** Add the typed accessor and default on `Config` in `rust/core/config/src/config.rs` (using parsers in `rust/core/config/src/config/values.rs`). Add unit tests in `rust/core/config/src/config/tests.rs` (or its scenario modules).
-   - If it belongs to a 3.0 extension, add it to `SETTINGS_30` in `rust/core/config/src/config/settings30.rs`.
-   - If per-app or per-device overrides apply, update `override_allowed` in `rust/core/config/src/config/overrides.rs` (resolution lives in `rust/core/session/src/device_overrides.rs`).
-   - If renaming or retiring, register it in `rust/core/config/src/config/retired.rs`.
-3. **Web console schema:** Add the entry (matching the Rust default) to its category file in `rust/web/src/lib/schema/` (`basics.ts`, `display.ts`, `video.ts`, `library.ts`, `extensions.ts`) and assign its tier in `rust/web/src/lib/schema/tiers.ts` (everyday settings need no tier entry and may not depend on non-everyday settings; folded groups live in `FOLDED_GROUPS` in `rust/web/src/lib/schema/main.ts`).
-4. **No-JS console & host locales:** Add the row in `rust/host/web/src/console/settings.rs` and add translations across all 22 `rust/assets/locale/*.json` files via:
+2. **Catalog:** Add the `[[setting]]` entry (key, part, type, default, UI text, control) in `rust/core/config/settings.toml`. For a no-JS console row add its `console` field and list the key in `[console]` `global_order` (app/device rows: `[[console.app]]` / `[[console.client]]`).
+   - 3.0 extension: `settings_30` fields and `[rust]` `settings_30_order` (generates `SETTINGS_30`; update the count test in `rust/core/config/src/config/settings30.rs`).
+   - Per-app/device override: `override_allowed` and `[rust]` `override_order` (read by `override_allowed` in `rust/core/config/src/config/overrides.rs`; resolution lives in `rust/core/session/src/device_overrides.rs`).
+   - Read only at startup: `restart` and `[rust]` `restart_order`.
+   - Tiers: the `[web]` lists (everyday settings need none and may not depend on diagnostic or Games-page ones; `folded_groups` generates `FOLDED_GROUPS`).
+3. **Accessor & validation:** Use the entry's `rust_accessor` / `validate` fields; hand-write only what they cannot express, on `Config` in `rust/core/config/src/config.rs` (parsers in `rust/core/config/src/config/values.rs`). Add tests in `rust/core/config/src/config/tests.rs` or `rust/core/config/src/config/tests/`.
+4. **Regenerate:** `python tools/generated_docs.py` writes the Rust catalogs, the modules in `rust/web/src/lib/schema/`, the console rows rendered by `rust/host/web/src/console/settings.rs` and the All settings tables in `docs/configuration.md`.
+5. **Host locales:** Add translations across all 22 `rust/assets/locale/*.json` files via:
    ```powershell
    python tools/i18n.py apply <spec.json> --dry-run
    python tools/i18n.py apply <spec.json>
    ```
-5. **Docs & release note:** Update the topic section and key table in `docs/configuration.md` (search/slice — never read whole) and add a user-facing bullet fragment in `rust/release/notes.d/<topic>.md`.
+6. **Docs & release note:** Update the hand-written topic section in `docs/configuration.md` (search/slice — never read whole) and add a user-facing bullet fragment in `rust/release/notes.d/<topic>.md`.
 
 ## Nightjar setting checklist (Desktop + Android)
 
 1. **Shared policy:** Put any decision shared by both apps in `client/protocol/policy/src/`.
-2. **Desktop:** Add field + default to `Settings` (and `Overrides` if per-PC/game) in `client/protocol/desktop-config/src/config.rs`, row in `client/protocol/desktop-ui/src/ui/settings.rs`, tests in `client/protocol/desktop-ui/src/ui/settings_tests.rs`, and all 14 tables in `client/protocol/desktop-config/src/strings/*.rs` via `tools/i18n.py apply`.
-3. **Android:** Add preference in `client/app/src/main/res/xml/preferences.xml`, reading/migration in `client/app/src/main/java/com/limelight/preferences/PreferenceConfiguration.java`, strings across `client/app/src/main/res/values*/` via `tools/i18n.py apply` (cross-fills shared Desktop<->Android strings automatically), and update `client/scripts/generate-settings.py` then run `python client/scripts/generate-settings.py` to refresh `client/docs/settings.md`.
+2. **Catalog:** Add `[[desktop_setting]]` and `[[android_setting]]` entries (linked by `android_key` / `desktop_key`) in `client/protocol/policy/settings.toml`.
+3. **Desktop:** Add the field to `Settings` in `client/protocol/desktop-config/src/config.rs` (enums in `client/protocol/desktop-config/src/config/enums.rs`; default and override list come from the catalog), a row under `client/protocol/desktop-ui/src/ui/settings/` with its key in `SECTION_KEYS` in `client/protocol/desktop-ui/src/ui/settings.rs`, tests in `client/protocol/desktop-ui/src/ui/settings_tests.rs` or `client/protocol/desktop-ui/src/ui/settings_tests/`, and all 14 tables in `client/protocol/desktop-config/src/strings/*.rs` via `tools/i18n.py apply`.
+4. **Android:** Add the preference in `client/app/src/main/res/xml/preferences.xml` (main rows also in `client/app/src/main/res/values/settings_tiers.xml`), reading in `client/app/src/main/java/com/limelight/preferences/PreferenceReader.java`, and strings across `client/app/src/main/res/values*/` via `tools/i18n.py apply` (cross-fills shared Desktop<->Android strings automatically).
+5. **Regenerate:** `python client/scripts/generate-settings.py` writes `client/protocol/policy/src/settings_catalog_gen.rs`, `client/protocol/desktop-config/src/config/defaults_gen.rs`, `client/app/src/main/java/com/limelight/preferences/SettingsCatalogGen.java` and `client/docs/settings.md`. Parity tests: `client/protocol/policy/tests/settings_catalog.rs`, `client/protocol/desktop-config/tests/settings_catalog_parity.rs`, `client/scripts/test_generate_settings.py`.
 
 ## Verification
 
@@ -45,6 +50,11 @@ Always set `$env:TEMP="D:\t"; $env:TMP="D:\t"` and wrap Cargo/Web builds with `t
 ```powershell
 python tools/build_lock.py --lane cargo -- cargo test -p butterpollo-config --locked
 python tools/build_lock.py --lane web -- pwsh -c "cd rust/web; node --test SettingsSchema.test.mjs SettingsHome.test.mjs SettingsTiers.test.mjs"
+python tools/build_lock.py --lane cargo -- cargo test --manifest-path client/protocol/Cargo.toml -p nightjar-policy --test settings_catalog --locked
+python tools/build_lock.py --lane cargo -- cargo test --manifest-path client/protocol/Cargo.toml -p nightjar-desktop-config --test settings_catalog_parity --locked
+python tools/build_lock.py --lane cargo -- cargo test --manifest-path client/protocol/Cargo.toml -p nightjar-desktop-ui settings --locked
+python client/scripts/test_generate_settings.py
+python tools/generated_docs.py --check
 python tools/i18n.py check
 python tools/arch_check.py
 python tools/code_map.py check

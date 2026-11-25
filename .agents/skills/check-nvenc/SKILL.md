@@ -17,7 +17,7 @@ Use this skill whenever writing or reviewing changes touching NVENC, CUDA intero
 
 | Surface | Vendor headers / reference | Host source |
 | --- | --- | --- |
-| NVENC / CUDA ABI | `rust/windows/abi/include/nvEncodeAPI.h` (FFmpeg `nv-codec-headers` n13.0.19.1, SDK 13.0) | `rust/core/media-policy/src/nvenc.rs`, `rust/windows/graphics/src/nvenc.rs`, `rust/windows/graphics/src/nvenc/` |
+| NVENC / CUDA ABI | `rust/windows/abi/include/nvEncodeAPI.h` (FFmpeg `nv-codec-headers` n13.0.19.1, SDK 13.0) | `rust/core/media-policy/src/nvenc.rs`, `rust/core/media-policy/src/nvenc/`, `rust/windows/graphics/src/nvenc.rs`, `rust/windows/graphics/src/nvenc/` |
 | RTX Video / TrueHDR (NGX) | `rtx-video-sdk-1.1.0` in dependencies folder after `rust\build.ps1 -Nvidia` | `rust/core/media-policy/src/nvidia_{enhance,component}.rs`, `rust/windows/graphics/src/{nvidia_enhance,rtx_video,truehdr}.rs`, `rust/truehdr-runtime/` |
 | NVAPI (driver settings, clocks profile) | **No vendored headers in repo** — report explicitly which calls rest on other hosts' code alone | `rust/windows/graphics/src/{nvidia_settings,nvidia_profile}.rs` |
 
@@ -26,10 +26,10 @@ Use this skill whenever writing or reviewing changes touching NVENC, CUDA intero
 1. **FFI & struct ABI check:** Verify every foreign declaration's parameter types, calling convention, struct field layout, bitfields, and `NV_ENC_*_VER` / API version constants directly against `rust/windows/abi/include/nvEncodeAPI.h` (give the reviewer the exact header path).
 2. **Call-order & API version floors:**
    - API 11–13 supported; AV1 and D3D12 interface require API 12.0 (driver 522.25+); output block stats require API 12.1 (driver 531.61+); split-frame encode requires API 12.2.
-   - Verify resource registration, mapping, fence synchronization (`inputFencePoint` / `outputFencePoint` on D3D12), CUDA stream binding (`nvEncSetIOCudaStreams` after `nvEncInitializeEncoder`), and teardown order.
+   - Verify resource registration, mapping, fence synchronization (`inputFencePoint` / `outputFencePoint` on D3D12, `rust/windows/graphics/src/nvenc/submit.rs`), CUDA stream binding (`nvEncSetIOCudaStreams` after `nvEncInitializeEncoder`, `rust/windows/graphics/src/nvenc/config.rs`), and teardown order.
    - Verify D3D12 fallback restrictions (no weighted prediction, no `YUV444_10BIT`, subframe readback rules) and sticky demotion to D3D11 on repeated D3D12 failure.
 3. **Fake-driver tests & documentation:**
-   - Cover every new branch in `rust/windows/graphics/src/nvenc/tests.rs` (or `nvidia_profile.rs` / `nvidia_settings.rs` / `gpu_priority.rs`).
+   - Cover every new branch in `rust/windows/graphics/src/nvenc/tests.rs` or its `rust/windows/graphics/src/nvenc/tests/` submodules (or `rust/windows/graphics/src/nvidia_profile.rs`, `rust/windows/graphics/src/nvidia_settings/tests.rs`, `rust/windows/graphics/src/gpu_priority.rs`).
    - Update `docs/nvenc.md` (Parity table + "Not run on NVIDIA hardware" list) for any new unverified NVIDIA behaviour.
 
 ## Verification commands

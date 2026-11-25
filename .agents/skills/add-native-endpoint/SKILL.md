@@ -10,7 +10,7 @@ Use this skill when adding a paired-client HTTPS endpoint under `/api/native/v1`
 ## Contract invariants (`docs/native-api.md`)
 
 - **Auth & transport:** Served on the streaming HTTPS port (`HttpsPort`, typically 47984) using the client's paired TLS certificate (`caller(&h, &c)?`). Never use admin console auth, cookies, or API tokens.
-- **Live permissions:** Check the caller's permissions and Host control flag on EVERY request (`require`, `require_host_control`, `require_view_or_launch`); never cache permissions from launch.
+- **Live permissions:** Check the caller's permissions and Host control flag on EVERY request (`require`, `require_host_control`, `require_view_or_launch` from `rust/host/stream/src/session_actions.rs`, re-exported by `rust/host/web/src/native_api.rs`); never cache permissions from launch.
 - **Additive v1 wire rules:**
   - Response types ignore unknown fields; enums use `#[serde(rename_all = "snake_case")]` and `#[serde(other)] Unknown`.
   - Request types use `#[serde(deny_unknown_fields)]` so typos fail loudly; POST bodies cap at `MAX_BODY` (16 KiB) and accept `application/json`, `text/plain`, or empty (`{}`).
@@ -32,12 +32,12 @@ Use this skill when adding a paired-client HTTPS endpoint under `/api/native/v1`
    - Put pure projection/validation logic in `rust/core/session/src/native.rs` (or a submodule under `rust/core/session/src/native/`) so it is unit-tested without HTTP or Windows APIs.
 4. **Host route & handler (`rust/host/web/`):**
    - Implement the handler in `rust/host/web/src/native_api/<name>.rs` (wrap blocking I/O in `tokio::task::spawn_blocking`).
-   - Register the module and route in `router` in `rust/host/web/src/native_api.rs`, and include the feature string in `/capabilities` when enabled.
+   - Register the module and route in `router` in `rust/host/web/src/native_api.rs`, and include the feature string in its `capabilities` handler (`/capabilities`) when enabled.
 5. **Host parity tests & contract doc:**
    - Register `mod <name>;` and verify fixture match, `Cache-Control: no-store`, and `403 permission_required` in `tests/host/tests/nvhttp_parity/native_tests/<name>.rs`.
    - Document request, response, permissions, and errors in `docs/native-api.md`.
 6. **Nightjar client (same change):**
-   - Add `Feature` / capability parsing in `client/protocol/policy/src/http/capabilities.rs` (`with_native`) and Java `client/app/src/main/java/com/limelight/nvstream/http/HostCapabilities.java`.
+   - Add the `Feature` variant in `client/protocol/policy/src/http/capabilities/types.rs`, set it from the feature string in `client/protocol/policy/src/http/capabilities.rs` (`with_native`), name it in `client/protocol/android/src/capabilities.rs` (`feature_key`) and Java `client/app/src/main/java/com/limelight/nvstream/http/HostCapabilities.java`.
    - Add HTTP client method in `client/protocol/client/src/http/native.rs`, then wire Desktop (`client/protocol/desktop/src/hosts/native.rs`) and Android (`client/app/src/main/java/com/limelight/nativeapi/`).
 
 ## Verification

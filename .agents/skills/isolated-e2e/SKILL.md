@@ -12,7 +12,7 @@ Use this skill when validating a packaged Rubylight host end to end (`e2e.py`, `
 1. **Always isolate from the installed host.** Device and E2E tests spawn a test-owned host on its own profile and ports (`48518-48544`, default HTTP `--port 48523`, bound to `127.0.0.1` only). Never edit or restart the installed service unless explicitly running an install check (`check.ps1`).
 2. **Installed host must be idle** before starting any GPU/E2E stream (`e2e_host.installed_idle()` checks it).
 3. **Exit code 3 = AMD video-engine hang — STOP, DO NOT RETRY.**
-   - `e2e.py` and `check.ps1` exit with code `3` (`gpu_hang.py`) when an encoder call stalls >=2 s, stall watch remains unresolved after 5 s, or a new LiveKernelReport appears in `C:\Windows\LiveKernelReports`.
+   - `e2e.py` and `check.ps1` (via `rust/release/check_streams.ps1`) exit with code `3` (`rust/release/gpu_hang.py`) when an encoder call stalls >=2 s, stall watch remains unresolved after 5 s, or a new LiveKernelReport appears in `C:\Windows\LiveKernelReports`.
    - Inspect `<work>/e2e-<name>/result.json` (`gpu_hang`) and `<work>/e2e-<name>/config/logs/butterpollo.log` (installed host log: `C:\ProgramData\Butterpollo\config\logs\butterpollo.log`).
    - Do NOT launch another stream on a resetting GPU; check Device Manager for Code 31 and reboot if wedged.
 4. **Respect shared machine locks (`C:\src\butterpollo-release`):** Never delete or break `GPU-LOCK`, `BUILD-LOCK`, `RELEASE-LOCK`, or `PRIORITY`. Wrap Cargo/Web commands with `python tools/build_lock.py`. Always set `$env:TEMP="D:\t"; $env:TMP="D:\t"`.
