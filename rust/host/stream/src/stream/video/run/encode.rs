@@ -226,13 +226,19 @@ pub(super) fn encode_frame(
         focus.failed(&error, &s.encoder_focus_state, &s.launch.warnings);
         active.set_focus(None)?;
     }
-    let mut presented_image = image.as_ref().clone();
-    if !fresh {
-        presented_image.captured = Instant::now();
-    }
-    if leave_pointer_out {
-        presented_image.leave_pointer_out();
-    }
+    let mut modified_image = None;
+    let presented_image = if !fresh || leave_pointer_out {
+        let copy = modified_image.insert(image.as_ref().clone());
+        if !fresh {
+            copy.captured = Instant::now();
+        }
+        if leave_pointer_out {
+            copy.leave_pointer_out();
+        }
+        &*copy
+    } else {
+        image.as_ref()
+    };
     progress.mark(crate::stall_watch::Phase::Encode);
     let encode_trace_started = trace_send.then(Instant::now);
     let encoded = (|| -> Result<Vec<butterpollo_win_graphics::encoder::Encoded>> {
@@ -241,9 +247,9 @@ pub(super) fn encode_frame(
         #[cfg(debug_assertions)]
         crate::soak_fault::check("DXGI_ERROR_DEVICE_REMOVED")?;
         Ok(if direct_encoder_input {
-            active.encode_gpu(&presented_image, idr, bitrate)?
+            active.encode_gpu(presented_image, idr, bitrate)?
         } else {
-            active.encode(&readback(&presented_image)?, idr, bitrate)?
+            active.encode(&readback(presented_image)?, idr, bitrate)?
         })
     })();
     if let Some(at) = encode_trace_started {

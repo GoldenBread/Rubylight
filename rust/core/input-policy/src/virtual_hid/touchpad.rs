@@ -22,6 +22,7 @@ struct Finger {
 /// button, what Windows configured and the reports it has not polled yet.
 pub struct PrecisionTouchpad {
     extent: (u16, u16),
+    descriptor: Vec<u8>,
     size_mm: (u16, u16),
     slots: [Option<Finger>; MAX_CONTACTS],
     button: bool,
@@ -41,8 +42,11 @@ pub struct PrecisionTouchpad {
 impl PrecisionTouchpad {
     /// A touchpad of the client's size (0 for unknown), whose scan times start at `epoch`.
     pub fn new(width_mm: u16, height_mm: u16, serial: &str, epoch: Instant) -> Self {
+        let extent = touchpad_extent(width_mm, height_mm);
+        let descriptor = touchpad_report_descriptor(extent.0 / 10, extent.1 / 10);
         Self {
-            extent: touchpad_extent(width_mm, height_mm),
+            extent,
+            descriptor,
             size_mm: (width_mm, height_mm),
             slots: [None; MAX_CONTACTS],
             button: false,
@@ -212,13 +216,12 @@ impl Device for PrecisionTouchpad {
         }
     }
     fn control(&mut self, setup: &Setup, data: &[u8]) -> Option<Vec<u8>> {
-        let descriptor = touchpad_report_descriptor(self.extent.0 / 10, self.extent.1 / 10);
         let strings = [
             "Rubylight",
             "Rubylight Virtual Touchpad",
             self.serial.as_str(),
         ];
-        let reply = match standard(setup, TOUCHPAD_PRODUCT, &descriptor, 64, &strings) {
+        let reply = match standard(setup, TOUCHPAD_PRODUCT, &self.descriptor, 64, &strings) {
             Standard::Reply(reply) => reply,
             Standard::Stall => return None,
             Standard::Class => match (setup.request_type, setup.request) {

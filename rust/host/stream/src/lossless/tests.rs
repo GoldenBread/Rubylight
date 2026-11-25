@@ -356,3 +356,37 @@ fn settings_read_and_write_refuse_reparse_point_components() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn target_prefilter_and_image_path_cache_skip_redundant_lookups() {
+    let game = sample(2, r"C:\Game\game.exe", 10, 100);
+    let ignored = sample(3, r"C:\Tools\LosslessScaling.exe", 0, 0).process;
+    let baseline: HashSet<(u32, u64)> = [(4, 1)].into_iter().collect();
+    let other = sample(5, r"C:\Game\other.exe", 0, 0).process;
+    let base_proc = sample(4, r"C:\Windows\System32\dwm.exe", 0, 0).process;
+
+    assert!(!prefilter_process(&base_proc, &baseline, None));
+    assert!(prefilter_process(&other, &baseline, None));
+    assert!(!prefilter_process(&ignored, &baseline, Some(&game)));
+    assert!(prefilter_process(&other, &baseline, Some(&game)));
+
+    let mut cache: HashMap<(u32, u64), String> = HashMap::new();
+    let mut lookups = 0usize;
+    let first = cached_image_path(&mut cache, (2, 10), |_| {
+        lookups += 1;
+        Some(r"C:\Game\game.exe".into())
+    });
+    let second = cached_image_path(&mut cache, (2, 10), |_| {
+        lookups += 1;
+        Some(r"C:\Game\game.exe".into())
+    });
+    // PID reuse with a different start timestamp misses and re-queries.
+    let reused = cached_image_path(&mut cache, (2, 11), |_| {
+        lookups += 1;
+        Some(r"C:\Game\reused.exe".into())
+    });
+    assert_eq!(lookups, 2);
+    assert_eq!(first.as_deref(), Some(r"C:\Game\game.exe"));
+    assert_eq!(second, first);
+    assert_eq!(reused.as_deref(), Some(r"C:\Game\reused.exe"));
+}

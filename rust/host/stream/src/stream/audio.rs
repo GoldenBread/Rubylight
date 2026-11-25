@@ -323,7 +323,7 @@ impl Media {
                         now,
                         pace.due(),
                         check,
-                        Some(audio_sink::READ_POLL),
+                        (!muted).then_some(audio_sink::READ_POLL),
                     ),
                 ),
             }

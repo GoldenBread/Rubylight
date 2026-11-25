@@ -85,14 +85,13 @@ pub(super) fn check_admission(
     let fresh = last_image
         .as_ref()
         .is_none_or(|previous| !std::ptr::eq(previous.as_ptr(), Arc::as_ptr(raw_image)));
+    let pace_candidate =
+        arrival_pacing && fresh && !rebuild_encoder && !s.idr.load(Ordering::Acquire);
     // Read out first: the guard must not live through the wait
     // below, or it blocks `request_invalidation` on the control
     // thread.
-    let invalidation_clear = s.invalidation.lock().unwrap().is_none();
-    if arrival_pacing
-        && fresh
-        && !rebuild_encoder
-        && !s.idr.load(Ordering::Acquire)
+    let invalidation_clear = !pace_candidate || s.invalidation.lock().unwrap().is_none();
+    if pace_candidate
         && invalidation_clear
         && let interval = pacing.picture_interval
         && let butterpollo_media_policy::stream_policy::Pace::WaitUntil(deadline) =

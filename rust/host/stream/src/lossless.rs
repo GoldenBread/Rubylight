@@ -6,7 +6,7 @@
 use anyhow::{Context, Result, bail};
 use butterpollo_media_policy::lossless::{Options, Profile};
 use std::{
-    collections::{BTreeMap, BTreeSet, HashSet},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex,
@@ -228,6 +228,43 @@ fn in_folder(path: &str, folder: Option<&str>) -> bool {
             .strip_prefix(folder)
             .is_some_and(|tail| tail.starts_with('\\'))
 }
+fn name_ignored(name: &str) -> bool {
+    const IGNORED: [&str; 4] = [
+        "losslessscaling.exe",
+        "lossless scaling.exe",
+        "playnite.desktopapp.exe",
+        "playnite.fullscreenapp.exe",
+    ];
+    IGNORED
+        .iter()
+        .any(|ignored| name.eq_ignore_ascii_case(ignored))
+}
+
+fn prefilter_process(
+    process: &butterpollo_session::steam::Process,
+    baseline: &HashSet<(u32, u64)>,
+    current: Option<&Sample>,
+) -> bool {
+    if current.is_none() {
+        !baseline.contains(&(process.pid, process.started))
+    } else {
+        !name_ignored(&process.name)
+    }
+}
+
+fn cached_image_path<F: FnOnce(u32) -> Option<String>>(
+    cache: &mut HashMap<(u32, u64), String>,
+    identity: (u32, u64),
+    fetch: F,
+) -> Option<String> {
+    if let Some(path) = cache.get(&identity) {
+        return Some(path.clone());
+    }
+    let path = fetch(identity.0)?;
+    cache.insert(identity, path.clone());
+    Some(path)
+}
+
 fn eligible(
     sample: &Sample,
     baseline: &HashSet<(u32, u64)>,
@@ -237,16 +274,8 @@ fn eligible(
     if current.is_none() {
         return !baseline.contains(&sample.identity());
     }
-    let ignored = [
-        "losslessscaling.exe",
-        "lossless scaling.exe",
-        "playnite.desktopapp.exe",
-        "playnite.fullscreenapp.exe",
-    ];
     sample.windowed
-        && !ignored
-            .iter()
-            .any(|name| sample.process.name.eq_ignore_ascii_case(name))
+        && !name_ignored(&sample.process.name)
         && (in_folder(&sample.path, folder)
             || current.is_some_and(|game| normalized(&sample.path) == normalized(&game.path)))
 }
@@ -467,6 +496,7 @@ fn run(
     let known: HashSet<(u32, u64)> = baseline.iter().map(|p| (p.pid, p.started)).collect();
     let (cpu_count, windows) = butterpollo_win_io::lossless::scoring_environment();
     let mut current: Option<Sample> = None;
+    let mut paths: HashMap<(u32, u64), String> = HashMap::new();
     loop {
         let folder = folder().filter(|f| !f.trim().is_empty()).or_else(|| {
             current
@@ -480,11 +510,19 @@ fn run(
             if stop.load(Ordering::Acquire) {
                 return Ok(());
             }
-            let samples = butterpollo_win_io::process::processes()?
+            let processes = butterpollo_win_io::process::processes()?;
+            let live: HashSet<(u32, u64)> = processes.iter().map(|p| (p.pid, p.started)).collect();
+            paths.retain(|identity, _| live.contains(identity));
+            let samples = processes
                 .into_iter()
-                .filter(|p| current.is_some() || !known.contains(&(p.pid, p.started)))
+                .filter(|p| prefilter_process(p, &known, current.as_ref()))
                 .filter_map(|process| {
-                    let path = butterpollo_win_io::process::image_path(process.pid)?;
+                    let identity = (process.pid, process.started);
+                    let path = cached_image_path(
+                        &mut paths,
+                        identity,
+                        butterpollo_win_io::process::image_path,
+                    )?;
                     let mut sample = Sample {
                         windowed: true,
                         process,

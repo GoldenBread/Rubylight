@@ -711,6 +711,8 @@ fn the_wait_runs_to_the_earliest_deadline_and_never_below_one_millisecond() {
     );
     assert_eq!(audio_wait(now, now + ms(3), None, Some(READ_POLL)), ms(3));
     assert_eq!(audio_wait(now, now - ms(4), None, Some(READ_POLL)), ms(1));
+    // Muted streams omit the 5 ms read-poll cap and sleep until the silence deadline.
+    assert_eq!(audio_wait(now, now + ms(50), None, None), ms(50));
 }
 
 #[test]

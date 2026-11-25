@@ -124,6 +124,7 @@ fn the_body_stops_when_a_stream_runs_or_starts() {
             .pending
             .insert(launch.id.clone(), launch.clone());
         let mut rest = vec![];
+        body.recheck_now();
         assert_eq!(body.read_to_end(&mut rest).await.unwrap(), 0);
         f.host.sessions.lock().unwrap().pending.remove(&launch.id);
 
@@ -131,7 +132,19 @@ fn the_body_stops_when_a_stream_runs_or_starts() {
         let mut body = ProbeBody::new(probe::MAX_BYTES as usize, deadline, stream_starts(&f.host));
         assert_eq!(body.read(&mut chunk).await.unwrap(), chunk.len());
         let session = f.session(client, Role::Stream);
+        body.recheck_now();
         assert_eq!(body.read_to_end(&mut rest).await.unwrap(), 0);
         drop(session);
+
+        // Consecutive reads inside the 1s check window reuse the cached idle check.
+        let checks = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let checks_ref = checks.clone();
+        let mut throttled = ProbeBody::new(128 * 1024, deadline, move || {
+            checks_ref.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            false
+        });
+        assert_eq!(throttled.read(&mut chunk).await.unwrap(), chunk.len());
+        assert_eq!(throttled.read(&mut chunk).await.unwrap(), chunk.len());
+        assert_eq!(checks.load(std::sync::atomic::Ordering::Relaxed), 1);
     });
 }
