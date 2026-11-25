@@ -35,6 +35,7 @@ mod page_hosts;
 mod pin_clock;
 mod power;
 mod self_update;
+mod startup;
 mod update_check;
 mod update_net;
 mod window_place;
@@ -63,6 +64,8 @@ use stream::{ConnectFailed, Connecting, Display, Exit, LaunchPlan, Streaming};
 use strings::{tr, trf};
 use ui::{Combo, Command, ConnectingView, Dialog, Launcher, Screen, View};
 use app::*;
+pub(crate) use startup::blend_title_bar;
+use startup::*;
 
 struct App {
     window: *mut SDL_Window,
@@ -208,159 +211,6 @@ struct App {
     save_failed_told: bool,
 }
 
-/// Now on the session clock (`nightjar_core::session::now_us`), in nanoseconds, the clock
-/// `stream::phase::timing` reports vblanks on.
-fn session_now_ns() -> i64 {
-    i64::try_from(nightjar_core::session::now_us()).unwrap_or(i64::MAX / 1000).saturating_mul(1000)
-}
-
-fn display_of(window: *mut SDL_Window) -> Display {
-    // SAFETY: a live window; the mode pointer is owned by SDL.
-    unsafe {
-        let id = SDL_GetDisplayForWindow(window);
-        let mode = SDL_GetCurrentDisplayMode(id);
-        if mode.is_null() {
-            return display_from_mode(None, None);
-        }
-        let m = &*mode;
-        display_from_mode(Some((m.w, m.h, m.pixel_density, m.refresh_rate)), panel_pixels(id))
-    }
-}
-
-/// macOS: the panel's own size in pixels, from its native mode (`mac_display::native_pixels`),
-/// read once for each display. SDL's mode there is the desktop's backing store, which a scaled
-/// mode makes larger than the panel. None elsewhere, and on a Mac whose display lists no native
-/// mode: SDL's mode is used then.
-#[cfg(target_os = "macos")]
-fn panel_pixels(id: SDL_DisplayID) -> Option<(u32, u32)> {
-    /// The display last read, and its panel's size.
-    type Read = Option<(SDL_DisplayID, Option<(u32, u32)>)>;
-    static PANEL: std::sync::Mutex<Read> = std::sync::Mutex::new(None);
-    let mut panel = PANEL.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some((known, pixels)) = *panel
-        && known == id
-    {
-        return pixels;
-    }
-    let mut bounds = SDL_Rect { x: 0, y: 0, w: 0, h: 0 };
-    // SAFETY: a display query with a valid out-pointer.
-    if !unsafe { SDL_GetDisplayBounds(id, &mut bounds) } {
-        // Not kept: the next call asks again.
-        return None;
-    }
-    let (x, y) = (f64::from(bounds.x) + f64::from(bounds.w) / 2.0, f64::from(bounds.y) + f64::from(bounds.h) / 2.0);
-    let pixels = mac_display::native_pixels(&mac_display::modes_at(x, y));
-    *panel = Some((id, pixels));
-    pixels
-}
-
-#[cfg(not(target_os = "macos"))]
-fn panel_pixels(_: SDL_DisplayID) -> Option<(u32, u32)> {
-    None
-}
-
-/// Whether the window now stands on another display, or its display on another mode.
-fn another_display(kind: SDL_EventType) -> bool {
-    matches!(kind, SDL_EVENT_WINDOW_DISPLAY_CHANGED | SDL_EVENT_DISPLAY_CURRENT_MODE_CHANGED)
-}
-
-/// The display from SDL's current mode (width, height, pixel density, refresh rate), if it gave
-/// one, with the panel's own size (`panel_pixels`) in place of the mode's where it is known.
-/// Without a mode or a refresh rate, pacing assumes 1920x1080 at 60 Hz, but the rate is not
-/// marked reported, so the overlay does not judge frames against a guess.
-fn display_from_mode(mode: Option<(i32, i32, f32, f32)>, panel: Option<(u32, u32)>) -> Display {
-    let Some((w, h, pixel_density, refresh_rate)) = mode else {
-        return Display { width: 1920, height: 1080, refresh_hz: 60.0, refresh_reported: false };
-    };
-    let (width, height) = panel.unwrap_or_else(|| mode_pixels(w, h, pixel_density));
-    let reported = refresh_rate.is_finite() && refresh_rate > 0.0;
-    Display { width, height, refresh_hz: if reported { refresh_rate } else { 60.0 }, refresh_reported: reported }
-}
-
-/// A display mode's size in pixels. SDL 3 gives a mode's size in its own units and
-/// `pixel_density` turns them into pixels: Windows (per-monitor DPI aware, which SDL declares)
-/// and X11 give pixels at density 1 whatever the desktop scaling, Wayland and macOS give points
-/// and the scale. On macOS that is the backing store, the panel's size only at the default
-/// scaled mode (`panel_pixels`). The display's scaling (`SDL_GetDisplayContentScale`) is not part
-/// of it.
-fn mode_pixels(w: i32, h: i32, pixel_density: f32) -> (u32, u32) {
-    let density = if pixel_density > 0.0 { pixel_density } else { 1.0 };
-    let pixels = |points: i32| (points.max(0) as f32 * density).round() as u32;
-    (pixels(w), pixels(h))
-}
-
-/// The refresh rate exclusive fullscreen asks the display for. With VRR the display's top rate
-/// (`modes`: the refresh rates of its fullscreen modes), whatever the desktop runs at: the mode
-/// closest to it at the stream's size is that size's fastest, the panel follows the frames up to
-/// it, and a mode at the stream's rate would cap the range (a 60 fps stream would put a 240 Hz
-/// panel at 60 Hz). Without VRR the stream's rate, so each frame gets whole refreshes.
-fn fullscreen_refresh_hz(vrr: bool, modes: &[f32], stream_fps: i32) -> f32 {
-    let top = modes.iter().copied().fold(0.0, f32::max);
-    if vrr && top > 0.0 { top } else { stream_fps as f32 }
-}
-
-/// The refresh rates of a display's fullscreen modes, empty when SDL has none.
-fn mode_refresh_rates(id: SDL_DisplayID) -> Vec<f32> {
-    fullscreen_modes(id).iter().map(|mode| mode.refresh_hz).collect()
-}
-
-/// A display's fullscreen modes in SDL's order, empty when SDL has none.
-fn fullscreen_modes(id: SDL_DisplayID) -> Vec<ui::FullscreenMode> {
-    let mut count = 0;
-    // SAFETY: SDL allocates the list of mode pointers, which is read here and then freed.
-    unsafe {
-        let modes = SDL_GetFullscreenDisplayModes(id, &mut count);
-        if modes.is_null() {
-            return Vec::new();
-        }
-        let list = (0..count.max(0) as usize)
-            .filter_map(|i| {
-                (*modes.add(i)).as_ref().map(|mode| ui::FullscreenMode { w: mode.w, h: mode.h, refresh_hz: mode.refresh_rate, bytes_per_pixel: SDL_BYTESPERPIXEL(mode.format) })
-            })
-            .collect();
-        SDL_free(modes.cast());
-        list
-    }
-}
-
-/// What the display reported, for the log: the stream's "native" resolution comes from it.
-fn log_display(window: *mut SDL_Window, display: Display) {
-    // SAFETY: a live window; the mode pointer is owned by SDL.
-    let (mode, scale, id) = unsafe {
-        let id = SDL_GetDisplayForWindow(window);
-        let mode = SDL_GetCurrentDisplayMode(id).as_ref().map(|m| (m.w, m.h, m.pixel_density));
-        (mode, SDL_GetDisplayContentScale(id), id)
-    };
-    let mode = mode.map_or("no mode".to_owned(), |(w, h, d)| format!("mode {w}x{h} at density {d}"));
-    // Where a Mac's size came from: its native mode, or SDL's mode when none is listed.
-    let panel = match (cfg!(target_os = "macos"), panel_pixels(id)) {
-        (false, _) => String::new(),
-        (true, Some((w, h))) => format!(", native mode {w}x{h}"),
-        (true, None) => ", no native mode listed".to_owned(),
-    };
-    eprintln!(
-        "nightjar: display {}x{}@{} ({mode}, scaling {scale}{panel})",
-        display.width, display.height, display.refresh_hz
-    );
-}
-
-/// When this process entered `main`, for the launch line.
-static LAUNCH: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
-
-/// The events after which the window has to be drawn even if egui paints the same: it moved, was
-/// resized, exposed or restored, or the renderer lost what it held.
-fn window_needs_a_frame(kind: SDL_EventType) -> bool {
-    (SDL_EVENT_WINDOW_FIRST.0..=SDL_EVENT_WINDOW_LAST.0).contains(&kind.0)
-        || matches!(kind, SDL_EVENT_RENDER_TARGETS_RESET | SDL_EVENT_RENDER_DEVICE_RESET | SDL_EVENT_RENDER_DEVICE_LOST)
-}
-
-/// The launch line, once: the launcher's first frame is on the screen.
-fn first_frame_line(already: &std::sync::atomic::AtomicBool, since: Option<std::time::Duration>) -> Option<String> {
-    let since = since?;
-    (!already.swap(true, std::sync::atomic::Ordering::Relaxed))
-        .then(|| format!("nightjar: launch to first frame {} ms", since.as_millis()))
-}
-
 fn main() {
     // Before any thread starts and anything loads Vulkan: the loader sees the bundled driver only.
     #[cfg(target_os = "macos")]
@@ -495,133 +345,9 @@ fn main() {
     }
 }
 
-fn message_box(flags: SDL_MessageBoxFlags, text: &str) {
-    let text = std::ffi::CString::new(text).unwrap_or_default();
-    // SAFETY: NUL-terminated strings; a null parent window is allowed.
-    unsafe { SDL_ShowSimpleMessageBox(flags, c"Nightjar".as_ptr(), text.as_ptr(), std::ptr::null_mut()) };
-}
-
 fn run(launch: Option<cli::Launch>, started: open_play::Started, link: Option<String>) -> Result<(), String> {
-    font_loader::register();
-    conn_test::register();
-    pin_clock::register();
-    shortcuts_runtime::register_hooks();
-    platform_hooks::register(platform_hooks::PlatformHooks {
-        pyrowave_probe: |device, ten_bit| {
-            stream::pyrowave_mode::settings_probe(device as *mut std::ffi::c_void, ten_bit)
-        },
-        enhance_probe: |device| {
-            stream::enhance::settings_probe(device as *mut std::ffi::c_void)
-                .map(|cap| cap.is_some())
-        },
-        clear_scan_sync: stream::scan_sync::clear_all,
-        metalfx_supported: stream::metalfx_supported,
-        offers_714: stream::offers_714,
-        self_update_checks: || self_update::current().checks(),
-        kms_active: kms::active,
-        gpu_pair: || {
-            #[cfg(windows)]
-            {
-                gpu_adapters::gpus()
-                    .map(|g| (g.power_saving.name.clone(), g.high_performance.name.clone()))
-            }
-            #[cfg(not(windows))]
-            {
-                None
-            }
-        },
-        video_driver: || {
-            #[cfg(target_os = "linux")]
-            {
-                sdl::video_driver()
-            }
-            #[cfg(not(target_os = "linux"))]
-            {
-                String::new()
-            }
-        },
-    });
-    sdl::set_hint(SDL_HINT_APP_NAME, c"Nightjar");
-    sdl::set_hint(SDL_HINT_APP_ID, c"io.github.ramazankara.nightjar");
-    #[cfg(windows)]
-    {
-        // The decoder shares the renderer's D3D11 device from its own thread.
-        sdl::set_hint(SDL_HINT_RENDER_DRIVER, c"direct3d11");
-        sdl::set_hint(SDL_HINT_RENDER_DIRECT3D_THREADSAFE, c"1");
-    }
-    // VAAPI pictures reach the OpenGL renderer as EGL images (`dmabuf`), which needs an EGL
-    // context on X11 as well (Wayland's always is), as moonlight-qt forces it.
-    #[cfg(target_os = "linux")]
-    sdl::set_hint(SDL_HINT_VIDEO_FORCE_EGL, c"1");
-    // Keep Alt+Tab and the Windows key for the host while the keyboard is grabbed.
-    sdl::set_hint(SDL_HINT_ALLOW_ALT_TAB_WHILE_GRABBED, c"0");
-    sdl::set_hint(SDL_HINT_VIDEO_MINIMIZE_ON_FOCUS_LOSS, c"0");
-    sdl::set_hint(SDL_HINT_AUDIO_DEVICE_SAMPLE_FRAMES, c"480");
-    sdl::set_hint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, c"1");
-    sdl::set_hint(SDL_HINT_AUTO_UPDATE_JOYSTICKS, c"0"); // Adaptive polling via PadPoll.
-    sdl::set_hint(SDL_HINT_MOUSE_RELATIVE_MODE_CENTER, c"1");
-    // The second screen's window opens beside the first stream without taking its keyboard and mouse.
-    if second_screen::this_process() {
-        sdl::set_hint(SDL_HINT_WINDOW_ACTIVATE_WHEN_SHOWN, c"0");
-        sdl::set_hint(SDL_HINT_WINDOW_ACTIVATE_WHEN_RAISED, c"0");
-    }
-    // Before Vulkan loads: gamescope's layer without its socket would block the swapchain.
-    if handheld::gamescope() {
-        let socket = handheld::gamescope_socket(std::env::var_os("XDG_RUNTIME_DIR").as_deref(), std::env::var_os("GAMESCOPE_WAYLAND_DISPLAY").as_deref());
-        if handheld::gamescope_layer_off(socket.as_deref(), std::path::Path::exists) {
-            eprintln!("nightjar: gamescope: its socket {} is not reachable here, so gamescope's Vulkan layer is off (DISABLE_GAMESCOPE_WSI=1) and the output is SDR", socket.unwrap_or_default().display());
-            // SAFETY: called at startup in `main` before threads or Vulkan initialize.
-            unsafe { std::env::set_var("DISABLE_GAMESCOPE_WSI", "1") };
-        }
-    }
-    // Before SDL, VAAPI or Vulkan load Mesa.
-    #[cfg(target_os = "linux")]
-    amd_decode::request();
-
-    // Straight to the display (KMS) or through the desktop, decided before SDL picks its video driver.
-    #[cfg(target_os = "linux")]
-    {
-        let setting = Store::open().map(|store| store.read_only().settings().display_output).unwrap_or_default();
-        let session = kms::Session::read(|name| std::env::var_os(name), std::path::Path::exists);
-        let driver = std::env::var("SDL_VIDEO_DRIVER").ok();
-        let decision = kms::decide(kms::flag(), setting, session, driver.as_deref());
-        eprintln!("nightjar: kms: {} ({})", if decision.backend == kms::Backend::Kms { "drawing straight to the display" } else { "drawing through the desktop" }, decision.why);
-        if let Some(drivers) = decision.driver_hint {
-            let drivers = std::ffi::CString::new(drivers).expect("driver names have no NUL");
-            sdl::set_hint(SDL_HINT_VIDEO_DRIVER, &drivers);
-        }
-        kms::set(decision.backend);
-    }
-    #[cfg(not(target_os = "linux"))]
-    if let Some(flag) = kms::flag() {
-        eprintln!("nightjar: kms: {} is ignored: only Linux draws straight to the display", if flag { kms::KMS_ARG } else { kms::NO_KMS_ARG });
-    }
-    // The second screen's stream takes no controllers: they stay with the first.
-    let gamepads = if second_screen::this_process() { SDL_InitFlags::default() } else { SDL_INIT_GAMEPAD };
-    let subsystems = SDL_INIT_VIDEO | gamepads | SDL_INIT_EVENTS;
-    // On macOS the first stream opens Core Audio. Enumerating a cold audio driver
-    // can otherwise hold the Cocoa thread before the launcher has drawn a window.
-    #[cfg(not(target_os = "macos"))]
-    let subsystems = subsystems | SDL_INIT_AUDIO;
-    sdl::screen_sleeps_outside_streams();
-    sdl::fullscreen_over_the_notch();
-    // SAFETY: SDL initialisation on the main thread.
-    unsafe {
-        if !SDL_Init(subsystems) {
-            #[cfg(target_os = "linux")]
-            {
-                if kms::active() {
-                    let index = std::env::var("SDL_KMSDRM_DEVICE_INDEX").ok().and_then(|i| i.trim().parse().ok());
-                    return Err(kms::start_failure(&sdl::error(), kms::drm::connected_displays(index)));
-                }
-                let session = kms::Session::read(|name| std::env::var_os(name), std::path::Path::exists);
-                if !session.any() {
-                    return Err(kms::desktop_failure(&sdl::error()));
-                }
-            }
-            return Err(format!("SDL could not start: {}", sdl::error()));
-        }
-    }
+    startup::register_hooks();
+    startup::init_sdl()?;
     #[cfg(feature = "demo-library")]
     demo_driver::require_sandbox()?;
     let store = Store::open().map_err(|e| format!("No config directory: {e}"))?;
@@ -640,29 +366,7 @@ fn run(launch: Option<cli::Launch>, started: open_play::Started, link: Option<St
     let profiles = store.profiles();
     let mappings = store.controller_mappings();
     let hosts = host_store.load_records::<config::HostRecord, _>(config::keep_readable_settings_value);
-    #[cfg(any(target_os = "macos", windows))]
-    let gpu = false; // Start the launcher in SDR (8-bit BGRA on Windows, Metal SDR on macOS); streams switch as needed.
-    #[cfg(not(any(target_os = "macos", windows)))]
-    let gpu = settings.needs_gpu() || hosts.iter()
-        .any(|host| host.settings.as_ref().is_some_and(config::Overrides::needs_gpu) || host.app_settings.values().any(config::Overrides::needs_gpu))
-        || profiles.entries.iter().any(|profile| profile.settings.needs_gpu());
-    #[cfg(target_os = "linux")]
-    let vulkan_choice = vulkan_video::Choice::from_environment();
-    #[cfg(target_os = "linux")]
-    let vulkan_video = vulkan_video_possible(any_hardware_decoding(&settings, hosts.iter()
-        .flat_map(|host| host.settings.iter().chain(host.app_settings.values()))
-        .chain(profiles.entries.iter().map(|profile| &profile.settings))), vulkan_choice, vaapi_map_switched_on());
-    // The Renderer setting decides, and at Auto what needs the GPU renderer.
-    #[cfg(target_os = "linux")]
-    let gpu = handheld::starts_on_gpu(settings.renderer, settings.renderer == config::Renderer::Auto && (gpu || gpu_for_vulkan_video(vulkan_video, vulkan_choice)));
-    // Straight to the display, OpenGL keeps DRM master where the video planes can share it.
-    #[cfg(target_os = "linux")]
-    let gpu = match kms::active().then(|| kms::renderer_for(settings.renderer, settings.video_planes)).flatten() {
-        Some(gpu) => gpu,
-        None => gpu,
-    };
-    #[cfg(not(target_os = "linux"))]
-    let vulkan_video = false;
+    let (gpu, vulkan_video) = startup::choose_renderer_gpu(&settings, &hosts, &profiles);
 
     // The GPU before the renderer: Windows applies Nightjar's graphics preference at a start, so
     // a preference that changed now ends this start for a new one (once).
@@ -680,60 +384,7 @@ fn run(launch: Option<cli::Launch>, started: open_play::Started, link: Option<St
     stream::pyrowave_sdk::queue::use_async_compute(any_async_compute_asked(&settings, hosts.iter()
         .flat_map(|host| host.settings.iter().chain(host.app_settings.values()))
         .chain(profiles.entries.iter().map(|profile| &profile.settings))));
-
-    // Steam's Game Mode, and straight to the display: fullscreen without a border from the start
-    // (handheld.rs), at the display's current mode in KMS mode. On a desktop the Window setting
-    // opens the launcher as it opens its streams' window: Fullscreen and Borderless fill the
-    // screen on the desktop's mode, Windowed is an ordinary window.
-    let launcher_mode = if second_screen::this_process() { WindowMode::Windowed } else { settings.window_mode };
-    let start = handheld::start_window(launcher_mode, handheld::fills_screen());
-    if handheld::gamescope() {
-        eprintln!("nightjar: gamescope: starting fullscreen without a border; Start+Back opens the stream menu");
-    }
-    // SAFETY: display queries on the main thread after SDL_Init; the mode is SDL's and read at once.
-    let (screen, os_scale) = unsafe {
-        let mode = SDL_GetDesktopDisplayMode(SDL_GetPrimaryDisplay());
-        ((!mode.is_null()).then(|| ((*mode).w, (*mode).h)), SDL_GetDisplayContentScale(SDL_GetPrimaryDisplay()))
-    };
-    // Auto only enlarges unscaled screens, where SDL's window size is in pixels and points alike.
-    let zoom = match settings.ui_zoom {
-        0 => config::auto_zoom(screen.map(|(_, h)| h as f32), os_scale),
-        _ => 100,
-    };
-    let (width, height) = handheld::start_size(kms::active(), screen, zoom);
-    // SAFETY: window and renderer creation on the main thread.
-    let (window, renderer, wake_event) = unsafe {
-        let window = SDL_CreateWindow(
-            c"Nightjar".as_ptr(),
-            width,
-            height,
-            start_flags(start),
-        );
-        if window.is_null() {
-            return Err(format!("No window: {}", sdl::error()));
-        }
-        window_place::set_minimum_size(window);
-        if let Some(point) = second_screen::point() {
-            if !window_place::move_to_display_at(window, point) {
-                return Err(format!("No monitor at {},{} for the second screen: {}", point.0, point.1, sdl::error()));
-            }
-        } else if start.restore_place {
-            window_place::apply(window, store.window_placement().as_ref());
-        }
-        let renderer =
-            sdl::create_renderer_with(window, gpu, vulkan_video);
-        if renderer.is_null() {
-            return Err(format!("No renderer: {}", sdl::error()));
-        }
-        SDL_SetRenderVSync(renderer, 1);
-        (window, renderer, SDL_RegisterEvents(1))
-    };
-    // Windows windows take the executable's icon (build.rs) in every size the shell asks for.
-    #[cfg(not(windows))]
-    sdl::set_icon(window, &theme::logo_rgba(64), 64);
-    sdl::exclude_from_capture_if_asked(window);
-    // Before the window shows, so its first frame already has the dark bar; again when the palette changes.
-    blend_title_bar(window, *theme::NIGHT, *theme::ON_SURFACE);
+    let (window, renderer, wake_event, launcher_mode) = startup::open_window_and_renderer(&store, &settings, gpu, vulkan_video)?;
 
     let waker: hosts::Waker = Arc::new(move || {
         // SAFETY: SDL_PushEvent is thread-safe; the event is plain data.
@@ -745,23 +396,7 @@ fn run(launch: Option<cli::Launch>, started: open_play::Started, link: Option<St
     });
 
     let mut gui = Gui::new();
-    // A launcher on a touch screen scrolls by dragging from the first finger: egui offers that
-    // once it has seen a touch, so one is announced before the window shows (gui::prime_touch).
-    // SAFETY: SDL is up; the list SDL returns is freed here.
-    unsafe {
-        let mut count = 0;
-        let ids = SDL_GetTouchDevices(&mut count);
-        let screen = !ids.is_null()
-            && (0..count.max(0)).any(|i| SDL_GetTouchDeviceType(*ids.add(i as usize)).0 == SDL_TOUCH_DEVICE_DIRECT.0);
-        if !ids.is_null() {
-            SDL_free(ids.cast());
-        }
-        // SDL on Windows lists a touch screen only after its first WM_TOUCH; Windows knows sooner.
-        #[cfg(windows)]
-        let screen = screen
-            || windows::Win32::UI::WindowsAndMessaging::GetSystemMetrics(windows::Win32::UI::WindowsAndMessaging::SM_MAXIMUMTOUCHES) > 0;
-        gui.prime_touch(screen);
-    }
+    startup::prime_gui_touch(&mut gui);
     // Before the window shows: UI Automation's adapter has to be on it from the start.
     if let Err(e) = gui.attach_accessibility(window, waker.clone()) {
         eprintln!("nightjar: screen readers cannot read this window: {e}");
@@ -803,49 +438,7 @@ fn run(launch: Option<cli::Launch>, started: open_play::Started, link: Option<St
     launcher.favourites = store.favourites();
     launcher.hidden_games = store.hidden_games();
     launcher.system_languages = sdl::preferred_languages();
-    #[cfg(windows)]
-    {
-        launcher.tearing_supported =
-            media::swapchain_allows_tearing(sdl::renderer_pointer(renderer, SDL_PROP_RENDERER_D3D11_SWAPCHAIN_POINTER));
-    }
-    #[cfg(target_os = "linux")]
-    {
-        launcher.tearing_supported = true;
-    }
-    #[cfg(target_os = "macos")]
-    {
-        // SAFETY: SDL's live window, on the main thread.
-        let timing = unsafe {
-            mac_display::of_window(SDL_GetPointerProperty(SDL_GetWindowProperties(window), SDL_PROP_WINDOW_COCOA_WINDOW_POINTER, std::ptr::null_mut()))
-        };
-        let variable = timing.is_some_and(|timing| timing.variable_refresh());
-        match timing {
-            Some(timing) => {
-                let (slowest, fastest) = timing.range_hz();
-                eprintln!("nightjar: the display refreshes at {slowest:.0} to {fastest:.0} Hz{}", if variable { ", a variable refresh rate" } else { "" });
-            }
-            None => eprintln!("nightjar: the display reports no refresh range"),
-        }
-        // Real VRR on a Mac is built and was not seen on a display: `NIGHTJAR_MAC_VRR=1` turns
-        // it on for a display with a refresh range, where a stream then presents synchronised at
-        // the PC's frame times (`stream::present::sync_interval`).
-        launcher.tearing_supported = variable && stream::env_flag("NIGHTJAR_MAC_VRR") == Some(true);
-        if launcher.tearing_supported { eprintln!("nightjar: Real VRR on this display (NIGHTJAR_MAC_VRR)"); }
-    }
-    launcher.gpu_device = renderer_gpu_device(renderer).map(|d| d.0 as usize);
-    // Off Windows the swapchain's present mode decides tearing, logged when a stream starts.
-    eprintln!(
-        "nightjar: renderer {}, display {}x{} at {:.2} Hz{}",
-        sdl::renderer_name(renderer),
-        display.width,
-        display.height,
-        display.refresh_hz,
-        if cfg!(windows) { format!(", tearing {}", launcher.tearing_supported) } else { String::new() }
-    );
-    #[cfg(windows)]
-    if let Some(gpu) = gpu_adapters::renderer_gpu(sdl::renderer_pointer(renderer, SDL_PROP_RENDERER_D3D11_DEVICE_POINTER)) {
-        eprintln!("nightjar: the renderer draws and D3D11VA decodes on {gpu}");
-    }
+    startup::configure_display_tearing(window, renderer, &mut launcher, display);
 
     let opened_by_link = link.is_some();
     let links = Arc::new(link_channel::Inbox::default());
@@ -1089,29 +682,6 @@ fn run(launch: Option<cli::Launch>, started: open_play::Started, link: Option<St
         Some(why) => Err(why),
         None => Ok(()),
     }
-}
-
-/// A Wayland window learns its HDR state after it is mapped: the log says when, launcher or stream.
-fn log_window_hdr(event: &SDL_Event) {
-    static LAST: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
-    // SAFETY: union members read by event type.
-    unsafe {
-        if SDL_EventType(event.r#type) == SDL_EVENT_WINDOW_HDR_STATE_CHANGED
-            && LAST.swap(event.window.data1, std::sync::atomic::Ordering::Relaxed) != event.window.data1 {
-            eprintln!("nightjar: the compositor reports window HDR {} ({})", if event.window.data1 != 0 { "on" } else { "off" }, sdl::window_hdr_levels(event.window.windowID));
-        }
-    }
-}
-
-pub(crate) fn blend_title_bar(window: *mut SDL_Window, bg: egui::Color32, fg: egui::Color32) {
-    sdl::blend_title_bar(window, [bg.r(), bg.g(), bg.b()], [fg.r(), fg.g(), fg.b()]);
-}
-
-/// The launcher window's flags for how it opens (handheld.rs).
-fn start_flags(start: handheld::StartWindow) -> SDL_WindowFlags {
-    SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY | SDL_WINDOW_HIDDEN
-        | if start.fullscreen { SDL_WINDOW_FULLSCREEN } else { SDL_WindowFlags(0) }
-        | if start.borderless { SDL_WINDOW_BORDERLESS } else { SDL_WindowFlags(0) }
 }
 
 // Test only, and declared down here: `strings.rs` reads this file up to its first test item.
