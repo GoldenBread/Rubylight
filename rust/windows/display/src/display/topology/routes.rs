@@ -98,7 +98,7 @@ pub(super) fn extended_paths_preferred(
 /// chooses its modes, refresh and position. Such routes carry a zero
 /// rotation and scaling and a stale refresh, which SetDisplayConfig refuses
 /// with ERROR_INVALID_PARAMETER.
-fn switch_on_route(path: &mut DISPLAYCONFIG_PATH_INFO) {
+fn switch_on_route(path: &mut DISPLAYCONFIG_PATH_INFO, preferred_rotation: Option<u32>) {
     path.flags = DISPLAYCONFIG_PATH_ACTIVE;
     path.sourceInfo.Anonymous.modeInfoIdx = DISPLAYCONFIG_PATH_MODE_IDX_INVALID;
     path.targetInfo.Anonymous.modeInfoIdx = DISPLAYCONFIG_PATH_MODE_IDX_INVALID;
@@ -106,7 +106,9 @@ fn switch_on_route(path: &mut DISPLAYCONFIG_PATH_INFO) {
     // unspecified scan-line ordering.
     path.targetInfo.refreshRate = DISPLAYCONFIG_RATIONAL::default();
     path.targetInfo.scanLineOrdering = DISPLAYCONFIG_SCANLINE_ORDERING_UNSPECIFIED;
-    if path.targetInfo.rotation.0 == 0 {
+    if let Some(rotation) = preferred_rotation.filter(|r| (1..=4).contains(r)) {
+        path.targetInfo.rotation = DISPLAYCONFIG_ROTATION(rotation as i32);
+    } else if path.targetInfo.rotation.0 == 0 {
         path.targetInfo.rotation = DISPLAYCONFIG_ROTATION_IDENTITY;
     }
     if path.targetInfo.scaling.0 == 0 {
@@ -158,14 +160,19 @@ pub(super) fn moving_targets(
         .collect()
 }
 /// Chosen routes with the mode indices of those already active, so their
-/// displays keep timing and position; newly switched-on routes get none.
-pub(super) fn keep_active_modes(paths: &[DISPLAYCONFIG_PATH_INFO]) -> Vec<DISPLAYCONFIG_PATH_INFO> {
+/// displays keep timing and position; newly switched-on routes get none and
+/// start in their saved orientation when provided.
+pub(super) fn keep_active_modes(
+    paths: &[DISPLAYCONFIG_PATH_INFO],
+    preferred_rotations: &[Option<u32>],
+) -> Vec<DISPLAYCONFIG_PATH_INFO> {
     paths
         .iter()
-        .map(|path| {
+        .enumerate()
+        .map(|(i, path)| {
             let mut path = *path;
             if path.flags & DISPLAYCONFIG_PATH_ACTIVE == 0 {
-                switch_on_route(&mut path);
+                switch_on_route(&mut path, preferred_rotations.get(i).copied().flatten());
             }
             path.flags = DISPLAYCONFIG_PATH_ACTIVE;
             path
@@ -230,7 +237,7 @@ pub(super) fn activation_paths(
             route
         }
     };
-    switch_on_route(&mut route);
+    switch_on_route(&mut route, None);
     let mut paths: Vec<_> = active.iter().filter(|p| !ours(p)).copied().collect();
     paths.push(route);
     Ok(Some(paths))
@@ -369,21 +376,29 @@ impl Topology {
         Ok(())
     }
     pub fn set_active(ids: &[String]) -> Result<()> {
-        Self::set_active_preferred(ids, &std::collections::BTreeMap::new(), None)
+        Self::set_active_preferred(
+            ids,
+            &std::collections::BTreeMap::new(),
+            &std::collections::BTreeMap::new(),
+            None,
+        )
     }
     /// Activate `ids`, preferring each display's saved CCD desktop source ID
-    /// (and source 0 for `primary` when no source ID was saved) so Windows
-    /// restores the original GDI display names and per-display DPI scale.
+    /// (and source 0 for `primary` when no source ID was saved) and saved
+    /// rotation so Windows restores the original GDI display names,
+    /// orientation, and per-display DPI scale.
     pub fn set_active_preferred(
         ids: &[String],
         preferred_sources: &std::collections::BTreeMap<String, u32>,
+        preferred_rotations: &std::collections::BTreeMap<String, u32>,
         primary: Option<&str>,
     ) -> Result<()> {
-        Self::set_active_once(ids, preferred_sources, primary, true)
+        Self::set_active_once(ids, preferred_sources, preferred_rotations, primary, true)
     }
     fn set_active_once(
         ids: &[String],
         preferred_sources: &std::collections::BTreeMap<String, u32>,
+        preferred_rotations: &std::collections::BTreeMap<String, u32>,
         primary: Option<&str>,
         may_move: bool,
     ) -> Result<()> {
@@ -392,6 +407,7 @@ impl Topology {
         }
         let topology = Self::query_all()?;
         let mut candidates_by_target = Vec::new();
+        let mut target_rotations = Vec::new();
         for id in ids {
             let candidates = topology
                 .paths
@@ -416,8 +432,10 @@ impl Topology {
                 .collect::<Vec<_>>();
             if !candidates.is_empty() {
                 let preferred = preferred_sources.get(id).copied();
+                let preferred_rotation = preferred_rotations.get(id).copied();
                 let is_primary = primary.is_some_and(|p| p.eq_ignore_ascii_case(id));
                 candidates_by_target.push((candidates, preferred, is_primary));
+                target_rotations.push(preferred_rotation);
             }
         }
         let paths = extended_paths_preferred(&candidates_by_target)?;
@@ -430,7 +448,7 @@ impl Topology {
         // leave alone; Windows chooses for the displays it switches on.
         // Windows can refuse that mix, so fall back to choosing every mode.
         let moving = moving_targets(&paths, &topology.paths);
-        let mut paths = keep_active_modes(&paths);
+        let mut paths = keep_active_modes(&paths, &target_rotations);
         // SAFETY: These paths use the non-virtual mode-index union field returned by QueryDisplayConfig.
         let kept = if paths.iter().any(|p| unsafe { p.sourceInfo.Anonymous.modeInfoIdx }
             != DISPLAYCONFIG_PATH_MODE_IDX_INVALID)
@@ -465,7 +483,13 @@ impl Topology {
             check(unsafe { SetDisplayConfig(Some(&staying_paths), supplied_modes, flags) })
                 .context("cannot switch off the displays that change desktop source")?;
             super::super::end_trace::committed("switch off the displays that change source", false);
-            return Self::set_active_once(ids, preferred_sources, primary, false);
+            return Self::set_active_once(
+                ids,
+                preferred_sources,
+                preferred_rotations,
+                primary,
+                false,
+            );
         }
         let supplied = describe_paths(&paths);
         for path in &mut paths {

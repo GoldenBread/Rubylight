@@ -240,7 +240,7 @@ impl Snapshot {
                 n.active && n.primary && !preserve(&n.device_id) && ids.contains(&n.device_id)
             })
             .map(|n| n.device_id.as_str());
-        Topology::set_active_preferred(&ids, &self.sources, primary)
+        Topology::set_active_preferred(&ids, &self.sources, &self.rotation, primary)
             .context("cannot activate the saved displays")?;
         // A display that cannot take back its old setting must not leave the
         // rest of the layout unrestored; report every such failure at the end.
@@ -372,6 +372,48 @@ impl Snapshot {
                     "{} ({}) mode after layout: {error:#}",
                     n.label, m.display_name
                 ));
+            }
+        }
+        // Re-commit GDI orientation (`CDS_RESET`) for rotated displays after
+        // layout/mode restoration so WDDM drivers update hardware cursor
+        // rotation and hit-test bounds even when dimensions and rate matched.
+        let needs_orientation_commit = self.nodes.iter().any(|n| {
+            !preserve(&n.device_id)
+                && monitors.iter().any(|m| m.device_id == n.device_id)
+                && self
+                    .rotation
+                    .get(&n.device_id)
+                    .is_some_and(|r| (2..=4).contains(r))
+        });
+        if needs_orientation_commit {
+            let current_monitors = Topology::query()
+                .map(|t| t.basic_monitors())
+                .unwrap_or_default();
+            for n in self.nodes.iter().filter(|n| !preserve(&n.device_id)) {
+                let Some(m) = monitors.iter().find(|m| m.device_id == n.device_id) else {
+                    continue;
+                };
+                let Some(rotation) = self
+                    .rotation
+                    .get(&n.device_id)
+                    .copied()
+                    .filter(|r| (2..=4).contains(r))
+                else {
+                    continue;
+                };
+                let display_name = current_monitors
+                    .iter()
+                    .find(|cur| cur.device_id == n.device_id)
+                    .map_or(m.display_name.as_str(), |cur| cur.display_name.as_str());
+                if let Err(error) = super::modes::commit_rotated_mode(display_name, rotation) {
+                    tracing::warn!(
+                        display = %n.label,
+                        output = %display_name,
+                        rotation,
+                        error = %format!("{error:#}"),
+                        "GDI orientation commit after layout restore failed"
+                    );
+                }
             }
         }
         if !failures.is_empty() {

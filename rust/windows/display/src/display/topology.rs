@@ -44,7 +44,7 @@ impl Topology {
         rotations: &std::collections::BTreeMap<String, u32>,
     ) -> Result<()> {
         let monitors = self.basic_monitors();
-        let mut changed = false;
+        let mut changed = Vec::new();
         for monitor in monitors {
             if let Some(rotation) = rotations.get(&monitor.device_id) {
                 if !(1..=4).contains(rotation) {
@@ -72,13 +72,23 @@ impl Topology {
                     }
                     path.targetInfo.rotation = DISPLAYCONFIG_ROTATION(*rotation as i32);
                     path.targetInfo.Anonymous.modeInfoIdx = DISPLAYCONFIG_PATH_MODE_IDX_INVALID;
-                    changed = true;
+                    changed.push((monitor.display_name, *rotation));
                 }
             }
         }
-        if changed {
+        if !changed.is_empty() {
             self.restore()?;
             super::end_trace::committed("rotation", false);
+            for (display_name, rotation) in changed {
+                if let Err(error) = super::modes::commit_rotated_mode(&display_name, rotation) {
+                    tracing::warn!(
+                        output = %display_name,
+                        rotation,
+                        error = %format!("{error:#}"),
+                        "GDI orientation commit after SetDisplayConfig rotation failed"
+                    );
+                }
+            }
         }
         Ok(())
     }

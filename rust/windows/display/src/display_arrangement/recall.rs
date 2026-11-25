@@ -38,7 +38,7 @@ pub(super) fn forget_saved_layout(before: &Snapshot, target: &str, saves: bool) 
         connected,
         |ids| {
             crate::display::end_trace::phase("entry, displays on");
-            Topology::set_active_preferred(ids, &before.sources, primary)
+            Topology::set_active_preferred(ids, &before.sources, &before.rotation, primary)
         },
         || Ok(Snapshot::capture()?.nodes),
         |layout| {

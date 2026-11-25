@@ -169,6 +169,28 @@ pub(super) fn apply_mode_with(name: &str, mode: &DEVMODEW, flags: CDS_TYPE) -> R
         Ok(())
     }
 }
+/// Map a Windows CCD `DISPLAYCONFIG_ROTATION` (`1..=4`, clockwise) to a GDI
+/// `DEVMODE_DISPLAY_ORIENTATION` (`DMDO_*`, counter-clockwise).
+pub(super) fn ccd_to_devmode_orientation(rotation: u32) -> Option<DEVMODE_DISPLAY_ORIENTATION> {
+    match rotation {
+        1 => Some(DMDO_DEFAULT),
+        2 => Some(DMDO_270),
+        3 => Some(DMDO_180),
+        4 => Some(DMDO_90),
+        _ => None,
+    }
+}
+/// Re-commit the active display mode and GDI orientation (`CDS_RESET`) so WDDM
+/// drivers update hardware cursor rotation and input bounds after a
+/// `SetDisplayConfig` rotation change.
+pub(super) fn commit_rotated_mode(display_name: &str, ccd_rotation: u32) -> Result<()> {
+    let orientation = ccd_to_devmode_orientation(ccd_rotation)
+        .with_context(|| format!("invalid display rotation {ccd_rotation}"))?;
+    let mut next = mode(display_name)?;
+    next.Anonymous1.Anonymous2.dmDisplayOrientation = orientation;
+    next.dmFields |= DM_DISPLAYORIENTATION | DM_PELSWIDTH | DM_PELSHEIGHT | DM_DISPLAYFREQUENCY;
+    apply_mode_with(display_name, &next, CDS_RESET)
+}
 /// Width, height and refresh in millihertz.
 pub(super) type Timing = (u32, u32, u32);
 /// Whether a display shows a mode: the same size, and a refresh within half a
@@ -488,5 +510,14 @@ mod tests {
         );
         // No matching mode at all still bails.
         assert!(highest_refresh_in(&modes, Some((2560, 1600)), (3840, 2160)).is_err());
+    }
+    #[test]
+    fn ccd_rotation_maps_to_inverse_gdi_devmode_orientation() {
+        assert_eq!(ccd_to_devmode_orientation(1), Some(DMDO_DEFAULT));
+        assert_eq!(ccd_to_devmode_orientation(2), Some(DMDO_270));
+        assert_eq!(ccd_to_devmode_orientation(3), Some(DMDO_180));
+        assert_eq!(ccd_to_devmode_orientation(4), Some(DMDO_90));
+        assert_eq!(ccd_to_devmode_orientation(0), None);
+        assert_eq!(ccd_to_devmode_orientation(5), None);
     }
 }
