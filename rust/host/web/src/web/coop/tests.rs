@@ -6,14 +6,14 @@ use axum::http::StatusCode;
 use butterpollo_config::config::Config;
 use butterpollo_media_policy::rtsp::Negotiated;
 use butterpollo_session::{
-    nucleus::{
-        elevation::{self, Account},
-        install::{Problem, Unusable},
-    },
+    nucleus::install::{Problem, Unusable},
     session::Role,
     state::{App, Client},
 };
 use butterpollo_stream::nucleus::{Admission, Game, Held, fake};
+// The folder test that reads the Windows account of each game runs on Windows only.
+#[cfg(windows)]
+use butterpollo_session::nucleus::elevation::{self, Account};
 use butterpollo_stream::state::{Session, test_support::Fixture};
 use serde_json::{Value, json};
 use std::path::PathBuf;

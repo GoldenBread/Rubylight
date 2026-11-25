@@ -449,6 +449,8 @@ mod tests {
         );
     }
 
+    // Backslash paths and the \\?\ prefix are Windows paths.
+    #[cfg(windows)]
     #[test]
     fn vac_check_is_not_bypassed_by_dot_dot_or_verbatim_prefix() {
         let root = tempfile::tempdir().unwrap();

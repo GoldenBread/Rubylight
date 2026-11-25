@@ -1,9 +1,9 @@
 //! Tests for local game folder scanning, settings, and cross-launcher matching.
 use super::*;
 use serde_json::json;
+use std::path::Path;
 #[cfg(windows)]
 use std::path::PathBuf;
-use std::path::Path;
 
 #[cfg(windows)]
 #[test]

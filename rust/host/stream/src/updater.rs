@@ -35,13 +35,15 @@ pub use warnings::{UPDATE_FAILED, remember_check};
 
 #[cfg(test)]
 use download::{
-    DownloadPaused, InstallerRejected, arrived, hash_prefix, prepare_download, remove_downloads,
-    remove_legacy_downloads, resumable, resumes, stale_transactions, transfer,
+    DownloadPaused, InstallerRejected, arrived, hash_prefix, prepare_download, resumable, resumes,
+    stale_transactions, transfer,
 };
 use download::{
     NEXT_TIDY, check_recovery, download, failed, finish_download, remove_download, tidy_downloads,
     tidy_soon, verify,
 };
+#[cfg(all(test, windows))]
+use download::{remove_downloads, remove_legacy_downloads};
 
 const IDLE_SECONDS: u64 = 60;
 

@@ -19,10 +19,12 @@ mod lifecycle;
 #[cfg(all(test, windows))]
 mod parity_tests;
 
+#[cfg(all(test, windows))]
+use commands::client_stream_environment;
+#[cfg(test)]
+use commands::expand;
 pub use commands::{ClientCommands, MenuRun, app_bool, exit_timeout, pc_command, pc_command_names};
 use commands::{StateCommands, directory, inferred_working_dir, start_state_commands};
-#[cfg(test)]
-use commands::{client_stream_environment, expand};
 
 pub(crate) use focus::store_client;
 #[cfg(test)]
@@ -32,7 +34,7 @@ use focus::{
 use focus::{Focus, game_trees, only_opens_launchers};
 pub use focus::{FocusSnapshot, ForegroundCheck, ForegroundVerdict, ProcessScan, curtain_window};
 
-#[cfg(test)]
+#[cfg(all(test, windows))]
 use launch::launch_with_environment;
 pub use launch::{BACKGROUND_ARG, LAUNCH_STOPPED, launch};
 use launch::{prep_failure, wait_failure};

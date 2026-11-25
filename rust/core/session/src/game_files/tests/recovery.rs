@@ -1,9 +1,11 @@
 //! Crash recovery, halfway swap, folder pinning, and multi-session restore tests for managed game files.
-use super::super::{
-    Change, Journal, MAX_TEXT, Report, Scope, Target, Unusable, linked, move_in, pin, recover,
-    replace,
-};
-use super::{HALFWAY, OPTISCALER, apply, current, folders, game, limit, no_user, restore, targets};
+// Links, held files and half-done swaps are Windows behaviour; those tests run there only.
+use super::super::{Change, Journal, MAX_TEXT, Report, Scope, Unusable, move_in, recover};
+#[cfg(windows)]
+use super::super::{Target, linked, pin, replace};
+#[cfg(windows)]
+use super::HALFWAY;
+use super::{OPTISCALER, apply, current, folders, game, limit, no_user, restore, targets};
 use std::{collections::BTreeSet, path::PathBuf};
 
 #[test]

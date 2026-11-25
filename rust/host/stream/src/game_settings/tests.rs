@@ -1,8 +1,10 @@
 //! Unit tests for host per-device game settings file swapping.
 
 use super::*;
+#[cfg(windows)]
 use crate::state::test_support::Fixture;
 
+#[cfg(windows)]
 /// The app, in the host's library, and its settings file in a folder of its own.
 fn game(f: &Fixture) -> (App, PathBuf, BTreeMap<String, String>) {
     let folder = f.host.directory.join("game");
@@ -22,6 +24,7 @@ fn game(f: &Fixture) -> (App, PathBuf, BTreeMap<String, String>) {
     (app, file, environment)
 }
 
+#[cfg(windows)]
 fn args(device: &str) -> HashMap<String, String> {
     HashMap::from([
         ("clientUuid".to_owned(), device.to_owned()),
@@ -29,6 +32,7 @@ fn args(device: &str) -> HashMap<String, String> {
     ])
 }
 
+#[cfg(windows)]
 fn read(file: &Path) -> String {
     std::fs::read_to_string(file).unwrap()
 }

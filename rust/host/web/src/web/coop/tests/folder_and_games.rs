@@ -216,6 +216,7 @@ async fn choosing_a_folder_and_open_are_refused_without_the_service() {
     assert_eq!(body["opened"], false);
 }
 
+#[cfg(windows)]
 #[tokio::test]
 async fn each_game_with_an_exe_shows_its_coop_status() {
     let f = Fixture::new();

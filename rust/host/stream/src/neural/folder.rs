@@ -20,7 +20,8 @@ mod layout;
 mod place;
 mod remove;
 mod security;
-#[cfg(test)]
+// Frame generation and these paths are Windows ones; the tests run there only.
+#[cfg(all(test, windows))]
 mod tests;
 
 pub use butterpollo_session::neural::{

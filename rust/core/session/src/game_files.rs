@@ -41,8 +41,10 @@ mod journal;
 pub use ini::{value_of, with_value};
 use io::local;
 pub use io::{Access, as_host};
+#[cfg(all(test, windows))]
+use io::{linked, pin};
 #[cfg(test)]
-use io::{linked, move_in, pin, recover};
+use io::{move_in, recover};
 pub(crate) use io::{reach, replace};
 pub use journal::{Change, Journal, Scope, apply, restore};
 

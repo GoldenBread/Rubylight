@@ -15,13 +15,13 @@ use sha2::{Digest, Sha256};
 mod checks;
 mod userprofile;
 
+#[cfg(all(test, windows))]
+use checks::stub_name;
 pub use checks::{
     anti_cheat, epic_arguments, epic_exit, launcher, on_this_pc, refused_path, unreal_shipping,
 };
 #[cfg(test)]
 use checks::{anti_cheat_of, shared_folder};
-#[cfg(all(test, windows))]
-use checks::stub_name;
 pub use userprofile::{add_game, remove_game};
 
 /// The start of our handlers' GUIDs and file names.

@@ -372,7 +372,8 @@ pub fn keep_key(stored: Option<&App>, app: &mut App) {
     neural::app_keep_key(stored, app)
 }
 
-#[cfg(test)]
+// Frame generation and these paths are Windows ones; the tests run there only.
+#[cfg(all(test, windows))]
 mod tests {
     use super::*;
     use crate::state::test_support::Fixture;

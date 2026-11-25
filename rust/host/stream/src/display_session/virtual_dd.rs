@@ -37,8 +37,7 @@ pub(super) fn select_virtual_mode<'a>(
         .options
         .get("virtualDisplay")
         .map(|value| value != "0");
-    let mut display_request =
-        virtual_display_request(launch, app, config, mode, output_override);
+    let mut display_request = virtual_display_request(launch, app, config, mode, output_override);
     if !physical_only && !display_request.requested() {
         display_request.headless =
             butterpollo_win_graphics::capture::displays().is_ok_and(|displays| displays.is_empty());

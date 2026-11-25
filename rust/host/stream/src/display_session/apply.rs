@@ -123,7 +123,8 @@ pub fn prepare_stream(
         // A desktop stream shows a virtual display of its own where one is asked for and the
         // PC has one: a monitor at the device's mode that KWin captures by name.
         #[cfg(target_os = "linux")]
-        if desktop && let Some(private) = super::linux_private::prepare(h, launch, stream, config)? {
+        if desktop && let Some(private) = super::linux_private::prepare(h, launch, stream, config)?
+        {
             let target = private.target.clone();
             tracing::info!(target = %target, "streaming a virtual display on Linux");
             return Ready::window_holding(

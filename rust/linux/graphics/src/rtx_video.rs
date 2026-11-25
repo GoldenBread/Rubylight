@@ -4,7 +4,7 @@ use anyhow::Result;
 
 /// An enhancer on one capture device. None can be made on Linux yet.
 pub struct Filter {
-    _private: (),
+    _private: std::convert::Infallible,
 }
 impl Filter {
     /// An enhancer on the capture's device at quality level `quality`
@@ -15,6 +15,10 @@ impl Filter {
     }
     /// The quality level of the next pictures.
     pub fn set_quality(&mut self, _quality: u32) {}
+    /// The VSR quality level this filter uses. No filter exists on Linux, so nothing asks.
+    pub fn quality(&self) -> u32 {
+        match self._private {}
+    }
     /// The enhanced picture, in the capture's format. Not available on Linux yet.
     pub fn apply_gpu(&mut self, _image: &GpuImage) -> Result<GpuImage> {
         Err(crate::unsupported("RTX Video enhancement"))

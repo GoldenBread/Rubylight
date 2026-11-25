@@ -67,6 +67,7 @@ fn registry_leave_releases_held_controller_before_marking_away() {
     ));
 }
 
+#[cfg(windows)]
 #[test]
 fn game_folder_probes_always_run_under_user_impersonation_and_refuse_when_unavailable() {
     use std::sync::atomic::Ordering;

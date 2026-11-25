@@ -338,6 +338,13 @@ impl Ac3Encoder {
 
     /// Encodes one frame of interleaved samples ([`FRAME_SAMPLES`] per channel).
     pub fn encode(&mut self, samples: &[f32]) -> Result<Vec<u8>> {
+        let mut out = Vec::new();
+        self.encode_into(samples, &mut out)?;
+        Ok(out)
+    }
+
+    /// [`Self::encode`] into `out` (emptied first), reusing its buffer across frames.
+    pub fn encode_into(&mut self, samples: &[f32], out: &mut Vec<u8>) -> Result<()> {
         let codec = &mut self.codec;
         let channels = codec.channels;
         if samples.len() != FRAME_SAMPLES * channels {
@@ -365,16 +372,22 @@ impl Ac3Encoder {
             let code = (codec.ff.send_frame)(codec.context, codec.frame);
             codec.ff.check(code, &format!("{} input", codec.name))?;
         }
-        let mut frames = Vec::new();
-        codec.drain(&mut |packet| frames.push(packet.to_vec()))?;
-        match <[Vec<u8>; 1]>::try_from(frames) {
-            Ok([frame]) => Ok(frame),
-            Err(frames) => bail!(
-                "the {} gave {} frames for one frame of audio",
-                codec.name,
-                frames.len()
-            ),
+        out.clear();
+        let mut count = 0usize;
+        codec.drain(&mut |packet| {
+            if count == 0 {
+                out.extend_from_slice(packet);
+            }
+            count += 1;
+        })?;
+        if count != 1 {
+            out.clear();
+            bail!(
+                "the {} gave {count} frames for one frame of audio",
+                codec.name
+            );
         }
+        Ok(())
     }
 }
 

@@ -584,6 +584,7 @@ fn client_hooks_use_the_saved_environment_on_disconnect() {
     assert!(ClientCommands::with_environment(&invalid, environment).is_err());
     assert!(!path.exists());
 }
+#[cfg(windows)]
 #[test]
 fn output_redirection_preserves_shell_opening_for_uris_and_shortcuts() {
     assert_eq!(
