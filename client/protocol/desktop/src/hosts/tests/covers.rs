@@ -615,4 +615,3 @@ fn covers_load_a_few_at_a_time_and_all_of_them() {
     });
     wait_for("a cover asked for later loads", &|| landed.load(Ordering::SeqCst) == asked + 1);
 }
-
