@@ -1,8 +1,8 @@
 //! Manifest-driven removal, OptiScaler.ini restoration, and empty-folder
 //! cleanup for Neural Rendering game folders.
 use super::{
-    Failure, LINK, Outcome, PARTIAL, PROBE, Response, Writer, cleanup::left_in, guard, manifest,
-    state, writable, write_named, write_whole,
+    Failure, LINK, Outcome, PARTIAL, PROBE, Response, Writer, cleanup::left_in, guard,
+    is_clean_path, manifest, state, writable, write_named, write_whole,
 };
 use butterpollo_session::neural::{self, LEGACY_MANIFEST, MANIFEST};
 use std::{
@@ -15,6 +15,12 @@ use std::{
 /// it leaves when the install goes `elsewhere` ([`Response::Left`]); with
 /// `earlier`, only AMDNR.
 pub fn remove(folder: &Path, writer: Writer, elsewhere: bool, earlier: bool) -> Outcome<Response> {
+    if !is_clean_path(folder) {
+        return Err(Failure::Refused(format!(
+            "{} is not a plain path on this PC",
+            folder.display()
+        )));
+    }
     // A folder that is gone with its game holds nothing; one on a drive that
     // is not connected may, and is not called removed. So may a game folder
     // moved and linked back whose link leads nowhere now ([`super::followed`]).

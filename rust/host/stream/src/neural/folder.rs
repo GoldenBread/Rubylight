@@ -20,6 +20,8 @@ mod layout;
 mod place;
 mod remove;
 mod security;
+#[cfg(test)]
+mod tests;
 
 pub use butterpollo_session::neural::{
     ANTI_CHEAT, Cached, NO_DLSS, PACKAGE, Package, Rights, Security, kept_text,
@@ -27,7 +29,7 @@ pub use butterpollo_session::neural::{
 #[cfg(any(test, feature = "test-support"))]
 pub use find::anti_cheat_refusal;
 pub(super) use find::{inside, not_the_game};
-pub use find::{same, shared_folders};
+pub use find::{is_clean_path, is_valid_exe_path, same, shared_folders};
 pub use layout::Gone;
 pub use place::{check, place, prepare};
 pub use remove::remove;
@@ -316,8 +318,12 @@ fn folder_of(exe: &Path) -> &Path {
 /// a folder that is itself a link (a game moved elsewhere and linked back
 /// with `mklink /J`) is followed once, and the whole request works there.
 /// The user may write wherever it leads; links below it are still refused
-/// ([`guard`]). A SYSTEM host follows none.
+/// ([`guard`]). A SYSTEM host follows none, and a path with `..` or a
+/// verbatim/device prefix is never followed.
 pub fn followed(exe: PathBuf, writer: Writer) -> PathBuf {
+    if !is_clean_path(&exe) {
+        return exe;
+    }
     let (Some(folder), Some(name)) = (exe.parent(), exe.file_name()) else {
         return exe;
     };
@@ -326,7 +332,7 @@ pub fn followed(exe: PathBuf, writer: Writer) -> PathBuf {
     if writer != Writer::User || !linked {
         return exe;
     }
-    match real(folder) {
+    match real(folder).filter(|real| is_clean_path(real) && real.is_absolute()) {
         Some(real) => real.join(name),
         // Where it leads is not there now: the link is refused as one.
         None => exe,
@@ -341,7 +347,16 @@ pub fn real(path: &Path) -> Option<PathBuf> {
     Some(match real.to_str() {
         Some(text) => match text.strip_prefix(r"\\?\UNC\") {
             Some(share) => PathBuf::from(format!(r"\\{share}")),
-            None => PathBuf::from(text.strip_prefix(r"\\?\").unwrap_or(text)),
+            None => match text.strip_prefix(r"\\?\") {
+                Some(rest)
+                    if rest.len() >= 3
+                        && rest.as_bytes()[0].is_ascii_alphabetic()
+                        && &rest.as_bytes()[1..3] == br":\" =>
+                {
+                    PathBuf::from(rest)
+                }
+                _ => real,
+            },
         },
         None => real,
     })

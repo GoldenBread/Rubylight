@@ -257,27 +257,37 @@ fn same_library(a: &Path, b: &Path) -> bool {
 
 /// For an .exe below `<library>\steamapps\common\<folder>`, on this PC's
 /// drives: that `steamapps` folder, `<folder>`, and the .exe's path below
-/// it.
+/// it. Lexically resolves `.` and `..` segments so traversal inside a Steam
+/// library (such as `win64\..\win64\cs2.exe`) still resolves to its app.
 pub(super) fn library_folder(exe: &Path) -> Option<(PathBuf, String, String)> {
     let local = crate::nucleus::generic::on_this_pc(&exe.to_string_lossy())?;
-    let parts: Vec<&str> = local.split('\\').collect();
+    let mut raw = local.split('\\');
+    let root = raw.next()?;
+    let bytes = root.as_bytes();
+    if bytes.len() != 2 || !bytes[0].is_ascii_alphabetic() || bytes[1] != b':' {
+        return None;
+    }
+    let mut parts: Vec<&str> = vec![root];
+    for part in raw {
+        match part {
+            "" | "." => {}
+            ".." => {
+                if parts.len() > 1 {
+                    parts.pop();
+                }
+            }
+            other => parts.push(other),
+        }
+    }
     let is = |at: usize, name: &str| parts.get(at).is_some_and(|p| p.eq_ignore_ascii_case(name));
     // The last `steamapps\common` with a folder and something in it below.
     let at = (1..parts.len().saturating_sub(3))
         .rev()
-        .find(|&at| is(at, "steamapps") && is(at + 1, "common") && !parts[at + 2].is_empty())?;
-    if parts[at + 2] == "." || parts[at + 2] == ".." || parts[at + 3..].contains(&"..") {
-        return None;
-    }
+        .find(|&at| is(at, "steamapps") && is(at + 1, "common"))?;
     Some((
         PathBuf::from(parts[..=at].join("\\")),
         parts[at + 2].to_string(),
-        parts[at + 3..]
-            .iter()
-            .filter(|part| !part.is_empty() && **part != ".")
-            .copied()
-            .collect::<Vec<_>>()
-            .join("\\"),
+        parts[at + 3..].join("\\"),
     ))
 }
 
@@ -363,4 +373,113 @@ fn launch_executable(info: &Vdf) -> Option<(String, String)> {
         // 64-bit first, then Steam's order.
         .min_by_key(|(only_32, _)| *only_32)
         .map(|(_, launch)| launch)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn library_folder_normalizes_dot_dot_and_verbatim_paths_inside_steam_library() {
+        assert_eq!(
+            library_folder(Path::new(
+                r"C:\Steam\steamapps\common\CSGO\game\bin\win64\..\win64\cs2.exe"
+            )),
+            Some((
+                PathBuf::from(r"C:\Steam\steamapps"),
+                "CSGO".into(),
+                r"game\bin\win64\cs2.exe".into()
+            ))
+        );
+        assert_eq!(
+            library_folder(Path::new(
+                r"C:\Steam\steamapps\common\Other\..\CSGO\game\bin\win64\cs2.exe"
+            )),
+            Some((
+                PathBuf::from(r"C:\Steam\steamapps"),
+                "CSGO".into(),
+                r"game\bin\win64\cs2.exe".into()
+            ))
+        );
+        assert_eq!(
+            library_folder(Path::new(
+                r"\\?\C:\Steam\steamapps\common\CSGO\game\bin\win64\..\win64\cs2.exe"
+            )),
+            Some((
+                PathBuf::from(r"C:\Steam\steamapps"),
+                "CSGO".into(),
+                r"game\bin\win64\cs2.exe".into()
+            ))
+        );
+        assert_eq!(
+            library_folder(Path::new(r"\\.\C:\Steam\steamapps\common\CSGO\cs2.exe")),
+            Some((
+                PathBuf::from(r"C:\Steam\steamapps"),
+                "CSGO".into(),
+                "cs2.exe".into()
+            ))
+        );
+        // Traversing out of `steamapps\common` is no longer in the library.
+        assert_eq!(
+            library_folder(Path::new(
+                r"D:\Steam\steamapps\common\Game\..\..\..\Other\g.exe"
+            )),
+            None
+        );
+    }
+
+    #[test]
+    fn vac_check_is_not_bypassed_by_dot_dot_or_verbatim_prefix() {
+        let root = tempfile::tempdir().unwrap();
+        let steamapps = root.path().join("steamapps");
+        let bin = steamapps.join(r"common\CSGO\game\bin\win64");
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::write(bin.join("cs2.exe"), b"MZ").unwrap();
+        std::fs::write(
+            steamapps.join("appmanifest_730.acf"),
+            "\"AppState\" { \"appid\" \"730\" \"installdir\" \"CSGO\" }",
+        )
+        .unwrap();
+        let mut kv = Vec::new();
+        for key in ["appinfo", "common", "category"] {
+            kv.push(0x00);
+            kv.extend(key.as_bytes());
+            kv.push(0);
+        }
+        kv.push(0x01);
+        kv.extend(b"category_8\0");
+        kv.extend(b"1\0");
+        kv.extend([0x08; 5]);
+        let mut data = 0x0756_4428u32.to_le_bytes().to_vec();
+        data.extend(1u32.to_le_bytes());
+        data.extend(730u32.to_le_bytes());
+        data.extend(((60 + kv.len()) as u32).to_le_bytes());
+        data.extend([0; 60]);
+        data.extend(kv);
+        data.extend(0u32.to_le_bytes());
+        std::fs::create_dir_all(root.path().join("appcache")).unwrap();
+        std::fs::write(root.path().join(r"appcache\appinfo.vdf"), data).unwrap();
+
+        let roots = [root.path().to_path_buf()];
+        let traversal = PathBuf::from(format!(
+            r"{}\steamapps\common\CSGO\game\bin\win64\..\win64\cs2.exe",
+            root.path().display()
+        ));
+        let verbatim = PathBuf::from(format!(
+            r"\\?\{}\steamapps\common\CSGO\game\bin\win64\cs2.exe",
+            root.path().display()
+        ));
+        let both = PathBuf::from(format!(
+            r"\\?\{}\steamapps\common\CSGO\game\bin\win64\..\win64\cs2.exe",
+            root.path().display()
+        ));
+        for exe in [&traversal, &verbatim, &both] {
+            assert_eq!(
+                valve_anti_cheat(None, exe, "", &roots),
+                Ok(true),
+                "{}",
+                exe.display()
+            );
+        }
+    }
 }

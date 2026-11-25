@@ -72,11 +72,21 @@ pub fn clear_pending(h: &Shared, exe: &Path) {
     }
 }
 
-/// Add removals to the record (once each).
+/// Add removals to the record (once each). If an existing entry for the same
+/// executable had no UUID, fill it from the incoming removal so concurrent
+/// installs serialize on the app's job slot.
 pub fn record_pending(h: &Shared, removals: &[Pending]) -> Result<()> {
     update_settings(h, |value| {
         let mut list = pending_in(value)?;
         neural::merge_pending(&mut list, removals);
+        for removal in removals {
+            if let Some(uuid) = &removal.uuid
+                && let Some(entry) = list.iter_mut().find(|old| old.exe == removal.exe)
+                && entry.uuid.is_none()
+            {
+                entry.uuid = Some(uuid.clone());
+            }
+        }
         value[PENDING] = json!(list);
         Ok(())
     })
@@ -131,6 +141,10 @@ pub fn remove_pending(h: &Shared) {
 /// Try the recorded removals and `also` (in case the record could not be
 /// saved); keep the ones that are still to do.
 pub fn try_pending(h: &Shared, also: &[Pending]) {
+    try_pending_inner(h, also, || {});
+}
+
+fn try_pending_inner(h: &Shared, also: &[Pending], before_take: impl Fn()) {
     let _one = h
         .neural
         .removing
@@ -138,32 +152,53 @@ pub fn try_pending(h: &Shared, also: &[Pending]) {
         .unwrap_or_else(PoisonError::into_inner);
     let mut removals = pending(h);
     neural::merge_pending(&mut removals, also);
-    // The files an app has on stay: such a record is stale. The same folder
-    // also when one path goes through a link (a game folder moved and linked
-    // back) and the other doesn't.
-    let wanted: Vec<PathBuf> = h
-        .apps
-        .read()
-        .unwrap()
-        .iter()
-        .flat_map(placed_exes)
-        .collect();
+    before_take();
     let real = |exe: &Path| folder::real(exe.parent().unwrap_or(exe));
     let mut done = Vec::new();
     for removal in &removals {
-        let stale = wanted.iter().any(|exe| {
-            *exe == removal.exe || real(exe).is_some_and(|at| Some(at) == real(&removal.exe))
-        });
-        if stale {
-            done.push(removal.exe.clone());
-            continue;
-        }
-        let Ok(_slot) = Removing::take(h, removal.uuid.as_deref()) else {
+        // Acquire the app's switch slot BEFORE inspecting live apps and
+        // pending state: an install that finishes before the slot opens writes
+        // `KEY` and calls `clear_pending` before transitioning its job to
+        // `"done"`, so re-checking under the slot cannot race a fresh install.
+        let Ok(slot) = Removing::take(h, removal.uuid.as_deref()) else {
             tracing::info!(app = %removal.name, "Neural Rendering is busy with the game; its removal stays pending");
             continue;
         };
+        // The files an app has on stay: such a record is stale. The same folder
+        // also when one path goes through a link (a game folder moved and linked
+        // back) and the other doesn't.
+        let wanted: Vec<PathBuf> = h
+            .apps
+            .read()
+            .unwrap()
+            .iter()
+            .flat_map(placed_exes)
+            .collect();
+        let removal_real = real(&removal.exe);
+        let stale = wanted.iter().any(|exe| {
+            *exe == removal.exe
+                || folder::same(exe, &removal.exe)
+                || removal_real
+                    .as_ref()
+                    .is_some_and(|at| real(exe).as_ref() == Some(at))
+        });
+        if stale {
+            clear_pending(h, &removal.exe);
+            done.push(removal.exe.clone());
+            slot.restore();
+            continue;
+        }
+        let still_pending = pending(h).iter().any(|entry| entry.exe == removal.exe)
+            || also.iter().any(|entry| entry.exe == removal.exe);
+        if !still_pending {
+            slot.restore();
+            continue;
+        }
         match remove_at(&removal.name, &removal.exe) {
-            Ok(Removed::Done(_)) => done.push(removal.exe.clone()),
+            Ok(Removed::Done(_)) => {
+                clear_pending(h, &removal.exe);
+                done.push(removal.exe.clone());
+            }
             Ok(Removed::Unreachable(folder)) => {
                 tracing::info!(app = %removal.name, %folder, "Neural Rendering: the game's folder can't be reached; its removal stays pending");
             }
@@ -172,17 +207,280 @@ pub fn try_pending(h: &Shared, also: &[Pending]) {
             }
         }
     }
-    if done.is_empty() && also.is_empty() {
+    let remaining_also: Vec<Pending> = also
+        .iter()
+        .filter(|removal| !done.contains(&removal.exe))
+        .cloned()
+        .collect();
+    if remaining_also.is_empty() {
         return;
     }
     let saved = update_settings(h, |value| {
         let mut list = pending_in(value)?;
-        neural::merge_pending(&mut list, also);
-        neural::retain_pending_not_done(&mut list, &done);
+        neural::merge_pending(&mut list, &remaining_also);
         value[PENDING] = json!(list);
         Ok(())
     });
     if let Err(error) = saved {
         tracing::warn!(error = %format!("{error:#}"), "Neural Rendering: the pending removals could not be saved");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        neural::{
+            folder::{Response, Writer, handle},
+            game_check::placed_exe,
+            install::{fail_job, finish_install, start_job},
+        },
+        state::test_support::Fixture,
+    };
+    use butterpollo_session::neural::{Cached, MANIFEST, Package, Placed};
+    use sha2::{Digest, Sha256};
+    use std::{
+        collections::BTreeMap,
+        sync::{
+            Arc, Barrier,
+            atomic::{AtomicU64, Ordering},
+        },
+    };
+
+    struct Temp(PathBuf);
+    impl Temp {
+        fn new(tag: &str) -> Self {
+            static NEXT: AtomicU64 = AtomicU64::new(0);
+            let id = NEXT.fetch_add(1, Ordering::Relaxed);
+            let path = std::env::temp_dir().join(format!(
+                "rubylight-neural-pending-{tag}-{}-{id}",
+                std::process::id()
+            ));
+            std::fs::create_dir_all(&path).unwrap();
+            Self(path)
+        }
+        fn path(&self) -> &Path {
+            &self.0
+        }
+    }
+    impl Drop for Temp {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn sha(bytes: &[u8]) -> String {
+        hex::encode(Sha256::digest(bytes))
+    }
+
+    /// Build a minimal valid cached package and install it into a fresh game folder.
+    fn setup_installed_game(temp: &Path) -> (PathBuf, Response) {
+        let cache = temp.join("cache");
+        let files_dir = cache.join("files");
+        let provider_rel =
+            "full/game/OptiScaler/custom/Apex Neural Rendering FG/dlssg/nvngx_dlssg.dll";
+        let entries: &[(&str, &[u8])] = &[
+            ("full/game/dxgi.dll", b"OptiScaler proxy"),
+            ("full/game/OptiScaler.ini", b"[FrameGen]\nFGInput=nvngxfg\n"),
+            (provider_rel, b"provider"),
+        ];
+        let mut files = BTreeMap::new();
+        for (rel, bytes) in entries {
+            let path = files_dir.join(rel);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, bytes).unwrap();
+            files.insert(
+                (*rel).to_owned(),
+                Placed {
+                    sha256: sha(bytes),
+                    size: bytes.len() as u64,
+                },
+            );
+        }
+        let package = Cached {
+            folder: cache,
+            package: Package {
+                tag: "FG-Test".into(),
+                archives: BTreeMap::new(),
+                files,
+            },
+        };
+        let game_dir = temp.join("Game");
+        std::fs::create_dir_all(&game_dir).unwrap();
+        let exe = game_dir.join("Game.exe");
+        std::fs::write(&exe, b"MZ").unwrap();
+        std::fs::write(game_dir.join("nvngx_dlssg.dll"), b"DLSS").unwrap();
+        let placed = handle(
+            folder::Request::Install {
+                exe: Some(exe.clone()),
+                install: None,
+                package,
+            },
+            Writer::User,
+            &|_, _| {},
+        );
+        assert!(matches!(placed, Response::Placed { .. }), "{placed:?}");
+        (exe, placed)
+    }
+
+    /// T1-2 regression: `try_pending` reads a pending entry while an install
+    /// is in flight, then the install completes (`set_key` + `clear_pending` +
+    /// `done`) before `Removing::take` runs. Re-checking live `h.apps` and
+    /// `pending` under `Removing::take` must preserve the freshly installed
+    /// files and keep the install job `"done"`.
+    #[test]
+    fn try_pending_rechecks_under_slot_and_preserves_freshly_finished_install() {
+        let f = Fixture::new();
+        let h = &f.host;
+        let temp = Temp::new("race-finish");
+        let (exe, placed) = setup_installed_game(temp.path());
+        let folder = exe.parent().unwrap();
+
+        crate::steam::update_library(h, |apps, _| {
+            apps.push(json!({"name": "Game", "uuid": "game"}));
+            true
+        })
+        .unwrap();
+        let app = crate::neural::app(h, "game").unwrap();
+
+        // Install is active and has recorded its pending entry; `KEY` is not saved yet.
+        start_job(h, "game", "install", "place").unwrap();
+        record_pending(
+            h,
+            &[Pending {
+                name: "Game".into(),
+                exe: exe.clone(),
+                uuid: Some("game".into()),
+            }],
+        )
+        .unwrap();
+
+        // Simulate the exact race window: `try_pending` has already snapshotted
+        // `removals` before `finish_install` saves `KEY`, clears pending, and
+        // marks the job `"done"`.
+        try_pending_inner(h, &[], || {
+            finish_install(h, "game", &app, Some(&exe), Ok(placed.clone()));
+        });
+
+        assert!(
+            folder.join(MANIFEST).is_file(),
+            "manifest was deleted out from under freshly enabled app"
+        );
+        assert!(
+            folder.join("dxgi.dll").is_file(),
+            "proxy DLL was deleted out from under freshly enabled app"
+        );
+        assert!(pending(h).is_empty());
+        let saved_app = crate::neural::app(h, "game").unwrap();
+        assert_eq!(placed_exe(&saved_app), Some(exe));
+        let job = h.neural.lock().jobs["game"].clone();
+        assert_eq!((job.action, job.phase), ("install", "done"));
+    }
+
+    /// T1-2 regression: if an entry was cleared from live `pending(h)` before
+    /// `Removing::take` opens (even without `KEY` saved on any app),
+    /// `try_pending` skips it without calling `remove_at` and restores any
+    /// failed job state.
+    #[test]
+    fn try_pending_skips_entry_already_cleared_before_slot_opened() {
+        let f = Fixture::new();
+        let h = &f.host;
+        let temp = Temp::new("race-cleared");
+        let (exe, _) = setup_installed_game(temp.path());
+        let folder = exe.parent().unwrap();
+
+        start_job(h, "game", "install", "place").unwrap();
+        record_pending(
+            h,
+            &[Pending {
+                name: "Game".into(),
+                exe: exe.clone(),
+                uuid: Some("game".into()),
+            }],
+        )
+        .unwrap();
+
+        try_pending_inner(h, &[], || {
+            clear_pending(h, &exe);
+            fail_job(h, "game", "refused".into(), false);
+        });
+
+        assert!(folder.join(MANIFEST).is_file());
+        assert!(folder.join("dxgi.dll").is_file());
+        assert!(pending(h).is_empty());
+        let job = h.neural.lock().jobs["game"].clone();
+        assert_eq!(job.phase, "failed");
+        assert_eq!(job.error.as_deref(), Some("refused"));
+    }
+
+    /// T1-2 regression: an older pending entry with `uuid: None` gets its UUID
+    /// filled when a new install records pending for the same exe, and a
+    /// concurrent `remove_pending` thread never deletes a freshly completed
+    /// install.
+    #[test]
+    fn concurrent_finish_install_and_remove_pending_never_deletes_installed_files() {
+        let f = Fixture::new();
+        let h = &f.host;
+        let temp = Temp::new("race-concurrent");
+        let (exe, placed) = setup_installed_game(temp.path());
+        let folder = exe.parent().unwrap();
+
+        // Pre-existing `uuid: None` entry gets upgraded to `Some("game")`.
+        record_pending(
+            h,
+            &[Pending {
+                name: "Game".into(),
+                exe: exe.clone(),
+                uuid: None,
+            }],
+        )
+        .unwrap();
+        record_pending(
+            h,
+            &[Pending {
+                name: "Game".into(),
+                exe: exe.clone(),
+                uuid: Some("game".into()),
+            }],
+        )
+        .unwrap();
+        assert_eq!(pending(h)[0].uuid.as_deref(), Some("game"));
+
+        crate::steam::update_library(h, |apps, _| {
+            apps.push(json!({"name": "Game", "uuid": "game"}));
+            true
+        })
+        .unwrap();
+        let app = crate::neural::app(h, "game").unwrap();
+        start_job(h, "game", "install", "place").unwrap();
+
+        let barrier = Arc::new(Barrier::new(2));
+        let h_finish = h.clone();
+        let b_finish = barrier.clone();
+        let exe_finish = exe.clone();
+        let handle_finish = std::thread::spawn(move || {
+            b_finish.wait();
+            finish_install(&h_finish, "game", &app, Some(&exe_finish), Ok(placed));
+        });
+
+        let h_pending = h.clone();
+        let b_pending = barrier;
+        let handle_pending = std::thread::spawn(move || {
+            b_pending.wait();
+            for _ in 0..8 {
+                remove_pending(&h_pending);
+            }
+        });
+
+        handle_finish.join().unwrap();
+        handle_pending.join().unwrap();
+
+        assert!(folder.join(MANIFEST).is_file());
+        assert!(folder.join("dxgi.dll").is_file());
+        assert!(pending(h).is_empty());
+        assert_eq!(
+            placed_exe(&crate::neural::app(h, "game").unwrap()),
+            Some(exe)
+        );
     }
 }

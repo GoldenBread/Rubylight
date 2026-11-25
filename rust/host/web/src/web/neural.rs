@@ -52,12 +52,10 @@ pub(super) async fn handle(
                 .map(str::trim)
                 .filter(|exe| !exe.is_empty())
                 .map(std::path::PathBuf::from);
-            if exe.as_ref().is_some_and(|exe| {
-                !exe.is_absolute()
-                    || !exe
-                        .extension()
-                        .is_some_and(|e| e.eq_ignore_ascii_case("exe"))
-            }) {
+            if exe
+                .as_ref()
+                .is_some_and(|exe| !neural::folder::is_valid_exe_path(exe))
+            {
                 return error(
                     StatusCode::BAD_REQUEST,
                     "exe must be the full path of a .exe",
@@ -282,5 +280,43 @@ mod tests {
         )
         .await;
         assert!(butterpollo_stream::neural::accepted(h));
+    }
+
+    /// `POST /api/neural/enable` rejects path traversal (`..`), `.`, NT
+    /// namespace, and verbatim/device prefixes (`\\?\`, `\\.\`) with 400
+    /// before touching the game folder.
+    #[tokio::test]
+    async fn enable_rejects_traversal_and_verbatim_or_device_exe_paths() {
+        let f = Fixture::new();
+        for bad in [
+            r"C:\Program Files\DLSSGame\..\OtherApp\target.exe",
+            r"\\?\C:\Windows\System32\foo.exe",
+            r"\\.\C:\Windows\System32\foo.exe",
+            r"C:\Games\Game\..\..\Windows\System32\foo.exe",
+            r"C:\Games\EACGame\Binaries\Win64\..\Win64\Game.exe",
+            r"C:\Steam\steamapps\common\CSGO\game\bin\win64\..\win64\cs2.exe",
+            r"\\?\C:\Steam\steamapps\common\CSGO\game\bin\win64\cs2.exe",
+            r"\??\C:\Windows\System32\foo.exe",
+            r"C:\Games\Game\.\Game.exe",
+        ] {
+            let refused = value(
+                request(
+                    &f,
+                    "POST",
+                    "/api/neural/enable",
+                    json!({"uuid": "game", "exe": bad}),
+                )
+                .await,
+                StatusCode::BAD_REQUEST,
+            )
+            .await;
+            assert!(
+                refused["error"]
+                    .as_str()
+                    .unwrap()
+                    .contains("full path of a .exe"),
+                "{bad}: {refused}"
+            );
+        }
     }
 }

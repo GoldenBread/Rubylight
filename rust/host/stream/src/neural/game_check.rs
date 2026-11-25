@@ -225,19 +225,42 @@ pub fn steam_refusal(app: &App, paths: &[PathBuf], roots: &[PathBuf]) -> Option<
 /// The game's .exe `exe` (where a linked game folder leads, as the helper
 /// works there) and the paths it was reached by before the link was
 /// followed: the chosen program `requested`, the app's command, and `exe`
-/// in the app's install as named.
+/// in the app's install as named. Local candidates are also resolved via
+/// [`folder::real`] so junctions or non-canonical paths into a Steam library
+/// never hide Valve Anti-Cheat.
 pub(super) fn reached_by(app: &App, requested: Option<&Path>, exe: &Path) -> Vec<PathBuf> {
+    let local_real = |path: &Path| {
+        butterpollo_session::nucleus::generic::on_this_pc(&path.to_string_lossy())
+            .and_then(|_| folder::real(path))
+    };
+    let real_exe = local_real(exe);
     let named = install(app).and_then(|install| {
-        let relative = folder::real(&install)
-            .and_then(|real| exe.strip_prefix(real).ok().map(Path::to_path_buf))
+        let relative = local_real(&install)
+            .and_then(|real_install| {
+                real_exe
+                    .as_deref()
+                    .and_then(|re| re.strip_prefix(&real_install).ok())
+                    .or_else(|| exe.strip_prefix(&real_install).ok())
+                    .map(Path::to_path_buf)
+            })
             .or_else(|| exe.strip_prefix(&install).ok().map(Path::to_path_buf))
             .or_else(|| exe.file_name().map(PathBuf::from))?;
         Some(install.join(relative))
     });
-    let mut paths = vec![exe.to_path_buf()];
-    for path in [requested.map(Path::to_path_buf), command_exe(app), named]
-        .into_iter()
-        .flatten()
+    let cmd = command_exe(app);
+    let mut paths = Vec::new();
+    for path in [
+        Some(exe.to_path_buf()),
+        real_exe,
+        requested.map(Path::to_path_buf),
+        requested.and_then(local_real),
+        cmd.clone(),
+        cmd.as_deref().and_then(local_real),
+        named.clone(),
+        named.as_deref().and_then(local_real),
+    ]
+    .into_iter()
+    .flatten()
     {
         if !paths.contains(&path) {
             paths.push(path);
@@ -347,4 +370,152 @@ pub fn set_key(h: &Shared, uuid: &str, key: &str, value: Option<Value>) -> Resul
 /// A saved app keeps the host's keys: the console never sets them.
 pub fn keep_key(stored: Option<&App>, app: &mut App) {
     neural::app_keep_key(stored, app)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state::test_support::Fixture;
+    use serde_json::json;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    struct Temp {
+        path: PathBuf,
+        junctions: Vec<PathBuf>,
+    }
+
+    impl Temp {
+        fn new(tag: &str) -> Self {
+            static NEXT: AtomicU64 = AtomicU64::new(0);
+            let id = NEXT.fetch_add(1, Ordering::Relaxed);
+            let path = std::env::temp_dir().join(format!(
+                "rubylight-neural-game-check-{tag}-{}-{id}",
+                std::process::id()
+            ));
+            std::fs::create_dir_all(&path).unwrap();
+            Self {
+                path,
+                junctions: Vec::new(),
+            }
+        }
+
+        fn path(&self) -> &Path {
+            &self.path
+        }
+
+        fn junction(&mut self, link: PathBuf, target: &Path) -> PathBuf {
+            if let Some(parent) = link.parent() {
+                std::fs::create_dir_all(parent).unwrap();
+            }
+            let output = std::process::Command::new("cmd")
+                .args(["/c", "mklink", "/J"])
+                .arg(&link)
+                .arg(target)
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "{output:?}");
+            self.junctions.push(link.clone());
+            link
+        }
+    }
+
+    impl Drop for Temp {
+        fn drop(&mut self) {
+            for link in self.junctions.iter().rev() {
+                let _ = std::fs::remove_dir(link);
+            }
+            let _ = std::fs::remove_dir_all(&self.path);
+        }
+    }
+
+    fn vac_steam_root(tag: &str) -> Temp {
+        let root = Temp::new(tag);
+        let apps = root.path().join("steamapps");
+        let bin = apps.join(r"common\CSGO\game\bin\win64");
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::write(bin.join("cs2.exe"), b"MZ").unwrap();
+        std::fs::write(bin.join("nvngx_dlssg.dll"), b"DLSS").unwrap();
+        std::fs::write(
+            apps.join("appmanifest_730.acf"),
+            "\"AppState\" { \"appid\" \"730\" \"installdir\" \"CSGO\" }",
+        )
+        .unwrap();
+        let mut kv = Vec::new();
+        for key in ["appinfo", "common", "category"] {
+            kv.push(0x00);
+            kv.extend(key.as_bytes());
+            kv.push(0);
+        }
+        kv.push(0x01);
+        kv.extend(b"category_8\0");
+        kv.extend(b"1\0");
+        kv.extend([0x08; 5]);
+        let mut data = 0x0756_4428u32.to_le_bytes().to_vec();
+        data.extend(1u32.to_le_bytes());
+        data.extend(730u32.to_le_bytes());
+        data.extend(((60 + kv.len()) as u32).to_le_bytes());
+        data.extend([0; 60]);
+        data.extend(kv);
+        data.extend(0u32.to_le_bytes());
+        std::fs::create_dir_all(root.path().join("appcache")).unwrap();
+        std::fs::write(root.path().join(r"appcache\appinfo.vdf"), data).unwrap();
+        root
+    }
+
+    #[test]
+    fn traversal_verbatim_and_junction_paths_cannot_bypass_steam_vac_check() {
+        let f = Fixture::new();
+        let h = &f.host;
+        let mut steam = vac_steam_root("vac");
+        let roots = vec![steam.path().to_path_buf()];
+        *h.neural.steam_roots.lock().unwrap() = Some(roots.clone());
+
+        let app: App = serde_json::from_value(json!({"name": "CS2", "uuid": "cs2"})).unwrap();
+        let traversal = PathBuf::from(format!(
+            r"{}\steamapps\common\CSGO\game\bin\win64\..\win64\cs2.exe",
+            steam.path().display()
+        ));
+        let verbatim = PathBuf::from(format!(
+            r"\\?\{}\steamapps\common\CSGO\game\bin\win64\cs2.exe",
+            steam.path().display()
+        ));
+
+        // Direct `steam_refusal` catches both `..` and `\\?\`.
+        for exe in [&traversal, &verbatim] {
+            let refusal = steam_refusal(&app, std::slice::from_ref(exe), &roots)
+                .expect("VAC game must be refused");
+            assert!(
+                refusal.starts_with("Steam lists Valve Anti-Cheat"),
+                "{}: {refusal}",
+                exe.display()
+            );
+            // `find_game` rejects traversal and verbatim paths upfront too.
+            assert!(
+                matches!(
+                    find_game(h, &app, Some(exe.clone()), None).unwrap(),
+                    Response::ChooseExe { .. }
+                ),
+                "{}",
+                exe.display()
+            );
+        }
+
+        // A junction outside Steam pointing into `steamapps\common\CSGO\game\bin\win64`
+        // resolves via `reached_by` (`folder::real`) and is still refused by VAC.
+        let alias = steam.junction(
+            steam.path().join("AliasBin"),
+            &steam.path().join(r"steamapps\common\CSGO\game\bin\win64"),
+        );
+        let alias_exe = alias.join("cs2.exe");
+        let response = find_game(h, &app, Some(alias_exe), None).unwrap();
+        match response {
+            Response::Refused { reason } => {
+                assert!(
+                    reason.starts_with("Steam lists Valve Anti-Cheat"),
+                    "{reason}"
+                );
+            }
+            other => panic!("expected VAC refusal through junction, got {other:?}"),
+        }
+    }
 }

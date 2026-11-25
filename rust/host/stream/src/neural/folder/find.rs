@@ -1,42 +1,147 @@
 //! Game executable discovery, launcher/helper filtering, install walking, and
 //! anti-cheat / DLSS frame generation checks for Neural Rendering folders.
-use super::{ANTI_CHEAT, DEPTH, ENTRIES, Failure, NO_DLSS, Outcome, folder_of, real};
+use super::{ANTI_CHEAT, DEPTH, ENTRIES, Failure, LINK, NO_DLSS, Outcome, folder_of, real};
 use butterpollo_session::neural;
 use std::{
     collections::VecDeque,
-    path::{Path, PathBuf},
+    os::windows::fs::MetadataExt,
+    path::{Component, Path, PathBuf, Prefix},
 };
+
+/// Whether `path` has no parent-directory traversal (`..`), current-directory
+/// component (`.`), NT namespace (`\??\`), or verbatim/device namespace prefix
+/// (`\\?\`, `\\.\`).
+pub fn is_clean_path(path: &Path) -> bool {
+    let raw = path.as_os_str().as_encoded_bytes();
+    if raw.is_empty()
+        || raw
+            .split(|&b| b == b'\\' || b == b'/')
+            .any(|part| part == b"." || part == b"..")
+    {
+        return false;
+    }
+    let mut components = path.components().peekable();
+    if matches!(components.peek(), Some(Component::RootDir)) {
+        let mut rest = components.clone();
+        rest.next();
+        if matches!(rest.next(), Some(Component::Normal(first)) if first == "??") {
+            return false;
+        }
+    }
+    for component in components {
+        match component {
+            Component::ParentDir | Component::CurDir => return false,
+            Component::Prefix(prefix) => match prefix.kind() {
+                Prefix::Disk(_) => {}
+                Prefix::UNC(server, _) => {
+                    if server == "?" || server == "." {
+                        return false;
+                    }
+                }
+                Prefix::Verbatim(_)
+                | Prefix::VerbatimUNC(_, _)
+                | Prefix::VerbatimDisk(_)
+                | Prefix::DeviceNS(_) => return false,
+            },
+            Component::RootDir | Component::Normal(_) => {}
+        }
+    }
+    true
+}
+
+/// Whether `exe` is a clean absolute path ending in `.exe`.
+pub fn is_valid_exe_path(exe: &Path) -> bool {
+    is_clean_path(exe)
+        && exe.is_absolute()
+        && exe
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("exe"))
+}
+
+/// Normalize a Windows drive path lexically (stripping `\\?\` / `\\.\` / `\??\`
+/// prefixes and resolving `.` / `..` components) for deny-list checks like
+/// Windows-directory blocking.
+fn lexical_for_denylist(path: &Path) -> Option<PathBuf> {
+    let text = path.to_string_lossy().replace('/', "\\");
+    let stripped = text
+        .strip_prefix(r"\\?\")
+        .or_else(|| text.strip_prefix(r"\\.\"))
+        .or_else(|| text.strip_prefix(r"\??\"))
+        .unwrap_or(&text);
+    let bytes = stripped.as_bytes();
+    if bytes.len() < 3 || !bytes[0].is_ascii_alphabetic() || &bytes[1..3] != br":\" {
+        return None;
+    }
+    let mut parts: Vec<&str> = Vec::new();
+    for seg in stripped[3..].split('\\') {
+        match seg {
+            "" | "." => {}
+            ".." => {
+                parts.pop();
+            }
+            other => parts.push(other),
+        }
+    }
+    let mut out = PathBuf::from(&stripped[..3]);
+    for part in parts {
+        out.push(part);
+    }
+    Some(out)
+}
 
 /// The chosen .exe, or the game's .exe in its install: the one Unreal Engine
 /// shipping build, else the one program in the install's top folder that is
 /// no crash reporter, launcher or installer.
 pub(super) fn find_exe(exe: Option<PathBuf>, install: Option<&Path>) -> Outcome<PathBuf> {
     if let Some(exe) = exe {
+        if !is_clean_path(&exe) {
+            return Err(Failure::ChooseExe(format!(
+                "{} is not a plain path on this PC: choose the game's own program",
+                exe.display()
+            )));
+        }
         let program = exe
             .extension()
             .is_some_and(|e| e.eq_ignore_ascii_case("exe"));
+        let in_install = |candidate: &Path, install: &Path| {
+            // A program found in a linked game folder is where the link
+            // leads ([`super::Request::Find`]).
+            inside(candidate, install)
+                || real(install).is_some_and(|real_install| inside(candidate, &real_install))
+        };
         return if let Some(what) = not_the_game(&exe) {
             Err(Failure::ChooseExe(format!(
                 "{} is {what}, not the game: choose the game's own program",
                 exe.display()
             )))
-        } else if let Some(install) = install.filter(|install| {
-            // A program found in a linked game folder is where the link
-            // leads ([`super::Request::Find`]).
-            !inside(&exe, install) && real(install).is_none_or(|real| !inside(&exe, &real))
-        }) {
+        } else if let Some(install) = install.filter(|install| !in_install(&exe, install)) {
             Err(Failure::ChooseExe(format!(
                 "{} is not in the game's folder {}: choose the game's own program",
                 exe.display(),
                 install.display()
             )))
-        } else if program && exe.is_absolute() && exe.is_file() {
-            Ok(exe)
-        } else {
+        } else if std::fs::symlink_metadata(&exe)
+            .is_ok_and(|meta| meta.file_attributes() & LINK != 0)
+        {
+            Err(Failure::ChooseExe(format!(
+                "{} is a link to elsewhere: choose the game's own program",
+                exe.display()
+            )))
+        } else if !(program && exe.is_absolute() && exe.is_file()) {
             Err(Failure::Error(format!(
                 "{} is not a program on this PC",
                 exe.display()
             )))
+        } else if let Some(install) = install
+            .filter(|install| real(&exe).is_none_or(|real_exe| !in_install(&real_exe, install)))
+        {
+            Err(Failure::ChooseExe(format!(
+                "{} is not in the game's folder {}: choose the game's own program",
+                exe.display(),
+                install.display()
+            )))
+        } else {
+            Ok(exe)
         };
     }
     let Some(install) = install else {
@@ -44,7 +149,7 @@ pub(super) fn find_exe(exe: Option<PathBuf>, install: Option<&Path>) -> Outcome<
             "Rubylight doesn't know where this game is installed".into(),
         ));
     };
-    if !install.is_dir() {
+    if !is_clean_path(install) || !install.is_dir() {
         return Err(Failure::ChooseExe(format!(
             "{} is not a folder on this PC",
             install.display()
@@ -58,7 +163,10 @@ pub(super) fn find_exe(exe: Option<PathBuf>, install: Option<&Path>) -> Outcome<
             .unwrap_or_default()
             .to_string_lossy()
             .to_ascii_lowercase();
-        if folder || !name.ends_with(".exe") {
+        if folder
+            || !name.ends_with(".exe")
+            || std::fs::symlink_metadata(path).is_ok_and(|meta| meta.file_attributes() & LINK != 0)
+        {
             return None::<()>;
         }
         if name.ends_with("-shipping.exe") {
@@ -94,11 +202,21 @@ pub(in crate::neural) fn not_the_game(exe: &Path) -> Option<&'static str> {
     if let Some(kind) = neural::classify_non_game_exe(&name) {
         return Some(kind);
     }
-    let windows = ["SystemRoot", "windir"]
+    let roots: Vec<PathBuf> = ["SystemRoot", "windir"]
         .into_iter()
         .filter_map(std::env::var_os)
         .filter(|root| !root.is_empty())
-        .any(|root| inside(exe, Path::new(&root)));
+        .map(PathBuf::from)
+        .collect();
+    let in_windows = |candidate: &Path| roots.iter().any(|root| inside(candidate, root));
+    let resolved = real(exe).or_else(|| {
+        exe.parent()
+            .and_then(real)
+            .and_then(|dir| exe.file_name().map(|name| dir.join(name)))
+    });
+    let windows = in_windows(exe)
+        || lexical_for_denylist(exe).is_some_and(|clean| in_windows(&clean))
+        || resolved.as_deref().is_some_and(in_windows);
     windows.then_some("part of Windows")
 }
 
@@ -138,8 +256,12 @@ fn walk<T>(
 }
 
 /// Whether `path` is `root` or inside it, comparing names as Windows does,
-/// whatever their case.
+/// whatever their case. Paths with `..`, `.`, or verbatim/device prefixes
+/// (`\\?\`, `\\.\`) are never considered inside any root.
 pub(in crate::neural) fn inside(path: &Path, root: &Path) -> bool {
+    if !is_clean_path(path) || !is_clean_path(root) {
+        return false;
+    }
     let mut parts = path.components();
     root.components().all(|part| {
         parts.next().is_some_and(|other| {
@@ -205,6 +327,12 @@ pub fn anti_cheat_refusal(
 /// programs ([`holds_others`]). An install too big to search through is
 /// refused too.
 fn refuse_anti_cheat_in(exe: &Path, install: Option<&Path>, shared: &[PathBuf]) -> Outcome<()> {
+    if !is_clean_path(exe) {
+        return Err(Failure::Refused(format!(
+            "{} is not a plain path on this PC, so Rubylight cannot check it for anti-cheat",
+            exe.display()
+        )));
+    }
     let found = |path: &Path| {
         let name = path.file_name()?.to_string_lossy().into_owned();
         neural::anti_cheat(&name).map(|which| (which, path.to_path_buf()))
@@ -253,6 +381,12 @@ fn refuse_anti_cheat_in(exe: &Path, install: Option<&Path>, shared: &[PathBuf]) 
 /// case-blind). OptiScaler's own folder and a provider's `dlssg` folder
 /// don't count: they hold the provider itself.
 pub(super) fn refuse_without_frame_generation(exe: &Path, install: Option<&Path>) -> Outcome<()> {
+    if !is_clean_path(exe) {
+        return Err(Failure::Refused(format!(
+            "{} is not a plain path on this PC, so Rubylight cannot check it for DLSS frame generation",
+            exe.display()
+        )));
+    }
     let own = folder_of(exe);
     let mut roots = Vec::from_iter(install.filter(|install| !same(install, own)));
     roots.push(own);

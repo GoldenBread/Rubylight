@@ -449,26 +449,53 @@ pub fn before_delete(h: &Shared, app: &App) -> Result<Removing> {
 pub struct Removing {
     h: Shared,
     uuid: Option<String>,
-    failed: Option<Job>,
+    previous: Option<Job>,
+    restored: bool,
 }
 impl Removing {
     pub(super) fn take(h: &Shared, uuid: Option<&str>) -> Result<Self, Refusal> {
-        let failed = uuid.and_then(|uuid| {
-            h.neural
-                .lock()
-                .jobs
-                .get(uuid)
-                .filter(|job| job.phase == "failed")
-                .cloned()
-        });
-        if let Some(uuid) = uuid {
-            start_job(h, uuid, "remove", "remove")?;
-        }
+        let previous = if let Some(uuid) = uuid {
+            let mut state = h.neural.lock();
+            if running(&state, uuid) {
+                return Err(Refusal::Busy);
+            }
+            let previous = state.jobs.get(uuid).cloned();
+            forget_game_check(&mut state, uuid);
+            state.jobs.insert(uuid.into(), Job::new("remove", "remove"));
+            previous
+        } else {
+            None
+        };
         Ok(Self {
             h: h.clone(),
             uuid: uuid.map(str::to_owned),
-            failed,
+            previous,
+            restored: false,
         })
+    }
+
+    /// Release the slot and restore the job that was there before without
+    /// running a removal (used when a pending entry turned out to be stale or
+    /// already cleared after the slot opened).
+    pub(super) fn restore(mut self) {
+        self.restored = true;
+        if let Some(uuid) = &self.uuid {
+            let mut state = self.h.neural.lock();
+            if state
+                .jobs
+                .get(uuid)
+                .is_some_and(|job| job.phase == "remove")
+            {
+                match self.previous.take() {
+                    Some(previous) => {
+                        state.jobs.insert(uuid.clone(), previous);
+                    }
+                    None => {
+                        state.jobs.remove(uuid);
+                    }
+                }
+            }
+        }
     }
 
     /// For an app with files placed: take them out of its folder, or keep
@@ -502,8 +529,11 @@ impl Removing {
 }
 impl Drop for Removing {
     fn drop(&mut self) {
+        if self.restored {
+            return;
+        }
         if let Some(uuid) = &self.uuid {
-            let failed = self.failed.take();
+            let failed = self.previous.take().filter(|job| job.phase == "failed");
             update_job(&self.h, uuid, |job| {
                 if job.phase == "remove" {
                     match failed {

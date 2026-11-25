@@ -1,6 +1,6 @@
 //! Reparse-point guards, Windows ACL inspection, and administrator-only write
 //! checks for Neural Rendering game and cache folders.
-use super::{Failure, LINK, Outcome, PROBE, Rights, Security, Writer};
+use super::{Failure, LINK, Outcome, PROBE, Rights, Security, Writer, is_clean_path};
 use butterpollo_session::neural;
 use std::{os::windows::fs::MetadataExt, path::Path};
 
@@ -9,10 +9,25 @@ use std::{os::windows::fs::MetadataExt, path::Path};
 /// copy or a delete elsewhere. A SYSTEM host also refuses a folder on the
 /// way that anyone but administrators may change.
 pub(super) fn guard(folder: &Path, relative: &str, writer: Writer) -> Outcome<()> {
+    if !is_clean_path(folder) {
+        return Err(Failure::Refused(format!(
+            "{} is not a plain path on this PC",
+            folder.display()
+        )));
+    }
     let parts: Vec<&str> = relative
         .split('/')
         .filter(|part| !part.is_empty())
         .collect();
+    if parts
+        .iter()
+        .any(|part| *part == "." || *part == ".." || part.contains('\\'))
+    {
+        return Err(Failure::Refused(format!(
+            "{relative} is not a path inside {}",
+            folder.display()
+        )));
+    }
     let mut path = folder.to_path_buf();
     for depth in 0..=parts.len() {
         if depth > 0 {
@@ -100,6 +115,9 @@ pub fn hold(
 /// nobody but administrators may change them. Otherwise an ordinary account
 /// could swap one for a link and send SYSTEM's copies anywhere.
 pub fn administrators_only(folder: &Path) -> Result<(), String> {
+    if !is_clean_path(folder) || !folder.is_absolute() {
+        return Err(format!("{} is not a plain folder path", folder.display()));
+    }
     for path in folder.ancestors().filter(|p| !p.as_os_str().is_empty()) {
         let rights = if path.parent().is_none() {
             Rights::MoveContents
