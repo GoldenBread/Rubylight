@@ -24,6 +24,7 @@ pub(crate) struct Recorder {
     pub hung: bool,
     pub took: Mutex<Vec<u8>>,
     pub warned: Mutex<Vec<(String, String)>>,
+    pub unplugged: std::sync::atomic::AtomicUsize,
 }
 impl Pads for Recorder {
     fn send(&self, event: Input) {
@@ -52,6 +53,10 @@ impl Pads for Recorder {
             .lock()
             .unwrap()
             .push((code.to_string(), message.to_string()));
+    }
+    fn unplug(&self) {
+        self.unplugged
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     }
 }
 
@@ -218,11 +223,18 @@ fn released_controllers_are_waited_for_until_xinput_shows_them_gone() {
     assert!(released(&mut xinput, || anyhow::bail!("stuck")).is_err());
 }
 
+/// Serializes tests that insert into the process-global `PLUGGED` list so
+/// `retire_earlier` in one test does not race with another test's `SessionPads`.
+static PLUGGED_TEST_LOCK: Mutex<()> = Mutex::new(());
+
 /// The real sets: an earlier session's pad thread stuck in the driver
 /// fails the next launch after [`RETIRE_TIMEOUT`], the launches after it
 /// at once (never blocked by it), and none once it ended.
 #[test]
 fn a_stuck_earlier_set_is_waited_for_once_and_retired_once_it_ends() {
+    let _serial = PLUGGED_TEST_LOCK
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
     let abandoned = || plugged().iter().filter(|p| p.abandoned.is_some()).count();
     let (stuck, gate, log) = crate::input::fake_pads();
     let earlier = session_pads(stuck, Default::default());
@@ -258,6 +270,69 @@ fn a_stuck_earlier_set_is_waited_for_once_and_retired_once_it_ends() {
     gate.wait_until(|| next.retire_earlier().is_ok());
     assert!(log.lock().unwrap().iter().any(|e| e == "unplugged"));
     assert_eq!(abandoned(), 0);
+}
+
+#[test]
+fn unplug_is_idempotent_and_retiring_a_lingering_session_prunes_plugged_entry() {
+    let _serial = PLUGGED_TEST_LOCK
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    let arrival = Input::Arrival {
+        id: 0,
+        kind: XBOX,
+        capabilities: CAPABILITIES,
+        buttons: 0,
+    };
+    // 1. SessionPads::unplug stops the pad thread and removes its PLUGGED entry
+    // immediately (before Drop), and a second unplug + drop are no-ops.
+    let (thread1, gate1, log1) = crate::input::fake_pads();
+    gate1.open();
+    let pads1 = session_pads(thread1, Default::default());
+    pads1.send(arrival.clone());
+    assert!(pads1.wait_ready(1, PLUG_TIMEOUT));
+    let weak1 = Arc::downgrade(&pads1.thread);
+    // Use index 3 (unoccupied in parallel XInput tests) so `held()` never
+    // perturbs concurrent `free()` checks.
+    pads1.took(&[3]);
+    assert!(plugged().iter().any(|p| p.thread.ptr_eq(&weak1)));
+    pads1.unplug();
+    assert!(!plugged().iter().any(|p| p.thread.ptr_eq(&weak1)));
+    assert!(log1.lock().unwrap().iter().any(|e| e == "unplugged"));
+    pads1.unplug();
+    drop(pads1);
+    assert!(!plugged().iter().any(|p| p.thread.ptr_eq(&weak1)));
+
+    // 2. T3-28: a lingering SessionPads that was NOT dropped yet (abandoned == None)
+    // is retired by the next session's retire_earlier() and its PLUGGED entry is
+    // removed unconditionally so stale XInput indices do not linger.
+    let (thread_old, gate_old, log_old) = crate::input::fake_pads();
+    gate_old.open();
+    let lingering = session_pads(thread_old, Default::default());
+    lingering.send(arrival);
+    assert!(lingering.wait_ready(1, PLUG_TIMEOUT));
+    let weak_old = Arc::downgrade(&lingering.thread);
+    lingering.took(&[3]);
+    let (thread_new, gate_new, _) = crate::input::fake_pads();
+    gate_new.open();
+    let next = session_pads(thread_new, Default::default());
+    let weak_new = Arc::downgrade(&next.thread);
+
+    assert!(
+        plugged()
+            .iter()
+            .any(|p| p.thread.ptr_eq(&weak_old) && p.abandoned.is_none())
+    );
+    let retired = next.retire_earlier().unwrap();
+    assert!(retired.contains(&3), "{retired:?}");
+    assert!(log_old.lock().unwrap().iter().any(|e| e == "unplugged"));
+    assert!(
+        !plugged().iter().any(|p| p.thread.ptr_eq(&weak_old)),
+        "retired non-abandoned entry must be pruned from PLUGGED"
+    );
+    assert!(plugged().iter().any(|p| p.thread.ptr_eq(&weak_new)));
+    // Dropping the lingering SessionPads afterward is clean and idempotent.
+    drop(lingering);
+    drop(next);
 }
 
 #[test]

@@ -345,6 +345,7 @@ fn runner(players: usize, screen: &Screen, probe: &Probe, t0: Instant) -> Runner
         settings: None,
         layers: None,
         instances: None,
+        pads: None,
         to_front: false,
         fronted: BTreeSet::new(),
     }
@@ -417,6 +418,9 @@ impl Pads for Recorded {
     }
     fn reports(&self) -> Vec<PadReport> {
         self.0.reports()
+    }
+    fn unplug(&self) {
+        self.0.unplug()
     }
 }
 

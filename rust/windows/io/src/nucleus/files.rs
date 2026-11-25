@@ -68,7 +68,13 @@ fn handlers(folder: &Path) -> Result<Vec<Handler>> {
     files.sort();
     for path in files {
         let file = path.file_name().unwrap_or_default().to_string_lossy();
-        let text = read_text(&path)?;
+        let text = match read_handler_text(&path) {
+            Ok(text) => text,
+            Err(error) => {
+                tracing::warn!(%file, error = %format!("{error:#}"), "Nucleus Co-op handler could not be read; skipped");
+                continue;
+            }
+        };
         match handler::parse(&file, &text) {
             Ok(handler) => found.push(handler),
             Err(error) => tracing::info!(%file, %error, "Nucleus Co-op handler skipped"),
@@ -104,6 +110,36 @@ pub fn listed_by_nucleus(folder: &Path) -> Result<Vec<String>> {
 fn read_text(path: &Path) -> Result<String> {
     let bytes = std::fs::read(path).with_context(|| format!("reading {}", path.display()))?;
     String::from_utf8(bytes).with_context(|| format!("{} is not UTF-8 text", path.display()))
+}
+
+/// Decode a Nucleus handler file's bytes lossily: UTF-16 LE/BE when a BOM is
+/// present, otherwise UTF-8 with replacement characters for Latin-1 /
+/// Windows-1252 bytes so one non-UTF-8 handler never aborts the catalog.
+fn decode_handler_text(bytes: &[u8]) -> String {
+    if let Some(rest) = bytes.strip_prefix(&[0xFF, 0xFE]) {
+        let units: Vec<u16> = rest
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|&pair| u16::from_le_bytes(pair))
+            .collect();
+        return String::from_utf16_lossy(&units);
+    }
+    if let Some(rest) = bytes.strip_prefix(&[0xFE, 0xFF]) {
+        let units: Vec<u16> = rest
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|&pair| u16::from_be_bytes(pair))
+            .collect();
+        return String::from_utf16_lossy(&units);
+    }
+    String::from_utf8_lossy(bytes).into_owned()
+}
+
+fn read_handler_text(path: &Path) -> Result<String> {
+    let bytes = std::fs::read(path).with_context(|| format!("reading {}", path.display()))?;
+    Ok(decode_handler_text(&bytes))
 }
 
 /// The most of a game list the host reads; Nucleus' own are kilobytes.
@@ -200,7 +236,7 @@ pub fn write_own(folder: &Path, setup: &Setup) -> Result<Handler> {
         .context("finding the signed-in user, whose game list the handler is for")?;
     let setup = &Setup {
         inject: inject_for(folder, &setup.exe_path)?,
-        arguments: start_arguments(setup, &epic_manifests()),
+        arguments: start_arguments_under(setup, &epic_program_data(), &EPIC_MANIFEST_COMPONENTS),
         ..setup.clone()
     };
     match setup.inject {
@@ -236,31 +272,146 @@ pub fn write_own(folder: &Path, setup: &Setup) -> Result<Handler> {
     Ok(handler)
 }
 
-/// Where the Epic Games Launcher lists the games it installed.
-fn epic_manifests() -> PathBuf {
+/// Relative path components of the Epic Games Launcher manifest folder below `%PROGRAMDATA%`.
+const EPIC_MANIFEST_COMPONENTS: [&str; 4] = ["Epic", "EpicGamesLauncher", "Data", "Manifests"];
+
+/// `%PROGRAMDATA%`, the root from which the Epic manifest path is walked.
+fn epic_program_data() -> PathBuf {
     PathBuf::from(std::env::var_os("PROGRAMDATA").unwrap_or_else(|| r"C:\ProgramData".into()))
-        .join(r"Epic\EpicGamesLauncher\Data\Manifests")
 }
 
 /// Larger than any manifest the launcher writes.
 const EPIC_MANIFEST_MAX: u64 = 1 << 20;
 
-/// A manifest's bytes. The folder is writable by every user, and the host may
-/// read it elevated: never through a link, nor more than a manifest's size.
-fn read_epic_manifest(path: &Path) -> Result<Vec<u8>, String> {
-    use std::io::Read;
+/// Run `work` while impersonating the signed-in user when running as `SYSTEM`.
+/// Fails closed if `SYSTEM` has no signed-in user token to impersonate.
+fn as_signed_in_user_if_system<T>(work: impl FnOnce() -> T) -> std::result::Result<T, String> {
+    if !crate::process::is_system() {
+        return Ok(work());
+    }
+    let token = crate::user_folder::user_token().map_err(|error| error.to_string())?;
+    let Some(token) = token else {
+        return Err("no signed-in user token available".into());
+    };
+    let _impersonation = crate::user_folder::Impersonation::begin(Some(&token))
+        .map_err(|error| error.to_string())?;
+    Ok(work())
+}
+
+/// Open `base` and every relative component in `components` without following
+/// reparse points, holding each directory handle open without delete sharing
+/// so no component can be swapped for a junction while manifests are read.
+fn open_unfollowed_epic_dir(
+    base: &Path,
+    components: &[&str],
+) -> std::result::Result<Option<(Vec<std::fs::File>, PathBuf)>, String> {
     use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
     use windows::Win32::Storage::FileSystem::{
-        FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_OPEN_REPARSE_POINT,
+        FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_BACKUP_SEMANTICS,
+        FILE_FLAG_OPEN_REPARSE_POINT, FILE_LIST_DIRECTORY, FILE_READ_ATTRIBUTES, FILE_SHARE_READ,
+        FILE_SHARE_WRITE, SECURITY_ANONYMOUS, SECURITY_SQOS_PRESENT,
+    };
+    let open_dir = |path: &Path| {
+        std::fs::OpenOptions::new()
+            .access_mode(FILE_LIST_DIRECTORY.0 | FILE_READ_ATTRIBUTES.0)
+            .share_mode((FILE_SHARE_READ | FILE_SHARE_WRITE).0)
+            .custom_flags(
+                (FILE_FLAG_BACKUP_SEMANTICS
+                    | FILE_FLAG_OPEN_REPARSE_POINT
+                    | SECURITY_SQOS_PRESENT
+                    | SECURITY_ANONYMOUS)
+                    .0,
+            )
+            .open(path)
+    };
+    let root_handle = match open_dir(base) {
+        Ok(handle) => handle,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.to_string()),
+    };
+    let root_attrs = root_handle
+        .metadata()
+        .map_err(|error| error.to_string())?
+        .file_attributes();
+    if root_attrs & FILE_ATTRIBUTE_REPARSE_POINT.0 != 0 {
+        return Err(format!("{} is a link", base.display()));
+    }
+    if root_attrs & FILE_ATTRIBUTE_DIRECTORY.0 == 0 {
+        return Err(format!("{} is not a directory", base.display()));
+    }
+    let mut resolved = PathBuf::from(
+        crate::user_folder::final_path(&root_handle).map_err(|error| error.to_string())?,
+    );
+    let mut pinned = vec![root_handle];
+    for part in components {
+        let next = resolved.join(part);
+        let handle = match open_dir(&next) {
+            Ok(handle) => handle,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(error.to_string()),
+        };
+        let attrs = handle
+            .metadata()
+            .map_err(|error| error.to_string())?
+            .file_attributes();
+        if attrs & FILE_ATTRIBUTE_REPARSE_POINT.0 != 0 {
+            return Err(format!("{} is a link", next.display()));
+        }
+        if attrs & FILE_ATTRIBUTE_DIRECTORY.0 == 0 {
+            return Err(format!("{} is not a directory", next.display()));
+        }
+        let actual = crate::user_folder::final_path(&handle).map_err(|error| error.to_string())?;
+        if !crate::user_folder::same_name(&actual, next.as_os_str()) {
+            return Err(format!("{} leads elsewhere through a link", next.display()));
+        }
+        resolved = next;
+        pinned.push(handle);
+    }
+    Ok(Some((pinned, resolved)))
+}
+
+/// A manifest's bytes. The folder is writable by every user: never through a
+/// link, never a non-disk device/pipe, with anonymous SQOS, and never more
+/// than a manifest's size.
+#[cfg(test)]
+fn read_epic_manifest(path: &Path) -> Result<Vec<u8>, String> {
+    read_epic_manifest_checked(path, None)
+}
+
+fn read_epic_manifest_checked(path: &Path, expected: Option<&Path>) -> Result<Vec<u8>, String> {
+    use std::io::Read;
+    use std::os::windows::{
+        fs::{MetadataExt, OpenOptionsExt},
+        io::AsRawHandle,
+    };
+    use windows::Win32::{
+        Foundation::HANDLE,
+        Storage::FileSystem::{
+            FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_OPEN_REPARSE_POINT, FILE_TYPE_DISK,
+            GetFileType, SECURITY_ANONYMOUS, SECURITY_SQOS_PRESENT,
+        },
     };
     let file = std::fs::OpenOptions::new()
         .read(true)
-        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT.0)
+        .custom_flags((FILE_FLAG_OPEN_REPARSE_POINT | SECURITY_SQOS_PRESENT | SECURITY_ANONYMOUS).0)
         .open(path)
         .map_err(|error| error.to_string())?;
+    // SAFETY: `file` is an open handle for the duration of this call.
+    if unsafe { GetFileType(HANDLE(file.as_raw_handle())) } != FILE_TYPE_DISK {
+        return Err("it is not a disk file".into());
+    }
     let metadata = file.metadata().map_err(|error| error.to_string())?;
     if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT.0 != 0 {
         return Err("it is a link".into());
+    }
+    if !metadata.is_file() {
+        return Err("it is not a file".into());
+    }
+    if let Some(expected) = expected {
+        let actual = crate::user_folder::final_path(&file).map_err(|error| error.to_string())?;
+        if !crate::user_folder::same_name(&actual, expected.as_os_str()) {
+            return Err("it leads elsewhere through a link".into());
+        }
     }
     let mut bytes = Vec::new();
     file.take(EPIC_MANIFEST_MAX + 1)
@@ -272,43 +423,67 @@ fn read_epic_manifest(path: &Path) -> Result<Vec<u8>, String> {
     Ok(bytes)
 }
 
-/// What the Epic Games Launcher in `manifests` starts the game at `exe` with
-/// ([`generic::epic_arguments`]); None for any other game. An app's command
-/// is a bare .exe, so its manifest is what says it is an Epic game. A manifest
-/// that can't be read is said, and leaves the game as it is.
-fn epic_arguments(manifests: &Path, exe: &str) -> Option<String> {
-    let files = match std::fs::read_dir(manifests) {
-        Ok(files) => files,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
-        Err(error) => {
-            tracing::warn!(folder = %manifests.display(), %error, "Nucleus Co-op: the Epic Games Launcher's manifests can't be read");
-            return None;
-        }
-    };
-    files
-        .flatten()
-        .map(|file| file.path())
-        .filter(|path| path.extension().is_some_and(|ext| ext == "item"))
-        .find_map(|path| {
-            match read_epic_manifest(&path).and_then(|bytes| generic::epic_arguments(&bytes, exe)) {
-                Ok(arguments) => arguments,
-                Err(error) => {
-                    tracing::warn!(manifest = %path.display(), error, "Nucleus Co-op: an Epic Games Launcher manifest can't be used");
-                    None
-                }
+/// What the Epic Games Launcher in `base`/`components` starts the game at `exe`
+/// with ([`generic::epic_arguments`]); None for any other game. Walks every
+/// directory component rejecting reparse points, and runs under signed-in user
+/// impersonation when the host is `SYSTEM`.
+fn epic_arguments_under(base: &Path, components: &[&str], exe: &str) -> Option<String> {
+    match as_signed_in_user_if_system(|| {
+        let (_pinned, resolved) = match open_unfollowed_epic_dir(base, components) {
+            Ok(Some(found)) => found,
+            Ok(None) => return None,
+            Err(error) => {
+                tracing::warn!(folder = %base.display(), error, "Nucleus Co-op: the Epic Games Launcher's manifests can't be read");
+                return None;
             }
-        })
+        };
+        let files = match std::fs::read_dir(&resolved) {
+            Ok(files) => files,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
+            Err(error) => {
+                tracing::warn!(folder = %resolved.display(), %error, "Nucleus Co-op: the Epic Games Launcher's manifests can't be read");
+                return None;
+            }
+        };
+        files
+            .flatten()
+            .map(|file| resolved.join(file.file_name()))
+            .filter(|path| path.extension().is_some_and(|ext| ext == "item"))
+            .find_map(|path| {
+                match read_epic_manifest_checked(&path, Some(&path))
+                    .and_then(|bytes| generic::epic_arguments(&bytes, exe))
+                {
+                    Ok(arguments) => arguments,
+                    Err(error) => {
+                        tracing::warn!(manifest = %path.display(), error, "Nucleus Co-op: an Epic Games Launcher manifest can't be used");
+                        None
+                    }
+                }
+            })
+    }) {
+        Ok(arguments) => arguments,
+        Err(error) => {
+            tracing::warn!(folder = %base.display(), error, "Nucleus Co-op: could not read Epic Games Launcher manifests as the signed-in user");
+            None
+        }
+    }
+}
+
+/// What the Epic Games Launcher in `manifests` starts the game at `exe` with.
+#[cfg(test)]
+fn epic_arguments(manifests: &Path, exe: &str) -> Option<String> {
+    epic_arguments_under(manifests, &[], exe)
 }
 
 /// Whether the Epic Games Launcher installed the game at `exe`.
 pub(super) fn epic_game(exe: &str) -> bool {
-    epic_arguments(&epic_manifests(), exe).is_some()
+    epic_arguments_under(&epic_program_data(), &EPIC_MANIFEST_COMPONENTS, exe).is_some()
 }
 
 /// What Rubylight's handler starts `setup`'s game with.
-fn start_arguments(setup: &Setup, manifests: &Path) -> String {
+fn start_arguments_under(setup: &Setup, base: &Path, components: &[&str]) -> String {
     let arguments = setup.windowed_arguments();
-    match epic_arguments(manifests, &setup.exe_path) {
+    match epic_arguments_under(base, components, &setup.exe_path) {
         Some(epic) if !arguments.to_ascii_lowercase().contains("-epicportal") => {
             tracing::info!(
                 exe = setup.exe_path,
@@ -318,6 +493,11 @@ fn start_arguments(setup: &Setup, manifests: &Path) -> String {
         }
         _ => arguments,
     }
+}
+
+#[cfg(test)]
+fn start_arguments(setup: &Setup, manifests: &Path) -> String {
+    start_arguments_under(setup, manifests, &[])
 }
 
 /// How Rubylight's handler injects ProtoInput's input hooks into the games

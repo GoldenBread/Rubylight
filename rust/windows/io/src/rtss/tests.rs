@@ -453,3 +453,154 @@ fn apply_fails_when_rtss_saves_a_different_limit() -> Result<()> {
     assert!(error.to_string().contains("different Limit"), "{error}");
     Ok(())
 }
+
+fn make_junction(link: &Path, target: &Path) {
+    let out = std::process::Command::new("cmd")
+        .args(["/C", "mklink", "/J"])
+        .arg(link)
+        .arg(target)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+}
+
+#[test]
+fn trust_verdict_accepts_only_administrators_and_rejects_links_and_non_admins() {
+    use butterpollo_session::neural::{ADMINISTRATORS, Security};
+    let path = Path::new(r"C:\Program Files (x86)\RivaTuner Statistics Server");
+    for owner in ADMINISTRATORS {
+        let sec = Security {
+            link: false,
+            owner: owner.into(),
+            writers: ADMINISTRATORS.iter().map(|s| (*s).into()).collect(),
+        };
+        trust::check_security(path, &sec, TrustMode::AdministratorsOnly).unwrap();
+    }
+    // Non-admin owner is rejected.
+    let bad_owner = Security {
+        link: false,
+        owner: "S-1-5-21-100-200-300-1001".into(),
+        writers: vec!["S-1-5-18".into(), "S-1-5-32-544".into()],
+    };
+    let err = trust::check_security(path, &bad_owner, TrustMode::AdministratorsOnly).unwrap_err();
+    assert!(
+        err.to_string().contains("not by SYSTEM or Administrators"),
+        "{err}"
+    );
+    // Non-admin writer (Users / Everyone / user SID / unknown ACE type) is rejected.
+    for writer in ["S-1-5-32-545", "S-1-1-0", "S-1-5-11", "ACE type 9"] {
+        let bad_writer = Security {
+            link: false,
+            owner: "S-1-5-32-544".into(),
+            writers: vec!["S-1-5-18".into(), writer.into()],
+        };
+        let err =
+            trust::check_security(path, &bad_writer, TrustMode::AdministratorsOnly).unwrap_err();
+        assert!(
+            err.to_string().contains("can be changed by"),
+            "{writer}: {err}"
+        );
+    }
+    // Reparse points are rejected in both modes.
+    for mode in [TrustMode::AdministratorsOnly, TrustMode::ReparseOnly] {
+        let linked = Security {
+            link: true,
+            owner: "S-1-5-32-544".into(),
+            writers: vec!["S-1-5-32-544".into()],
+        };
+        let err = trust::check_security(path, &linked, mode).unwrap_err();
+        assert!(err.to_string().contains("link"), "{mode:?}: {err}");
+    }
+}
+
+#[test]
+fn untrusted_user_writable_root_is_rejected_for_exec_hooks_and_admin_profile_write() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    std::fs::write(dir.path().join("RTSS.exe"), b"MZ")?;
+    std::fs::write(dir.path().join("RTSSHooks64.dll"), b"MZ")?;
+    std::fs::create_dir(dir.path().join("Profiles"))?;
+    std::fs::write(
+        dir.path().join("Profiles/Global"),
+        "[Framerate]\nLimit=60\n",
+    )?;
+    let err = start(dir.path()).err().unwrap();
+    assert!(err.to_string().contains("untrusted RTSS path"), "{err:#}");
+    let err = Hooks::open(dir.path()).err().unwrap();
+    assert!(err.to_string().contains("untrusted RTSS path"), "{err:#}");
+    let err = trust::write_profile_checked(
+        dir.path(),
+        &BTreeMap::from([("Limit".into(), Some(120))]),
+        TrustMode::AdministratorsOnly,
+    )
+    .unwrap_err();
+    assert!(err.to_string().contains("untrusted RTSS path"), "{err:#}");
+    // Nothing was overwritten.
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("Profiles/Global"))?,
+        "[Framerate]\nLimit=60\n"
+    );
+    Ok(())
+}
+
+#[test]
+fn reparse_point_root_and_profiles_junctions_are_rejected_without_writing() -> Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let real_root = tmp.path().join("real_root");
+    let real_profiles = tmp.path().join("real_profiles");
+    std::fs::create_dir_all(real_root.join("Profiles"))?;
+    std::fs::create_dir_all(&real_profiles)?;
+    let original = "[Framerate]\nLimit=60\n";
+    std::fs::write(real_root.join("Profiles/Global"), original)?;
+    std::fs::write(real_profiles.join("Global"), original)?;
+
+    // 1. Root itself is a junction.
+    let link_root = tmp.path().join("link_root");
+    make_junction(&link_root, &real_root);
+    let err = write_profile(&link_root, &BTreeMap::from([("Limit".into(), Some(90))])).unwrap_err();
+    assert!(err.to_string().contains("link"), "{err:#}");
+    assert!(read(&link_root).is_err());
+    assert_eq!(
+        std::fs::read_to_string(real_root.join("Profiles/Global"))?,
+        original
+    );
+
+    // 2. Profiles directory under root is a junction.
+    let host_root = tmp.path().join("host_root");
+    std::fs::create_dir_all(&host_root)?;
+    let link_profiles = host_root.join("Profiles");
+    make_junction(&link_profiles, &real_profiles);
+    let err = write_profile(&host_root, &BTreeMap::from([("Limit".into(), Some(90))])).unwrap_err();
+    assert!(err.to_string().contains("link"), "{err:#}");
+    assert!(read(&host_root).is_err());
+    assert_eq!(
+        std::fs::read_to_string(real_profiles.join("Global"))?,
+        original
+    );
+    Ok(())
+}
+
+#[test]
+fn trusted_windows_program_files_and_system_dll_pass_pinned_validation() -> Result<()> {
+    // Standard RTSS parent directories C:\ and C:\Program Files (x86) are
+    // TrustedInstaller/Administrators-only and must pass validation.
+    for path in [Path::new(r"C:\"), Path::new(r"C:\Program Files (x86)")] {
+        if path.is_dir() {
+            trust::pin_root(path, TrustMode::AdministratorsOnly)?;
+        }
+    }
+    // LoadLibraryExW with LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32
+    // succeeds while the validated directory chain and DLL handle are pinned open.
+    let system32 =
+        PathBuf::from(std::env::var_os("WINDIR").unwrap_or_else(|| r"C:\Windows".into()))
+            .join("System32");
+    if system32.join("version.dll").is_file() {
+        let pinned = pin_binary(
+            &system32,
+            &["version.dll"],
+            "missing version.dll",
+            TrustMode::AdministratorsOnly,
+        )?;
+        let _lib = load_library_pinned(&pinned)?;
+    }
+    Ok(())
+}

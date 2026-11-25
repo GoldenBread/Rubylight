@@ -117,14 +117,28 @@ fn route_with(
         Some(app) => {
             // The program waits for its restore, or another stream plays it:
             // its journalled device stays the user's. One the user chose for
-            // it meanwhile (neither the sink nor that) is kept.
+            // it meanwhile (neither the new sink, the previously applied sink,
+            // the saved device, nor Windows Default) is kept.
             if let Some(chosen) = current
                 .iter()
                 .zip(&app.before)
-                .find(|(now, before)| !is_sink(now) && !now.eq_ignore_ascii_case(before))
+                .find(|(now, before)| {
+                    !now.is_empty()
+                        && !is_sink(now)
+                        && !now.eq_ignore_ascii_case(&app.applied)
+                        && !now.eq_ignore_ascii_case(before)
+                })
                 .map(|(now, _)| now.clone())
             {
                 return Ok(Routed::Users(chosen));
+            }
+            // If the user reset a role to Windows Default ("") in Volume Mixer
+            // while a prior non-empty device was saved, record that reset so
+            // teardown restores Default instead of the old device.
+            for (now, before) in current.iter().zip(&mut app.before) {
+                if now.is_empty() && !before.is_empty() {
+                    before.clear();
+                }
             }
             app.applied = sink.into();
         }
@@ -357,9 +371,9 @@ pub struct AppRoute {
     /// The sink's endpoint ID, and its name for messages.
     sink_id: String,
     pub sink: String,
-    /// Kept on a device the user chose for the game, or not moved as the
-    /// host stops the game (""): nothing to put back.
-    users: Option<String>,
+    /// How [`route_with`] left the process: routed to the virtual sink, kept on
+    /// a user-chosen device, or left alone while the host stops the game.
+    routed: Routed,
 }
 impl AppRoute {
     /// Play process `pid` on the configured `virtual_sink`, else on Steam
@@ -390,7 +404,7 @@ impl AppRoute {
             &exe,
             &format!("{MMDEVAPI}{}{RENDER_INTERFACE}", sink.id),
         );
-        let users = match routed {
+        let routed = match routed {
             Ok(Routed::Sink) => {
                 tracing::info!(
                     exe,
@@ -398,7 +412,7 @@ impl AppRoute {
                     sink = sink.name,
                     "game audio plays on the virtual sink"
                 );
-                None
+                Routed::Sink
             }
             Ok(Routed::Closing) => {
                 tracing::info!(
@@ -406,7 +420,7 @@ impl AppRoute {
                     pid,
                     "game audio not moved: the host is stopping the game"
                 );
-                Some(String::new())
+                Routed::Closing
             }
             Ok(Routed::Users(device)) => {
                 tracing::info!(
@@ -415,7 +429,7 @@ impl AppRoute {
                     device,
                     "game audio stays on the device the user chose for it"
                 );
-                Some(device)
+                Routed::Users(device)
             }
             // Nothing changed or journalled yet: the caller tries again.
             Err(error) if no_sound_yet(&error) => return Err(error),
@@ -430,7 +444,7 @@ impl AppRoute {
             pid,
             sink_id: sink.id.clone(),
             sink: sink.name.clone(),
-            users,
+            routed,
         })
     }
     /// The routed program's path, in lower case.
@@ -439,18 +453,24 @@ impl AppRoute {
     }
     /// The device the user chose for the game, which it stays on.
     pub fn users_device(&self) -> Option<&str> {
-        self.users.as_deref().filter(|device| !device.is_empty())
+        match &self.routed {
+            Routed::Users(device) => Some(device.as_str()),
+            Routed::Sink | Routed::Closing => None,
+        }
     }
     /// Which of these routes' processes, and of the game's processes left
     /// `unrouted`, play where the PC plays the game, not on the routes' sink
     /// ([`plays_elsewhere`]).
     pub fn plays_elsewhere(routes: &[&AppRoute], unrouted: &[u32]) -> Result<OnThePc> {
-        let Some(first) = routes.iter().find(|route| route.users.is_none()) else {
+        let Some(first) = routes
+            .iter()
+            .find(|route| matches!(route.routed, Routed::Sink))
+        else {
             return Ok(OnThePc::default());
         };
         let pids: Vec<u32> = routes
             .iter()
-            .filter(|r| r.users.is_none())
+            .filter(|r| matches!(r.routed, Routed::Sink))
             .map(|r| r.pid)
             .chain(unrouted.iter().copied())
             .collect();
@@ -476,7 +496,7 @@ impl AppRoute {
 }
 impl Drop for AppRoute {
     fn drop(&mut self) {
-        if self.users.is_some() {
+        if !matches!(self.routed, Routed::Sink) {
             return;
         }
         if !release(&mut STATE.lock().unwrap(), &self.exe) {

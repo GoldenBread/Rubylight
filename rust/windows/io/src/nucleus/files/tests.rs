@@ -534,3 +534,94 @@ fn a_game_entry_left_after_its_handler_went_is_taken_over_again() {
     );
     assert!(again.handlers.iter().any(|h| h.own));
 }
+
+#[test]
+fn epic_manifests_reject_directory_junctions_along_path_and_non_disk_handles() {
+    let tmp = tempfile::tempdir().unwrap();
+    let real_manifests = tmp.path().join("real_manifests");
+    std::fs::create_dir_all(&real_manifests).unwrap();
+    let manifest = r#"{"AppName":"Jackdaw","CatalogNamespace":"plague","InstallLocation":"D:\\Game","LaunchExecutable":"Game.exe"}"#;
+    std::fs::write(real_manifests.join("game.item"), manifest).unwrap();
+    let exe = r"D:\Game\Game.exe";
+
+    // Plain hierarchy works when walking from ProgramData down through Manifests.
+    let clean_pd = tmp.path().join("clean_pd");
+    let clean_dir = clean_pd.join(r"Epic\EpicGamesLauncher\Data\Manifests");
+    std::fs::create_dir_all(&clean_dir).unwrap();
+    std::fs::write(clean_dir.join("game.item"), manifest).unwrap();
+    assert!(epic_arguments_under(&clean_pd, &EPIC_MANIFEST_COMPONENTS, exe).is_some());
+
+    // Junction at `Manifests` (leaf dir) is rejected.
+    let j1_pd = tmp.path().join("j1_pd");
+    std::fs::create_dir_all(j1_pd.join(r"Epic\EpicGamesLauncher\Data")).unwrap();
+    let link = j1_pd.join(r"Epic\EpicGamesLauncher\Data\Manifests");
+    let out = std::process::Command::new("cmd")
+        .args(["/C", "mklink", "/J"])
+        .arg(&link)
+        .arg(&real_manifests)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    assert!(epic_arguments_under(&j1_pd, &EPIC_MANIFEST_COMPONENTS, exe).is_none());
+
+    // Junction at intermediate `Epic` dir is also rejected.
+    let real_epic = tmp.path().join("real_epic");
+    let nested = real_epic.join(r"EpicGamesLauncher\Data\Manifests");
+    std::fs::create_dir_all(&nested).unwrap();
+    std::fs::write(nested.join("game.item"), manifest).unwrap();
+    let j2_pd = tmp.path().join("j2_pd");
+    std::fs::create_dir_all(&j2_pd).unwrap();
+    let out = std::process::Command::new("cmd")
+        .args(["/C", "mklink", "/J"])
+        .arg(j2_pd.join("Epic"))
+        .arg(&real_epic)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    assert!(epic_arguments_under(&j2_pd, &EPIC_MANIFEST_COMPONENTS, exe).is_none());
+
+    // Non-disk device handle (\\.\NUL has FILE_TYPE_CHAR) is rejected.
+    let err = read_epic_manifest(Path::new(r"\\.\NUL")).unwrap_err();
+    assert!(err.contains("not a disk file"), "{err}");
+}
+
+#[test]
+fn non_utf8_and_unreadable_handlers_do_not_abort_the_catalog() {
+    use std::os::windows::fs::OpenOptionsExt;
+    let nucleus = tempfile::tempdir().unwrap();
+    let handlers = nucleus.path().join("handlers");
+    std::fs::create_dir_all(&handlers).unwrap();
+    // Valid UTF-8 handler.
+    std::fs::write(handlers.join("Borderlands 2.js"), HANDLER).unwrap();
+    // Windows-1252 encoded handler (0xE9 = é, 0x92 = ’) should decode lossily and parse!
+    let mut win1252 = b"// Caf\xe9 handler \x92 author\r\n".to_vec();
+    win1252.extend_from_slice(
+        br#"Game.GUID = "Win1252Game";
+Game.GameName = "Win1252Game";
+Game.ExecutableName = "Win1252.exe";
+Game.MaxPlayers = 2;
+"#,
+    );
+    std::fs::write(handlers.join("win1252.js"), &win1252).unwrap();
+    // UTF-16 LE BOM handler should decode cleanly and parse!
+    let utf16_src = "Game.GUID = \"Utf16Game\";\nGame.GameName = \"Utf16Game\";\nGame.ExecutableName = \"Utf16.exe\";\nGame.MaxPlayers = 2;\n";
+    let mut utf16_bytes = vec![0xFFu8, 0xFEu8];
+    for unit in utf16_src.encode_utf16() {
+        utf16_bytes.extend_from_slice(&unit.to_le_bytes());
+    }
+    std::fs::write(handlers.join("utf16.js"), &utf16_bytes).unwrap();
+    // Unparseable invalid-UTF-8 file.
+    std::fs::write(handlers.join("garbled.js"), [0xFF, 0x00, 0x80, 0xE9]).unwrap();
+    // Unreadable locked .js file (share_mode(0) forces ERROR_SHARING_VIOLATION on read).
+    let locked_path = handlers.join("locked.js");
+    std::fs::write(&locked_path, HANDLER).unwrap();
+    let _lock = std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(0)
+        .open(&locked_path)
+        .unwrap();
+
+    let found = catalog(nucleus.path(), false).unwrap();
+    let guids: Vec<&str> = found.handlers.iter().map(|h| h.guid.as_str()).collect();
+    assert_eq!(guids, ["Borderlands 2", "Utf16Game", "Win1252Game"]);
+}

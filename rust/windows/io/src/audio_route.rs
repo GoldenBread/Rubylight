@@ -19,9 +19,11 @@ pub mod hooks;
 mod microphone;
 mod policy;
 
+use format::{
+    FormatPolicy, apply_virtual_format, apply_virtual_format_with, sample_layout, valid_bits,
+};
 #[cfg(test)]
-use format::{Sample, describe_format, virtual_format, virtual_formats};
-use format::{apply_virtual_format, valid_bits};
+use format::{Sample, describe_format, fallback_channels, virtual_format, virtual_formats};
 pub use format::{restore_sink_format, set_sink_channels};
 use microphone::microphone_owns_recording;
 pub use microphone::{
@@ -30,7 +32,8 @@ pub use microphone::{
 };
 #[cfg(test)]
 use microphone::{
-    check_matched, matching_playback_format, microphone_path, microphone_pending, unity_cap,
+    check_matched, matching_playback_format, microphone_path, microphone_pending,
+    restore_saved_defaults, unity_cap,
 };
 #[cfg(test)]
 use policy::PolicyVtbl;
@@ -410,33 +413,58 @@ impl Route {
         } else {
             Some(Policy::new()?)
         };
+        let mut applied_channels = if managed_virtual && !capture_only {
+            None
+        } else {
+            Some(channels)
+        };
         let result = (|| -> Result<()> {
             if managed_virtual && !capture_only {
                 let policy = policy.as_ref().unwrap();
                 let current = policy.format(&selected.id)?;
                 // A pending restore's original format wins over the one this
                 // host left, as for the default devices.
-                let before = match pending.as_ref().and_then(|j| j.format.as_ref()) {
-                    Some(format) if format.id == selected.id && format.applied == current => {
-                        format.before.clone()
-                    }
-                    _ => current,
-                };
+                journal.format = pending
+                    .as_ref()
+                    .and_then(|j| j.format.as_ref())
+                    .filter(|format| format.id == selected.id && format.applied == current)
+                    .cloned();
                 let default_format = policy.format(&default.id)?;
                 let bits = valid_bits(&default_format);
-                journal.format = Some(FormatChange {
-                    id: selected.id.clone(),
-                    before,
-                    applied: Vec::new(),
-                });
-                apply_virtual_format(
+                match apply_virtual_format(
                     policy,
                     &selected.id,
                     channels,
                     bits,
                     directory,
                     &mut journal,
-                )?;
+                ) {
+                    Ok(applied) => {
+                        if applied != channels {
+                            tracing::warn!(
+                                requested = channels,
+                                applied,
+                                sink = %selected.name,
+                                "virtual audio sink rejected the requested surround layout; fell back to a lower surround layout"
+                            );
+                        }
+                        applied_channels = Some(applied);
+                    }
+                    Err(error) if channels > 2 => {
+                        // Do not fail Route::acquire or undo default switching
+                        // when a virtual sink refuses surround (e.g. a stereo-only
+                        // sink): keep journal.format unchanged and let capture open
+                        // on the sink's native format with the audio_surround warning.
+                        tracing::warn!(
+                            requested = channels,
+                            sink = %selected.name,
+                            error = %format!("{error:#}"),
+                            "virtual surround format could not be applied; continuing with the sink's current format"
+                        );
+                        applied_channels = None;
+                    }
+                    Err(error) => return Err(error),
+                }
             }
             if !capture_only
                 && journal
@@ -460,12 +488,16 @@ impl Route {
             return Err(error);
         }
         let id = NEXT_ROUTE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let mut channel_requests = BTreeMap::new();
+        if let Some(applied) = applied_channels {
+            channel_requests.insert(id, applied);
+        }
         *active = Some(Active {
             directory: directory.into(),
             sink: selected.id.clone(),
             virtual_sink: managed_virtual,
             users: 1,
-            channels: BTreeMap::from([(id, channels)]),
+            channels: channel_requests,
         });
         Ok(Self {
             sink: selected.id.clone(),
@@ -518,33 +550,58 @@ impl Route {
         if !self.virtual_sink || self.capture_only {
             return Ok(());
         }
-        let channels = match active.as_mut() {
-            Some(shared) => {
-                shared.channels.insert(self.id, channels);
-                shared_channels(&shared.channels).unwrap_or(channels)
-            }
-            None => channels,
-        };
         let policy = Policy::new()?;
-        let current = policy.format(&self.sink)?;
-        // SAFETY: `current` came from Policy::format, which returns at least a whole WAVEFORMATEX.
-        let format = unsafe { std::ptr::read_unaligned(current.as_ptr().cast::<WAVEFORMATEX>()) };
-        if usize::from(format.nChannels) == channels {
-            return Ok(());
-        }
-        let mut journal: Journal = serde_json::from_slice(&std::fs::read(path(&self.directory))?)?;
-        if journal.format.is_none() {
-            bail!("virtual audio format is not owned");
-        }
-        apply_virtual_format(
-            &policy,
+        set_channels_with(
+            &mut active,
+            self.id,
             &self.sink,
-            channels,
-            valid_bits(&current),
             &self.directory,
-            &mut journal,
+            channels,
+            &policy,
+            hooks::mark_audio,
         )
     }
+}
+
+fn set_channels_with(
+    active: &mut Option<Active>,
+    route_id: u64,
+    sink: &str,
+    directory: &Path,
+    channels: usize,
+    policy: &dyn FormatPolicy,
+    mark_audio: impl Fn(bool) -> Result<()>,
+) -> Result<()> {
+    let target = match active.as_ref() {
+        Some(shared) => {
+            let mut next = shared.channels.clone();
+            next.insert(route_id, channels);
+            shared_channels(&next).unwrap_or(channels)
+        }
+        None => channels,
+    };
+    let current = policy.format(sink)?;
+    let current_channels = usize::from(sample_layout(&current).0);
+    if current_channels == target {
+        if let Some(shared) = active.as_mut() {
+            shared.channels.insert(route_id, channels);
+        }
+        return Ok(());
+    }
+    let mut journal: Journal = serde_json::from_slice(&std::fs::read(path(directory))?)?;
+    let applied = apply_virtual_format_with(
+        policy,
+        sink,
+        target,
+        valid_bits(&current),
+        directory,
+        &mut journal,
+        mark_audio,
+    )?;
+    if let Some(shared) = active.as_mut() {
+        shared.channels.insert(route_id, applied.min(channels));
+    }
+    Ok(())
 }
 impl Drop for Route {
     fn drop(&mut self) {

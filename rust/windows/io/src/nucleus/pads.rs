@@ -50,12 +50,16 @@ pub trait Pads: Send + Sync {
     fn took(&self, _indices: &[u8]) {}
     /// Show the stream a warning.
     fn warn(&self, _code: &str, _message: &str) {}
+    /// Unplug this session's virtual pads immediately. Idempotent: repeated
+    /// calls and [`Drop`] after unplugging are no-ops.
+    fn unplug(&self) {}
 }
 
 /// The session's pads on the PC; [`virtual_pads`].
 pub struct SessionPads {
     thread: Arc<GamepadThread>,
     warnings: Arc<Warnings>,
+    unplugged: std::sync::atomic::AtomicBool,
 }
 
 /// Every session's pads the host still holds, and the XInput indices they
@@ -79,19 +83,7 @@ fn plugged() -> std::sync::MutexGuard<'static, Vec<Plugged>> {
 
 impl Drop for SessionPads {
     fn drop(&mut self) {
-        // The thread unplugs its pads as it ends.
-        let stuck = self.thread.stop_within(RETIRE_TIMEOUT).err();
-        let own = Arc::downgrade(&self.thread);
-        let mut plugged = plugged();
-        match stuck {
-            Some(error) => {
-                tracing::warn!("Nucleus Co-op: {error:#}");
-                if let Some(set) = plugged.iter_mut().find(|p| p.thread.ptr_eq(&own)) {
-                    set.abandoned = Some(self.thread.clone());
-                }
-            }
-            None => plugged.retain(|p| !p.thread.ptr_eq(&own)),
-        }
+        Pads::unplug(self);
     }
 }
 
@@ -139,7 +131,7 @@ impl Pads for SessionPads {
                         "an earlier Nucleus Co-op session's controllers are still plugged in",
                     )?;
             }
-            plugged().retain(|p| !(p.abandoned.is_some() && p.thread.ptr_eq(&weak)));
+            plugged().retain(|p| !p.thread.ptr_eq(&weak));
             tracing::info!(
                 xinput = ?held,
                 "Nucleus Co-op: an earlier session's controllers unplugged"
@@ -156,6 +148,27 @@ impl Pads for SessionPads {
     }
     fn warn(&self, code: &str, message: &str) {
         self.warnings.set(code, message);
+    }
+    fn unplug(&self) {
+        if self
+            .unplugged
+            .swap(true, std::sync::atomic::Ordering::AcqRel)
+        {
+            return;
+        }
+        // The thread unplugs its pads as it ends.
+        let stuck = self.thread.stop_within(RETIRE_TIMEOUT).err();
+        let own = Arc::downgrade(&self.thread);
+        let mut plugged = plugged();
+        match stuck {
+            Some(error) => {
+                tracing::warn!("Nucleus Co-op: {error:#}");
+                if let Some(set) = plugged.iter_mut().find(|p| p.thread.ptr_eq(&own)) {
+                    set.abandoned = Some(self.thread.clone());
+                }
+            }
+            None => plugged.retain(|p| !p.thread.ptr_eq(&own)),
+        }
     }
 }
 
@@ -180,7 +193,11 @@ fn session_pads(thread: GamepadThread, warnings: Arc<Warnings>) -> SessionPads {
         indices: Vec::new(),
         abandoned: None,
     });
-    SessionPads { thread, warnings }
+    SessionPads {
+        thread,
+        warnings,
+        unplugged: std::sync::atomic::AtomicBool::new(false),
+    }
 }
 
 /// Which XInput user indices have a controller.

@@ -406,6 +406,87 @@ fn a_reused_pid_is_not_the_instance() {
     assert_eq!(keeper.pass(&mut desktop, &job, &SIZES).unwrap().gone, [0]);
 }
 
+#[test]
+fn a_root_that_spawns_children_and_exits_within_one_pass_promotes_its_descendant() {
+    // 1. Direct child spawned and root exits before the next pass (< 250ms).
+    let mut keeper = Keeper::new(
+        1,
+        &["Stub.exe".into(), "Game.exe".into()],
+        r"C:\N\content",
+        100,
+    );
+    let mut desktop = fake(vec![process(20, 10, 110, "Stub.exe")], Vec::new());
+    let job = BTreeSet::from([20]);
+    let pass = keeper.pass(&mut desktop, &job, &SIZES).unwrap();
+    assert_eq!(
+        pass.roots,
+        [Some(Identity {
+            pid: 20,
+            started: 110
+        })]
+    );
+    // Within one pass: Stub (20) spawns Child (21) and exits.
+    desktop.processes = vec![process(21, 20, 111, "Helper.exe")];
+    desktop.windows = vec![window(7, 21, ON_SCREEN)];
+    let pass = keeper.pass(&mut desktop, &job, &SIZES).unwrap();
+    assert!(pass.gone.is_empty());
+    assert_eq!(
+        pass.roots,
+        [Some(Identity {
+            pid: 21,
+            started: 111
+        })]
+    );
+    assert_eq!(pass.windows, [Some(7)]);
+
+    // 2. Multi-hop spawn within one pass: root P (20) -> launcher C (21) -> game G (22), P exits.
+    let mut keeper = Keeper::new(
+        1,
+        &["Stub.exe".into(), "Game.exe".into()],
+        r"C:\N\content",
+        100,
+    );
+    let mut desktop = fake(vec![process(20, 10, 110, "Stub.exe")], Vec::new());
+    keeper.pass(&mut desktop, &job, &SIZES).unwrap();
+    desktop.processes = vec![
+        process(21, 20, 111, "Launcher.exe"),
+        process(22, 21, 112, "Game.exe"),
+    ];
+    desktop.windows = vec![window(9, 22, ON_SCREEN)];
+    let pass = keeper.pass(&mut desktop, &job, &SIZES).unwrap();
+    assert!(pass.gone.is_empty());
+    assert_eq!(
+        pass.roots,
+        [Some(Identity {
+            pid: 22,
+            started: 112
+        })]
+    );
+    assert_eq!(pass.windows, [Some(9)]);
+
+    // 3. PID-reuse guards:
+    // (a) An unrelated older process whose parent PID happened to be 20 (started < parent.started).
+    let mut keeper = keeper_single();
+    let mut desktop = fake(vec![process(20, 10, 110, "Game.exe")], Vec::new());
+    keeper.pass(&mut desktop, &job, &SIZES).unwrap();
+    desktop.processes = vec![process(50, 20, 90, "UnrelatedOlder.exe")];
+    assert_eq!(keeper.pass(&mut desktop, &job, &SIZES).unwrap().gone, [0]);
+
+    // (b) A newer process reusing PID 20 and spawning its own child is not promoted.
+    let mut keeper = keeper_single();
+    let mut desktop = fake(vec![process(20, 10, 110, "Game.exe")], Vec::new());
+    keeper.pass(&mut desktop, &job, &SIZES).unwrap();
+    desktop.processes = vec![
+        process(20, 3, 200, "Other.exe"),
+        process(60, 20, 201, "OtherChild.exe"),
+    ];
+    assert_eq!(keeper.pass(&mut desktop, &job, &SIZES).unwrap().gone, [0]);
+}
+
+fn keeper_single() -> Keeper {
+    keeper(1)
+}
+
 /// #56: a borderless fullscreen game kept returning to the PC's monitor,
 /// and was left there with the PC's keyboard and mouse after 20 tries.
 #[test]

@@ -186,7 +186,7 @@ pub struct Start<'a> {
 /// never wait for a stop, which can take seconds.
 pub struct Running {
     shared: Arc<Shared>,
-    pads: Box<dyn Pads>,
+    pads: Arc<dyn Pads>,
     stop: Mutex<Option<mpsc::Sender<()>>>,
     thread: Mutex<Option<JoinHandle<()>>>,
     players: usize,
@@ -310,6 +310,7 @@ fn begin(
         start.players,
         start.players
     );
+    let pads: Arc<dyn Pads> = Arc::from(pads);
     let indices = pads::plug(pads.as_ref(), xinput, start.players, pads::PLUG_TIMEOUT)?;
     let session = coop::Session::new(
         start.id,
@@ -446,6 +447,7 @@ fn begin(
         settings,
         layers: Some(layers),
         instances: start.instances.clone(),
+        pads: Some(pads.clone()),
         to_front: brought_to_front(start)?,
         fronted: BTreeSet::new(),
     };
@@ -551,7 +553,8 @@ impl Running {
     }
 
     /// End the session and wait until Nucleus and the instances closed; a
-    /// second call waits for the first.
+    /// second call waits for the first. Unplugs virtual pads immediately so
+    /// an ended session never holds XInput slots until `Running` is dropped.
     pub fn stop(&self) {
         drop(self.stop.lock().unwrap().take());
         let mut thread = self.thread.lock().unwrap();
@@ -560,6 +563,7 @@ impl Running {
         {
             tracing::error!("the Nucleus Co-op session thread panicked");
         }
+        self.pads.unplug();
     }
 }
 

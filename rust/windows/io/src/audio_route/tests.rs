@@ -274,3 +274,215 @@ fn policy_config_abi_and_surround_formats_match_windows_contract() {
         assert_eq!(rate, 48000 * channels as u32 * 3);
     }
 }
+
+struct FakeFormatPolicy {
+    current: std::cell::RefCell<Vec<u8>>,
+    max_channels: usize,
+    set_calls: std::cell::RefCell<Vec<usize>>,
+}
+
+impl FakeFormatPolicy {
+    fn new(initial: Vec<u8>, max_channels: usize) -> Self {
+        Self {
+            current: std::cell::RefCell::new(initial),
+            max_channels,
+            set_calls: std::cell::RefCell::new(Vec::new()),
+        }
+    }
+}
+
+impl FormatPolicy for FakeFormatPolicy {
+    fn format(&self, _id: &str) -> Result<Vec<u8>> {
+        Ok(self.current.borrow().clone())
+    }
+    fn set_format(&self, _id: &str, bytes: &[u8]) -> Result<()> {
+        let ch = usize::from(sample_layout(bytes).0);
+        self.set_calls.borrow_mut().push(ch);
+        if ch > self.max_channels {
+            bail!("{ch} channels rejected");
+        }
+        *self.current.borrow_mut() = bytes.to_vec();
+        Ok(())
+    }
+}
+
+#[test]
+fn surround_fallback_drops_714_to_71_and_rechecks_cleanly() -> Result<()> {
+    assert_eq!(fallback_channels(12)?, &[12, 8, 6]);
+    assert_eq!(fallback_channels(8)?, &[8, 6]);
+    assert_eq!(fallback_channels(6)?, &[6]);
+    assert_eq!(fallback_channels(2)?, &[2]);
+    let dir = tempfile::tempdir()?;
+    let orig = virtual_format(2, Sample::Pcm16, false);
+    let policy = FakeFormatPolicy::new(orig.clone(), 8);
+    let mut journal = Journal {
+        applied: "{virtual}".into(),
+        ..Journal::default()
+    };
+    let applied = apply_virtual_format_with(
+        &policy,
+        "{virtual}",
+        12,
+        16,
+        dir.path(),
+        &mut journal,
+        |_| Ok(()),
+    )?;
+    assert_eq!(applied, 8);
+    assert_eq!(sample_layout(&policy.format("{virtual}")?).0, 8);
+    let saved: Journal = serde_json::from_slice(&std::fs::read(path(dir.path()))?)?;
+    assert_eq!(saved.format.as_ref().unwrap().before, orig);
+    assert_eq!(
+        saved.format.as_ref().unwrap().applied,
+        policy.format("{virtual}")?
+    );
+    // Subsequent set_channels(12) from stream/audio.rs falls back to 8 cleanly
+    // without disturbing the active 8ch format or corrupting the journal.
+    let mut active = Some(Active {
+        directory: dir.path().to_path_buf(),
+        sink: "{virtual}".into(),
+        virtual_sink: true,
+        users: 1,
+        channels: BTreeMap::from([(1, 8)]),
+    });
+    let calls_before = policy.set_calls.borrow().len();
+    set_channels_with(&mut active, 1, "{virtual}", dir.path(), 12, &policy, |_| {
+        Ok(())
+    })?;
+    // Only tried 12ch candidates, then recognized 8ch is already active and applied.
+    assert!(
+        policy.set_calls.borrow()[calls_before..]
+            .iter()
+            .all(|&ch| ch == 12)
+    );
+    assert_eq!(active.as_ref().unwrap().channels[&1], 8);
+    let saved_after: Journal = serde_json::from_slice(&std::fs::read(path(dir.path()))?)?;
+    assert_eq!(
+        saved_after.format.as_ref().unwrap().applied,
+        policy.format("{virtual}")?
+    );
+    Ok(())
+}
+
+#[test]
+fn failed_surround_preserves_journal_format_and_shared_channels_for_teardown() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    // 1. Stereo-only sink refusing 8ch during acquire leaves journal.format None.
+    let stereo_orig = virtual_format(2, Sample::Pcm16, false);
+    let stereo_only = FakeFormatPolicy::new(stereo_orig.clone(), 2);
+    let mut journal = Journal {
+        applied: "{virtual}".into(),
+        ..Journal::default()
+    };
+    assert!(
+        apply_virtual_format_with(
+            &stereo_only,
+            "{virtual}",
+            8,
+            16,
+            dir.path(),
+            &mut journal,
+            |_| Ok(()),
+        )
+        .is_err()
+    );
+    assert!(journal.format.is_none());
+    let saved: Journal = serde_json::from_slice(&std::fs::read(path(dir.path()))?)?;
+    assert!(saved.format.is_none());
+
+    // 2. Previously applied 2ch format is preserved when a later set_channels(8) fails,
+    // and shared.channels is NOT polluted with 8 so teardown restores `stereo_orig`.
+    let applied_2ch = virtual_format(2, Sample::Pcm24In32, false);
+    let policy = FakeFormatPolicy::new(applied_2ch.clone(), 2);
+    let initial_journal = Journal {
+        applied: "{virtual}".into(),
+        format: Some(FormatChange {
+            id: "{virtual}".into(),
+            before: stereo_orig.clone(),
+            applied: applied_2ch.clone(),
+        }),
+        ..Journal::default()
+    };
+    save(dir.path(), &initial_journal)?;
+    let mut active = Some(Active {
+        directory: dir.path().to_path_buf(),
+        sink: "{virtual}".into(),
+        virtual_sink: true,
+        users: 1,
+        channels: BTreeMap::from([(1, 2)]),
+    });
+    assert!(
+        set_channels_with(&mut active, 1, "{virtual}", dir.path(), 8, &policy, |_| {
+            Ok(())
+        })
+        .is_err()
+    );
+    // shared.channels stays 2 (not 8).
+    assert_eq!(active.as_ref().unwrap().channels[&1], 2);
+    // audio-recovery.json still records applied_2ch (matching current format), NOT a rejected 6ch/8ch format.
+    let saved: Journal = serde_json::from_slice(&std::fs::read(path(dir.path()))?)?;
+    let fmt = saved.format.unwrap();
+    assert_eq!(fmt.before, stereo_orig);
+    assert_eq!(fmt.applied, applied_2ch);
+    assert_eq!(fmt.applied, policy.format("{virtual}")?);
+    Ok(())
+}
+
+#[test]
+fn saved_defaults_restore_attempts_every_playback_and_recording_role_despite_errors() {
+    let saved = [
+        [
+            Some("spk-console".into()),
+            Some("spk-media".into()),
+            Some("spk-comms".into()),
+        ],
+        [
+            Some("mic-console".into()),
+            Some("mic-media".into()),
+            Some("mic-comms".into()),
+        ],
+    ];
+    let mut attempted = Vec::new();
+    let err = restore_saved_defaults(
+        &saved,
+        |flow| {
+            Ok(if flow == eRender {
+                [
+                    Some("steam-spk".into()),
+                    Some("steam-spk".into()),
+                    Some("steam-spk".into()),
+                ]
+            } else {
+                [
+                    Some("steam-mic".into()),
+                    Some("mic-media".into()), // unchanged: must be skipped
+                    Some("steam-mic".into()),
+                ]
+            })
+        },
+        |device, role| {
+            attempted.push((device.to_string(), role));
+            if device == "spk-console" {
+                bail!("console speaker offline");
+            }
+            if device == "mic-console" {
+                bail!("console mic offline");
+            }
+            Ok(())
+        },
+    )
+    .unwrap_err();
+    // First error is retained and returned.
+    assert!(err.to_string().contains("console speaker offline"), "{err}");
+    // All remaining playback AND recording roles were still attempted.
+    assert_eq!(
+        attempted,
+        vec![
+            ("spk-console".into(), eConsole),
+            ("spk-media".into(), eMultimedia),
+            ("spk-comms".into(), eCommunications),
+            ("mic-console".into(), eConsole),
+            ("mic-comms".into(), eCommunications),
+        ]
+    );
+}

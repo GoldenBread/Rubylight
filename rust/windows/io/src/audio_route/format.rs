@@ -1,8 +1,34 @@
 //! Shared-mode `WAVEFORMATEXTENSIBLE` builders and format matching helpers.
-use super::{Journal, hooks, policy::Policy, save};
+use super::{FormatChange, Journal, hooks, policy::Policy, save};
 use anyhow::{Context, Result, bail};
 use std::path::Path;
 use windows::{Win32::Media::Audio::*, core::GUID};
+
+/// Minimal subset of `Policy` needed for format probing/application (mockable in tests).
+pub(super) trait FormatPolicy {
+    fn format(&self, id: &str) -> Result<Vec<u8>>;
+    fn set_format(&self, id: &str, bytes: &[u8]) -> Result<()>;
+}
+
+impl FormatPolicy for Policy {
+    fn format(&self, id: &str) -> Result<Vec<u8>> {
+        Policy::format(self, id)
+    }
+    fn set_format(&self, id: &str, bytes: &[u8]) -> Result<()> {
+        Policy::set_format(self, id, bytes)
+    }
+}
+
+/// Surround channel-count fallback ladder (`12 -> 8 -> 6`; `8 -> 6`; `6`; `2`).
+pub(super) fn fallback_channels(channels: usize) -> Result<&'static [usize]> {
+    match channels {
+        2 => Ok(&[2]),
+        6 => Ok(&[6]),
+        8 => Ok(&[8, 6]),
+        12 => Ok(&[12, 8, 6]),
+        _ => bail!("virtual audio requires stereo, 5.1, 7.1 or 7.1.4"),
+    }
+}
 
 /// What Steam Streaming Microphone's driver copies between its pins as it is:
 /// channels, rate, container and valid bits, and whether samples are float.
@@ -169,24 +195,88 @@ pub(super) fn apply_virtual_format(
     bits: u16,
     directory: &Path,
     journal: &mut Journal,
-) -> Result<()> {
+) -> Result<usize> {
+    apply_virtual_format_with(
+        policy,
+        id,
+        channels,
+        bits,
+        directory,
+        journal,
+        hooks::mark_audio,
+    )
+}
+
+/// Try `channels` and lower surround channel counts (`12 -> 8 -> 6`) on `id`.
+///
+/// Snapshots `journal.format` before mutating it and restores + re-saves the
+/// previous journal entry if every candidate is rejected, so teardown always
+/// sees the last actually-applied format rather than a rejected candidate.
+pub(super) fn apply_virtual_format_with(
+    policy: &dyn FormatPolicy,
+    id: &str,
+    channels: usize,
+    bits: u16,
+    directory: &Path,
+    journal: &mut Journal,
+    mark_audio: impl Fn(bool) -> Result<()>,
+) -> Result<usize> {
+    let counts = fallback_channels(channels)?;
+    let previous = journal.format.clone();
+    let current = policy.format(id)?;
+    let current_channels = usize::from(sample_layout(&current).0);
+    if journal.format.is_none() {
+        journal.format = Some(FormatChange {
+            id: id.to_owned(),
+            before: current.clone(),
+            applied: Vec::new(),
+        });
+    }
     let mut last_error = None;
-    for desired in virtual_formats(channels, bits)? {
-        journal
-            .format
-            .as_mut()
-            .context("virtual audio format is not owned")?
-            .applied = desired.clone();
-        save(directory, journal)?;
-        hooks::mark_audio(true)?;
-        match policy.set_format(id, &desired) {
-            Ok(()) => {
-                journal.format.as_mut().unwrap().applied = policy.format(id)?;
+    let mut wrote_journal = false;
+    for &target in counts {
+        // When falling back to a lower surround layout that is already active
+        // and recorded as applied, keep it without triggering a redundant
+        // format switch.
+        if target < channels
+            && current_channels == target
+            && previous
+                .as_ref()
+                .is_some_and(|f| f.id == id && f.applied == current)
+        {
+            journal.format = previous;
+            if wrote_journal {
                 save(directory, journal)?;
-                return Ok(());
             }
-            Err(error) => last_error = Some(error),
+            return Ok(target);
         }
+        for desired in virtual_formats(target, bits)? {
+            journal
+                .format
+                .as_mut()
+                .context("virtual audio format is not owned")?
+                .applied = desired.clone();
+            save(directory, journal)?;
+            wrote_journal = true;
+            mark_audio(true)?;
+            match policy.set_format(id, &desired) {
+                Ok(()) => {
+                    journal.format.as_mut().unwrap().applied = policy.format(id)?;
+                    save(directory, journal)?;
+                    return Ok(target);
+                }
+                Err(error) => last_error = Some(error),
+            }
+        }
+    }
+    // Restore the previous applied format so a rejected candidate is never
+    // left in `audio-recovery.json`.
+    journal.format = previous;
+    if wrote_journal && let Err(save_error) = save(directory, journal) {
+        tracing::warn!(
+            error = %format!("{save_error:#}"),
+            "failed to restore audio recovery journal after rejected format"
+        );
     }
     Err(last_error.context("no usable virtual audio format")?)
         .with_context(|| format!("setting {channels}-channel virtual speaker format"))

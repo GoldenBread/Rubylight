@@ -255,14 +255,28 @@ pub fn restrict_to_administrators(folder: &Path) -> Result<()> {
     restrict(folder, ADMINISTRATORS_ONLY)
 }
 /// The permissions `sddl` describes on `folder` and the files in it.
+///
+/// Opens every file and directory once without following reparse points and
+/// without sharing deletion, verifies `FILE_ATTRIBUTE_REPARSE_POINT == 0` on
+/// the open handle, applies owner and protected DACL via handle-based
+/// `SetSecurityInfo`, and enumerates child entries from the open parent handle
+/// via `GetFileInformationByHandleEx(FileFullDirectoryInfo)`.
 pub fn restrict(folder: &Path, sddl: &str) -> Result<()> {
-    use windows::Win32::Security::Authorization::{
-        ConvertStringSecurityDescriptorToSecurityDescriptorW, SE_FILE_OBJECT, SetNamedSecurityInfoW,
+    use windows::Win32::{
+        Security::Authorization::{
+            ConvertStringSecurityDescriptorToSecurityDescriptorW, SE_FILE_OBJECT, SetSecurityInfo,
+        },
+        Storage::FileSystem::{
+            CreateFileW, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT,
+            FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_LIST_DIRECTORY,
+            FILE_READ_ATTRIBUTES, FILE_SHARE_READ, FILE_SHARE_WRITE, GetFileInformationByHandle,
+            OPEN_EXISTING, READ_CONTROL, WRITE_DAC, WRITE_OWNER,
+        },
     };
     let sddl = wide(std::ffi::OsStr::new(sddl))?;
     let mut descriptor = PSECURITY_DESCRIPTOR::default();
-    // SAFETY: `sddl` and `path` are NUL-terminated and outlive the calls, and `dacl` points into
-    // `descriptor`, which is freed once after its last use.
+    // SAFETY: `sddl` is NUL-terminated and outlives the call; `dacl` and `owner` point into
+    // `descriptor`, which is freed once after the traversal completes.
     unsafe {
         ConvertStringSecurityDescriptorToSecurityDescriptorW(
             PCWSTR(sddl.as_ptr()),
@@ -277,31 +291,107 @@ pub fn restrict(folder: &Path, sddl: &str) -> Result<()> {
             let mut owner = PSID::default();
             GetSecurityDescriptorOwner(descriptor, &mut owner, &mut defaulted)?;
             GetSecurityDescriptorDacl(descriptor, &mut present, &mut dacl, &mut defaulted)?;
-            let mut pending = vec![folder.to_path_buf()];
-            while let Some(path) = pending.pop() {
-                use std::os::windows::fs::MetadataExt;
-                let metadata = std::fs::symlink_metadata(&path)?;
-                if metadata.file_attributes() & 0x400 != 0 {
+            let has_owner = !owner.is_invalid();
+            let mut security_info = DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION;
+            let mut base_access = READ_CONTROL.0 | WRITE_DAC.0 | FILE_READ_ATTRIBUTES.0;
+            if has_owner {
+                security_info |= OWNER_SECURITY_INFORMATION;
+                base_access |= WRITE_OWNER.0;
+            }
+            let open_node = |path: &Path, expect_dir: Option<bool>| -> Result<OwnedHandle> {
+                let name = wide(path.as_os_str())?;
+                let share = FILE_SHARE_READ | FILE_SHARE_WRITE;
+                let flags = FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS;
+                let access = match expect_dir {
+                    Some(false) => base_access,
+                    Some(true) | None => base_access | FILE_LIST_DIRECTORY.0,
+                };
+                match CreateFileW(
+                    PCWSTR(name.as_ptr()),
+                    access,
+                    share,
+                    None,
+                    OPEN_EXISTING,
+                    flags,
+                    None,
+                ) {
+                    Ok(handle) => Ok(owned(handle)),
+                    Err(error)
+                        if expect_dir.is_none()
+                            && error.code()
+                                == windows::core::HRESULT::from_win32(ERROR_ACCESS_DENIED.0) =>
+                    {
+                        CreateFileW(
+                            PCWSTR(name.as_ptr()),
+                            base_access,
+                            share,
+                            None,
+                            OPEN_EXISTING,
+                            flags,
+                            None,
+                        )
+                        .map(owned)
+                        .with_context(|| format!("opening {}", path.display()))
+                    }
+                    Err(error) => Err(error).with_context(|| format!("opening {}", path.display())),
+                }
+            };
+            let restrict_handle = |path: &Path, handle: HANDLE| -> Result<bool> {
+                let mut info =
+                    windows::Win32::Storage::FileSystem::BY_HANDLE_FILE_INFORMATION::default();
+                GetFileInformationByHandle(handle, &mut info)
+                    .with_context(|| format!("reading attributes of {}", path.display()))?;
+                if info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT.0 != 0 {
                     bail!("{} is a reparse point", path.display());
                 }
-                let name = wide(path.as_os_str())?;
-                SetNamedSecurityInfoW(
-                    PCWSTR(name.as_ptr()),
+                SetSecurityInfo(
+                    handle,
                     SE_FILE_OBJECT,
-                    OWNER_SECURITY_INFORMATION
-                        | DACL_SECURITY_INFORMATION
-                        | PROTECTED_DACL_SECURITY_INFORMATION,
-                    Some(owner),
+                    security_info,
+                    has_owner.then_some(owner),
                     None,
                     Some(dacl),
                     None,
                 )
                 .ok()
                 .with_context(|| format!("setting permissions on {}", path.display()))?;
-                if metadata.is_dir() {
-                    for entry in std::fs::read_dir(&path)? {
-                        pending.push(entry?.path());
-                    }
+                Ok(info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY.0 != 0)
+            };
+            struct Frame {
+                dir: std::path::PathBuf,
+                _handle: OwnedHandle,
+                children: std::vec::IntoIter<(std::ffi::OsString, u32)>,
+            }
+            let root_handle = open_node(folder, None)?;
+            let root_is_dir = restrict_handle(folder, raw(&root_handle))?;
+            let mut stack = Vec::new();
+            if root_is_dir {
+                let entries = list_directory_by_handle(raw(&root_handle), folder)?;
+                stack.push(Frame {
+                    dir: folder.to_path_buf(),
+                    _handle: root_handle,
+                    children: entries.into_iter(),
+                });
+            }
+            while let Some(frame) = stack.last_mut() {
+                let Some((name, entry_attrs)) = frame.children.next() else {
+                    stack.pop();
+                    continue;
+                };
+                let child_path = frame.dir.join(&name);
+                if entry_attrs & FILE_ATTRIBUTE_REPARSE_POINT.0 != 0 {
+                    bail!("{} is a reparse point", child_path.display());
+                }
+                let expect_dir = entry_attrs & FILE_ATTRIBUTE_DIRECTORY.0 != 0;
+                let child_handle = open_node(&child_path, Some(expect_dir))?;
+                let is_dir = restrict_handle(&child_path, raw(&child_handle))?;
+                if is_dir {
+                    let entries = list_directory_by_handle(raw(&child_handle), &child_path)?;
+                    stack.push(Frame {
+                        dir: child_path,
+                        _handle: child_handle,
+                        children: entries.into_iter(),
+                    });
                 }
             }
             Ok(())
@@ -309,6 +399,64 @@ pub fn restrict(folder: &Path, sddl: &str) -> Result<()> {
         let _ = LocalFree(Some(HLOCAL(descriptor.0)));
         result
     }
+}
+
+/// Enumerate direct child entries of an open directory handle via `FileFullDirectoryInfo`.
+///
+/// # Safety
+/// `handle` must be an open directory handle with `FILE_LIST_DIRECTORY` access.
+unsafe fn list_directory_by_handle(
+    handle: HANDLE,
+    dir: &Path,
+) -> Result<Vec<(std::ffi::OsString, u32)>> {
+    use std::os::windows::ffi::OsStringExt;
+    use windows::Win32::Storage::FileSystem::{
+        FILE_FULL_DIR_INFO, FileFullDirectoryInfo, GetFileInformationByHandleEx,
+    };
+    let no_more = windows::core::HRESULT::from_win32(ERROR_NO_MORE_FILES.0);
+    let not_found = windows::core::HRESULT::from_win32(ERROR_FILE_NOT_FOUND.0);
+    let mut buffer = vec![0u64; 2048];
+    let byte_len = (buffer.len() * size_of::<u64>()) as u32;
+    let mut entries = Vec::new();
+    loop {
+        // SAFETY: `handle` is an open directory handle and `buffer` is 8-byte aligned for
+        // `FILE_FULL_DIR_INFO` with length `byte_len`.
+        match unsafe {
+            GetFileInformationByHandleEx(
+                handle,
+                FileFullDirectoryInfo,
+                buffer.as_mut_ptr().cast(),
+                byte_len,
+            )
+        } {
+            Ok(()) => {}
+            Err(error) if error.code() == no_more || error.code() == not_found => break,
+            Err(error) => {
+                return Err(error).with_context(|| format!("listing {}", dir.display()));
+            }
+        }
+        let base = buffer.as_ptr().cast::<u8>();
+        let mut offset = 0usize;
+        loop {
+            // SAFETY: Windows writes valid `FILE_FULL_DIR_INFO` records within `byte_len` bytes,
+            // chained by `NextEntryOffset` until 0.
+            let entry = unsafe { &*base.add(offset).cast::<FILE_FULL_DIR_INFO>() };
+            let name_units = (entry.FileNameLength as usize) / size_of::<u16>();
+            let name_ptr = (&raw const entry.FileName).cast::<u16>();
+            // SAFETY: `FileName` holds `name_units` UTF-16 code units inside the returned buffer.
+            let name = std::ffi::OsString::from_wide(unsafe {
+                std::slice::from_raw_parts(name_ptr, name_units)
+            });
+            if name != "." && name != ".." {
+                entries.push((name, entry.FileAttributes));
+            }
+            if entry.NextEntryOffset == 0 {
+                break;
+            }
+            offset += entry.NextEntryOffset as usize;
+        }
+    }
+    Ok(entries)
 }
 /// Create the folder `path` with [`USERS_READ`]'s owner and permissions from
 /// the start: it never has the inherited ones, not even for a moment.

@@ -168,18 +168,54 @@ pub struct SavedDefaults {
 }
 impl SavedDefaults {
     /// Puts back defaults Windows moved to a device that arrived since.
+    /// Attempts every playback and recording role so one unavailable endpoint
+    /// never skips restoring the remaining roles; returns the first error.
     pub fn restore(&self) -> Result<()> {
         let policy = Policy::new()?;
-        for (flow, saved) in [eRender, eCapture].into_iter().zip(&self.defaults) {
-            for ((role, now), before) in ROLES.into_iter().zip(defaults_for(flow)?).zip(saved) {
-                if let Some(before) = before
-                    && now.as_ref() != Some(before)
-                {
-                    policy.set_default(before, role)?;
-                }
+        restore_saved_defaults(&self.defaults, defaults_for, |device, role| {
+            policy.set_default(device, role)
+        })
+    }
+}
+
+pub(super) fn restore_saved_defaults(
+    defaults: &[[Option<String>; 3]; 2],
+    mut current_for: impl FnMut(EDataFlow) -> Result<[Option<String>; 3]>,
+    mut set_default: impl FnMut(&str, ERole) -> Result<()>,
+) -> Result<()> {
+    let mut first_error = None;
+    for (flow, saved) in [eRender, eCapture].into_iter().zip(defaults) {
+        let current = match current_for(flow) {
+            Ok(current) => current,
+            Err(error) => {
+                tracing::warn!(
+                    flow = flow.0,
+                    error = %format!("{error:#}"),
+                    "saved audio defaults could not be read for restore"
+                );
+                first_error.get_or_insert(error);
+                continue;
+            }
+        };
+        for ((role, now), before) in ROLES.into_iter().zip(current).zip(saved) {
+            if let Some(before) = before
+                && now.as_ref() != Some(before)
+                && let Err(error) = set_default(before, role)
+            {
+                tracing::warn!(
+                    flow = flow.0,
+                    role = role.0,
+                    device = %before,
+                    error = %format!("{error:#}"),
+                    "saved audio default could not be restored"
+                );
+                first_error.get_or_insert(error);
             }
         }
-        Ok(())
+    }
+    match first_error {
+        Some(error) => Err(error),
+        None => Ok(()),
     }
 }
 

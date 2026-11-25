@@ -13,7 +13,12 @@ use std::{
     path::{Path, PathBuf},
     time::{Duration, Instant},
 };
+
+mod trust;
+use trust::{TrustMode, find_plain, load_library_pinned, pin_binary};
 pub const KEYS: [&str; 3] = ["Limit", "LimitDenominator", "SyncLimiter"];
+const EXECUTABLES: [&str; 2] = ["RTSS.exe", "RTSS64.exe"];
+const HOOK_DLLS: [&str; 2] = ["RTSSHooks64.dll", "RTSSHooks.dll"];
 const PIPE_PREFIX: &str = r"\\.\pipe\Butterpollo.Rtss.";
 /// For each RTSS call; a stalled RTSS must not hold up a stream.
 const TIMEOUT: Duration = Duration::from_secs(2);
@@ -40,16 +45,10 @@ pub fn root(config: &butterpollo_config::config::Config) -> PathBuf {
     PathBuf::from("C:/Program Files (x86)").join(path)
 }
 pub fn executable(root: &Path) -> Option<PathBuf> {
-    ["RTSS.exe", "RTSS64.exe"]
-        .into_iter()
-        .map(|s| root.join(s))
-        .find(|p| p.is_file())
+    find_plain(root, &EXECUTABLES)
 }
 fn hooks(root: &Path) -> Option<PathBuf> {
-    ["RTSSHooks64.dll", "RTSSHooks.dll"]
-        .into_iter()
-        .map(|s| root.join(s))
-        .find(|p| p.is_file())
+    find_plain(root, &HOOK_DLLS)
 }
 pub fn available(root: &Path) -> bool {
     executable(root).is_some() && hooks(root).is_some()
@@ -122,21 +121,29 @@ pub fn running(root: &Path) -> bool {
     }
 }
 pub fn start(root: &Path) -> Result<Option<Process>> {
-    if running(root) {
+    let pinned = pin_binary(
+        root,
+        &EXECUTABLES,
+        "RTSS executable is missing",
+        TrustMode::AdministratorsOnly,
+    )?;
+    if running(&pinned.root_path()) {
         return Ok(None);
     }
-    let executable = executable(root).context("RTSS executable is missing")?;
+    let executable = pinned.path().to_path_buf();
+    let working_dir = pinned.root_path();
     let process = start_with_elevation(crate::process::is_system(), |elevated| {
         Process::spawn(
             &executable,
             &[],
-            Some(root),
+            Some(&working_dir),
             Target::User { elevated },
             &BTreeMap::new(),
             true,
         )
     })
     .with_context(|| format!("start RTSS at {}", executable.display()))?;
+    drop(pinned);
     // RTSSHooks hands profile calls to RTSS's message loop. Until that loop
     // runs they block, as Vibepollo found: a host check's restore to an RTSS
     // started a moment earlier timed out in the helper.
@@ -170,13 +177,15 @@ fn start_with_elevation<T>(service: bool, mut spawn: impl FnMut(bool) -> Result<
         result => result,
     }
 }
-pub fn read(root: &Path) -> Result<String> {
-    let path = root.join("Profiles/Global");
-    match std::fs::metadata(&path) {
-        Ok(m) if m.len() <= 4 * 1024 * 1024 => Ok(std::fs::read_to_string(path)?),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
-        _ => bail!("RTSS Global profile is unreadable or exceeds its size limit"),
+fn profile_trust_mode() -> TrustMode {
+    if crate::process::is_system() {
+        TrustMode::AdministratorsOnly
+    } else {
+        TrustMode::ReparseOnly
     }
+}
+pub fn read(root: &Path) -> Result<String> {
+    trust::read_profile_checked(root, profile_trust_mode())
 }
 pub fn properties(text: &str) -> Result<BTreeMap<String, Option<u32>>> {
     let mut in_section = false;
@@ -279,6 +288,13 @@ enum Response {
     },
 }
 fn call(request: &Request) -> Result<Reply> {
+    // Reject untrusted or reparse-point RTSS roots before spawning the helper.
+    let _pinned = pin_binary(
+        &request.root,
+        &HOOK_DLLS,
+        "RTSS hooks missing",
+        TrustMode::AdministratorsOnly,
+    )?;
     // The user helper cannot write the service's config directory. Keep that
     // directory private and exchange bounded messages over an owned pipe.
     let (pipe, name) = Pipe::server(PIPE_PREFIX)?;
@@ -410,10 +426,14 @@ struct Hooks {
 }
 impl Hooks {
     fn open(root: &Path) -> Result<Self> {
-        // SAFETY: the hooks DLL is RTSS's own, from the configured RTSS folder, and loading it
-        // runs only that trusted code.
-        let library =
-            unsafe { libloading::Library::new(hooks(root).context("RTSS hooks missing")?)? };
+        let pinned = pin_binary(
+            root,
+            &HOOK_DLLS,
+            "RTSS hooks missing",
+            TrustMode::AdministratorsOnly,
+        )?;
+        let library = load_library_pinned(&pinned)?;
+        drop(pinned);
         // SAFETY: the symbol types match the RTSSHooks exports, and `_library` keeps every copied
         // function pointer loaded for the lifetime of `Hooks`.
         unsafe {
@@ -603,43 +623,7 @@ pub fn query(root: &Path) -> Result<Reply> {
     })
 }
 pub fn write_profile(root: &Path, values: &BTreeMap<String, Option<u32>>) -> Result<()> {
-    ensure!(
-        values.keys().all(|key| KEYS.contains(&key.as_str())),
-        "unknown RTSS property"
-    );
-    let path = root.join("Profiles/Global");
-    let original = read(root)?;
-    let current = properties(&original)?;
-    // A failed application may leave only already-original properties to
-    // restore. Do not require write/delete access or claim pending recovery
-    // for a profile that never changed.
-    if values
-        .iter()
-        .all(|(key, value)| current.get(key) == Some(value))
-    {
-        return Ok(());
-    }
-    let content = replace(&original, values)?;
-    if let Err(error) = butterpollo_session::state::atomic_write(&path, content.as_bytes()) {
-        // RTSS's UI opens the selected profile without delete sharing. It
-        // still permits writing the file; keep unknown fields and truncate
-        // only after the complete replacement has been written successfully.
-        let locked = error
-            .downcast_ref::<std::io::Error>()
-            .is_some_and(|e| matches!(e.raw_os_error(), Some(5 | 32)));
-        if !locked {
-            return Err(error);
-        }
-        use std::io::Write;
-        let mut file = std::fs::OpenOptions::new()
-            .write(true)
-            .open(&path)
-            .context("open RTSS Global profile for update")?;
-        file.write_all(content.as_bytes())?;
-        file.set_len(content.len() as u64)?;
-        file.sync_all()?;
-    }
-    Ok(())
+    trust::write_profile_checked(root, values, profile_trust_mode())
 }
 /// Called only after the limiter has durably saved its originals. The service
 /// writes the protected profile, so it holds the values even if RTSS stalls;

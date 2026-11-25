@@ -134,6 +134,38 @@ pub fn tree(processes: &[Process], root: Identity) -> BTreeSet<Identity> {
     found
 }
 
+/// Live processes in `processes` that are in `seeds` or descended from any
+/// identity in `seeds` (including multi-hop spawns whose root exited before
+/// this pass). Rejects PID reuse: a child older than its parent, or spawned
+/// after another live process reused the parent's PID, is never included.
+fn live_descendants(processes: &[Process], seeds: &BTreeSet<Identity>) -> BTreeSet<Identity> {
+    let mut known = seeds.clone();
+    let mut pending: Vec<Identity> = seeds.iter().copied().collect();
+    while let Some(parent) = pending.pop() {
+        for child in processes {
+            let child_id = identity(child);
+            let pid_reused = processes.iter().any(|other| {
+                other.pid == parent.pid
+                    && other.started != parent.started
+                    && child.started >= other.started
+            });
+            if child.parent == parent.pid
+                && child.started >= parent.started
+                && child.pid != parent.pid
+                && !pid_reused
+                && known.insert(child_id)
+            {
+                pending.push(child_id);
+            }
+        }
+    }
+    processes
+        .iter()
+        .map(identity)
+        .filter(|id| known.contains(id))
+        .collect()
+}
+
 #[derive(Debug)]
 struct Slot {
     root: Option<Identity>,
@@ -288,10 +320,13 @@ impl Keeper {
             if slot.gone || alive.contains(&root) {
                 continue;
             }
-            // A launcher that started the game and exited leaves the game.
+            // A launcher that started the game and exited leaves the game,
+            // including children and multi-hop descendants spawned before the
+            // root exited within the same polling pass.
+            let descendants = live_descendants(&processes, &slot.tree);
             let heir = processes
                 .iter()
-                .filter(|p| slot.tree.contains(&identity(p)))
+                .filter(|p| descendants.contains(&identity(p)))
                 .min_by_key(|p| {
                     let game = self
                         .executables
@@ -301,7 +336,10 @@ impl Keeper {
                 })
                 .map(identity);
             match heir {
-                Some(heir) => slot.root = Some(heir),
+                Some(heir) => {
+                    slot.root = Some(heir);
+                    slot.tree = descendants;
+                }
                 None => {
                     slot.gone = true;
                     slot.window = None;

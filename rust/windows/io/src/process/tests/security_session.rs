@@ -257,6 +257,64 @@ fn a_folder_for_administrators_alone_is_made_with_its_permissions() {
 }
 
 #[test]
+fn restrict_applies_handle_pinned_dacl_and_refuses_junction_without_touching_target() {
+    let temporary = tempfile::tempdir().unwrap();
+    let owner = default_owner().unwrap();
+    let target = temporary.path().join("outside");
+    let tree = temporary.path().join("tree");
+    let nested = tree.join("nested");
+    std::fs::create_dir_all(&target).unwrap();
+    std::fs::create_dir_all(&nested).unwrap();
+    let outside_file = target.join("secret.txt");
+    let inside_file = nested.join("data.txt");
+    std::fs::write(&outside_file, b"keep").unwrap();
+    std::fs::write(&inside_file, b"protect").unwrap();
+
+    // Give the outside target Users write access so we can detect any unintended ACL change.
+    let wide_open = format!(
+        "O:{owner}D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;{owner})(A;OICI;0x1301bf;;;BU)"
+    );
+    restrict(&target, &wide_open).unwrap();
+    let target_writers_before =
+        open_file_writers(&open_unfollowed(&target, true).unwrap()).unwrap();
+    assert!(target_writers_before.iter().any(|s| s == "S-1-5-32-545"));
+
+    // Restrict a clean tree (files + subdirectories) via handle-based SetSecurityInfo.
+    let tight = format!("O:{owner}D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;{owner})");
+    restrict(&tree, &tight).unwrap();
+    for (p, dir) in [(&tree, true), (&nested, true), (&inside_file, false)] {
+        let open = open_unfollowed(p, dir).unwrap();
+        assert_eq!(open_file_owner(&open).unwrap(), owner);
+        let writers = open_file_writers(&open).unwrap();
+        assert!(
+            !writers.iter().any(|s| s == "S-1-5-32-545"),
+            "{p:?}: {writers:?}"
+        );
+    }
+
+    // Plant a directory junction inside the tree pointing to `outside`.
+    let junction = nested.join("escape");
+    let out = std::process::Command::new("cmd")
+        .args(["/C", "mklink", "/J"])
+        .arg(&junction)
+        .arg(&target)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let err = restrict(&tree, &tight).unwrap_err();
+    assert!(err.to_string().contains("reparse point"), "{err:#}");
+    // Junction target and its file MUST keep their original ACL untouched.
+    for (p, dir) in [(&target, true), (&outside_file, false)] {
+        let open = open_unfollowed(p, dir).unwrap();
+        let writers = open_file_writers(&open).unwrap();
+        assert!(
+            writers.iter().any(|s| s == "S-1-5-32-545"),
+            "junction target ACL was modified on {p:?}: {writers:?}"
+        );
+    }
+}
+
+#[test]
 fn console_reattachment_refuses_other_users_and_transitional_sessions() {
     assert!(reattach_blocker(4, 1, WTSDisconnected, 2, true, false, false).is_none());
     assert!(reattach_blocker(4, 1, WTSActive, 2, true, false, false).is_none());

@@ -421,3 +421,81 @@ fn a_store_game_is_the_same_program_after_an_update() {
         r"d:\games\lego batman\legobatmanlotdk-win64-shipping.exe"
     ));
 }
+
+#[test]
+fn changing_virtual_sink_does_not_mistake_previous_sink_for_a_user_device() -> Result<()> {
+    const SINK_2: &str = r"\\?\SWD#MMDEVAPI#{vbcable}#{e6327cad-dcec-4949-ae8a-991e976a79d2}";
+    let directory = tempfile::tempdir()?;
+    let (fake, mut state) = (Fake::default(), State::default());
+    started(&fake, 7);
+    fake.set(7, eConsole, HEADSET)?;
+    // Routed to SINK_1, then game exits while restore waits.
+    assert_eq!(
+        route_with(&fake, &mut state, directory.path(), 7, GAME, SINK)?,
+        Routed::Sink
+    );
+    exited(&fake);
+    assert!(release_with(&fake, &mut state, directory.path(), GAME)?);
+    // User switches virtual_sink setting from SINK to SINK_2 before next stream.
+    started(&fake, 9);
+    assert_eq!(
+        route_with(&fake, &mut state, directory.path(), 9, GAME, SINK_2)?,
+        Routed::Sink
+    );
+    for role in ROLES {
+        assert_eq!(fake.device(GAME, role), SINK_2);
+    }
+    // Teardown restores the original HEADSET, not SINK_1.
+    assert!(!release_with(&fake, &mut state, directory.path(), GAME)?);
+    assert_eq!(fake.device(GAME, eConsole), HEADSET);
+    assert_eq!(fake.device(GAME, eMultimedia), "");
+    Ok(())
+}
+
+#[test]
+fn volume_mixer_reset_to_default_updates_before_and_routes_to_virtual_sink() -> Result<()> {
+    let directory = tempfile::tempdir()?;
+    let (fake, mut state) = (Fake::default(), State::default());
+    started(&fake, 7);
+    fake.set(7, eConsole, HEADSET)?;
+    assert_eq!(
+        route_with(&fake, &mut state, directory.path(), 7, GAME, SINK)?,
+        Routed::Sink
+    );
+    exited(&fake);
+    assert!(release_with(&fake, &mut state, directory.path(), GAME)?);
+    // User resets game to Windows Default ("") in Volume Mixer before next stream.
+    started(&fake, 9);
+    fake.set(9, eConsole, "")?;
+    fake.set(9, eMultimedia, "")?;
+    assert_eq!(
+        route_with(&fake, &mut state, directory.path(), 9, GAME, SINK)?,
+        Routed::Sink
+    );
+    assert_eq!(fake.device(GAME, eConsole), SINK);
+    assert_eq!(fake.device(GAME, eMultimedia), SINK);
+    // Teardown restores Default ("") rather than the old HEADSET.
+    assert!(!release_with(&fake, &mut state, directory.path(), GAME)?);
+    assert_eq!(fake.device(GAME, eConsole), "");
+    assert_eq!(fake.device(GAME, eMultimedia), "");
+    Ok(())
+}
+
+#[test]
+fn app_route_users_device_distinguishes_sink_closing_and_users() {
+    let make = |routed| AppRoute {
+        directory: PathBuf::new(),
+        exe: GAME.into(),
+        pid: 1,
+        sink_id: "{steam}".into(),
+        sink: "Steam".into(),
+        routed,
+    };
+    let sink = make(Routed::Sink);
+    let closing = make(Routed::Closing);
+    let users = make(Routed::Users(HEADSET.into()));
+    assert_eq!(sink.users_device(), None);
+    assert_eq!(closing.users_device(), None);
+    assert_eq!(users.users_device(), Some(HEADSET));
+    std::mem::forget((sink, closing, users));
+}

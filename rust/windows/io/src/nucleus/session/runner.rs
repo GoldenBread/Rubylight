@@ -3,6 +3,7 @@
 use super::super::files;
 use super::super::instances::{Desktop, Keeper, MessageBox};
 use super::super::layers::Guard;
+use super::super::pads::Pads;
 use super::diagnostics::{Crashlog, said};
 use super::{Instances, Nucleus, PERIOD, PLAY, RECLICK, REFUSAL_GRACE, START_TIMEOUT};
 use butterpollo_session::audio_scope::Identity;
@@ -97,6 +98,9 @@ pub(super) struct Runner {
     pub(super) layers: Option<Guard>,
     /// Told each slot's instance after every pass ([`Instances`]).
     pub(super) instances: Option<Instances>,
+    /// This session's virtual pads: unplugged in [`Runner::finish`] as soon as
+    /// the session ends (even before [`super::Running::stop`] or drop).
+    pub(super) pads: Option<Arc<dyn Pads>>,
     /// A one-player game without ProtoInput's hooks ([`super::unhooked`]): its
     /// window is brought to the front as it shows, since such a game takes
     /// its pad only there and nothing hides from it that it isn't (#59).
@@ -395,6 +399,9 @@ impl Runner {
         self.nucleus.stop(&instances);
         if let Some(told) = &self.instances {
             told.stopped();
+        }
+        if let Some(pads) = &self.pads {
+            pads.unplug();
         }
         // Nucleus sets them as it starts each instance: back once all stopped.
         if let Some(layers) = &mut self.layers {

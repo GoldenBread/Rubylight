@@ -309,12 +309,41 @@ fn the_games_compatibility_settings_are_back_after_a_session_or_a_failed_start()
 fn a_session_that_fails_on_its_own_stops_nucleus() {
     let folder = tempfile::tempdir().unwrap();
     let (screen, probe) = (screen(), Probe::default());
-    let (running, _) = start_with(folder.path(), 1, [false; 4], &screen, &probe);
+    let (running, recorder) = start_with(folder.path(), 1, [false; 4], &screen, &probe);
     let running = running.unwrap();
     *probe.exit.lock().unwrap() = Some(1);
     wait_for(&running, |p| matches!(p, Phase::Ended(_)));
+    // Runner::finish must unplug pads immediately on natural exit, even before
+    // Running::stop() or Drop is called!
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while recorder.unplugged.load(std::sync::atomic::Ordering::SeqCst) == 0 {
+        assert!(
+            Instant::now() < deadline,
+            "pads were not unplugged on runner exit"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
     drop(running);
     assert!(probe.stopped.lock().unwrap().is_some());
+}
+
+#[test]
+fn stopping_a_session_unplugs_pads_before_running_is_dropped() {
+    let folder = tempfile::tempdir().unwrap();
+    let (screen, probe) = (screen(), Probe::default());
+    let (running, recorder) = start_with(folder.path(), 1, [false; 4], &screen, &probe);
+    let running = running.unwrap();
+    assert_eq!(
+        recorder.unplugged.load(std::sync::atomic::Ordering::SeqCst),
+        0
+    );
+    running.stop();
+    // Pads are unplugged as soon as stop() returns, while `running` is still held.
+    assert!(
+        recorder.unplugged.load(std::sync::atomic::Ordering::SeqCst) >= 1,
+        "Running::stop() must unplug virtual pads before Drop"
+    );
+    drop(running);
 }
 
 #[test]
