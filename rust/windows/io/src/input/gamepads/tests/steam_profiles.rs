@@ -511,6 +511,7 @@ fn steam_controls_say_why_they_got_no_steam_controller() {
 
 #[test]
 fn a_failed_plug_reports_the_drivers_error_not_full_slots() {
+    let _stranded = stranded_slots();
     let mut pads = broken_pads();
     pads.available = !0;
     let error = format!("{:#}", pads.ensure(0).unwrap_err());
@@ -527,6 +528,7 @@ fn usbip_attach_offloads_off_calling_thread_and_strands_unpluggable_temporary_pa
         atomic::{AtomicBool, Ordering},
     };
 
+    let _stranded = stranded_slots();
     let gate = Arc::new((Mutex::new(false), Condvar::new()));
     let woke = Arc::new(AtomicBool::new(false));
 
@@ -578,11 +580,14 @@ fn usbip_attach_offloads_off_calling_thread_and_strands_unpluggable_temporary_pa
     pads.finish_attaches().unwrap();
     assert!(!pads.attaching.contains_key(&(attach::AttachKind::Deck, 0)));
     assert!(pads.deck_failed.contains(&0));
-    pads.active.clear();
+    let temp_global = pads.active.get(&0).copied();
+    drop(pads);
+    if let Some(temp_global) = temp_global {
+        assert!(!SLOTS.lock().unwrap()[temp_global as usize]);
+    }
 
     // When a temporary VHF pad cannot be unplugged while switching to USB/IP,
     // `retire_vhf_for_usbip` retires it from `active` and strands its slot instead of failing.
-    let _stranded = stranded_slots();
     let slot = Slot::reserve().unwrap();
     let global = slot.id();
     std::mem::forget(slot);
