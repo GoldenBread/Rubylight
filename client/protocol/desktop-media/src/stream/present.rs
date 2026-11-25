@@ -76,6 +76,20 @@ struct DirectPlanes {
     what: &'static str,
 }
 
+/// Which plane-shader configuration owns `VideoTexture.planes` on Linux and macOS: tracked
+/// explicitly so transitioning between modes that share identical shader `parameters` (such as
+/// `FRAME_VULKAN` and semi-planar `FRAME_NV12`/`FRAME_P010` HLG) recreates the pass instead of
+/// mismatching it.
+// Linux and macOS (unix): SDL GPU plane-pass mode tag (tested everywhere).
+#[cfg(any(unix, test))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum PlanesMode {
+    PyroWave,
+    Planar,
+    SemiPlanar,
+    Vulkan,
+}
+
 /// The renderer's texture holding the current picture.
 pub struct VideoTexture {
     #[cfg(windows)]
@@ -97,6 +111,15 @@ pub struct VideoTexture {
     planes: Option<super::d3d11::PlanesPass>,
     #[cfg(unix)]
     planes: Option<super::planes_gpu::PlanesPass>,
+    /// Active plane-pass mode (`PlanesMode`), cleared whenever `planes` is dropped.
+    // Linux and macOS (unix): plane-pass mode tracking.
+    #[cfg(unix)]
+    planes_mode: Option<PlanesMode>,
+    /// Set during an upload when previously held/sampled planes were released or dropped so
+    /// `run_upload` does not restore stale `planes_pending` on failure.
+    // Linux and macOS (unix): plane-pass invalidation guard.
+    #[cfg(unix)]
+    planes_invalidated: bool,
     /// Vulkan video pictures' planes, copied on the GPU, which `planes` draws (dropped after it).
     #[cfg(unix)]
     vulkan: Option<crate::vulkan_video::Planes>,
@@ -230,6 +253,12 @@ impl Default for VideoTexture {
             pyrowave_format: None,
             #[cfg(any(windows, unix))]
             planes: None,
+            // Linux and macOS (unix): plane-pass mode tracking.
+            #[cfg(unix)]
+            planes_mode: None,
+            // Linux and macOS (unix): plane-pass invalidation guard.
+            #[cfg(unix)]
+            planes_invalidated: false,
             #[cfg(unix)]
             vulkan: None,
             #[cfg(unix)]
@@ -638,6 +667,34 @@ impl VideoTexture {
 #[cfg_attr(not(unix), allow(dead_code))]
 fn planes_after_upload(uploaded: bool, new: Option<[u32; 8]>, last: Option<[u32; 8]>, held: bool, pass_format: Option<[u32; 8]>) -> Option<[u32; 8]> {
     if uploaded || new.is_some() || !held || pass_format != last { new } else { last }
+}
+
+/// Whether an existing Linux/macOS `PlanesPass` of `current` mode must be recreated before running
+/// `wanted` mode even when shader `parameters` match.
+// Linux and macOS (unix): plane-pass mode transition check (tested everywhere).
+#[cfg(any(unix, test))]
+pub(super) fn planes_mode_mismatch(current: Option<PlanesMode>, wanted: PlanesMode) -> bool {
+    current.is_some_and(|mode| mode != wanted)
+}
+
+/// Visible crop after an upload attempt: updates from `visible` when `uploaded`, preserves the
+/// prior crop when `!uploaded` while the prior texture remains alive, and clears when no texture
+/// exists.
+pub(super) fn visible_after_upload(
+    previous: Option<(i32, i32)>,
+    visible: Option<(i32, i32)>,
+    uploaded: bool,
+    is_plain: bool,
+    texture_size: (i32, i32),
+    has_texture: bool,
+) -> Option<(i32, i32)> {
+    if uploaded {
+        visible.filter(|_| is_plain).and_then(|v| visible_part(v, texture_size))
+    } else if has_texture {
+        previous
+    } else {
+        None
+    }
 }
 
 #[cfg(all(target_os = "macos", feature = "demo-library"))]

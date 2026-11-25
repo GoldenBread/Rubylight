@@ -281,15 +281,21 @@ impl VideoTexture {
     }
 
     fn run_upload(&mut self, visible: Option<(i32, i32)>, is_plain: bool, upload: impl FnOnce(&mut Self) -> bool) -> bool {
-        // Planes copied for the last picture are not this one's, unless this one fails: then the
-        // last picture stays on screen, from its planes while the pass and texture that hold them
-        // do (the texture was never drawn into).
+        // Planes copied for the last picture are not this one's, unless this one fails without
+        // invalidating them: then the last picture stays on screen from its planes while the pass
+        // and texture that hold them survive.
         #[cfg(any(target_os = "linux", target_os = "macos"))]
-        let last_planes = self.planes_pending.take();
+        let last_planes = {
+            self.planes_invalidated = false;
+            self.planes_pending.take()
+        };
         let uploaded = upload(self);
         #[cfg(any(target_os = "linux", target_os = "macos"))]
-        { self.planes_pending = planes_after_upload(uploaded, self.planes_pending, last_planes, self.planes.is_some() && !self.texture.is_null(), self.pyrowave_format); }
-        self.visible = visible.filter(|_| uploaded && is_plain).and_then(|visible| visible_part(visible, (self.width, self.height)));
+        {
+            let held = !self.planes_invalidated && self.planes.is_some() && !self.texture.is_null();
+            self.planes_pending = planes_after_upload(uploaded, self.planes_pending, last_planes, held, self.pyrowave_format);
+        }
+        self.visible = visible_after_upload(self.visible, visible, uploaded, is_plain, (self.width, self.height), !self.texture.is_null());
         uploaded
     }
 

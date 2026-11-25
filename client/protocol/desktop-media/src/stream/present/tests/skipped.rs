@@ -428,3 +428,27 @@ fn a_present_without_waiting_is_refused_while_the_last_picture_waits() {
         SDL_Quit();
     }
 }
+
+#[test]
+fn refused_skipped_picture_keeps_uploaded_flag_across_overdue_retry() {
+    let mut pacer = Pacer::new(PacingMode::Vsync, 8_333);
+    pacer.accept(super::decoded(1_000));
+    let (mut first, dropped) = pacer.take_due(1_000);
+    assert_eq!(dropped, 0);
+    let mut first = first.take().unwrap();
+    assert!(!first.uploaded, "freshly accepted picture needs upload");
+    first.uploaded = true;
+    let mut kept = Some(first);
+    let (retry, replaced) = take_over_kept(None, &mut kept, true);
+    assert_eq!(replaced, 0);
+    assert!(retry.unwrap().uploaded, "retried skipped_picture stays marked uploaded so upload_take is skipped");
+}
+
+#[test]
+fn egl_in_order_wait_cap_tracks_two_refreshes_with_safe_bounds() {
+    use std::time::Duration;
+    assert_eq!(super::super::pacer::no_wait::egl_in_order_wait_cap(90.0), Duration::from_micros(22_222));
+    assert_eq!(super::super::pacer::no_wait::egl_in_order_wait_cap(240.0), Duration::from_millis(20));
+    assert_eq!(super::super::pacer::no_wait::egl_in_order_wait_cap(15.0), Duration::from_millis(100));
+    assert_eq!(super::super::pacer::no_wait::egl_in_order_wait_cap(0.0), Duration::from_millis(40));
+}

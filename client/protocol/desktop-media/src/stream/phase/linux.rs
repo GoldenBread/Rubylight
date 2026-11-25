@@ -39,6 +39,11 @@ impl TimingSource {
 
 /// Maximum past age of a display vblank timestamp (µs) accepted as a live phase anchor.
 const MAX_PAST_US: i128 = 100_000;
+/// Extended past age (µs) tolerated for EGL DRI3 sync timestamps, which only update on completed
+/// swaps so brief network stalls or still frames would otherwise drop EGL sync and flap to DRM
+/// vblank (Nightjar #175).
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+const EGL_STALE_GRACE_US: i128 = 500_000;
 /// Maximum forward skew (µs) accepted for a slightly projected vblank timestamp.
 const MAX_FUTURE_US: i128 = 5_000;
 /// Bounds for a valid display refresh period (ns): ~24 Hz to 500 Hz, matching `Phase::sample`.
@@ -46,24 +51,31 @@ const MIN_PERIOD_NS: i64 = 2_000_000;
 const MAX_PERIOD_NS: i64 = 41_700_000;
 
 /// Age (`now - ust`, in µs) of a `CLOCK_MONOTONIC` UST timestamp returned by EGL or GLX sync
-/// control. Mesa's X11 DRI3 returns microseconds while some EGL implementations (such as ANGLE)
-/// return nanoseconds; both are checked against `now_ns` and non-monotonic epochs or stale values
-/// are rejected.
+/// control within `max_past_us` of `now_ns`.
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-pub(crate) fn monotonic_ust_age_us(now_ns: i128, ust: u64) -> Option<i64> {
+pub(crate) fn monotonic_ust_age_within_us(now_ns: i128, ust: u64, max_past_us: i128) -> Option<i64> {
     if ust == 0 {
         return None;
     }
     let ust = i128::from(ust);
     let age_us = now_ns / 1_000 - ust;
-    if (-MAX_FUTURE_US..=MAX_PAST_US).contains(&age_us) {
+    if (-MAX_FUTURE_US..=max_past_us).contains(&age_us) {
         return Some(age_us as i64);
     }
     let age_ns = now_ns - ust;
-    if (-MAX_FUTURE_US * 1_000..=MAX_PAST_US * 1_000).contains(&age_ns) {
+    if (-MAX_FUTURE_US * 1_000..=max_past_us * 1_000).contains(&age_ns) {
         return Some((age_ns / 1_000) as i64);
     }
     None
+}
+
+/// Age (`now - ust`, in µs) of a `CLOCK_MONOTONIC` UST timestamp returned by EGL or GLX sync
+/// control. Mesa's X11 DRI3 returns microseconds while some EGL implementations (such as ANGLE)
+/// return nanoseconds; both are checked against `now_ns` and non-monotonic epochs or stale values
+/// are rejected.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub(crate) fn monotonic_ust_age_us(now_ns: i128, ust: u64) -> Option<i64> {
+    monotonic_ust_age_within_us(now_ns, ust, MAX_PAST_US)
 }
 
 /// Age (`now - timestamp_ns`, in µs) of a `CLOCK_MONOTONIC` nanosecond timestamp from the kernel
@@ -114,6 +126,84 @@ pub(crate) fn choose_period_ns(measured_ns: Option<i64>, refresh_hz: f32) -> Opt
         }
     }
     nominal
+}
+
+/// Refresh period (ns) for DRM vblank timing: when SDL's reported panel `refresh_hz` (e.g.
+/// 89.89 Hz on Steam Deck OLED) agrees within 2% of the kernel mode's nominal rate (90.00 Hz),
+/// align DRM vblank with SDL's exact panel period so falling back between EGL sync and DRM vblank
+/// never shifts the phase-lock period between 11.11 ms and 11.13 ms (Nightjar #175).
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub(crate) fn drm_period_ns(drm_refresh_hz: f32, sdl_refresh_hz: f32) -> Option<i64> {
+    let drm = period_ns_from_hz(drm_refresh_hz);
+    let sdl = period_ns_from_hz(sdl_refresh_hz);
+    match (drm, sdl) {
+        (Some(d), Some(s)) if (d - s).abs() * 50 <= s => Some(s),
+        _ => choose_period_ns(drm, sdl_refresh_hz),
+    }
+}
+
+/// Consecutive healthy readings required before switching back to a preferred timing source after
+/// a fallback, preventing rapid DRM↔EGL flapping during bursty dropouts (Nightjar #175).
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+const SOURCE_SWITCH_CONFIRM: u32 = 8;
+
+/// Sticky Linux display-timing source selector with hysteresis.
+#[derive(Debug, Default)]
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub(crate) struct SourceHysteresis {
+    active: Option<TimingSource>,
+    pending: Option<(TimingSource, u32)>,
+}
+
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+impl SourceHysteresis {
+    /// Picks between `preferred` (EGL/GLX sync) and `fallback` (DRM vblank). Switches immediately
+    /// when the currently active source is unavailable, but requires `SOURCE_SWITCH_CONFIRM`
+    /// consecutive healthy samples before switching from an active fallback back to `preferred`.
+    pub(crate) fn pick(
+        &mut self,
+        preferred: Option<((i64, i64), TimingSource)>,
+        fallback: Option<((i64, i64), TimingSource)>,
+    ) -> Option<((i64, i64), TimingSource)> {
+        match (self.active, preferred, fallback) {
+            (Some(active), Some((t, src)), Some(_)) if active == src => {
+                self.pending = None;
+                Some((t, src))
+            }
+            (Some(active), Some((pref_t, pref_src)), Some((fb_t, fb_src))) if active == fb_src => {
+                let count = match self.pending {
+                    Some((src, n)) if src == pref_src => n + 1,
+                    _ => 1,
+                };
+                if count >= SOURCE_SWITCH_CONFIRM {
+                    self.active = Some(pref_src);
+                    self.pending = None;
+                    Some((pref_t, pref_src))
+                } else {
+                    self.pending = Some((pref_src, count));
+                    Some((fb_t, fb_src))
+                }
+            }
+            (_, Some((t, src)), _) => {
+                self.active = Some(src);
+                self.pending = None;
+                Some((t, src))
+            }
+            (_, None, Some((t, src))) => {
+                self.active = Some(src);
+                self.pending = None;
+                Some((t, src))
+            }
+            (_, None, None) => {
+                self.pending = None;
+                None
+            }
+        }
+    }
+
+    pub(crate) fn reset(&mut self) {
+        *self = Self::default();
+    }
 }
 
 /// Exact whitespace-delimited extension token check (matching `dmabuf.rs`).
@@ -225,8 +315,9 @@ mod os {
     use sdl3_sys::everything::*;
 
     use super::{
-        choose_period_ns, has_extension, monotonic_ns_age_us, monotonic_ust_age_us,
-        period_ns_from_hz, rate_period_ns, EglSwapTracker, TimingSource,
+        choose_period_ns, drm_period_ns, has_extension, monotonic_ns_age_us, monotonic_ust_age_us,
+        monotonic_ust_age_within_us, rate_period_ns, EglSwapTracker, SourceHysteresis,
+        TimingSource, EGL_STALE_GRACE_US,
     };
 
     const EGL_EXTENSIONS: c_int = 0x3055;
@@ -303,6 +394,7 @@ mod os {
         static GLX_CACHE: RefCell<Option<Option<GlxProcs>>> = const { RefCell::new(None) };
         static DRM_CACHE: RefCell<DrmCache> = const { RefCell::new(DrmCache { key: None, vblank: None }) };
         static SWAP_TRACKER: RefCell<EglSwapTracker> = RefCell::new(EglSwapTracker::default());
+        static SOURCE_HYSTERESIS: RefCell<SourceHysteresis> = RefCell::new(SourceHysteresis::default());
     }
 
     fn clock_monotonic_ns() -> Option<i128> {
@@ -385,7 +477,7 @@ mod os {
                 return None;
             }
             let now_ns = clock_monotonic_ns()?;
-            let age_us = monotonic_ust_age_us(now_ns, ust)?;
+            let age_us = monotonic_ust_age_within_us(now_ns, ust, EGL_STALE_GRACE_US)?;
             let measured_period = procs.get_msc_rate.and_then(|rate| {
                 let (mut num, mut den) = (0i32, 0i32);
                 (rate(display, surface, &mut num, &mut den) != 0)
@@ -510,7 +602,7 @@ mod os {
             }
             let now_ns = clock_monotonic_ns()?;
             let age_us = monotonic_ns_age_us(now_ns, seq.sequence_ns)?;
-            let period_ns = choose_period_ns(period_ns_from_hz(vblank.refresh_hz as f32), refresh_hz)?;
+            let period_ns = drm_period_ns(vblank.refresh_hz as f32, refresh_hz)?;
             Some((nightjar_core::session::now_us() as i64 - age_us, period_ns))
         })
     }
@@ -519,15 +611,19 @@ mod os {
         renderer: *mut SDL_Renderer,
         refresh_hz: f32,
     ) -> Option<((i64, i64), TimingSource)> {
-        if let Some(sample) = egl_sync_sample(renderer, refresh_hz)
-            && let Some(period_ns) = sample.period_ns
-        {
-            return Some(((sample.ust_session_us, period_ns), TimingSource::EglSync));
-        }
-        if let Some(timing) = glx_timing(renderer, refresh_hz) {
-            return Some((timing, TimingSource::GlxSync));
-        }
-        drm_timing(renderer, refresh_hz).map(|timing| (timing, TimingSource::DrmVblank))
+        let preferred = egl_sync_sample(renderer, refresh_hz)
+            .and_then(|s| s.period_ns.map(|p| ((s.ust_session_us, p), TimingSource::EglSync)))
+            .or_else(|| glx_timing(renderer, refresh_hz).map(|t| (t, TimingSource::GlxSync)));
+        SOURCE_HYSTERESIS.with(|h| {
+            let mut h = h.borrow_mut();
+            let need_fallback = preferred.is_none() || h.active == Some(TimingSource::DrmVblank);
+            let fallback = if need_fallback {
+                drm_timing(renderer, refresh_hz).map(|t| (t, TimingSource::DrmVblank))
+            } else {
+                None
+            };
+            h.pick(preferred, fallback)
+        })
     }
 
     pub(crate) fn present_stats(renderer: *mut SDL_Renderer) -> crate::timing_csv::Flip {
@@ -582,6 +678,7 @@ mod os {
         });
         EGL_CACHE.with(|cache| *cache.borrow_mut() = None);
         SWAP_TRACKER.with(|tracker| tracker.borrow_mut().reset());
+        SOURCE_HYSTERESIS.with(|h| h.borrow_mut().reset());
     }
 }
 
@@ -601,114 +698,5 @@ pub fn reset_display_timing() {}
 pub(crate) fn note_external_present() {}
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn monotonic_ust_accepts_microseconds_and_nanoseconds_and_rejects_bad_epochs() {
-        let now_ns: i128 = 10_000_000_000_000; // 10,000 s uptime
-        let now_us = (now_ns / 1_000) as u64;
-        // Mesa DRI3 returns microseconds.
-        assert_eq!(monotonic_ust_age_us(now_ns, now_us - 4_200), Some(4_200));
-        assert_eq!(monotonic_ust_age_us(now_ns, now_us), Some(0));
-        // Slight future projection (<= 5 ms) accepted.
-        assert_eq!(monotonic_ust_age_us(now_ns, now_us + 2_000), Some(-2_000));
-        // ANGLE/nanosecond implementations return nanoseconds.
-        assert_eq!(monotonic_ust_age_us(now_ns, (now_ns - 6_500_000) as u64), Some(6_500));
-        assert_eq!(monotonic_ust_age_us(now_ns, (now_ns + 1_000_000) as u64), Some(-1_000));
-        // Zero, stale (> 100 ms), far future (> 5 ms), and CLOCK_REALTIME epochs are rejected.
-        assert_eq!(monotonic_ust_age_us(now_ns, 0), None);
-        assert_eq!(monotonic_ust_age_us(now_ns, now_us - 100_001), None);
-        assert_eq!(monotonic_ust_age_us(now_ns, now_us + 5_001), None);
-        assert_eq!(monotonic_ust_age_us(now_ns, 1_750_000_000_000_000), None);
-    }
-
-    #[test]
-    fn monotonic_ns_validates_drm_vblank_timestamps() {
-        let now_ns: i128 = 50_000_000_000;
-        assert_eq!(monotonic_ns_age_us(now_ns, (now_ns - 3_400_000) as i64), Some(3_400));
-        assert_eq!(monotonic_ns_age_us(now_ns, (now_ns + 1_000_000) as i64), Some(-1_000));
-        assert_eq!(monotonic_ns_age_us(now_ns, 0), None);
-        assert_eq!(monotonic_ns_age_us(now_ns, -1), None);
-        assert_eq!(monotonic_ns_age_us(now_ns, (now_ns - 150_000_000) as i64), None);
-    }
-
-    #[test]
-    fn period_selection_keeps_matching_measured_rate_and_rejects_mismatched_60hz_fallback() {
-        // Steam Deck OLED 89.89 Hz: exact kernel/EGL period is kept.
-        let deck_ns = period_ns_from_hz(89.89).unwrap();
-        assert_eq!(deck_ns, 11_124_708);
-        assert_eq!(choose_period_ns(Some(11_125_000), 89.89), Some(11_125_000));
-        // A synthetic 60 Hz Xwayland rate (16.67 ms) on an 89.89 Hz panel is rejected (>5% off).
-        assert_eq!(choose_period_ns(rate_period_ns(60, 1), 89.89), Some(deck_ns));
-        // Missing measured rate falls back to SDL refresh_hz.
-        assert_eq!(choose_period_ns(None, 89.89), Some(deck_ns));
-        // Without refresh_hz, a sane measured rate still works.
-        assert_eq!(choose_period_ns(rate_period_ns(90_000, 1_001), 0.0), Some(11_122_222));
-        // Out-of-range rates are rejected.
-        assert_eq!(rate_period_ns(0, 1), None);
-        assert_eq!(rate_period_ns(10, 1), None);
-        assert_eq!(period_ns_from_hz(0.0), None);
-        assert_eq!(period_ns_from_hz(f32::NAN), None);
-    }
-
-    #[test]
-    fn extension_check_matches_whole_tokens_only() {
-        let exts = "EGL_KHR_image EGL_CHROMIUM_sync_control EGL_ANGLE_sync_control_rate";
-        assert!(has_extension(exts, "EGL_CHROMIUM_sync_control"));
-        assert!(has_extension(exts, "EGL_ANGLE_sync_control_rate"));
-        assert!(!has_extension(exts, "EGL_CHROMIUM_sync"));
-        assert!(!has_extension("EGL_CHROMIUM_sync_control_extra", "EGL_CHROMIUM_sync_control"));
-    }
-
-    #[test]
-    fn glass_phase_timing_supports_one_to_one_wayland_and_kms_streams() {
-        assert_eq!(
-            glass_phase_timing(Some(500_000), Some(11_125_000), 504_000, 89.89),
-            Some((500_000, 11_125_000))
-        );
-        // Compositor reporting 0 refresh falls back to display refresh_hz.
-        assert_eq!(
-            glass_phase_timing(Some(500_000), None, 504_000, 89.89),
-            Some((500_000, 11_124_708))
-        );
-        // Stale glass timestamp (>100 ms old) returns None.
-        assert_eq!(glass_phase_timing(Some(500_000), None, 600_001, 89.89), None);
-        assert_eq!(glass_phase_timing(None, None, 504_000, 89.89), None);
-    }
-
-    #[test]
-    fn egl_swap_tracker_verifies_sbc_before_waiting_and_handles_stuck_drivers() {
-        let mut tracker = EglSwapTracker::default();
-        tracker.bind(0x1000);
-        // Before verification, never waits/refuses.
-        assert_eq!(tracker.should_wait(40), Some(false));
-        tracker.note_presented(40);
-        // Completed SBC advanced to 41 -> verified, swapchain clear.
-        assert_eq!(tracker.should_wait(41), Some(false));
-        tracker.note_presented(41);
-        // Still at 41 -> swap 42 is in flight -> wait/refuse!
-        assert_eq!(tracker.should_wait(41), Some(true));
-        // Completed SBC catches up to 42 -> clear to present.
-        assert_eq!(tracker.should_wait(42), Some(false));
-        // External redraw advanced SBC beyond submitted -> resyncs cleanly without waiting.
-        assert_eq!(tracker.should_wait(45), Some(false));
-        tracker.note_presented(45);
-        assert_eq!(tracker.should_wait(45), Some(true));
-        // After an external waiting present, clears pending watermark so next probe does not stall.
-        tracker.note_external_present();
-        assert_eq!(tracker.should_wait(45), Some(false));
-        // Changing surface resets state.
-        tracker.bind(0x2000);
-        assert!(!tracker.verified);
-
-        // A broken driver whose SBC never increments falls back to None after UNVERIFIED_LIMIT.
-        let mut stuck = EglSwapTracker::default();
-        stuck.bind(0x3000);
-        for _ in 0..UNVERIFIED_LIMIT {
-            assert_eq!(stuck.should_wait(0), Some(false));
-            stuck.note_presented(0);
-        }
-        assert_eq!(stuck.should_wait(0), None);
-    }
-}
+#[path = "linux_tests.rs"]
+mod tests;

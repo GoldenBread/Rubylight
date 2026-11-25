@@ -292,3 +292,30 @@ impl<P> Sampled<P> {
         self.returning.retain_mut(|&mut (_, slot)| !gpu.finished(slot));
     }
 }
+
+/// Swapping a sampled frame with itself (e.g. duplicate `AVVkFrame` reference): release the old
+/// slot FIRST (transitioning to `GENERAL` / `EXTERNAL` and signaling its semaphore/fence), then
+/// acquire the incoming slot so the image ends in `SHADER_READ_ONLY_OPTIMAL` on the graphics queue.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub(super) fn swap_same_frame(
+    gpu: &mut impl SampleGpu,
+    acquire_slot: usize,
+    release_slot: usize,
+) -> Result<(), String> {
+    gpu.release(release_slot)?;
+    gpu.acquire(acquire_slot)
+}
+
+/// Whether a cached VA-API import with `lent` active `Lent` frames can safely be mutated by
+/// `ready_for_reuse` and lent again without aliasing a frame still held by the presenter/pacer.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub(super) fn can_reuse_cached_import(lent: usize) -> bool {
+    lent == 0
+}
+
+/// Whether `Planes::sampling.wrapped` must evict its cached SDL textures/imports because the
+/// incoming import belongs to a new VA-API surface pool generation.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub(super) fn should_evict_pool(current: Option<u64>, incoming: u64) -> bool {
+    current.is_some_and(|prev| prev != incoming)
+}

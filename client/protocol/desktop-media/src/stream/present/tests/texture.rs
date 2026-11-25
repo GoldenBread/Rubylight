@@ -552,3 +552,46 @@ fn sdl_gets_rgb_exactly_when_its_shaders_would_decode_the_picture_wrongly() {
     assert!(!sdl_needs_rgb(SDL_PIXELFORMAT_P010, Pq));
     assert!(!sdl_needs_rgb(SDL_PIXELFORMAT_NV12, Sdr));
 }
+
+#[test]
+fn failed_upload_preserves_visible_crop_while_texture_survives() {
+    // T7-7: re-running or failing upload while the prior texture stays alive must not wipe crop.
+    assert_eq!(
+        visible_after_upload(Some((1920, 1080)), Some((1920, 1080)), false, true, (1920, 1088), true),
+        Some((1920, 1080))
+    );
+    // Without a live texture, crop clears to None.
+    assert_eq!(
+        visible_after_upload(Some((1920, 1080)), Some((1920, 1080)), false, true, (1920, 1088), false),
+        None
+    );
+    // Successful plain upload updates visible crop normally.
+    assert_eq!(
+        visible_after_upload(None, Some((1920, 1080)), true, true, (1920, 1088), true),
+        Some((1920, 1080))
+    );
+    assert_eq!(
+        visible_after_upload(Some((1920, 1080)), Some((1920, 1088)), true, true, (1920, 1088), true),
+        None
+    );
+}
+
+#[test]
+fn planes_mode_mismatch_detects_vulkan_and_semi_planar_hlg_transitions() {
+    // T7-18: FRAME_VULKAN and semi-planar HLG share identical shader parameters, so mode
+    // transitions must force recreating PlanesPass.
+    assert!(planes_mode_mismatch(Some(PlanesMode::Vulkan), PlanesMode::SemiPlanar));
+    assert!(planes_mode_mismatch(Some(PlanesMode::SemiPlanar), PlanesMode::Vulkan));
+    assert!(planes_mode_mismatch(Some(PlanesMode::PyroWave), PlanesMode::Planar));
+    assert!(!planes_mode_mismatch(Some(PlanesMode::Vulkan), PlanesMode::Vulkan));
+    assert!(!planes_mode_mismatch(None, PlanesMode::SemiPlanar));
+}
+
+#[test]
+fn invalidated_planes_are_not_restored_after_failed_upload() {
+    // T7-3: when a failed upload invalidated previously sampled/held planes (`held == false`),
+    // `planes_after_upload` must drop `planes_pending` rather than restoring stale parameters.
+    let params = [1920, 1080, 1920, 1080, 0, 3, 256, 1.0f32.to_bits()];
+    assert_eq!(planes_after_upload(false, None, Some(params), false, Some(params)), None);
+    assert_eq!(planes_after_upload(false, None, Some(params), true, Some(params)), Some(params));
+}

@@ -30,23 +30,11 @@ pub fn codec_name(format: u32) -> &'static str {
     }
 }
 
-/// The stream's resolution, rate and bitrate from the settings and display. The bitrate is the one
-/// for the chosen codec (`start_bitrate`), PyroWave's own while PyroWave is chosen, as the settings
-/// show it; a launch decides by what it offers the PC (`offers_pyrowave`).
+/// The stream's resolution, rate and bitrate from the settings and display. Delegates to
+/// `nightjar_desktop_config::stream_types::stream_mode` so UI previews and stream launches
+/// always apply the same native scaling, even-dimension rounding, FPS and bitrate rules.
 pub fn stream_mode(settings: &Settings, display: Display) -> (u32, u32, u32, u32) {
-    let (mut w, mut h) = if settings.width == 0 || settings.height == 0 {
-        (display.width, display.height)
-    } else {
-        (settings.width, settings.height)
-    };
-    w = (w.max(320) + 1) & !1;
-    h = (h.max(240) + 1) & !1;
-    let fps = if settings.fps == 0 {
-        (display.refresh_hz.round() as u32).clamp(30, 240)
-    } else {
-        settings.fps
-    };
-    (w, h, fps, start_bitrate(settings, w, h, fps, settings.codec.is_pyrowave(), 0))
+    nightjar_desktop_config::stream_types::stream_mode(settings, display)
 }
 
 /// The bitrate a stream starts at: the chosen one, or the default for its size and frame rate. A

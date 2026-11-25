@@ -221,3 +221,28 @@ fn the_log_says_which_path_is_taken() {
     assert!(describe_route(Route::Sample).contains("sampled in place"));
     assert!(describe_route(Route::Copy("why")).ends_with("why"));
 }
+
+#[test]
+fn swapping_the_same_frame_releases_before_acquiring() {
+    let mut gpu = Mock::default();
+    swap_same_frame(&mut gpu, 1, 0).unwrap();
+    assert_eq!(gpu.log, ["release 0", "acquire 1"], "release must run before acquire so the incoming frame ends in SHADER_READ_ONLY_OPTIMAL");
+    gpu.refuse_release = true;
+    gpu.log.clear();
+    assert!(swap_same_frame(&mut gpu, 2, 1).is_err());
+    assert!(gpu.log.is_empty(), "acquire does not run when release fails");
+}
+
+#[test]
+fn cached_import_reuse_requires_zero_active_lent_frames() {
+    assert!(can_reuse_cached_import(0));
+    assert!(!can_reuse_cached_import(1));
+    assert!(!can_reuse_cached_import(3));
+}
+
+#[test]
+fn wrapped_textures_evict_when_vaapi_pool_generation_changes() {
+    assert!(!should_evict_pool(None, 1));
+    assert!(!should_evict_pool(Some(1), 1));
+    assert!(should_evict_pool(Some(1), 2));
+}

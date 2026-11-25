@@ -362,8 +362,6 @@ struct Pool {
 #[derive(Default)]
 struct PoolState {
     pool: Option<Pool>,
-    /// Cached `(source_raw, hw_frames_ctx_data, desc)` to skip per-frame `GetDesc`.
-    source_desc: Option<(usize, usize, D3D11_TEXTURE2D_DESC)>,
 }
 
 /// Cross-device bridge between a dedicated `D3D11_CREATE_DEVICE_VIDEO_SUPPORT` decode device and
@@ -649,21 +647,14 @@ impl DecodeBridge {
         // SAFETY: `raw_frame` is a live `AV_PIX_FMT_D3D11` frame belonging to this decode device.
         let source = unsafe { ID3D11Texture2D::from_raw_borrowed(&source_raw) }.ok_or("decoded D3D11 frame has no source texture")?;
         let slice = raw_frame.data[1] as usize as u32;
-        let frames_key = if raw_frame.hw_frames_ctx.is_null() { 0 } else { unsafe { (*raw_frame.hw_frames_ctx).data as usize } };
-        let (desc, slot) = {
+        // Read `GetDesc` directly (cheap user-mode copy) instead of caching by raw pointer,
+        // avoiding stale descriptions if FFmpeg recycles freed texture/frames addresses.
+        let mut desc = D3D11_TEXTURE2D_DESC::default();
+        // SAFETY: `GetDesc` is a user-mode read on a live texture.
+        unsafe { source.GetDesc(&mut desc) };
+        let slot = {
             let mut state = self.pool.lock().unwrap_or_else(|e| e.into_inner());
-            let desc = match state.source_desc {
-                Some((k, fk, d)) if frames_key != 0 && k == source_raw as usize && fk == frames_key => d,
-                _ => {
-                    let mut d = D3D11_TEXTURE2D_DESC::default();
-                    // SAFETY: `GetDesc` is a user-mode read on a live texture.
-                    unsafe { source.GetDesc(&mut d) };
-                    if frames_key != 0 { state.source_desc = Some((source_raw as usize, frames_key, d)); }
-                    d
-                }
-            };
-            let slot = self.acquire_slot(&mut state, desc.Format, desc.Width, desc.Height)?;
-            (desc, slot)
+            self.acquire_slot(&mut state, desc.Format, desc.Width, desc.Height)?
         };
         let lease = Arc::new(SlotLease { bridge: self.clone(), slot });
         let need_reuse = lease.slot.reuse_value.load(Ordering::Acquire);

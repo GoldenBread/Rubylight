@@ -276,21 +276,32 @@ impl Streaming {
         if probe && self.frame_warp.is_none() { self.hold_for_turn(renderer); }
         let issued_us = session::now_us();
         let blank = self.blank_present(renderer, probe);
+        let egl_in_order = cfg!(target_os = "linux")
+            && probe
+            && !skips
+            && blank.is_none()
+            && self.vrr.sync != present::VrrSync::Blank
+            && self.pacer.mode == PacingMode::Vsync
+            && self.pacer.keeps_every_picture()
+            && self.vrr.held(self.pacer.mode) <= 1;
         // SAFETY: a live renderer.
         let mut latched = false;
-        let (refused, present_failed) = unsafe {
+        let (refused, present_failed, egl_paced) = unsafe {
             let done = if skips { present::present_without_waiting(renderer, self.skipped.hold(), self.plan.display.refresh_hz) } else { present::NoWait::Failed };
             if skips { self.no_wait_present = done != present::NoWait::Failed; }
-            let failed = if let Some(ok) = blank { !ok } else if done != present::NoWait::Failed { false } else {
+            let egl_done = if egl_in_order { present::present_after_egl_swap(renderer, self.plan.display.refresh_hz) } else { None };
+            let failed = if let Some(ok) = blank { !ok } else if let Some(ok) = egl_done { !ok } else if done != present::NoWait::Failed { false } else {
                 // Sync interval 1 shows the picture whole at the next refresh when the wait for
                 // the scan would have cost the next picture its turn (`scan_sync::scan_wait`).
                 latched = latch && present::present_adaptive(renderer, true);
                 !latched && !SDL_RenderPresent(renderer)
             };
-            (done == present::NoWait::Refused, failed)
+            (done == present::NoWait::Refused, failed, egl_done.is_some())
         };
         let device_lost = crate::render_device::after_present_lost(present_failed, &self.plan.device);
-        if device_lost { self.note_render_device_lost(crate::render_device::lost_reason().into()); } else if !refused { self.texture.mark_d3d11_flushed(); #[cfg(target_os = "linux")] if !skips || !self.no_wait_present { phase::note_external_present(); } }
+        if device_lost { self.note_render_device_lost(crate::render_device::lost_reason().into()); } else if !refused { self.texture.mark_d3d11_flushed(); #[cfg(target_os = "linux")] if !egl_paced && (!skips || !self.no_wait_present) { phase::note_external_present(); } }
+        #[cfg(not(target_os = "linux"))]
+        let _ = egl_paced;
         self.flip_guard.last_flip_us = Some(issued_us);
         self.flip_guard.last_flip_latched = latched;
         if latched { self.scan_tally.latched += 1; }
@@ -357,6 +368,7 @@ impl Streaming {
         // Whether the frame is under the racer, and which rows of it are left to draw.
         let mut raced = false;
         let mut rows = None;
+        let mut freshly_uploaded = false;
         if let Some(p) = &mut picture {
             if self.facts.phase_lock && self.pacer.mode == PacingMode::Vsync && self.focused && !self.menu_visible {
                 // With no refreshes to spare a picture has to make the desktop's deadline, which comes before the refresh.
@@ -403,8 +415,14 @@ impl Streaming {
                 }
             }
             // Only a picture on the screen counts as the stream's video (`has_picture`, the
-            // no-video watchdog, `video_started`).
-            if self.scan_out(&p.decoded) || self.texture.upload_take(renderer, &mut p.decoded, rows) {
+            // no-video watchdog, `video_started`). A refused `skipped_picture` was already
+            // uploaded into `self.texture` / `direct_planes` / `held`, so retrying it must not
+            // re-consume its `GpuPlanes` `Lease` or `Picture::Taken`.
+            if p.uploaded {
+                self.unshown.shown();
+            } else if self.scan_out(&p.decoded) || self.texture.upload_take(renderer, &mut p.decoded, rows) {
+                p.uploaded = true;
+                freshly_uploaded = true;
                 self.unshown.shown();
                 self.first_frame = true;
             } else if p.decoded.setup.format & VIDEO_FORMAT_MASK_PYROWAVE != 0 {
@@ -462,7 +480,7 @@ impl Streaming {
         }
         let (flipped, by_kms) = match self.kms_flip(window, &mut draw_overlay, has_picture) {
             Some(flipped) => (flipped, true),
-            None => (self.render_flip(renderer, &mut draw_overlay, has_picture, has_picture, picture.as_ref().map(|p| p.present_us)), false),
+            None => (self.render_flip(renderer, &mut draw_overlay, has_picture, freshly_uploaded, picture.as_ref().map(|p| p.present_us)), false),
         };
         self.needs_redraw = false;
         if flipped.device_lost { return true; }

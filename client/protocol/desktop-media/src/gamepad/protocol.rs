@@ -104,16 +104,32 @@ impl Gamepads {
         if !self.motion {
             return;
         }
-        let sensor = match kind {
-            motion_type::ACCEL => SDL_SENSOR_ACCEL,
-            motion_type::GYRO => SDL_SENSOR_GYRO,
+        let (sensor, label) = match kind {
+            motion_type::ACCEL => (SDL_SENSOR_ACCEL, "accel"),
+            motion_type::GYRO => (SDL_SENSOR_GYRO, "gyro"),
             _ => return,
         };
         for pad in self.sent_as(index) {
             // A pad pinned as Xbox told the host it has no motion sensors.
             let on = rate_hz != 0 && !pad.mapping.drops_motion_and_touchpad();
             // SAFETY: an open gamepad.
-            unsafe { SDL_SetGamepadSensorEnabled(pad.handle, sensor, on) };
+            unsafe {
+                let already = SDL_GamepadSensorEnabled(pad.handle, sensor);
+                // Nightjar #177: if a Bluetooth controller missed its initial enhanced-mode report
+                // right on arrival, SDL3 can still report the sensor enabled and treat another
+                // `true` call as a no-op; cycling `false -> true` forces SDL to resend it.
+                if should_cycle_sensor(on, already) {
+                    let _ = SDL_SetGamepadSensorEnabled(pad.handle, sensor, false);
+                }
+                if !SDL_SetGamepadSensorEnabled(pad.handle, sensor, on) {
+                    eprintln!(
+                        "nightjar: gamepad {} ({}) {label} sensor ({rate_hz} Hz, on={on}) failed: {}",
+                        pad.sent_as,
+                        pad.name,
+                        crate::sdl::error()
+                    );
+                }
+            }
         }
     }
 
@@ -296,4 +312,23 @@ pub(super) fn send_battery(pad: &Pad, state: SDL_PowerState, percent: i32, queue
         BATTERY_PERCENT_UNKNOWN
     };
     let _ = queue.send_controller_battery(pad.sent_as, state_code, percent);
+}
+
+/// Whether `set_motion` should disable before re-enabling a sensor so SDL3 re-sends its
+/// Bluetooth enhanced-mode report on host watchdog retries (Nightjar #177).
+fn should_cycle_sensor(want_on: bool, already_enabled: bool) -> bool {
+    want_on && already_enabled
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_cycle_sensor;
+
+    #[test]
+    fn re_enabling_an_already_enabled_sensor_cycles_off_then_on() {
+        assert!(should_cycle_sensor(true, true));
+        assert!(!should_cycle_sensor(true, false));
+        assert!(!should_cycle_sensor(false, true));
+        assert!(!should_cycle_sensor(false, false));
+    }
 }

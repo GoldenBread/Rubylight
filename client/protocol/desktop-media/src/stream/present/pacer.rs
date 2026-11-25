@@ -209,8 +209,8 @@ pub fn skips_instead_of_waiting(mode: PacingMode, frame_pacing: FramePacing, fra
 }
 
 #[path = "no_wait.rs"]
-mod no_wait;
-pub use no_wait::{present_without_waiting, NoWait};
+pub(super) mod no_wait;
+pub use no_wait::{present_after_egl_swap, present_without_waiting, NoWait};
 
 /// Presents with sync interval 1 when `latched` (the scan wait would cost the next picture its
 /// turn, `scan_sync::ScanWait::Latch`), else with tearing. Returns whether the present succeeded.
@@ -319,6 +319,10 @@ pub struct Pending {
     pub present_us: u64,
     pub hold_us: i64,
     pub late: bool,
+    /// True once `upload_take` / `scan_out` already consumed this picture into `VideoTexture`
+    /// (so retrying a refused `skipped_picture` presents directly without re-uploading a
+    /// consumed `GpuPlanes` `Lease` or `Picture::Taken`).
+    pub uploaded: bool,
 }
 
 pub struct Pacer {
@@ -441,8 +445,27 @@ impl Pacer {
 
     /// Whether pictures are shown in turn, one a refresh, instead of the newest due one: the FPS
     /// limit, the smoothest pacing, and Balanced without Keep only the newest frame.
-    fn keeps_every_picture(&self) -> bool {
+    pub fn keeps_every_picture(&self) -> bool {
         self.paced(FramePacing::CapFps) || self.paced(FramePacing::Smoothness) || (self.paced(FramePacing::Balanced) && !self.drop_late_frames)
+    }
+
+    /// Updates the display's shortest refresh interval (µs) after a display change.
+    #[allow(dead_code)]
+    pub fn set_min_interval_us(&mut self, min_interval_us: i64) {
+        self.min_interval_us = min_interval_us;
+    }
+
+    /// Maximum age of a queued in-order picture before a newer due one replaces it (`take_due`).
+    /// When the display refresh period is near or slower than one stream frame (e.g. 89.89 Hz
+    /// Steam Deck OLED streaming 90 fps, or 59.94 Hz streaming 60 fps), allow one full refresh
+    /// plus 2 ms of scheduling jitter so steady V-Sync pacing never falsely drops frames (#175).
+    pub(super) fn stale_frame_us(&self) -> u64 {
+        let refresh_us = self.min_interval_us.max(0) as u64;
+        if refresh_us > 0 && refresh_us.saturating_mul(100) >= self.frame_us.saturating_mul(98) {
+            refresh_us.max(self.frame_us).saturating_add(2_000)
+        } else {
+            self.frame_us
+        }
     }
 
     /// One frame of the stream.
@@ -490,6 +513,7 @@ impl Pacer {
             present_us,
             hold_us,
             late,
+            uploaded: false,
         });
     }
 
@@ -535,8 +559,9 @@ impl Pacer {
         let keeps_every_picture = self.keeps_every_picture();
         let mut pending = super::super::pipeline::lock(&self.pending);
         if keeps_every_picture {
+            let stale_us = self.stale_frame_us();
             while pending.get(1).is_some_and(|next| next.present_us <= now_us)
-                && pending.front().is_some_and(|p| now_us.saturating_sub(p.decoded.ready_us) > self.frame_us)
+                && pending.front().is_some_and(|p| now_us.saturating_sub(p.decoded.ready_us) > stale_us)
             {
                 pending.pop_front();
                 dropped += 1;

@@ -487,7 +487,7 @@ fn a_pacer_backlog_never_starves_the_decoder() {
     // HostTimes: the presenter's queue is empty and both plane sets wait in the pacer.
     for n in 0..2 {
         let output = gpu.frame(&data, &mut || false).unwrap();
-        crate::stream::pipeline::lock(&shared.pacer_backlog).push_back(Pending { decoded: decoded(output, setup), present_us: n, hold_us: 0, late: false });
+        crate::stream::pipeline::lock(&shared.pacer_backlog).push_back(Pending { decoded: decoded(output, setup), present_us: n, hold_us: 0, late: false, uploaded: false });
     }
     assert!(crate::stream::pipeline::lock(&shared.frames).is_empty());
     let output = gpu.frame(&data, &mut || shared.evict_oldest()).unwrap_or_else(|e| panic!("the backlog starved the decoder: {e:?}"));

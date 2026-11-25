@@ -295,7 +295,7 @@ fn early_and_fallback_frames_are_counted_whatever_the_frame_result() {
 fn evicting_drops_the_oldest_waiting_picture_first_so_the_decoder_is_never_starved() {
     use super::super::present::{tests::decoded, Pending};
     let (_, shared) = decoder();
-    let pending = |present_us| Pending { decoded: decoded(present_us), present_us, hold_us: 0, late: false };
+    let pending = |present_us| Pending { decoded: decoded(present_us), present_us, hold_us: 0, late: false, uploaded: false };
     assert!(!shared.evict_oldest(), "nothing queued: the caller reports NoPlanes");
     // The pacer's pictures are older than those the presenter has not taken yet.
     lock(&shared.pacer_backlog).extend([pending(1), pending(2), pending(3)]);
@@ -326,7 +326,7 @@ fn a_hold_spike_with_host_times_keeps_every_picture_and_the_pool_has_a_surface_f
         let held = max_hold_us.div_ceil(frame_us) + 1;
         lock(&shared.pacer_backlog).extend((0..held).map(|i| {
             let ready_us = 1_000 + i * frame_us;
-            Pending { decoded: decoded(ready_us), present_us: ready_us + max_hold_us, hold_us: max_hold_us as i64, late: false }
+            Pending { decoded: decoded(ready_us), present_us: ready_us + max_hold_us, hold_us: max_hold_us as i64, late: false, uploaded: false }
         }));
         for i in 0..shared.queue_limit - 1 {
             lock(&shared.frames).push_back(decoded(1_000_000 + i as u64));
@@ -367,7 +367,7 @@ fn at_the_pool_limit_with_every_pacer_picture_due_the_oldest_pacer_picture_goes(
     let (_, shared) = decoder();
     // Already due, waiting for the presenter thread to take them.
     lock(&shared.pacer_backlog).extend((1..=3u64).map(|ready_us| {
-        Pending { decoded: decoded(ready_us), present_us: ready_us, hold_us: 0, late: false }
+        Pending { decoded: decoded(ready_us), present_us: ready_us, hold_us: 0, late: false, uploaded: false }
     }));
     lock(&shared.frames).push_back(decoded(10));
     shared.queue_pooled(decoded(11), 4);

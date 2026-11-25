@@ -247,6 +247,24 @@ impl PlanesPass {
         self.sampled_active = ptr::null_mut();
     }
 
+    /// Whether the pass is currently bound to draw a VA-API picture sampled in place.
+    pub fn is_sampling(&self) -> bool {
+        !self.sampled_active.is_null()
+    }
+
+    /// Destroys every cached render state made for VA-API sampled textures (after the caller
+    /// already waited for GPU idle and released those textures across a VA-API pool reopen).
+    ///
+    /// # Safety
+    /// No in-flight GPU work may still reference the render states' textures.
+    pub unsafe fn clear_sampled_states(&mut self) {
+        self.sampled_active = ptr::null_mut();
+        for (_, (state, _)) in self.sampled_states.drain() {
+            // SAFETY: Caller guarantees GPU is idle and `state` was created on `self.renderer`.
+            unsafe { SDL_DestroyGPURenderState(state) };
+        }
+    }
+
     /// The next draws read `textures`, the wrapped images of the VA-API picture sampled last
     /// (`vulkan_video::Planes::sample`), and draws them over all of `target` as `draw_bound` does
     /// (null: `draw_direct` or a later `draw_bound` draws them).

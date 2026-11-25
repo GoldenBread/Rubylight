@@ -3,11 +3,14 @@
 //! VUYA/VUYX/XV30) are imported once on first use and reused across subsequent frames of that
 //! surface without re-exporting DMA-BUFs or recreating Vulkan images.
 
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use super::*;
 use crate::dmabuf::{self, Descriptor, FramesRef, SurfaceCache, CACHE_LIMIT};
+
+/// Monotonic pool generation assigned to each VA-API surface pool in `SurfaceImports`.
+static NEXT_POOL_ID: AtomicU64 = AtomicU64::new(1);
 
 unsafe extern "C" {
     /// libavutil/hwcontext_vulkan.h: an AVVkFrame with its internal part (the lock FFmpeg's
@@ -133,6 +136,13 @@ struct CachedImport {
     sampled: bool,
     /// The picture's size, for the layers' extents.
     size: (u32, u32),
+    /// Generation of the VA-API surface pool this import belongs to, so `Planes` evicts stale
+    /// wrapped textures across pool reopens at the same resolution.
+    pool_id: u64,
+    /// Active `Lent` mapped frames currently holding this `AVVkFrame` across threads.
+    /// `SurfaceImports::map` reuses a cached import only when `lent == 0` (avoiding a data race
+    /// if FFmpeg emits a duplicate frame of the same `VASurfaceID`, e.g. AV1 `show_existing_frame`).
+    lent: AtomicUsize,
 }
 
 // SAFETY: The frame is used by one picture at a time: a surface comes back from the decoder,
@@ -159,6 +169,7 @@ impl CachedImport {
         ten_bit: bool,
         interleaved: bool,
         sample: bool,
+        pool_id: u64,
     ) -> Result<Self, String> {
         // SAFETY: Caller guarantees `descriptor`'s file descriptors are open and `vulkan` is live.
         unsafe {
@@ -188,7 +199,14 @@ impl CachedImport {
                 return Err("FFmpeg cannot allocate a Vulkan frame".into());
             }
             // From here on, `Drop` destroys what was made if a later step fails.
-            let import = Self { vulkan: vulkan.clone(), frame, sampled, size: (width, height) };
+            let import = Self {
+                vulkan: vulkan.clone(),
+                frame,
+                sampled,
+                size: (width, height),
+                pool_id,
+                lent: AtomicUsize::new(0),
+            };
             let device = &vulkan.device;
             let mut vkf = frame_fields(frame);
             *vkf.tiling = vk::ImageTiling::DRM_FORMAT_MODIFIER_EXT;
@@ -371,6 +389,11 @@ impl ImportRef {
     pub fn key(&self) -> usize {
         self.0.frame as usize
     }
+
+    /// The VA-API surface pool generation this import belongs to.
+    pub fn pool_id(&self) -> u64 {
+        self.0.pool_id
+    }
 }
 
 /// The kept import `frame`, a Vulkan frame mapped from VAAPI, shows (none for any other frame).
@@ -400,6 +423,9 @@ impl Drop for Lent {
             if !self.import.vulkan.wait(&frame_now(self.import.frame)) {
                 note("a mapped VAAPI picture's copy did not finish; its surface goes back to the decoder anyway");
             }
+            // Release after `frame_now` and semaphore wait finish so `SurfaceImports::map` never
+            // mutates `import.frame` concurrently with this drop.
+            self.import.lent.fetch_sub(1, Ordering::Release);
             av_frame_free(&mut self.source);
         }
     }
@@ -415,6 +441,8 @@ unsafe extern "C" fn give_back(opaque: *mut c_void, _data: *mut u8) {
 pub struct SurfaceImports {
     vulkan: Arc<ImportDevice>,
     cache: SurfaceCache<Arc<CachedImport>>,
+    /// Monotonic generation ID of the current surface pool.
+    pool_id: u64,
     /// The frames context whose surfaces the cache holds imports of, kept alive with it so
     /// no other pool takes its address (the cache's key).
     _pool: FramesRef,
@@ -442,6 +470,7 @@ impl SurfaceImports {
                 Some(Self {
                     vulkan: Arc::new(vulkan),
                     cache: SurfaceCache::new(CACHE_LIMIT),
+                    pool_id: NEXT_POOL_ID.fetch_add(1, Ordering::Relaxed),
                     _pool: FramesRef::none(),
                     decline: Arc::new(AtomicBool::new(false)),
                     sample: sample_switched_on(std::env::var_os(SAMPLE_ENVIRONMENT).as_deref()),
@@ -481,9 +510,28 @@ impl SurfaceImports {
             drop(gone);
             if changed {
                 self._pool = FramesRef::of(export.frames());
+                self.pool_id = NEXT_POOL_ID.fetch_add(1, Ordering::Relaxed);
             }
             let (import, cached) = match self.cache.get(export.surface()) {
-                Some(import) => (import.clone(), true),
+                Some(import) if can_reuse_cached_import(import.lent.load(Ordering::Acquire)) => {
+                    (import.clone(), true)
+                }
+                Some(_) => {
+                    // Duplicate live reference to the same VA-API surface (e.g. AV1
+                    // `show_existing_frame`): allocate an uncached copy-only import instead of
+                    // mutating the still-lent `AVVkFrame` across threads.
+                    let import = Arc::new(CachedImport::new(
+                        &self.vulkan,
+                        export.descriptor()?,
+                        generation.width,
+                        generation.height,
+                        ten_bit,
+                        interleaved,
+                        false,
+                        self.pool_id,
+                    )?);
+                    (import, false)
+                }
                 None => {
                     let import = Arc::new(CachedImport::new(
                         &self.vulkan,
@@ -493,6 +541,7 @@ impl SurfaceImports {
                         ten_bit,
                         interleaved,
                         self.sample,
+                        self.pool_id,
                     )?);
                     registry().lock().unwrap_or_else(|e| e.into_inner()).insert(import.frame as usize, Arc::downgrade(&import));
                     drop(self.cache.insert(export.surface(), import.clone()));
@@ -501,7 +550,7 @@ impl SurfaceImports {
             };
             // The exported descriptors close here; the imports hold their own.
             drop(export);
-            // No other picture uses the import (`CachedImport`'s Send).
+            // Exclusive: either newly created or verified `lent == 0` with Acquire ordering.
             ready_for_reuse(&mut frame_fields(import.frame));
             lend(target, source, frames, import)?;
             Ok(cached)
@@ -522,6 +571,7 @@ unsafe fn lend(target: *mut AVFrame, source: *const AVFrame, frames: *mut AVBuff
             return Err("the VAAPI picture cannot be referenced (out of memory)".into());
         }
         let vkf = import.frame;
+        import.lent.fetch_add(1, Ordering::AcqRel);
         let opaque = Box::into_raw(Box::new(Lent { source: held, import }));
         let buffer = av_buffer_create(vkf.cast(), StructLayout::linked().frame_size(), Some(give_back), opaque.cast(), 0);
         if buffer.is_null() {

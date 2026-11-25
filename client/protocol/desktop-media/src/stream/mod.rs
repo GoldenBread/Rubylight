@@ -219,7 +219,7 @@ pub struct Streaming {
     #[cfg(target_os = "linux")]
     kms_last_flip_us: Option<u64>,
     #[cfg(target_os = "linux")]
-    phase_source_logged: Option<&'static str>,
+    phase_source_logged: Option<(&'static str, u64)>,
     #[cfg(target_os = "linux")]
     phase_missing_logged: bool,
     #[cfg(target_os = "linux")]
@@ -623,8 +623,13 @@ impl Streaming {
                 match resolved {
                     Some(((_, period_ns), source)) => {
                         self.phase_first_miss_us = None;
-                        if self.phase_source_logged != Some(source.label()) {
-                            self.phase_source_logged = Some(source.label());
+                        const SOURCE_LOG_COOLDOWN_US: u64 = 30_000_000;
+                        let should_log = match self.phase_source_logged {
+                            None => true,
+                            Some((prev, at_us)) => prev != source.label() && now_us.saturating_sub(at_us) >= SOURCE_LOG_COOLDOWN_US,
+                        };
+                        if should_log {
+                            self.phase_source_logged = Some((source.label(), now_us));
                             self.phase_missing_logged = false;
                             eprintln!("nightjar: phase lock: display timing from {} ({:.2} ms refresh)", source.label(), period_ns as f64 / 1e6);
                         }

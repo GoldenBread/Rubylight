@@ -40,6 +40,10 @@ pub(super) struct Sampling {
     slots: Vec<Slot>,
     state: Sampled<HeldFrame>,
     wrapped: HashMap<usize, Wrapped>,
+    /// Pool generation ID of the entries currently in `wrapped`; a new pool evicts old entries.
+    pool_id: Option<u64>,
+    /// True after `evict_wrapped` released old textures so `PlanesPass` clears `sampled_states`.
+    wrapped_evicted: bool,
     renderer: *mut SDL_Renderer,
     /// The frames context and frame locks of the last picture shown, for releasing it at the end.
     locks: Option<(*mut AVHWFramesContext, FrameLock, FrameLock)>,
@@ -56,6 +60,8 @@ impl Sampling {
             slots: Vec::new(),
             state: Sampled::new(SLOTS),
             wrapped: HashMap::new(),
+            pool_id: None,
+            wrapped_evicted: false,
             renderer: ptr::null_mut(),
             locks: None,
             off: false,
@@ -227,8 +233,7 @@ impl SampleGpu for Queue<'_> {
             return Err("the picture to release was never acquired".into());
         }
         if old_frame == self.incoming {
-            self.acquire(acquire_slot)?;
-            return self.release(release_slot);
+            return swap_same_frame(self, acquire_slot, release_slot);
         }
         // SAFETY: Both `incoming` and `old_frame` are live frames held by the presenter; lock in
         // pointer order to avoid any AB-BA inversion.
@@ -326,6 +331,16 @@ impl Planes {
             let (Some(lock_frame), Some(unlock_frame)) = (vulkan_frames.lock_frame, vulkan_frames.unlock_frame) else {
                 return Ok(None);
             };
+            if self.sampling.as_ref().is_some_and(|s| should_evict_pool(s.pool_id, import.pool_id()))
+                && !self.evict_wrapped(import.pool_id())
+            {
+                return Ok(None);
+            }
+            if let Some(sampling) = self.sampling.as_mut()
+                && sampling.pool_id.is_none()
+            {
+                sampling.pool_id = Some(import.pool_id());
+            }
             let Some(textures) = self.wrap(&import) else {
                 return Ok(None);
             };
@@ -448,6 +463,50 @@ impl Planes {
         }
         self.sampling.as_mut()?.wrapped.insert(key, Wrapped { _import: import.clone(), textures });
         Some(textures)
+    }
+
+    /// Whether `sample()` evicted an earlier VA-API pool's wrapped textures, so `PlanesPass` must
+    /// destroy its cached `sampled_states`. Cleared when read.
+    pub fn take_wrapped_evicted(&mut self) -> bool {
+        self.sampling.as_mut().is_some_and(|s| std::mem::take(&mut s.wrapped_evicted))
+    }
+
+    /// Evicts wrapped textures belonging to a retired VA-API surface pool after releasing any
+    /// sampled picture and waiting for the GPU to finish reading them.
+    unsafe fn evict_wrapped(&mut self, next_pool_id: u64) -> bool {
+        // SAFETY: Caller guarantees `self.gpu` and `self.device` are live on the presenting thread.
+        unsafe {
+            if !self.end_sampling() {
+                if let Some(sampling) = self.sampling.as_mut() {
+                    sampling.off = true;
+                }
+                return false;
+            }
+            let old = match self.sampling.as_mut() {
+                Some(sampling) => std::mem::take(&mut sampling.wrapped),
+                None => return false,
+            };
+            for wrapped in old.values() {
+                for texture in wrapped.textures {
+                    SDL_ReleaseGPUTexture(self.gpu, texture);
+                }
+            }
+            let idle = SDL_WaitForGPUIdle(self.gpu);
+            if let Some(sampling) = self.sampling.as_mut() {
+                sampling.wrapped_evicted = true;
+                sampling.pool_id = Some(next_pool_id);
+                if !idle {
+                    sampling.off = true;
+                }
+            }
+            if !idle {
+                note("the GPU did not go idle while retiring VA-API wrapped textures; keeping their imports allocated");
+                std::mem::forget(old);
+                return false;
+            }
+            drop(old);
+            true
+        }
     }
 
     /// Gives the shown picture back to VA-API behind the renderer's draws so far and waits for

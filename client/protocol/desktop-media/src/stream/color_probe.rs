@@ -151,12 +151,25 @@ pub fn probe_base(hardware: media::Hardware, wanted: u32, budget: &mut ProbeBudg
     let probe = media::ProbeHardware::isolate(hardware);
     // VAAPI on the GPU the stream will decode on.
     let vaapi_node = media::vaapi_node(hardware);
+    let mut remaining_v4l2 = BASE_FIXTURES
+        .iter()
+        .filter(|&&(format, codec, ..)| format & wanted != 0 && v4l2_capable(codec))
+        .count();
     for (format, codec, name, data) in BASE_FIXTURES {
         if format & wanted == 0 {
             continue;
         }
         let pictures = fixture_pictures(format, vaapi_node);
-        match decode(probe.hardware, pictures, codec, data, budget) {
+        let mut format_budget = budget.for_format(if v4l2_capable(codec) {
+            let share = remaining_v4l2.max(1);
+            remaining_v4l2 = remaining_v4l2.saturating_sub(1);
+            share
+        } else {
+            1
+        });
+        let result = decode(probe.hardware, pictures, codec, data, &mut format_budget);
+        budget.reclaim(format_budget);
+        match result {
             Ok((_, backend)) => {
                 eprintln!("nightjar: decoder probe: {name} {} ok", backend.label());
                 base.decodable |= format;
@@ -189,13 +202,26 @@ pub fn probe(
     let probe = media::ProbeHardware::isolate(hardware);
     // VAAPI on the GPU the stream will decode on.
     let vaapi_node = media::vaapi_node(hardware);
+    let mut remaining_v4l2 = FIXTURES
+        .iter()
+        .filter(|&&(format, codec, ..)| format & wanted != 0 && v4l2_capable(codec))
+        .count();
     for (format, codec, name, data) in FIXTURES {
         if format & wanted == 0 {
             continue;
         }
         let yuv444 = format & VIDEO_FORMAT_MASK_YUV444 != 0;
         let pictures = fixture_pictures(format, vaapi_node);
-        match decode(probe.hardware, pictures, codec, data, budget)
+        let mut format_budget = budget.for_format(if v4l2_capable(codec) {
+            let share = remaining_v4l2.max(1);
+            remaining_v4l2 = remaining_v4l2.saturating_sub(1);
+            share
+        } else {
+            1
+        });
+        let result = decode(probe.hardware, pictures, codec, data, &mut format_budget);
+        budget.reclaim(format_budget);
+        match result
             .and_then(|(info, backend)| {
                 drawable(&info, yuv444, &planes)?;
                 keeps_depth(&info, pictures.ten_bit)?;
@@ -296,6 +322,12 @@ fn decode(
     }
 }
 
+/// Whether FFmpeg's V4L2 M2M backend can decode `codec` (AV1 has no V4L2 M2M decoder in our
+/// FFmpeg builds, so AV1 fixtures do not dilute HEVC/H.264 per-format V4L2 probe shares).
+fn v4l2_capable(codec: media::Codec) -> bool {
+    matches!(codec, media::Codec::H264 | media::Codec::Hevc)
+}
+
 /// How many times a [V4L2 M2M](media::Hardware::V4l2m2m) decoder that made no picture of a
 /// fixture is opened anew ([`decode`]): one, so a stream's probes cannot hang on a device.
 const V4L2_PROBE_RETRIES: usize = 1;
@@ -315,19 +347,49 @@ const V4L2_PROBE_BUDGET: std::time::Duration = std::time::Duration::from_millis(
 #[derive(Clone, Copy, Debug)]
 pub struct ProbeBudget {
     left: std::time::Duration,
+    /// Per-attempt cap for a sliced format budget so a single hung attempt still leaves room for
+    /// that format's retry within its isolated share (`for_format`).
+    attempt_cap: std::time::Duration,
 }
 
 impl Default for ProbeBudget {
     fn default() -> Self {
-        Self { left: V4L2_PROBE_BUDGET }
+        Self { left: V4L2_PROBE_BUDGET, attempt_cap: ASYNC_PROBE_WAIT }
     }
 }
 
 impl ProbeBudget {
-    /// How long to wait for a picture of this attempt: what is left, at most [`ASYNC_PROBE_WAIT`],
-    /// at least [`ASYNC_PROBE_FLOOR`].
+    /// Carves out an isolated per-format share from `self` for one of `remaining_formats` V4L2
+    /// fixtures (Nightjar #77), so an earlier hanging format cannot exhaust the shared budget and
+    /// deny later formats (such as HEVC Main10) their own wait and retry. Unspent time is returned
+    /// via [`Self::reclaim`].
+    fn for_format(&mut self, remaining_formats: usize) -> Self {
+        let count = remaining_formats.max(1) as u32;
+        let share = if count == 1 {
+            self.left
+        } else {
+            let equal = self.left / count;
+            let min_with_retry = ASYNC_PROBE_FLOOR + V4L2_PROBE_SETTLE + ASYNC_PROBE_FLOOR;
+            equal.max(min_with_retry).min(self.left)
+        };
+        self.left = self.left.saturating_sub(share);
+        let attempt_cap = if share > V4L2_PROBE_SETTLE + ASYNC_PROBE_FLOOR {
+            (share - V4L2_PROBE_SETTLE - ASYNC_PROBE_FLOOR).clamp(ASYNC_PROBE_FLOOR, ASYNC_PROBE_WAIT)
+        } else {
+            ASYNC_PROBE_WAIT
+        };
+        Self { left: share, attempt_cap }
+    }
+
+    /// Returns any unspent portion of a per-format slice to the shared start budget.
+    fn reclaim(&mut self, slice: Self) {
+        self.left = (self.left + slice.left).min(V4L2_PROBE_BUDGET);
+    }
+
+    /// How long to wait for a picture of this attempt: what is left, at most [`ASYNC_PROBE_WAIT`]
+    /// (or the format slice's `attempt_cap`), at least [`ASYNC_PROBE_FLOOR`].
     fn wait(&self) -> std::time::Duration {
-        self.left.min(ASYNC_PROBE_WAIT).max(ASYNC_PROBE_FLOOR)
+        self.left.min(self.attempt_cap).max(ASYNC_PROBE_FLOOR)
     }
 
     /// An attempt waited `waited` of the budget.
@@ -406,35 +468,93 @@ const ASYNC_PROBE_FLOOR: std::time::Duration = std::time::Duration::from_millis(
 /// How often [`decode_with`] asks an asynchronous decoder again for the picture.
 const ASYNC_PROBE_POLL: std::time::Duration = std::time::Duration::from_millis(5);
 
+/// Duplicate IDR frames sent to an asynchronous decoder (V4L2 M2M) before `drain()` (Nightjar
+/// #77: Qualcomm Iris Main10 firmware emits 0 pictures from a lone frame + immediate drain even
+/// though multi-frame Main10 streams decode P010 cleanly).
+const ASYNC_PROBE_FRAMES: usize = 3;
+
+/// Feeds up to `frames` IDR copies (`0..frames` PTS) to an asynchronous decoder, returning early
+/// if a picture arrives before `drain()`, then drains. Errors on copies after the first stop
+/// extra copies cleanly without aborting the probe.
+fn feed_async_probe<D, F>(
+    decoder: &mut D,
+    frames: usize,
+    mut send: impl FnMut(&mut D, i64) -> i32,
+    mut drain: impl FnMut(&mut D) -> i32,
+    mut receive: impl FnMut(&mut D) -> Option<Result<F, ()>>,
+) -> Result<Option<F>, (bool, i32)> {
+    let first = send(decoder, 0);
+    if first < 0 {
+        return Err((false, first));
+    }
+    for pts in 1..frames {
+        match receive(decoder) {
+            Some(Ok(frame)) => return Ok(Some(frame)),
+            Some(Err(())) => return Ok(None),
+            None => {}
+        }
+        if send(decoder, pts as i64) < 0 {
+            break;
+        }
+    }
+    let status = drain(decoder);
+    if status < 0 {
+        return Err((true, status));
+    }
+    Ok(None)
+}
+
 /// Decodes the fixture `data` with `decoder`, required to stay its backend.
 fn decode_with(decoder: &mut media::VideoDecoder, data: &[u8], budget: &mut ProbeBudget) -> Result<media::FrameInfo, String> {
+    if decoder.asynchronous() {
+        let now = std::time::Instant::now();
+        let early = feed_async_probe(
+            decoder,
+            ASYNC_PROBE_FRAMES,
+            |dec, pts| dec.send(data, pts),
+            |dec| dec.drain(),
+            |dec| match dec.receive() {
+                media::Received::Frame(frame) => Some(Ok(frame)),
+                media::Received::Error => Some(Err(())),
+                media::Received::None => None,
+            },
+        )
+        .map_err(|(draining, status)| {
+            if draining {
+                format!("the decoder refused the end of input ({status}: {})", media::error(status))
+            } else {
+                format!("the decoder rejected the fixture ({status}: {})", media::error(status))
+            }
+        })?;
+        if let Some(frame) = early {
+            budget.spent(now.elapsed());
+            return if decoder.refused() {
+                Err("the picture came out in memory, not the hardware decoder's".into())
+            } else {
+                Ok(frame.info())
+            };
+        }
+        let deadline = now + budget.wait();
+        let mut received = decoder.receive();
+        while matches!(received, media::Received::None) && std::time::Instant::now() < deadline {
+            std::thread::sleep(ASYNC_PROBE_POLL);
+            received = decoder.receive();
+        }
+        budget.spent(now.elapsed());
+        return match received {
+            media::Received::Frame(_) if decoder.refused() => {
+                Err("the picture came out in memory, not the hardware decoder's".into())
+            }
+            media::Received::Frame(frame) => Ok(frame.info()),
+            media::Received::None => Err("the decoder made no picture of the fixture".into()),
+            media::Received::Error => Err("the decoder failed on the fixture".into()),
+        };
+    }
     let status = decoder.send(data, 0);
     if status < 0 {
         return Err(format!("the decoder rejected the fixture ({status}: {})", media::error(status)));
     }
-    // An asynchronous decoder (V4L2 M2M) holds a lone frame until it is told the input ended,
-    // then says "no picture yet" while the driver decodes.
-    let deadline = if decoder.asynchronous() {
-        let status = decoder.drain();
-        if status < 0 {
-            return Err(format!("the decoder refused the end of input ({status}: {})", media::error(status)));
-        }
-        let now = std::time::Instant::now();
-        Some((now + budget.wait(), now))
-    } else {
-        None
-    };
-    let mut received = decoder.receive();
-    while matches!(received, media::Received::None)
-        && deadline.is_some_and(|(deadline, _)| std::time::Instant::now() < deadline)
-    {
-        std::thread::sleep(ASYNC_PROBE_POLL);
-        received = decoder.receive();
-    }
-    if let Some((_, started)) = deadline {
-        budget.spent(started.elapsed());
-    }
-    match received {
+    match decoder.receive() {
         media::Received::Frame(_) if decoder.refused() => {
             Err("the picture came out in memory, not the hardware decoder's".into())
         }

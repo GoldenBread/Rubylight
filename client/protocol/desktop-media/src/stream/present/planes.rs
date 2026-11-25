@@ -90,13 +90,24 @@ impl VideoTexture {
         let parameters = [setup.width as u32, setup.height as u32, setup.width as u32, setup.height as u32, 0, 3, flags, white_level.to_bits()];
         if self.pyrowave_format.is_some_and(|previous| previous != parameters) { self.destroy(); }
         if !self.ensure(renderer, SDL_PIXELFORMAT_RGBA64_FLOAT, setup.width, setup.height, SDL_COLORSPACE_SRGB_LINEAR, white_level) { return false; }
-        // A pass made for the other way of reading the planes (another decoder's) goes; its held
-        // set goes back to that decoder's pool.
-        if self.planes.as_ref().is_some_and(|pass| !pass.suits(lease.planes())) { self.planes = None; }
+        // A pass made for the other way of reading the planes (another decoder's or another mode)
+        // goes; its held set goes back to that decoder's pool.
+        if planes_mode_mismatch(self.planes_mode, PlanesMode::PyroWave)
+            || self.planes.as_ref().is_some_and(|pass| !pass.suits(lease.planes()))
+        {
+            self.planes = None;
+            self.vulkan = None;
+            self.planes_mode = None;
+            self.planes_invalidated = true;
+        }
         if self.planes.is_none() {
             // SAFETY: The live renderer belongs to the presenting thread.
             match unsafe { super::super::planes_gpu::PlanesPass::for_planes(renderer, lease.planes()) } {
-                Ok(pass) => { self.planes = Some(pass); self.pyrowave_format = Some(parameters); }
+                Ok(pass) => {
+                    self.planes = Some(pass);
+                    self.planes_mode = Some(PlanesMode::PyroWave);
+                    self.pyrowave_format = Some(parameters);
+                }
                 Err(error) => { self.failure = Some(format!("PyroWave GPU decoding cannot draw its planes: {error}")); return false; }
             }
         }
@@ -204,6 +215,13 @@ impl VideoTexture {
         };
         #[cfg(unix)]
         let drawn = {
+            let wanted_mode = if semi { PlanesMode::SemiPlanar } else { PlanesMode::Planar };
+            if planes_mode_mismatch(self.planes_mode, wanted_mode) {
+                self.planes = None;
+                self.vulkan = None;
+                self.planes_mode = None;
+                self.planes_invalidated = true;
+            }
             if self.planes.is_none() {
                 // SAFETY: The live renderer belongs to the presenting thread.
                 let pass = if semi {
@@ -212,7 +230,11 @@ impl VideoTexture {
                     unsafe { super::super::planes_gpu::PlanesPass::for_frames(renderer, layout) }
                 };
                 match pass {
-                    Ok(pass) => { self.planes = Some(pass); self.pyrowave_format = Some(parameters); }
+                    Ok(pass) => {
+                        self.planes = Some(pass);
+                        self.planes_mode = Some(wanted_mode);
+                        self.pyrowave_format = Some(parameters);
+                    }
                     Err(error) => { self.fail(format!("the plane shader pass cannot be made: {error}"), format!("the plane shader pass cannot be made: {error}")); return false; }
                 }
             }
@@ -263,6 +285,11 @@ impl VideoTexture {
     pub(super) fn upload_vulkan(&mut self, renderer: *mut SDL_Renderer, frame: &media::Frame, info: &FrameInfo, layout: media::PlanarLayout, white_level: f32) -> bool {
         let Some(parameters) = self.planar_target(renderer, info, layout, white_level, true) else { return false };
         let what = || format!("{}x{} {}-bit Vulkan video picture", layout.width, layout.height, if layout.ten_bit { 10 } else { 8 });
+        if planes_mode_mismatch(self.planes_mode, PlanesMode::Vulkan) {
+            self.planes = None;
+            self.planes_mode = None;
+            self.planes_invalidated = true;
+        }
         if self.vulkan.is_none() {
             let device = crate::sdl::renderer_pointer(renderer, SDL_PROP_RENDERER_GPU_DEVICE_POINTER);
             // SAFETY: The renderer's live GPU device, which outlives the texture.
@@ -281,34 +308,57 @@ impl VideoTexture {
             // SAFETY: The live renderer of the presenting thread; the textures live in `vulkan`,
             // which is dropped after the pass.
             match unsafe { super::super::planes_gpu::PlanesPass::for_vulkan(renderer, textures) } {
-                Ok(pass) => { self.planes = Some(pass); self.pyrowave_format = Some(parameters); }
+                Ok(pass) => {
+                    self.planes = Some(pass);
+                    self.planes_mode = Some(PlanesMode::Vulkan);
+                    self.pyrowave_format = Some(parameters);
+                }
                 Err(error) => { self.fail(format!("the plane shader pass cannot be made: {error}"), format!("the plane shader pass cannot be made: {error}")); return false; }
             }
         }
         let texture = self.planes_target();
         let (Some(planes), Some(pass)) = (self.vulkan.as_mut(), self.planes.as_mut()) else { return false };
+        let had_sampled = pass.is_sampling();
         // SAFETY: A live Vulkan frame of the decoder on this renderer's device (`device_context`);
         // planes and pass made on this renderer for pictures shaped like it (a change of shape
         // changes the parameters, which destroys them).
-        let drawn = unsafe {
+        let (drawn, invalidated) = unsafe {
             // A VA-API picture is sampled where VA-API wrote it when it can be (the route is logged
             // once); any other, or a surface the driver does not sample, is copied.
             #[cfg(target_os = "linux")]
             let sampled = planes.sample(renderer, frame.raw.as_ptr());
             #[cfg(not(target_os = "linux"))]
             let sampled: Result<Option<[*mut SDL_GPUTexture; 2]>, String> = Ok(None);
-            match sampled {
-                Ok(Some(textures)) => pass.draw_sampled_textures(renderer, texture, textures, &parameters),
-                Ok(None) => {
-                    pass.use_copy();
-                    planes.copy(renderer, frame.raw.as_ptr()).and_then(|()| pass.draw_bound(renderer, texture, &parameters))
-                }
-                Err(error) => Err(error),
+            #[cfg(target_os = "linux")]
+            let evicted = planes.take_wrapped_evicted();
+            #[cfg(not(target_os = "linux"))]
+            let evicted = false;
+            if evicted {
+                pass.clear_sampled_states();
             }
+            let drawn = match sampled {
+                Ok(Some(textures)) => pass.draw_sampled_textures(renderer, texture, textures, &parameters),
+                Ok(None) => planes.copy(renderer, frame.raw.as_ptr()).and_then(|()| {
+                    pass.use_copy();
+                    pass.draw_bound(renderer, texture, &parameters)
+                }),
+                Err(error) => Err(error),
+            };
+            let invalidated = evicted || had_sampled || matches!(sampled, Ok(Some(_)));
+            if drawn.is_err() && invalidated {
+                pass.use_copy();
+            }
+            (drawn, invalidated)
         };
         match drawn {
             Ok(()) => { self.planes_drawn(texture, parameters); true }
-            Err(error) => { self.fail(format!("drawing a {} failed: {error}", what()), error); false }
+            Err(error) => {
+                if invalidated {
+                    self.planes_invalidated = true;
+                }
+                self.fail(format!("drawing a {} failed: {error}", what()), error);
+                false
+            }
         }
     }
 

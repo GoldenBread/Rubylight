@@ -101,7 +101,7 @@ use device::{
 #[cfg(target_os = "linux")]
 use sample_state::{HeldFrame, COPY_WAIT, SLOTS};
 #[cfg(any(target_os = "linux", test))]
-use sample_state::acquire;
+use sample_state::{acquire, can_reuse_cached_import, should_evict_pool, swap_same_frame};
 #[cfg(test)]
 use sample_state::{after_copy, release, Held};
 #[cfg(target_os = "linux")]

@@ -382,3 +382,27 @@ fn a_stream_faster_than_the_hold_shows_one_picture_a_turn_in_the_renderers_order
         assert!(*ready < presents[at - 1], "a picture waiting from before the previous present took the next turn: {shown:?} at {presents:?}");
     }
 }
+
+/// Nightjar #175: Steam Deck OLED runs at 89.89 Hz (11_125 us refresh) while a 90 fps stream has
+/// `frame_us(90) == 11_111 us`. In Smoothness mode, a frame waiting one normal V-Sync refresh plus
+/// minor scheduling jitter must not be falsely dropped as stale; a genuinely stalled frame still is.
+#[test]
+fn smoothness_on_fractional_panel_does_not_falsely_drop_one_refresh_old_frames() {
+    // 89.89 Hz panel -> min_interval_us = 11_125 us, 90 fps stream -> frame_us = 11_111 us.
+    let mut pacer = Pacer::new(PacingMode::Vsync, 11_125).with_frame_pacing(FramePacing::Smoothness, 90);
+    pacer.accept(decoded(10_000));
+    pacer.accept(decoded(21_111));
+    // 11_500 us old (> 11_111 us frame_us, <= 11_125 + 2_000 us stale_frame_us): kept in order!
+    let (picture, dropped) = pacer.take_due(21_500);
+    assert_eq!((picture.unwrap().decoded.ready_us, dropped), (10_000, 0));
+    // Genuinely stalled frame (> 13_125 us old) with a newer frame due is still dropped.
+    pacer.accept(decoded(32_222));
+    let (picture, dropped) = pacer.take_due(35_000);
+    assert_eq!((picture.unwrap().decoded.ready_us, dropped), (32_222, 1));
+    // 59.94 Hz panel (16_683 us) @ 60 fps (16_666 us): same protection.
+    let mut ntsc = Pacer::new(PacingMode::Vsync, 16_683).with_frame_pacing(FramePacing::Smoothness, 60);
+    ntsc.accept(decoded(1_000));
+    ntsc.accept(decoded(17_666));
+    let (picture, dropped) = ntsc.take_due(18_200);
+    assert_eq!((picture.unwrap().decoded.ready_us, dropped), (1_000, 0));
+}

@@ -199,6 +199,83 @@ pub unsafe fn present_without_waiting(
     }
 }
 
+/// Upper bound on how long [`present_after_egl_swap`] waits for an in-flight DRI3 swap to retire
+/// before presenting anyway (two refreshes, clamped to 20–100 ms so a stalled compositor cannot
+/// hang the render loop).
+#[cfg_attr(not(any(target_os = "linux", test)), allow(dead_code))]
+pub(crate) fn egl_in_order_wait_cap(refresh_hz: f32) -> std::time::Duration {
+    let us = if refresh_hz.is_finite() && refresh_hz > 1.0 {
+        ((2_000_000.0 / f64::from(refresh_hz)).round() as u64).clamp(20_000, 100_000)
+    } else {
+        40_000
+    };
+    std::time::Duration::from_micros(us)
+}
+
+/// In-order V-Sync present on Linux X11 EGL (Smoothness / FPS cap / Balanced-no-drop): waits for
+/// the previous DRI3 swap (`sbc`) to complete before calling `SDL_RenderPresent` so Mesa DRI3 /
+/// gamescope stays capped at 1 frame in flight (~11 ms instead of ~22 ms) without skipping any
+/// picture (Nightjar #175). Returns `None` outside X11 EGL or when `sbc` is not advancing so the
+/// caller falls through to `SDL_RenderPresent`.
+///
+/// # Safety
+/// `renderer` is the live SDL renderer of this thread.
+#[cfg(target_os = "linux")]
+pub unsafe fn present_after_egl_swap(
+    renderer: *mut SDL_Renderer,
+    refresh_hz: f32,
+) -> Option<bool> {
+    use crate::stream::phase;
+    let sample = phase::egl_sync_sample(renderer, refresh_hz)?;
+    let mut in_flight = phase::egl_swap_check(sample.surface, sample.sbc)?;
+    // SAFETY: caller guarantees `renderer` is the live renderer of this thread.
+    if !unsafe { SDL_FlushRenderer(renderer) } {
+        return None;
+    }
+    let cap = egl_in_order_wait_cap(refresh_hz);
+    let begun = std::time::Instant::now();
+    let mut last = sample;
+    while in_flight {
+        let remaining = cap.saturating_sub(begun.elapsed());
+        if remaining.is_zero() {
+            break;
+        }
+        let now_us = nightjar_core::session::now_us();
+        let sync_us = last.ust_session_us.max(1);
+        let sleep_ns = no_wait_sleep_ns(remaining, refresh_hz, Some(sync_us), now_us, 1_000_000);
+        if sleep_ns > 0 {
+            // SAFETY: plain timer sleep on the render thread.
+            unsafe { SDL_DelayNS(sleep_ns) };
+        }
+        let Some(next) = phase::egl_sync_sample(renderer, refresh_hz) else {
+            return None;
+        };
+        last = next;
+        let Some(busy) = phase::egl_swap_check(last.surface, last.sbc) else {
+            return None;
+        };
+        in_flight = busy;
+    }
+    // SAFETY: caller guarantees `renderer` is the live renderer of this thread.
+    let ok = unsafe { SDL_RenderPresent(renderer) };
+    if ok {
+        phase::egl_swap_presented(last.surface, last.sbc);
+    }
+    Some(ok)
+}
+
+/// Only Linux X11 EGL has SBC-paced in-order presents.
+///
+/// # Safety
+/// Nothing to uphold here; the signature matches the Linux one.
+#[cfg(not(target_os = "linux"))]
+pub unsafe fn present_after_egl_swap(
+    _renderer: *mut SDL_Renderer,
+    _refresh_hz: f32,
+) -> Option<bool> {
+    None
+}
+
 /// Only Windows and Linux X11 EGL have this present: SDL's own takes over elsewhere.
 ///
 /// # Safety

@@ -322,6 +322,103 @@ fn the_v4l2_probe_time_of_a_start_is_bounded_across_formats() {
     assert_eq!(slow.wait(), Duration::from_millis(600));
 }
 
+/// Nightjar #77: an earlier hanging V4L2 format (e.g. HEVC 8-bit) must not exhaust the entire
+/// shared start budget and deprive HEVC Main10 of its own wait and retry; fast successes return
+/// their unspent slice to the parent budget.
+#[test]
+fn per_format_v4l2_budget_isolates_later_formats_and_reclaims_unspent_time() {
+    use std::time::Duration;
+    let mut shared = ProbeBudget::default();
+    // Format 1 of 2 hangs completely across both attempts.
+    let mut first = shared.for_format(2);
+    let w1 = first.wait();
+    assert!(w1 >= ASYNC_PROBE_FLOOR && w1 < V4L2_PROBE_BUDGET);
+    first.spent(w1);
+    assert!(first.retry(), "format 1 gets its own retry inside its isolated share");
+    let w1_retry = first.wait();
+    first.spent(w1_retry);
+    shared.reclaim(first);
+    // Format 2 of 2 STILL has enough budget for a full attempt AND its own retry.
+    let mut second = shared.for_format(1);
+    assert!(second.wait() >= Duration::from_millis(500), "wait {:?}", second.wait());
+    second.spent(second.wait());
+    assert!(second.retry(), "format 2 keeps its own retry even after format 1 hung");
+    shared.reclaim(second);
+
+    // Fast success on format 1 returns unspent budget to format 2.
+    let mut fast = ProbeBudget::default();
+    let mut f1 = fast.for_format(2);
+    f1.spent(Duration::from_millis(80));
+    fast.reclaim(f1);
+    assert_eq!(fast.left(), V4L2_PROBE_BUDGET - Duration::from_millis(80));
+}
+
+/// Nightjar #77: async V4L2 M2M decoders (Qualcomm Iris Main10) receive up to `ASYNC_PROBE_FRAMES`
+/// duplicate IDR frames with distinct PTS before `drain()`, stopping early if a picture arrives
+/// immediately or if a follow-up send fails.
+#[test]
+fn async_probe_feeds_multiple_frames_before_draining_and_short_circuits_on_early_frame() {
+    // 1. No early frame -> sends 0, 1, 2 then drains once.
+    let mut state = (Vec::new(), 0usize);
+    let got = feed_async_probe::<_, u32>(
+        &mut state,
+        ASYNC_PROBE_FRAMES,
+        |s, pts| {
+            s.0.push(pts);
+            0
+        },
+        |s| {
+            s.1 += 1;
+            0
+        },
+        |_| None,
+    );
+    assert_eq!(got, Ok(None));
+    assert_eq!(state.0, vec![0, 1, 2]);
+    assert_eq!(state.1, 1);
+
+    // 2. Frame arrives after first send -> returns immediately without draining or extra sends.
+    state = (Vec::new(), 0);
+    let got = feed_async_probe(
+        &mut state,
+        ASYNC_PROBE_FRAMES,
+        |s, pts| {
+            s.0.push(pts);
+            0
+        },
+        |s| {
+            s.1 += 1;
+            0
+        },
+        |_| Some(Ok(42u32)),
+    );
+    assert_eq!(got, Ok(Some(42)));
+    assert_eq!(state.0, vec![0]);
+    assert_eq!(state.1, 0);
+
+    // 3. Rejection on first send is fatal; rejection on second send still proceeds to drain.
+    let mut unit = ();
+    let err = feed_async_probe::<_, u32>(&mut unit, ASYNC_PROBE_FRAMES, |_, _| -22, |_| 0, |_| None);
+    assert_eq!(err, Err((false, -22)));
+    state = (Vec::new(), 0);
+    let ok = feed_async_probe::<_, u32>(
+        &mut state,
+        ASYNC_PROBE_FRAMES,
+        |s, pts| {
+            s.0.push(pts);
+            if pts == 0 { 0 } else { -11 }
+        },
+        |s| {
+            s.1 += 1;
+            0
+        },
+        |_| None,
+    );
+    assert_eq!(ok, Ok(None));
+    assert_eq!(state.0, vec![0, 1]);
+    assert_eq!(state.1, 1);
+}
+
 /// The probe opens each fixture for its own size, as a stream's decoder is opened for the
 /// stream's (Nightjar issue 77: a V4L2 M2M decoder opened without one reinitialises its
 /// buffers on the driver's first format event and makes no picture).
