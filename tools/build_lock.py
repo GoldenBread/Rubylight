@@ -19,7 +19,7 @@ owner exits, so a crashed stage never leaves a lane taken and no lane file is
 ever removed. Cargo and Gradle lock their own target and cache folders against
 a surviving child.
 """
-import argparse, collections, ctypes, datetime, os, pathlib, re, shutil, subprocess, sys, threading, time, uuid
+import argparse, collections, ctypes, datetime, math, os, pathlib, re, shutil, subprocess, sys, threading, time, uuid
 
 DEFAULT_DIRECTORY = pathlib.Path(r'C:\src\butterpollo-release') if os.name == 'nt' else pathlib.Path('/tmp/rubylight-build')
 
@@ -464,7 +464,8 @@ def client_slots(directory=None, pool=None):
 def _min_free_gb(value=None):
     raw = os.environ.get(MIN_FREE_GB_ENV, '').strip() if value is None else value
     try:
-        return DEFAULT_MIN_FREE_GB if raw == '' else float(raw)
+        val = DEFAULT_MIN_FREE_GB if raw == '' else float(raw)
+        return val if math.isfinite(val) else DEFAULT_MIN_FREE_GB
     except ValueError:
         return DEFAULT_MIN_FREE_GB
 

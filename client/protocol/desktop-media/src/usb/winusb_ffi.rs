@@ -138,9 +138,11 @@ mod loader {
 
     use nightjar_core::usb::wire;
     use windows::core::{s, w, PCWSTR};
-    use windows::Win32::Foundation::{CloseHandle, HANDLE};
+    use windows::Win32::Foundation::{CloseHandle, FreeLibrary, HANDLE};
     use windows::Win32::System::IO::OVERLAPPED;
-    use windows::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
+    use windows::Win32::System::LibraryLoader::{
+        GetProcAddress, LoadLibraryExW, LOAD_LIBRARY_SEARCH_SYSTEM32,
+    };
     use windows::Win32::System::Threading::CreateEventW;
 
     use super::{UsbInterfaceDescriptor, UsbdIsoPacketDescriptor, WinUsbSetupPacket};
@@ -226,13 +228,17 @@ mod loader {
 
     pub(in crate::usb::winusb) fn api() -> Result<&'static WinUsbApi, String> {
         API.get_or_init(|| unsafe {
-            let module = LoadLibraryW(w!("winusb.dll"))
+            let module = LoadLibraryExW(w!("winusb.dll"), None, LOAD_LIBRARY_SEARCH_SYSTEM32)
                 .map_err(|e| format!("Windows' inbox winusb.dll could not be loaded: {e}"))?;
             macro_rules! load {
                 ($name:literal, $ty:ty) => {{
-                    let ptr = GetProcAddress(module, s!($name)).ok_or_else(|| {
-                        format!("winusb.dll is missing {}; Windows 8.1 or newer is required", $name)
-                    })?;
+                    let Some(ptr) = GetProcAddress(module, s!($name)) else {
+                        let _ = FreeLibrary(module);
+                        return Err(format!(
+                            "winusb.dll is missing {}; Windows 8.1 or newer is required",
+                            $name
+                        ));
+                    };
                     std::mem::transmute::<unsafe extern "system" fn() -> isize, $ty>(ptr)
                 }};
             }

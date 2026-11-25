@@ -243,16 +243,16 @@ public class TvTransitionsTest {
         assertEquals("false", ((Element) list.getParentNode()).getAttribute("android:clipChildren"));
     }
 
-    /** TV UI #1-#3 (#7): TV Home leaves focus-ring headroom without platform fading edge, and Retry containers don't clip. */
+    /** TV UI #1-#3 (#7): TV Home preserves 168dp top margin and vertical fading edge, and Retry containers don't clip. */
     @Test
     public void tvHomeHeadroomNoFadingEdgeAndRetryContainersDoNotClip() throws Exception {
         Element tvHome = parse("src/main/res/layout-television/activity_console_home.xml");
         Element tvList = (Element) tvHome.getElementsByTagName("com.limelight.console.HomeList").item(0);
-        assertEquals("148dp", tvList.getAttribute("android:layout_marginTop"));
-        assertEquals("20dp", tvList.getAttribute("android:paddingTop"));
-        assertEquals("", tvList.getAttribute("android:requiresFadingEdge"));
+        assertEquals("168dp", tvList.getAttribute("android:layout_marginTop"));
+        assertEquals("", tvList.getAttribute("android:paddingTop"));
+        assertEquals("vertical", tvList.getAttribute("android:requiresFadingEdge"));
         Element tvSearch = (Element) tvHome.getElementsByTagName("com.limelight.console.SearchResultsView").item(0);
-        assertEquals("", tvSearch.getAttribute("android:requiresFadingEdge"));
+        assertEquals("vertical", tvSearch.getAttribute("android:requiresFadingEdge"));
 
         Element appView = parse("src/main/res/layout/activity_app_view.xml");
         NodeList layouts = appView.getElementsByTagName("LinearLayout");

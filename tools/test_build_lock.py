@@ -648,5 +648,19 @@ try { 'acquired' } finally { Exit-CheckLocks $held -NoPause }
         self.assertTrue(idle_a.exists())
         self.assertFalse(idle_b.exists())
 
+    def test_prune_pool_falls_back_on_non_finite_min_free_gb(self):
+        pool = self.root / 'target-pool'
+        idle = self._make_pool_slot(pool, '1', 1000)
+        gb = 2 ** 30
+        enough = shutil._ntuple_diskusage(500 * gb, 400 * gb, 100 * gb)
+        for bad in ('nan', 'inf', '-inf', 'not-a-number'):
+            os.environ[build_lock.MIN_FREE_GB_ENV] = bad
+            with mock.patch.object(shutil, 'disk_usage', return_value=enough):
+                self.assertEqual(build_lock.prune_pool(pool=pool), [])
+        self.assertTrue(idle.exists())
+        with mock.patch.object(shutil, 'disk_usage', return_value=enough):
+            self.assertEqual(build_lock.prune_pool(pool=pool, min_free_gb=float('nan')), [])
+            self.assertEqual(build_lock.prune_pool(pool=pool, min_free_gb=float('inf')), [])
+
 if __name__ == '__main__':
     unittest.main()

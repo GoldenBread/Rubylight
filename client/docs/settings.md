@@ -514,7 +514,7 @@ Defaults are those of a fresh installation. **Main** rows show when a section op
 
 | Setting | Tier | Default | Choices | Notes |
 | --- | --- | --- | --- | --- |
-| Resolution | Main | Native (this display) | Native, 640x360 to 5120x1440 in 16:9, 16:10 and ultrawide sizes, Custom… | The picture size the PC sends. Custom adds a **Custom resolution** row: width 320–7680 and height 240–4320 pixels. |
+| Resolution | Main | Native (this display) | Native, Native (75%), Native (50%), 640x360 to 5120x1440 in 16:9, 16:10 and ultrawide sizes, Custom… | The picture size the PC sends. Native (75%) and Native (50%) scale from this display's native resolution. Custom adds a **Custom resolution** row: width 320–7680 and height 240–4320 pixels. |
 | Frame rate | Main | Display (the monitor's refresh rate) | Display, 30, 60, 90, 120, 144, 165, 240 fps, Custom… | Custom adds a **Custom frame rate** row: 10–500 fps. Fractional refresh rates are followed. |
 | Automatic bitrate | Main | On | On, Off | On: Nightjar picks the bitrate for the resolution, frame rate and codec. Off adds a **Bitrate** row. |
 | Bitrate | Main | The recommended bitrate | 0.5–2000 Mbps | With Automatic bitrate off. With PyroWave, a bitrate below PyroWave's minimum is flagged. |
@@ -629,6 +629,7 @@ The App section is in the main settings only.
 | Check for updates now | Main | | Check now | The same builds as Check for updates automatically. Asks GitHub's releases API once, at once; a newer release shows its notice, and nothing is downloaded until you choose Update now. |
 | Check for updates automatically | More | On | On, Off | The Windows setup and portable copies and the Linux AppImage only. Once per launch, asks GitHub whether a newer release is out; nothing is downloaded until you choose Update now. A portable Windows copy only links to the release page. |
 | Start Nightjar when I sign in | More | Off | On, Off | Windows and Linux (including the Flatpak), where the system supports it. Opens Nightjar after you sign in to this computer. |
+| Windowed launcher | More | Off | On, Off | Opens Nightjar's menus in an ordinary window even when Window is Fullscreen or Borderless. Streams still use your Window setting. |
 | Use small box art | More | Off | On, Off | Small covers on Home, in a PC's library and in All games. Home's Card size sets the same thing. |
 | About | More | | Open | Nightjar's version, licences and credits, with a link to its source code. |
 | Logs | More | | Open logs folder | Attach `nightjar.log`, and `nightjar.prev.log` for a problem before a restart, to a bug report. |
