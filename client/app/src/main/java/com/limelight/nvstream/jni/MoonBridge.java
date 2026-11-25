@@ -4,7 +4,6 @@ import com.limelight.LimeLog;
 import com.limelight.binding.audio.AndroidAudioRenderer;
 import com.limelight.binding.video.MediaCodecDecoderRenderer;
 import com.limelight.binding.video.PackedFallback;
-import com.limelight.nativeapi.HostEndpoint;
 import com.limelight.nvstream.NvConnectionListener;
 import com.limelight.nvstream.RateChangeResult;
 import com.limelight.nvstream.av.audio.AudioRenderer;
@@ -14,131 +13,8 @@ import com.limelight.nvstream.av.video.VideoDecoderRenderer;
 import java.nio.ByteBuffer;
 import java.util.function.BooleanSupplier;
 
-public class MoonBridge {
+public class MoonBridge extends MoonBridgeForwarders {
     /* See documentation in Limelight.h for information about these functions and constants */
-
-    public static final AudioConfiguration AUDIO_CONFIGURATION_STEREO = new AudioConfiguration(2, 0x3);
-    public static final AudioConfiguration AUDIO_CONFIGURATION_51_SURROUND = new AudioConfiguration(6, 0x3F);
-    public static final AudioConfiguration AUDIO_CONFIGURATION_71_SURROUND = new AudioConfiguration(8, 0x63F);
-    // Moonlight V+'s 7.1.4 (AUDIO_CONFIGURATION_714_SURROUND), which Foundation Sunshine and Rubylight hosts stream.
-    public static final AudioConfiguration AUDIO_CONFIGURATION_714_SURROUND = new AudioConfiguration(12, 0xF63F);
-
-    public static final int VIDEO_FORMAT_H264 = 0x0001;
-    public static final int VIDEO_FORMAT_H264_HIGH8_444 = 0x0004;
-    public static final int VIDEO_FORMAT_H265 = 0x0100;
-    public static final int VIDEO_FORMAT_H265_MAIN10 = 0x0200;
-    public static final int VIDEO_FORMAT_H265_REXT8_444 = 0x0400;
-    public static final int VIDEO_FORMAT_H265_REXT10_444 = 0x0800;
-    public static final int VIDEO_FORMAT_AV1_MAIN8 = 0x1000;
-    public static final int VIDEO_FORMAT_AV1_MAIN10 = 0x2000;
-    public static final int VIDEO_FORMAT_AV1_HIGH8_444 = 0x4000;
-    public static final int VIDEO_FORMAT_AV1_HIGH10_444 = 0x8000;
-    public static final int VIDEO_FORMAT_PYROWAVE = 0x010000;
-    public static final int VIDEO_FORMAT_PYROWAVE_444 = 0x020000;
-    public static final int VIDEO_FORMAT_PYROWAVE_MAIN10 = 0x040000;
-    public static final int VIDEO_FORMAT_PYROWAVE_MAIN10_444 = 0x080000;
-
-    public static final int VIDEO_FORMAT_MASK_H264 = 0x000F;
-    public static final int VIDEO_FORMAT_MASK_H265 = 0x0F00;
-    public static final int VIDEO_FORMAT_MASK_AV1 = 0xF000;
-    public static final int VIDEO_FORMAT_MASK_PYROWAVE = 0x0F0000;
-    public static final int VIDEO_FORMAT_MASK_10BIT = 0x0CAA00;
-    public static final int VIDEO_FORMAT_MASK_YUV444 = 0x0ACC04;
-
-    public static final int BUFFER_TYPE_PICDATA = 0;
-    public static final int BUFFER_TYPE_SPS = 1;
-    public static final int BUFFER_TYPE_PPS = 2;
-    public static final int BUFFER_TYPE_VPS = 3;
-
-    public static final int FRAME_TYPE_PFRAME = 0;
-    public static final int FRAME_TYPE_IDR = 1;
-
-    public static final int COLORSPACE_REC_601 = 0;
-    public static final int COLORSPACE_REC_709 = 1;
-    public static final int COLORSPACE_REC_2020 = 2;
-
-    public static final int COLOR_RANGE_LIMITED = 0;
-    public static final int COLOR_RANGE_FULL = 1;
-
-    public static final int CAPABILITY_DIRECT_SUBMIT = 1;
-    public static final int CAPABILITY_REFERENCE_FRAME_INVALIDATION_AVC = 2;
-    public static final int CAPABILITY_REFERENCE_FRAME_INVALIDATION_HEVC = 4;
-    public static final int CAPABILITY_REFERENCE_FRAME_INVALIDATION_AV1 = 0x40;
-
-    public static final int DR_OK = 0;
-    public static final int DR_NEED_IDR = -1;
-
-    public static final int CONN_STATUS_OKAY = 0;
-    public static final int CONN_STATUS_POOR = 1;
-
-    public static final int ML_ERROR_GRACEFUL_TERMINATION = 0;
-    public static final int ML_ERROR_NO_VIDEO_TRAFFIC = -100;
-    public static final int ML_ERROR_NO_VIDEO_FRAME = -101;
-    public static final int ML_ERROR_UNEXPECTED_EARLY_TERMINATION = -102;
-    public static final int ML_ERROR_PROTECTED_CONTENT = -103;
-    public static final int ML_ERROR_FRAME_CONVERSION = -104;
-    // This device's own code, never sent by a PC: the optional Vulkan renderer failed mid-stream
-    public static final int CLIENT_ERROR_VULKAN_RENDERER = -105;
-    // The engine's start code (nightjar-core error::PACKED_444_REFUSED), never sent by a PC:
-    // experimental full chroma cannot be streamed with this PC (no packed mode both sides offer,
-    // or the PC refused it), so the stream may reconnect without it
-    public static final int CLIENT_ERROR_PACKED_444_REFUSED = -106;
-    // This device's own code, never sent by a PC: the video decoder failed and recovering it did not help
-    public static final int CLIENT_ERROR_DECODER = -107;
-    // This device's own code, never sent by a PC: the PC said goodbye and closed its server: it shuts down or its host stopped (HostLossWatch)
-    public static final int CLIENT_ERROR_HOST_GONE = -108;
-    // This device's own code, never sent by a PC: the streaming engine cannot start this stream (a PC older than
-    // GFE 3.22, a PC that reports no codec, or libnightjar_core.so did not load); StreamEngine says which
-    public static final int CLIENT_ERROR_ENGINE_UNAVAILABLE = -109;
-
-    public static final int ML_PORT_INDEX_TCP_47984 = 0;
-    public static final int ML_PORT_INDEX_TCP_47989 = 1;
-    public static final int ML_PORT_INDEX_TCP_48010 = 2;
-    public static final int ML_PORT_INDEX_UDP_47998 = 8;
-    public static final int ML_PORT_INDEX_UDP_47999 = 9;
-    public static final int ML_PORT_INDEX_UDP_48000 = 10;
-    public static final int ML_PORT_INDEX_UDP_48010 = 11;
-
-    public static final int ML_PORT_FLAG_ALL = 0xFFFFFFFF;
-    public static final int ML_PORT_FLAG_TCP_47984 = 0x0001;
-    public static final int ML_PORT_FLAG_TCP_47989 = 0x0002;
-    public static final int ML_PORT_FLAG_TCP_48010 = 0x0004;
-    public static final int ML_PORT_FLAG_UDP_47998 = 0x0100;
-    public static final int ML_PORT_FLAG_UDP_47999 = 0x0200;
-    public static final int ML_PORT_FLAG_UDP_48000 = 0x0400;
-    public static final int ML_PORT_FLAG_UDP_48010 = 0x0800;
-
-    public static final int ML_TEST_RESULT_INCONCLUSIVE = 0xFFFFFFFF;
-
-    public static final byte SS_KBE_FLAG_NON_NORMALIZED = 0x01;
-
-    public static final int LI_ERR_UNSUPPORTED = -5501;
-
-    public static final byte LI_TOUCH_EVENT_HOVER       = 0x00;
-    public static final byte LI_TOUCH_EVENT_DOWN        = 0x01;
-    public static final byte LI_TOUCH_EVENT_UP          = 0x02;
-    public static final byte LI_TOUCH_EVENT_MOVE        = 0x03;
-    public static final byte LI_TOUCH_EVENT_CANCEL      = 0x04;
-    public static final byte LI_TOUCH_EVENT_BUTTON_ONLY = 0x05;
-    public static final byte LI_TOUCH_EVENT_HOVER_LEAVE = 0x06;
-    public static final byte LI_TOUCH_EVENT_CANCEL_ALL  = 0x07;
-
-    public static final byte LI_TOOL_TYPE_UNKNOWN = 0x00;
-    public static final byte LI_TOOL_TYPE_PEN = 0x01;
-    public static final byte LI_TOOL_TYPE_ERASER = 0x02;
-
-    public static final byte LI_PEN_BUTTON_PRIMARY = 0x01;
-    public static final byte LI_PEN_BUTTON_SECONDARY = 0x02;
-    public static final byte LI_PEN_BUTTON_TERTIARY = 0x04;
-
-    public static final byte LI_TILT_UNKNOWN = (byte)0xFF;
-    public static final short LI_ROT_UNKNOWN = (short)0xFFFF;
-
-    public static final byte LI_CTYPE_UNKNOWN  = 0x00;
-    public static final byte LI_CTYPE_XBOX     = 0x01;
-    public static final byte LI_CTYPE_PS       = 0x02;
-    public static final byte LI_CTYPE_NINTENDO = 0x03;
-    public static final byte LI_CTYPE_STEAM    = 0x04;
 
     public static final short LI_CCAP_ANALOG_TRIGGERS = 0x01;
     public static final short LI_CCAP_RUMBLE          = 0x02;
@@ -151,22 +27,14 @@ public class MoonBridge {
     public static final short LI_CCAP_DUAL_TOUCHPAD   = 0x100;
     public static final short LI_CCAP_HAPTICS_PCM     = (short)0x8000;
 
-    public static final byte LI_MOTION_TYPE_ACCEL = 0x01;
-    public static final byte LI_MOTION_TYPE_GYRO  = 0x02;
-
-    public static final byte LI_BATTERY_STATE_UNKNOWN      = 0x00;
-    public static final byte LI_BATTERY_STATE_NOT_PRESENT  = 0x01;
-    public static final byte LI_BATTERY_STATE_DISCHARGING  = 0x02;
-    public static final byte LI_BATTERY_STATE_CHARGING     = 0x03;
-    public static final byte LI_BATTERY_STATE_NOT_CHARGING = 0x04; // Connected to power but not charging
-    public static final byte LI_BATTERY_STATE_FULL         = 0x05;
-
-    public static final byte LI_BATTERY_PERCENTAGE_UNKNOWN = (byte)0xFF;
-
     private static AudioRenderer audioRenderer;
     private static volatile VideoDecoderRenderer videoRenderer;
     private static NvConnectionListener connectionListener;
     private static BooleanSupplier connectionCancelled;
+    // Whether the listener was told that this start failed or that its connection ended.
+    private static volatile boolean startFailureReported;
+    private static volatile boolean packed444Requested;
+    private static volatile int networkGracePeriodMs;
 
     static {
         // The slim native library: AAudio output, USB audio for the DualSense and the controller tables.
@@ -174,61 +42,6 @@ public class MoonBridge {
         // Not the Rust engine's library: its init() initialises this class, so loading it from here
         // would take RustBridge's lock under this class's init lock while another thread in
         // RustBridge.load() waits the other way round. The forwarders load it on first use.
-    }
-
-    public static int CAPABILITY_SLICES_PER_FRAME(byte slices) {
-        return slices << 24;
-    }
-
-    public static class AudioConfiguration {
-        public final int channelCount;
-        public final int channelMask;
-
-        public AudioConfiguration(int channelCount, int channelMask) {
-            this.channelCount = channelCount;
-            this.channelMask = channelMask;
-        }
-
-        // Creates an AudioConfiguration from the integer value returned by moonlight-common-c
-        // See CHANNEL_COUNT_FROM_AUDIO_CONFIGURATION() and CHANNEL_MASK_FROM_AUDIO_CONFIGURATION()
-        // in Limelight.h
-        private AudioConfiguration(int audioConfiguration) {
-            // Check the magic byte before decoding to make sure we got something that's actually
-            // a MAKE_AUDIO_CONFIGURATION()-based value and not something else like an older version
-            // hardcoded AUDIO_CONFIGURATION value from an earlier version of moonlight-common-c.
-            if ((audioConfiguration & 0xFF) != 0xCA) {
-                throw new IllegalArgumentException("Audio configuration has invalid magic byte!");
-            }
-
-            this.channelCount = (audioConfiguration >> 8) & 0xFF;
-            this.channelMask = (audioConfiguration >> 16) & 0xFFFF;
-        }
-
-        // See SURROUNDAUDIOINFO_FROM_AUDIO_CONFIGURATION() in Limelight.h
-        public int getSurroundAudioInfo() {
-            return channelMask << 16 | channelCount;
-        }
-
-        @Override
-        public boolean equals(Object obj) {
-            if (obj instanceof AudioConfiguration) {
-                AudioConfiguration that = (AudioConfiguration)obj;
-                return this.toInt() == that.toInt();
-            }
-
-            return false;
-        }
-
-        @Override
-        public int hashCode() {
-            return toInt();
-        }
-
-        // Returns the integer value expected by moonlight-common-c
-        // See MAKE_AUDIO_CONFIGURATION() in Limelight.h
-        public int toInt() {
-            return ((channelMask) << 16) | (channelCount << 8) | 0xCA;
-        }
     }
 
     public static int bridgeDrSetup(int videoFormat, int width, int height, int redrawRate) {
@@ -363,9 +176,6 @@ public class MoonBridge {
         }
     }
 
-    // Whether the listener was told that this start failed or that its connection ended.
-    private static volatile boolean startFailureReported;
-
     /**
      * Whether the listener heard, since {@link #setupBridge}, that the start failed or the
      * connection ended. A start that returns a failure without either has told nobody.
@@ -459,63 +269,18 @@ public class MoonBridge {
         if (connectionListener != null) connectionListener.cursorShape(message);
     }
 
-    // USB forwarding (0x553A, docs/control-messages.md): what usbAttach returns instead of a request id.
-    public static final int USB_NO_STREAM = -1;
-    public static final int USB_BUSY = -2;
-    public static final int USB_UNSUPPORTED = -3;
-    public static final int USB_DEVICE_FAILED = -4;
-    public static final int USB_INVALID = -5;
-    public static final int USB_HOST_FAILED = -6;
-
-    private static volatile Runnable usbListener;
-
-    /** Runs on any thread whenever usbList() may have changed; null stops. */
-    public static void setUsbListener(Runnable listener) {
-        usbListener = listener;
-    }
-
     public static void bridgeClUsbChanged() {
         Runnable listener = usbListener;
         if (listener != null) listener.run();
     }
 
-    /**
-     * Asks the host to attach the device open on fd (a UsbDeviceConnection's, which the caller
-     * may close afterwards) at its usbfs path: a request id, or USB_*.
-     */
-    public static int usbAttach(int fd, String path, String name, HostEndpoint host) {
-        if (host == null) return USB_HOST_FAILED;
-        if (!RustBridge.isAvailable()) return USB_NO_STREAM;
-        return RustBridge.usbAttach(fd, path, name, host.address, host.httpPort, host.httpsPort,
-                host.serverCertificatePem, host.uniqueId, host.clientCertificateDer,
-                host.clientPrivateKeyPkcs8);
-    }
-
-    /** Detaches an attachment of this stream; false when it is not attached. */
-    public static boolean usbDetach(int requestId) {
-        return RustBridge.isAvailable() && RustBridge.usbDetach(requestId);
-    }
-
-    /** This stream's attachments as JSON (src/usb.rs's list_json), "[]" without any. */
-    public static String usbList() {
-        // The USB screen asks with no stream too: without the engine there is nothing attached.
-        if (!RustBridge.isAvailable()) return "[]";
-        String list = RustBridge.usbList();
-        if (list == null) {
-            LimeLog.severe("USB: the attachment list did not reach Java");
-            return "[]";
-        }
-        return list;
-    }
-
-    public static boolean sendControllerAudio(int kind, byte[] payload) {
-        return RustBridge.isAvailable() && RustBridge.sendControllerAudio(kind, payload);
-    }
     public static native long openUsbMicrophone(int fd, int endpoint, int interval);
     public static native int readUsbMicrophone(long handle, byte[] samples);
+
     public static void bridgeClLinkNotice(int state, int ceilingKbps, int currentKbps) {
         if (connectionListener != null) connectionListener.linkNotice(state, ceilingKbps, currentKbps);
     }
+
     public static void bridgeClRateChange(int serial, int bitrateKbps, int fpsMillihz, int bitrateStatus,
                                           int bitrateReason, int fpsStatus, int fpsReason) {
         if (connectionListener != null) {
@@ -523,23 +288,29 @@ public class MoonBridge {
                     bitrateReason, fpsStatus, fpsReason));
         }
     }
+
     public static void bridgeClTextInput(int kind, int inputType, int flags, int element) {
         if (connectionListener != null) connectionListener.textInput(kind, inputType, flags, element);
     }
+
     public static void bridgeClClipboardSync(String text) {
         if (connectionListener != null) connectionListener.clipboardSync(text);
     }
+
     public static void bridgeClClipboardSyncRefused(int reason) {
         if (connectionListener != null) connectionListener.clipboardSyncRefused(reason);
     }
+
     public static void bridgeClHostTiming(byte[] payload) {
         VideoDecoderRenderer renderer = videoRenderer;
         HostTimingReport report = HostTimingReport.parse(payload);
         if (renderer != null && report != null) renderer.onHostTiming(report);
     }
+
     public static void bridgeClControllerAudio(int kind, byte[] payload) {
         if (connectionListener != null) connectionListener.controllerAudio(kind, payload);
     }
+
     public static native long openUsbHaptics(int fd, int endpoint, int interval);
     public static native boolean writeUsbHaptics(long handle, byte[] samples);
     public static native void closeUsbHaptics(long handle);
@@ -561,229 +332,9 @@ public class MoonBridge {
         MoonBridge.connectionCancelled = null;
     }
 
-    // The streaming engine is nightjar-core (RustBridge); every streaming call below goes to it.
-    private static volatile boolean packed444Requested;
-    private static volatile int hdrFormatRequested;
-    private static volatile int networkGracePeriodMs;
-    private static volatile boolean roamingRequested = true;
-    private static volatile boolean roamingMeteredRequested;
-    private static volatile int audioPassthroughRequested;
-    private static volatile int videoFecRequested = -2;
-    private static volatile boolean pyrowaveEarlyRequested;
-    private static volatile boolean codecDirectRequested;
-    private static volatile boolean receiveDecodePriorityRequested;
-    private static volatile boolean receiveCoalescingRequested = true;
-    private static volatile int decodeQueueBound;
-    private static volatile boolean frameWarpWanted;
-    private static volatile boolean frameWarpRequested;
-
-    /**
-     * Call before startConnection(): "Client roaming" and "Continue on mobile
-     * data" for the next stream.
-     */
-    public static void requestRoaming(boolean enabled, boolean metered) {
-        roamingRequested = enabled;
-        roamingMeteredRequested = metered;
-    }
-
-    /**
-     * Call before startConnection(): the passthrough codecs (AudioPassthrough.CODEC_* bits) the
-     * audio route plays, or 0 for Opus.
-     */
-    public static void requestAudioPassthrough(int codecs) {
-        audioPassthroughRequested = codecs;
-    }
-
-    /**
-     * Call before startConnection(): early record push for the next stream
-     * (PyroWaveDecoderRenderer.wantsEarlyRecords).
-     */
-    public static void requestPyroWaveEarly(boolean requested) {
-        pyrowaveEarlyRequested = requested;
-    }
-
-    /**
-     * Call before startConnection(): "Video data straight to the decoder" for the next stream, which
-     * debug.nightjar.codec_direct overrides.
-     */
-    public static void requestCodecDirect(boolean requested) {
-        codecDirectRequested = requested;
-    }
-
-    /**
-     * Call before startConnection(): "Decoder priority for receiving" for the next stream, which
-     * debug.nightjar.decode_priority overrides. Only direct submission uses it.
-     */
-    public static void requestReceiveDecodePriority(boolean requested) {
-        receiveDecodePriorityRequested = requested;
-    }
-
-    /**
-     * Call before startConnection(): "Group incoming video packets" for the next stream (UDP_GRO
-     * on the video socket).
-     */
-    public static void requestReceiveCoalescing(boolean requested) {
-        receiveCoalescingRequested = requested;
-    }
-
-    /**
-     * Call before startConnection(): Frame Warp for the next stream (docs/frame-warp.md). {@code wanted} is the
-     * setting, {@code listed} whether the host's serverinfo lists it.
-     */
-    public static void requestFrameWarp(boolean wanted, boolean listed) {
-        frameWarpWanted = wanted;
-        frameWarpRequested = wanted && listed;
-    }
-
-    /** frameWarpStatus(): no Frame Warp line (the setting is off). */
-    public static final int FRAME_WARP_OFF = 0;
-    /** frameWarpStatus(): the setting is on, the host does not offer it. */
-    public static final int FRAME_WARP_NOT_OFFERED = 1;
-    /** frameWarpStatus(): offered; the host has not learned this game's camera yet. */
-    public static final int FRAME_WARP_LEARNING = 2;
-    /** frameWarpStatus(): locked to the mouse; the gain is picture pixels per mouse count. */
-    public static final int FRAME_WARP_MOUSE = 3;
-    /** frameWarpStatus(): locked to the right stick; the gain is picture pixels per second of full stick. */
-    public static final int FRAME_WARP_STICK = 4;
-    /** frameWarpStatus(): asked for, but this stream draws without it (a renderer declined). */
-    public static final int FRAME_WARP_OFF_FOR_STREAM = 5;
-    /** frameWarpForPts() and the native table: draw the picture as it is. */
-    public static final int FRAME_WARP_INACTIVE = -2;
-    /** frameWarpForPts(): shift the whole picture, there is no HUD mask. */
-    public static final int FRAME_WARP_NO_MASK = -1;
-    /** frameWarpMask(): the mask the caller holds is current. */
-    public static final int FRAME_WARP_MASK_UNCHANGED = -1;
-    /** frameWarpMask(): there is no mask any more. */
-    public static final int FRAME_WARP_MASK_CLEARED = -2;
-    /** frameWarpMask(): the cells array is too small; size holds what it needs. */
-    public static final int FRAME_WARP_MASK_TOO_SMALL = -3;
-
-    /**
-     * Whether the running stream draws with Frame Warp: asked for, the host announced it, and no
-     * renderer declined it. Known from the end of the RTSP handshake, so while the renderers start.
-     */
-    public static boolean isFrameWarpStream() {
-        return frameWarpRequested && RustBridge.isAvailable() && RustBridge.frameWarpOffered();
-    }
-
-    /** The address of the table the native renderers take (jni/frame_warp_api.h), 0 without Frame Warp. */
-    public static long frameWarpApi() {
-        return isFrameWarpStream() ? RustBridge.frameWarpApi() : 0;
-    }
-
-    /** The decoder queued frame {@code frame} with presentation time {@code ptsUs}; call only on a Frame Warp stream. */
-    public static void frameWarpNoteFrame(long ptsUs, int frame) {
-        if (RustBridge.isAvailable()) RustBridge.frameWarpNoteFrame(ptsUs, frame);
-    }
-
-    /** The floats frameWarpForPts() and frameWarpPeekForPts() write, as the native table's warp() and peek(). */
-    public static final int FRAME_WARP_FLOATS = 8;
-
-    /**
-     * The shift for the picture queued with {@code ptsUs}, drawn now: {@code out} (FRAME_WARP_FLOATS floats) gets
-     * the shift of the picture's centre as fractions of the picture (x, y) and in picture pixels (x, y), then the lens
-     * terms the rest of the picture is turned through (k.x, k.y, n.x, n.y; 0, 0, 1, 1 for a flat picture, which is
-     * sampled at its position less the shift), all with y down. Returns the HUD mask generation,
-     * FRAME_WARP_NO_MASK, or FRAME_WARP_INACTIVE to draw the picture as it is (also when {@code out} is shorter).
-     */
-    public static int frameWarpForPts(long ptsUs, float[] out) {
-        return RustBridge.isAvailable() ? RustBridge.frameWarpForPts(ptsUs, out) : FRAME_WARP_INACTIVE;
-    }
-
-    /**
-     * As {@link #frameWarpForPts}, without counting it in the overlay's statistics: whether the picture on screen
-     * should be drawn again. What a redraw then draws goes through frameWarpForPts().
-     */
-    public static int frameWarpPeekForPts(long ptsUs, float[] out) {
-        return RustBridge.isAvailable() ? RustBridge.frameWarpPeekForPts(ptsUs, out) : FRAME_WARP_INACTIVE;
-    }
-
-    /** frameWarpInputState(): set while the tracked right stick is deflected. */
-    public static final long FRAME_WARP_STICK_DEFLECTED = 1L << 32;
-
-    /**
-     * Whether a redraw between pictures can have anything new to show, without asking for a shift: the count of
-     * mouse and controller inputs sent (the low 32 bits; read it before a draw's frameWarpForPts() and compare)
-     * and FRAME_WARP_STICK_DEFLECTED. 0 without a stream.
-     */
-    public static long frameWarpInputState() {
-        return RustBridge.isAvailable() ? RustBridge.frameWarpInputState() : 0L;
-    }
-
-    /**
-     * The HUD mask when its generation is not {@code known} (-1 for none): {@code size} gets width and height and
-     * {@code cells}, when it has room, one byte per cell (0 or 255, rows from the top). Returns the generation or a
-     * FRAME_WARP_MASK_* code.
-     */
-    public static int frameWarpMask(int known, int[] size, byte[] cells) {
-        return RustBridge.isAvailable() ? RustBridge.frameWarpMask(known, size, cells) : (known < 0 ? FRAME_WARP_MASK_UNCHANGED : FRAME_WARP_MASK_CLEARED);
-    }
-
-    /** The renderer cannot draw Frame Warp for this stream: the host stops its work for it. */
-    public static void frameWarpDecline() {
-        if (frameWarpRequested && RustBridge.isAvailable()) RustBridge.frameWarpDecline();
-    }
-
-    /**
-     * The overlay's Frame Warp line: a FRAME_WARP_* state, and in {@code out} (4 floats) the gain, the game's lag in
-     * ms, the shift and the last second's peak in picture pixels.
-     */
-    public static int frameWarpStatus(float[] out) {
-        if (!frameWarpWanted) return FRAME_WARP_OFF;
-        if (!frameWarpRequested) return FRAME_WARP_NOT_OFFERED;
-        return RustBridge.isAvailable() ? RustBridge.frameWarpStatus(out) : FRAME_WARP_OFF_FOR_STREAM;
-    }
-
-    /** Whether the running stream (or the last one) hands PyroWave frames over while they arrive. */
-    public static boolean isPyroWaveEarlyStream() {
-        return pyrowaveEarlyRequested;
-    }
-
-    /** networkChanged: the stream's connection goes on (same address, or no route yet). */
-    public static final int NETWORK_CARRIES_ON = 0;
-    /** networkChanged: a roam started, the stream moves onto the new network. */
-    public static final int NETWORK_ROAMED = 1;
-    /** networkChanged: the route toward the PC left the stream's address; it cannot carry on. */
-    public static final int NETWORK_CANNOT_CONTINUE = 2;
-
-    /**
-     * The default network changed while a stream runs; metered is the new network's
-     * !NET_CAPABILITY_NOT_METERED. Returns what it means for the stream (NETWORK_*).
-     */
-    public static int networkChanged(boolean metered) {
-        return RustBridge.isAvailable() ? RustBridge.networkChanged(metered) : NETWORK_CARRIES_ON;
-    }
-
     public static void requestPacked444(boolean requested) {
         packed444Requested = requested;
     }
-
-    /**
-     * Call before startConnection(): the one HdrFormatPolicy bit the next stream asks a Rubylight
-     * 3.0 host for, 0 for stock HDR10. The ANNOUNCE carries it only when the DESCRIBE offered it.
-     */
-    public static void requestHdrFormat(int format) {
-        hdrFormatRequested = format;
-    }
-
-    /**
-     * Call before startConnection(): the video FEC the next stream asks a Foundation Sunshine host
-     * for in its ANNOUNCE (FecChoice.summaryPercentage(): -2 host, -1 automatic, 0-100 fixed).
-     * Rubylight hosts take the choice at launch; other hosts ignore it.
-     */
-    public static void requestVideoFec(int percentage) {
-        videoFecRequested = Math.max(-2, Math.min(percentage, 100));
-    }
-
-    /** The HDR format this stream's ANNOUNCE asked for, 0 for stock (and before the ANNOUNCE). */
-    public static int getAnnouncedHdrFormat() {
-        // Nothing asked keeps the native libraries out of it (and out of tests without them).
-        if (hdrFormatRequested == 0 || !RustBridge.isAvailable()) return 0;
-        return RustBridge.getAnnouncedHdrFormat();
-    }
-
-    /** The stage a start the engine cannot make is reported as failed in. */
-    public static final String ENGINE_STAGE = "streaming engine check";
 
     /**
      * A start that cannot go on, found before the engine ran a stage. The failure is reported as an
@@ -853,164 +404,8 @@ public class MoonBridge {
         networkGracePeriodMs = gracePeriodMs;
     }
 
-    /**
-     * Call before startConnection(): "Frames waiting for the decoder", the complete frames that may wait
-     * for a decoder without direct submission before they are dropped and a key frame is requested. 0 keeps
-     * 15, the bound it had before it was a setting; so does anything above 15.
-     */
-    public static void setDecodeQueueBound(int frames) {
-        decodeQueueBound = frames;
-    }
-
-    public static void stopConnection() {
-        if (RustBridge.isAvailable()) RustBridge.stopConnection();
-    }
-
-    public static void interruptConnection() {
-        if (RustBridge.isAvailable()) RustBridge.interruptConnection();
-    }
-
-    public static void sendMouseMove(short deltaX, short deltaY) {
-        if (!RustBridge.isAvailable()) return;
-        RustBridge.sendMouseMove(deltaX, deltaY);
-    }
-
-    public static void sendMousePosition(short x, short y, short referenceWidth, short referenceHeight) {
-        if (!RustBridge.isAvailable()) return;
-        RustBridge.sendMousePosition(x, y, referenceWidth, referenceHeight);
-    }
-
-    public static void sendMouseMoveAsMousePosition(short deltaX, short deltaY, short referenceWidth, short referenceHeight) {
-        if (!RustBridge.isAvailable()) return;
-        RustBridge.sendMouseMoveAsMousePosition(deltaX, deltaY, referenceWidth, referenceHeight);
-    }
-
-    public static void sendMouseButton(byte buttonEvent, byte mouseButton) {
-        if (!RustBridge.isAvailable()) return;
-        RustBridge.sendMouseButton(buttonEvent, mouseButton);
-    }
-
-    public static void sendMultiControllerInput(short controllerNumber,
-                                    short activeGamepadMask, int buttonFlags,
-                                    byte leftTrigger, byte rightTrigger,
-                                    short leftStickX, short leftStickY,
-                                    short rightStickX, short rightStickY) {
-        if (!RustBridge.isAvailable()) return;
-        RustBridge.sendMultiControllerInput(controllerNumber, activeGamepadMask, buttonFlags, leftTrigger, rightTrigger, leftStickX, leftStickY, rightStickX, rightStickY);
-    }
-
-    public static int sendTouchEvent(byte eventType, int pointerId, float x, float y, float pressure,
-                                            float contactAreaMajor, float contactAreaMinor, short rotation) {
-        if (!RustBridge.isAvailable()) return LI_ERR_UNSUPPORTED;
-        return RustBridge.sendTouchEvent(eventType, pointerId, x, y, pressure, contactAreaMajor, contactAreaMinor, rotation);
-    }
-
-    /** The host takes no touchpad fingers. */
-    public static final int TOUCHPAD_NONE = 0;
-    public static final int TOUCHPAD_INDIVIDUAL = 1;
-    public static final int TOUCHPAD_FRAME = 2;
-
-    /** How this stream takes a physical touchpad's fingers ("Touchpad gestures on the PC"). */
-    public static int touchpadTransport() {
-        if (!RustBridge.isAvailable()) return TOUCHPAD_NONE;
-        return RustBridge.touchpadTransport();
-    }
-
-    /** One motion event of a physical touchpad; 0, or the input error. */
-    public static int touchpadFrame(int device, int[] ids, float[] xs, float[] ys, float[] pressures, int count,
-                                    boolean button, short widthMm, short heightMm) {
-        if (!RustBridge.isAvailable()) return LI_ERR_UNSUPPORTED;
-        return RustBridge.touchpadFrame(device, ids, xs, ys, pressures, count, button, widthMm, heightMm);
-    }
-
-    /** Lifts the touchpad's fingers on the host. */
-    public static int touchpadCancel() {
-        if (!RustBridge.isAvailable()) return LI_ERR_UNSUPPORTED;
-        return RustBridge.touchpadCancel();
-    }
-
-    public static int sendPenEvent(byte eventType, byte toolType, byte penButtons, float x, float y,
-                                          float pressure, float contactAreaMajor, float contactAreaMinor,
-                                          short rotation, byte tilt) {
-        if (!RustBridge.isAvailable()) return LI_ERR_UNSUPPORTED;
-        return RustBridge.sendPenEvent(eventType, toolType, penButtons, x, y, pressure, contactAreaMajor, contactAreaMinor, rotation, tilt);
-    }
-
-    /** Controller identity (0x55000080): the engine drops it for a host without it. */
-    public static int sendControllerIdentityEvent(byte controllerNumber, int vendorId, int productId) {
-        if (!RustBridge.isAvailable()) return LI_ERR_UNSUPPORTED;
-        return RustBridge.sendControllerIdentityEvent(controllerNumber, vendorId, productId);
-    }
-
-    public static int sendControllerArrivalEvent(byte controllerNumber, short activeGamepadMask, byte type, int supportedButtonFlags, short capabilities) {
-        if (!RustBridge.isAvailable()) return LI_ERR_UNSUPPORTED;
-        return RustBridge.sendControllerArrivalEvent(controllerNumber, activeGamepadMask, type, supportedButtonFlags, capabilities);
-    }
-
-    public static int sendControllerTouchEvent(byte controllerNumber, byte eventType, int pointerId, float x, float y, float pressure) {
-        if (!RustBridge.isAvailable()) return LI_ERR_UNSUPPORTED;
-        return RustBridge.sendControllerTouchEvent(controllerNumber, eventType, pointerId, x, y, pressure);
-    }
-
-    public static int sendControllerMotionEvent(byte controllerNumber, byte motionType, float x, float y, float z) {
-        if (!RustBridge.isAvailable()) return LI_ERR_UNSUPPORTED;
-        return RustBridge.sendControllerMotionEvent(controllerNumber, motionType, x, y, z);
-    }
-
-    public static int sendControllerBatteryEvent(byte controllerNumber, byte batteryState, byte batteryPercentage) {
-        if (!RustBridge.isAvailable()) return LI_ERR_UNSUPPORTED;
-        return RustBridge.sendControllerBatteryEvent(controllerNumber, batteryState, batteryPercentage);
-    }
-
-    public static void sendKeyboardInput(short keyMap, byte keyDirection, byte modifier, byte flags) {
-        if (!RustBridge.isAvailable()) return;
-        RustBridge.sendKeyboardInput(keyMap, keyDirection, modifier, flags);
-    }
-
-    public static void sendMouseHighResScroll(short scrollAmount) {
-        if (!RustBridge.isAvailable()) return;
-        RustBridge.sendMouseHighResScroll(scrollAmount);
-    }
-
-    public static void sendMouseHighResHScroll(short scrollAmount) {
-        if (!RustBridge.isAvailable()) return;
-        RustBridge.sendMouseHighResHScroll(scrollAmount);
-    }
-
-    public static void sendUtf8Text(byte[] text) {
-        if (!RustBridge.isAvailable()) return;
-        RustBridge.sendUtf8Text(text);
-    }
     public static boolean sendServerCommand(byte[] payload) {
         return RustBridge.isAvailable() && RustBridge.sendServerCommand(payload);
-    }
-
-    public static String getStageName(int stage) {
-        return PortFlags.stageName(stage);
-    }
-
-    /** This device's WAN IPv4 address from a STUN server, or null (also when the Rust library did not load). */
-    public static String findExternalAddressIP4(String stunHostName, int stunPort) {
-        return RustBridge.isAvailable() ? RustBridge.findExternalAddressIP4(stunHostName, stunPort) : null;
-    }
-
-    public static int getPendingAudioDuration() {
-        return RustBridge.isAvailable() ? RustBridge.getPendingAudioDuration() : 0;
-    }
-
-    /** The engine's session clock in microseconds, which the Vulkan renderer maps receive times with. */
-    public static long sessionNowUs() {
-        return RustBridge.isAvailable() ? RustBridge.sessionNowUs() : 0L;
-    }
-
-    /** The engine's Opus concealer for the AAudio callback, a C function pointer for aaudio_output.c. */
-    public static long audioConcealer() {
-        return RustBridge.isAvailable() ? RustBridge.audioConcealer() : 0L;
-    }
-
-
-    public static int getPendingVideoFrames() {
-        return RustBridge.isAvailable() ? RustBridge.getPendingVideoFrames() : 0;
     }
 
     // Frames the engine dropped because its decode queue overflowed (the overflowing frame and those
@@ -1028,10 +423,6 @@ public class MoonBridge {
                 : ML_TEST_RESULT_INCONCLUSIVE;
     }
 
-    public static int getPortFlagsFromStage(int stage) {
-        return PortFlags.fromStage(stage);
-    }
-
     public static int getPortFlagsFromTerminationErrorCode(int errorCode) {
         return PortFlags.fromTerminationErrorCode(errorCode);
     }
@@ -1040,32 +431,9 @@ public class MoonBridge {
         return PortFlags.stringify(portFlags, separator);
     }
 
-    /** Whether this session's host's own disconnect ended the connection, not a silence past the timeout. */
-    public static boolean hostSaidGoodbye() {
-        return RustBridge.isAvailable() && RustBridge.hostSaidGoodbye();
-    }
-
-    /** The address the running stream connected to (as text, no DNS), or null without one. */
-    public static String getHostAddress() {
-        return RustBridge.isAvailable() ? RustBridge.getHostAddress() : null;
-    }
-
-    /** nightjar_core::host_loss::watch_goodbye: probes after the host's goodbye. */
-    public static int hostLossWatchGoodbye(long handle, String host, int port, NightjarJni.HostLossCallback callback) {
-        return RustBridge.isAvailable() ? RustBridge.hostLossWatchGoodbye(handle, host, port, callback) : 2;
-    }
-
-    public static boolean hostLossAvailable() {
-        return RustBridge.isAvailable();
-    }
-
     // The RTT is in the top 32 bits, and the RTT variance is in the bottom 32 bits
     public static long getEstimatedRttInfo() {
         return RustBridge.isAvailable() ? RustBridge.getEstimatedRttInfo() : -1L;
-    }
-
-    public static String getLaunchUrlQueryParameters() {
-        return PortFlags.LAUNCH_URL_QUERY_PARAMETERS;
     }
 
     public static native byte guessControllerType(int vendorId, int productId);
@@ -1080,14 +448,9 @@ public class MoonBridge {
     public static boolean reportFrameSlack(long slackNs, long periodNs) {
         return RustBridge.isAvailable() && RustBridge.reportFrameSlack(slackNs, periodNs);
     }
+
     public static void flushPhaseLockReport() {
         if (RustBridge.isAvailable()) RustBridge.flushPhaseLockReport();
-    }
-
-    // Bytes of every video and audio datagram received this stream, FEC parity included: the
-    // stream's bandwidth on the wire (Moonlight V+'s LiGetRTPVideoBytesReceived, with audio).
-    public static long getWireBytesReceived() {
-        return RustBridge.isAvailable() ? RustBridge.getWireBytesReceived() : 0L;
     }
 
     // The video socket's receive buffer in bytes: asked in the top 32 bits, what the system granted in
@@ -1096,35 +459,11 @@ public class MoonBridge {
         return RustBridge.isAvailable() ? RustBridge.getVideoReceiveBufferInfo() : -1L;
     }
 
-    // Early edge of the last phase-lock report in microseconds before the latch, or
-    // Integer.MIN_VALUE before the first one.
-    public static int getPhaseLockLeadUs() {
-        return RustBridge.isAvailable() ? RustBridge.getPhaseLockLeadUs() : Integer.MIN_VALUE;
-    }
-
     // Whether this connection's host named the control message in its DESCRIBE answer
     // (a=x-rl-control, Rubylight 2.2.0+). False before the RTSP handshake and for other hosts.
     public static boolean hostSupportsControlMessage(int messageType) {
         return RustBridge.isAvailable() && RustBridge.hostSupportsControlMessage(messageType);
     }
-
-    // Phase lock reports (reportFrameSlack), client to host (protocol/core/src/phase_lock.rs).
-    public static final int CONTROL_MESSAGE_PHASE_LOCK = 0x5530;
-
-    // Display HDR luminance, client to host (protocol/core/src/control.rs DisplayCaps).
-    public static final int CONTROL_MESSAGE_DISPLAY_CAPS = 0x5531;
-
-    // Sends the display's HDR luminance in nits (0 when unknown) on the encrypted control
-    // stream; false when the host did not announce 0x5531 or the stream is not up.
-    public static boolean sendDisplayCaps(boolean hdr, float maxNits, float maxAverageNits, float minNits) {
-        return RustBridge.isAvailable() && RustBridge.sendDisplayCaps(hdr, maxNits, maxAverageNits, minNits);
-    }
-
-    // Microphone state for this session.
-    public static final int MIC_STATE_OFF = 0;
-    public static final int MIC_STATE_NOT_OFFERED = 1;
-    public static final int MIC_STATE_UNAVAILABLE = 2;
-    public static final int MIC_STATE_READY = 3;
 
     /**
      * The packed full-chroma modes the PC's DESCRIBE offered this stream (0 without), from the end
@@ -1138,15 +477,6 @@ public class MoonBridge {
         return RustBridge.isAvailable() ? RustBridge.getMicrophoneState() : MIC_STATE_OFF;
     }
 
-    // Encodes one frame of 48 kHz mono PCM as Opus and sends it to the host. Returns the
-    // datagram length, or a negative value when the frame was not sent.
-    public static int sendMicrophonePcm(short[] pcm, int samples) {
-        return RustBridge.isAvailable() ? RustBridge.sendMicrophonePcm(pcm, samples) : -1;
-    }
-
-    // Rubylight 2.2 control message: change resolution or frame rate mid-stream.
-    public static final int CONTROL_MESSAGE_RECONFIGURE = 0x5532;
-
     // Asks the host to continue at width x height and fpsMillihz / 1000 fps; it answers with an
     // IDR at the new size. Only call when hostSupportsControlMessage(CONTROL_MESSAGE_RECONFIGURE).
     // Returns false when the request could not be sent.
@@ -1154,55 +484,6 @@ public class MoonBridge {
         return RustBridge.isAvailable() && RustBridge.requestReconfigure(width, height, fpsMillihz);
     }
 
-    // Host timing, host to client (protocol/core/src/control.rs HostTimingRequest and HostTiming).
-    public static final int CONTROL_MESSAGE_HOST_TIMING = HostTimingReport.MESSAGE_TYPE;
-
-    // Asks the host to report each frame's present-to-sent time (or stop). Only call when
-    // hostSupportsControlMessage(CONTROL_MESSAGE_HOST_TIMING); false when it could not be sent.
-    public static boolean sendHostTimingRequest(boolean enabled) {
-        return RustBridge.isAvailable() && RustBridge.sendHostTimingRequest(enabled);
-    }
-
-    // Link notice (0x5538, docs/control-messages.md in the Rubylight host): the host says when it
-    // lowers the video bitrate because of the network.
-    public static final int CONTROL_MESSAGE_LINK_NOTICE = 0x5538;
-
-    public static boolean sendLinkNoticeRequest(boolean enabled) {
-        return RustBridge.isAvailable() && RustBridge.sendLinkNoticeRequest(enabled);
-    }
-
-    // Clock sync (0x5537) and timestamp presentation (protocol/core/src/present_clock.rs). Times are System.nanoTime().
-    public static final int CONTROL_MESSAGE_CLOCK_SYNC = 0x5537;
-
-    // Sends one probe to a host that announced clock sync; false otherwise.
-    public static boolean sendClockSyncProbe() {
-        return RustBridge.isAvailable() && RustBridge.sendClockSyncProbe();
-    }
-    // adaptive: the display refreshes when a frame comes (adaptive refresh rate), so a frame much
-    // later than the typical one is shown when ready instead of every frame waiting for it.
-    public static void presentClockStart(int minIntervalUs, boolean adaptive) {
-        if (RustBridge.isAvailable()) RustBridge.presentClockStart(minIntervalUs, adaptive);
-    }
-    public static void presentClockStop() {
-        if (RustBridge.isAvailable()) RustBridge.presentClockStop();
-    }
-    public static void presentClockReset() {
-        if (RustBridge.isAvailable()) RustBridge.presentClockReset();
-    }
-    // out: present time (ns), hold (us), host-to-present latency (us, -1 without clock sync), late.
-    public static boolean presentClockSchedule(long hostUs, long readyNs, long[] out) {
-        return RustBridge.isAvailable() && RustBridge.presentClockSchedule(hostUs, readyNs, out);
-    }
-    // out: frames scheduled, frames late, clock sync round trip (us, -1 without).
-    public static boolean presentClockStats(long[] out) {
-        return RustBridge.isAvailable() && RustBridge.presentClockStats(out);
-    }
-    // out: the host-to-client clock offset in us now (client = host + offset, the client clock
-    // being CLOCK_MONOTONIC like System.nanoTime()) and the round trip in us of the exchange it
-    // comes from. False before the first clock sync exchange or without a running clock.
-    public static boolean presentClockOffset(long[] out) {
-        return RustBridge.isAvailable() && RustBridge.presentClockOffset(out);
-    }
     // PresentClock.schedule onto a display's vsync grid (present_clock.rs schedule_on_grid). out:
     // release time (ns), vsync (ns), vsync index from the anchor, flags (1 late, 2 shares the
     // previous frame's vsync), hold (us), host-to-vsync latency (us, -1 without clock sync) and
@@ -1210,87 +491,5 @@ public class MoonBridge {
     public static boolean presentClockScheduleOnGrid(long hostUs, long readyNs, long anchorNs, long intervalNs,
             long leadNs, long slackNs, long[] out) {
         return RustBridge.isAvailable() && RustBridge.presentClockScheduleOnGrid(hostUs, readyNs, anchorNs, intervalNs, leadNs, slackNs, out);
-    }
-    // Notes a frame's host time (us) for the content rate; the rate in millihertz once it held
-    // steady for two seconds, else 0.
-    public static void presentClockObserve(long hostUs) {
-        if (RustBridge.isAvailable()) RustBridge.presentClockObserve(hostUs);
-    }
-    public static int presentClockContentRate() {
-        return RustBridge.isAvailable() ? RustBridge.presentClockContentRate() : 0;
-    }
-
-    // Host cursor shapes, client to host (docs/protocol/cursor-shape.md).
-    public static final int CONTROL_MESSAGE_CURSOR_SHAPE_REQUEST = 0x5540;
-
-    // The 3.0 extensions (protocol/core/src/ids.rs). Defined so hostSupportsControlMessage can ask
-    // for them. MoonBridgeControlMessagesTest holds these and the cursor shape request to test
-    // resources protocol/control-messages.txt, which nightjar-core checks too.
-    public static final int CONTROL_MESSAGE_FEC_REPORT = 0x5539;
-    public static final int CONTROL_MESSAGE_USB = 0x553A;
-    public static final int CONTROL_MESSAGE_TEXT_INPUT = 0x553B;
-    public static final int CONTROL_MESSAGE_RATE_CHANGE = 0x553C;
-    public static final int CONTROL_MESSAGE_PIPELINE_RATES = 0x553D;
-    public static final int CONTROL_MESSAGE_KEYBOARD_LAYOUT = 0x553E;
-    // Moonlight V+'s clipboard sync, which Rubylight hosts offer to launches that ask for it.
-    public static final int CONTROL_MESSAGE_CLIPBOARD_SYNC = 0x5508;
-    // Moonlight V+'s FEC summary, which the engine sends to Foundation Sunshine hosts that
-    // offer FEC control in DESCRIBE (no a=x-rl-control entry).
-    public static final int CONTROL_MESSAGE_FEC_SUMMARY = 0x5510;
-
-    // Asks the host to send its cursor image and leave it out of the video (true), or to stop
-    // (false). Only call when hostSupportsControlMessage(CONTROL_MESSAGE_CURSOR_SHAPE_REQUEST).
-    // Returns false when the request could not be sent.
-    public static boolean sendCursorShapeRequest(boolean enabled) {
-        return RustBridge.isAvailable() && RustBridge.sendCursorShapeRequest(enabled);
-    }
-
-    // Asks the host for text field notices (0x553B; textInput on the listener), or to stop. Only
-    // call when hostSupportsControlMessage(CONTROL_MESSAGE_TEXT_INPUT).
-    public static boolean sendTextInputRequest(boolean enabled) {
-        return RustBridge.isAvailable() && RustBridge.sendTextInputRequest(enabled);
-    }
-
-    // Asks the host for a bitrate in kbps, a rate in mHz or both (0x553C; rateChange on the
-    // listener with the same serial), 0 keeping that value. Only call when
-    // hostSupportsControlMessage(CONTROL_MESSAGE_RATE_CHANGE); false when it
-    // could not be sent or a value is out of range.
-    public static boolean sendRateChange(int serial, int bitrateKbps, int fpsMillihz) {
-        return RustBridge.isAvailable() && RustBridge.sendRateChange(serial, bitrateKbps, fpsMillihz);
-    }
-
-    // Reports the client's keyboard layout as a BCP 47 tag (0x553E), so the host types keys the
-    // client did not normalize in that layout. Only call when
-    // hostSupportsControlMessage(CONTROL_MESSAGE_KEYBOARD_LAYOUT); false when it could not be
-    // sent or the tag is not a valid one (empty, over 64 characters, not printable ASCII).
-    public static boolean sendKeyboardLayout(String bcp47Tag) {
-        return RustBridge.isAvailable() && RustBridge.sendKeyboardLayout(bcp47Tag);
-    }
-
-    // What clipboardSyncStart did: on, the host did not offer it, or the
-    // hello could not be sent.
-    public static final int CLIPBOARD_SYNC_ON = 0;
-    public static final int CLIPBOARD_SYNC_NOT_OFFERED = 1;
-    public static final int CLIPBOARD_SYNC_FAILED = 2;
-    // What clipboardSyncLocal did with a copy: sent, skipped (empty, or the host's own copy coming
-    // back), too large for a frame, or not sent (the sync is off or the send failed).
-    public static final int CLIPBOARD_COPY_SENT = 0;
-    public static final int CLIPBOARD_COPY_SKIPPED = 1;
-    public static final int CLIPBOARD_COPY_TOO_LARGE = 2;
-    public static final int CLIPBOARD_COPY_FAILED = 3;
-    // clipboardSyncRefused reasons: the host copied an image, or sent what the sync cannot use.
-    public static final int CLIPBOARD_REFUSED_IMAGE = 1;
-    public static final int CLIPBOARD_REFUSED_OTHER = 2;
-
-    // Starts clipboard sync (0x5508) once the connection started. current is this device's
-    // clipboard text as it is, which stays here; null when it could not be read. The host's
-    // copies then arrive on the listener's clipboardSync.
-    public static int clipboardSyncStart(String current) {
-        return RustBridge.isAvailable() ? RustBridge.clipboardSyncStart(current) : CLIPBOARD_SYNC_FAILED;
-    }
-
-    // Text copied on this device, for clipboard sync: one of CLIPBOARD_COPY_*.
-    public static int clipboardSyncLocal(String text) {
-        return RustBridge.isAvailable() ? RustBridge.clipboardSyncLocal(text) : CLIPBOARD_COPY_FAILED;
     }
 }

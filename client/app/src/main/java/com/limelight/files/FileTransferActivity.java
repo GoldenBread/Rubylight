@@ -6,28 +6,16 @@ import android.content.ContentResolver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.ServiceConnection;
-import android.content.pm.ProviderInfo;
-import android.database.Cursor;
 import android.net.Uri;
-import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
-import android.os.ParcelFileDescriptor;
 import android.provider.DocumentsContract;
-import android.provider.OpenableColumns;
-import android.text.TextUtils;
-import android.text.format.DateUtils;
-import android.text.format.Formatter;
-import android.util.TypedValue;
 import android.view.View;
 import android.widget.Button;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
-import android.widget.ProgressBar;
-import android.widget.ScrollView;
-import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.activity.result.ActivityResultLauncher;
@@ -46,7 +34,6 @@ import com.limelight.nativeapi.NativeApiClient;
 import com.limelight.nativeapi.NativeApiException;
 import com.limelight.nvstream.http.ComputerDetails;
 import com.limelight.nvstream.http.HostCapabilities;
-import com.limelight.nvstream.http.PairingManager;
 import com.limelight.nvstream.jni.Json;
 import com.limelight.ui.NightjarActivity;
 import com.limelight.ui.TopAppBar;
@@ -54,7 +41,6 @@ import com.limelight.utils.ProblemReport;
 import com.limelight.utils.UiHelper;
 
 import java.io.FileNotFoundException;
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
@@ -95,25 +81,9 @@ public class FileTransferActivity extends NightjarActivity implements FileTransf
     private FileProblems.Access downloadAccess = FileProblems.Access.CHECKING;
     private int generation;
 
-    private TextView status;
-    private LinearLayout pcs;
-    private Button send;
+    private FileTransferViews views;
     private Button refresh;
-    private TextView transfersHeading;
-    private LinearLayout transfers;
-    private Button clearFinished;
-    private TextView filesHeading;
-    private TextView folder;
     private LinearLayout files;
-    /**
-     * What {@link #pcs}, {@link #transfers} and {@link #files} show, one key per button set: every PC is polled
-     * every 1.5 s, a transfer reports its progress many times a second and the folder is read after every upload.
-     * Buttons made again on each of those lost a press before it was let go (a remote's OK button, a tap) and the
-     * D-pad focus with it (issue 56).
-     */
-    private final List<String> shownPcs = new ArrayList<>();
-    private final List<String> shownRows = new ArrayList<>();
-    private final List<String> shownFiles = new ArrayList<>();
     /** A PC was just chosen: the first of its buttons to show takes the focus (see {@link #render}). */
     private boolean focusAfterPick;
 
@@ -153,7 +123,18 @@ public class FileTransferActivity extends NightjarActivity implements FileTransf
         UiHelper.setLocale(this);
         super.onCreate(state);
         FrameLayout content = TopAppBar.setUpPage(this, R.string.files_title, this::finish);
-        content.addView(buildPage());
+        views = new FileTransferViews(this);
+        content.addView(views.buildPage(
+                () -> picker.launch(new String[] {"*/*"}),
+                this::loadAccess,
+                () -> {
+                    work.leftovers.clear();
+                    if (work.controller != null) work.controller.clearFinished();
+                    render();
+                }));
+        refresh = views.refresh;
+        files = views.files;
+
         Keeper keeper = new ViewModelProvider(this).get(Keeper.class);
         if (keeper.work == null) {
             String pc = chosenPc(getIntent());
@@ -183,12 +164,16 @@ public class FileTransferActivity extends NightjarActivity implements FileTransf
             int refused = 0;
             Uri report = forReport(getIntent()) ? ProblemReport.reportUri() : null;
             for (Uri uri : sharedUris(getIntent())) {
-                if (sendable(uri, getPackageName(), providerPackage(uri), report)) work.waiting.add(uri);
-                else refused++;
+                if (sendable(uri, getPackageName(), FileShareIntents.providerPackage(this, uri), report)) {
+                    work.waiting.add(uri);
+                } else {
+                    refused++;
+                }
             }
             if (refused > 0) {
                 LimeLog.warning("File transfer: refused " + refused + " shared items that are not another app's files");
-                Toast.makeText(this, getResources().getQuantityString(R.plurals.files_share_refused, refused, refused), Toast.LENGTH_LONG).show();
+                Toast.makeText(this, getResources().getQuantityString(R.plurals.files_share_refused, refused, refused),
+                        Toast.LENGTH_LONG).show();
             }
             work.engine = FileTransferEngine.jni();
         }
@@ -206,133 +191,24 @@ public class FileTransferActivity extends NightjarActivity implements FileTransf
         return new Intent(context, FileTransferActivity.class).putExtra(EXTRA_PC_UUID, pcUuid);
     }
 
-    /**
-     * The PC the screen is for, or null to ask. Only Nightjar's menus name one: a share always asks, so another
-     * app cannot have files sent to a PC without the user choosing it.
-     */
     static String chosenPc(Intent intent) {
-        String action = intent.getAction();
-        boolean share = Intent.ACTION_SEND.equals(action) || Intent.ACTION_SEND_MULTIPLE.equals(action);
-        return share ? null : intent.getStringExtra(EXTRA_PC_UUID);
+        return FileShareIntents.chosenPc(intent);
     }
 
-    /**
-     * Whether a shared file may be sent: a content URI that another app's provider serves. A file path or one of
-     * Nightjar's providers would let any app have Nightjar send its private files (keys, settings). An authority
-     * with a user prefix ({@code 0@...}) resolves to no provider here but opens the unprefixed one, Nightjar's
-     * own included, so it is refused, and so is an authority no provider serves.
-     */
     static boolean sendable(Uri uri, String ownPackage, String providerPackage) {
-        String authority = uri.getAuthority();
-        return ContentResolver.SCHEME_CONTENT.equals(uri.getScheme()) && !TextUtils.isEmpty(authority)
-                && authority.indexOf('@') < 0 && providerPackage != null && !ownPackage.equals(providerPackage);
+        return FileShareIntents.sendable(uri, ownPackage, providerPackage);
     }
 
-    /**
-     * As above, except that a share through {@link #REPORT_ALIAS} may also send Nightjar's problem report:
-     * {@code report} is its URI then, null otherwise. Only that one file, not the rest of the provider that serves
-     * it (the clipboard image), and only Nightjar can open that alias, so no other app gets a private file sent.
-     */
     static boolean sendable(Uri uri, String ownPackage, String providerPackage, Uri report) {
-        if (report != null && report.equals(uri)) return true;
-        return sendable(uri, ownPackage, providerPackage);
+        return FileShareIntents.sendable(uri, ownPackage, providerPackage, report);
     }
 
-    /** Whether Report a problem opened the screen, through {@link #REPORT_ALIAS}. */
     static boolean forReport(Intent intent) {
-        ComponentName component = intent.getComponent();
-        return component != null && REPORT_ALIAS.equals(component.getClassName());
+        return FileShareIntents.forReport(intent);
     }
 
-    /** The app whose provider serves {@code uri}, or null when none does (then the share is refused). */
-    private String providerPackage(Uri uri) {
-        if (TextUtils.isEmpty(uri.getAuthority())) return null;
-        ProviderInfo provider = getPackageManager().resolveContentProvider(uri.getAuthority(), 0);
-        return provider == null ? null : provider.packageName;
-    }
-
-    /** The files of an ACTION_SEND or ACTION_SEND_MULTIPLE, in the order shared. */
     static List<Uri> sharedUris(Intent intent) {
-        List<Uri> uris = new ArrayList<>();
-        if (Intent.ACTION_SEND.equals(intent.getAction())) {
-            Uri uri = intent.getParcelableExtra(Intent.EXTRA_STREAM);
-            if (uri != null) uris.add(uri);
-        } else if (Intent.ACTION_SEND_MULTIPLE.equals(intent.getAction())) {
-            List<Uri> shared = intent.getParcelableArrayListExtra(Intent.EXTRA_STREAM);
-            if (shared != null) {
-                for (Uri uri : shared) if (uri != null) uris.add(uri);
-            }
-        }
-        return uris;
-    }
-
-    private View buildPage() {
-        ScrollView scroll = new ScrollView(this);
-        LinearLayout page = new LinearLayout(this);
-        page.setOrientation(LinearLayout.VERTICAL);
-        int pad = dp(16);
-        page.setPadding(pad, pad, pad, pad);
-        scroll.addView(page);
-
-        status = text(page, android.R.style.TextAppearance_Material_Body1);
-        pcs = new LinearLayout(this);
-        pcs.setOrientation(LinearLayout.VERTICAL);
-        page.addView(pcs);
-
-        LinearLayout actions = new LinearLayout(this);
-        actions.setOrientation(LinearLayout.HORIZONTAL);
-        page.addView(actions);
-        send = button(actions, R.string.files_send);
-        send.setOnClickListener(v -> picker.launch(new String[] {"*/*"}));
-        refresh = button(actions, R.string.files_refresh);
-        refresh.setOnClickListener(v -> loadAccess());
-
-        transfersHeading = text(page, android.R.style.TextAppearance_Material_Title);
-        transfersHeading.setText(R.string.files_transfers);
-        transfers = new LinearLayout(this);
-        transfers.setOrientation(LinearLayout.VERTICAL);
-        page.addView(transfers);
-        clearFinished = button(page, R.string.files_clear_finished);
-        clearFinished.setOnClickListener(v -> {
-            work.leftovers.clear();
-            if (work.controller != null) work.controller.clearFinished();
-            render();
-        });
-
-        filesHeading = text(page, android.R.style.TextAppearance_Material_Title);
-        filesHeading.setText(R.string.files_on_pc);
-        folder = text(page, android.R.style.TextAppearance_Material_Body1);
-        files = new LinearLayout(this);
-        files.setOrientation(LinearLayout.VERTICAL);
-        page.addView(files);
-        return scroll;
-    }
-
-    private int dp(int value) {
-        return (int) TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, value, getResources().getDisplayMetrics());
-    }
-
-    private TextView text(LinearLayout parent, int appearance) {
-        TextView view = new TextView(this);
-        view.setTextAppearance(this, appearance);
-        view.setPadding(0, dp(8), 0, dp(4));
-        parent.addView(view);
-        return view;
-    }
-
-    private Button button(LinearLayout parent, int label) {
-        return button(parent, getText(label));
-    }
-
-    private Button button(LinearLayout parent, CharSequence label) {
-        Button button = new com.google.android.material.button.MaterialButton(this, null,
-                com.google.android.material.R.attr.materialButtonOutlinedStyle);
-        button.setText(label);
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        params.setMarginEnd(dp(8));
-        parent.addView(button, params);
-        return button;
+        return FileShareIntents.sharedUris(intent);
     }
 
     private void startPolling() {
@@ -383,7 +259,7 @@ public class FileTransferActivity extends NightjarActivity implements FileTransf
         int asked = ++generation;
         uploadAccess = FileProblems.Access.CHECKING;
         downloadAccess = FileProblems.Access.CHECKING;
-        status.setText(R.string.files_checking);
+        views.status.setText(R.string.files_checking);
         HostCapabilities known = work.computer.caps;
         work.workers.execute(() -> {
             String failure = null;
@@ -408,7 +284,7 @@ public class FileTransferActivity extends NightjarActivity implements FileTransf
                     uploadAccess = FileProblems.Access.CHECKING;
                     downloadAccess = FileProblems.Access.CHECKING;
                     render();
-                    status.setText(getString(R.string.files_check_failed, problem));
+                    views.status.setText(getString(R.string.files_check_failed, problem));
                     return;
                 }
                 uploadAccess = FileProblems.access(read, true);
@@ -456,19 +332,20 @@ public class FileTransferActivity extends NightjarActivity implements FileTransf
         FileTransferController controller = owner.controller;
         ContentResolver resolver = getApplicationContext().getContentResolver();
         owner.workers.execute(() -> {
-            List<SharedFile> files = new ArrayList<>();
-            for (Uri uri : uris) files.add(describe(resolver, uri));
+            List<SharedFile> queued = new ArrayList<>();
+            for (Uri uri : uris) queued.add(describe(resolver, uri));
             owner.handler.post(() -> {
-                for (SharedFile file : files) {
+                for (SharedFile file : queued) {
                     if (owner.controller != controller) {
                         // Another PC's transfers meanwhile: the file waits for one that may receive it.
                         owner.waiting.add(file.uri);
                     } else if (file.size < 0) {
                         // The host needs the length before the first byte.
                         FileTransferActivity screen = owner.screen;
-                        if (screen != null) screen.status.setText(screen.getString(R.string.files_size_unknown, file.name));
+                        if (screen != null) screen.views.status.setText(screen.getString(R.string.files_size_unknown, file.name));
                     } else {
-                        controller.send(file.name, file.size, () -> detach(resolver.openFileDescriptor(file.uri, "r")));
+                        controller.send(file.name, file.size,
+                                () -> FileShareIntents.detach(resolver.openFileDescriptor(file.uri, "r")));
                     }
                 }
             });
@@ -488,33 +365,8 @@ public class FileTransferActivity extends NightjarActivity implements FileTransf
         }
     }
 
-    /** Asks the provider for a file's name and size, opening the file when the size is not listed. Off the main thread. */
     static SharedFile describe(ContentResolver resolver, Uri uri) {
-        String name = null;
-        long size = -1;
-        try (Cursor cursor = resolver.query(uri, new String[] {OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE},
-                null, null, null)) {
-            if (cursor != null && cursor.moveToFirst()) {
-                if (!cursor.isNull(0)) name = cursor.getString(0);
-                if (!cursor.isNull(1)) size = cursor.getLong(1);
-            }
-        } catch (RuntimeException e) {
-            LimeLog.warning("File transfer: no details for a shared file: " + e.getMessage());
-        }
-        if (name == null) name = uri.getLastPathSegment() != null ? uri.getLastPathSegment() : "file";
-        if (size < 0) {
-            try (ParcelFileDescriptor fd = resolver.openFileDescriptor(uri, "r")) {
-                if (fd != null) size = fd.getStatSize();
-            } catch (IOException | RuntimeException e) {
-                LimeLog.warning("File transfer: could not open a shared file: " + e.getMessage());
-            }
-        }
-        return new SharedFile(uri, name, size);
-    }
-
-    private static int detach(ParcelFileDescriptor fd) throws IOException {
-        if (fd == null) throw new FileNotFoundException("no descriptor");
-        return fd.detachFd();
+        return FileShareIntents.describe(resolver, uri);
     }
 
     private void download(RemoteFiles.Entry entry) {
@@ -530,7 +382,8 @@ public class FileTransferActivity extends NightjarActivity implements FileTransf
         work.pendingDownload = null;
         work.pendingRetry = -1;
         if (uri == null) return;
-        String name = displayName(uri, entry != null ? entry.name : String.valueOf(uri.getLastPathSegment()));
+        String name = FileShareIntents.displayName(getContentResolver(), uri,
+                entry != null ? entry.name : String.valueOf(uri.getLastPathSegment()));
         Runnable discard = work.discard(uri, name);
         FileTransferController current = work.controller;
         if (current == null || (entry == null && retry < 0)) {
@@ -541,22 +394,12 @@ public class FileTransferActivity extends NightjarActivity implements FileTransf
             return;
         }
         ContentResolver resolver = getApplicationContext().getContentResolver();
-        FileTransferController.Opener opener = () -> detach(resolver.openFileDescriptor(uri, "w"));
+        FileTransferController.Opener opener = () -> FileShareIntents.detach(resolver.openFileDescriptor(uri, "w"));
         if (retry >= 0) {
             current.retryDownload(retry, opener, discard);
         } else {
             current.download(entry.name, name, entry.size, opener, discard);
         }
-    }
-
-    private String displayName(Uri uri, String fallback) {
-        try (Cursor cursor = getContentResolver().query(uri, new String[] {OpenableColumns.DISPLAY_NAME},
-                null, null, null)) {
-            if (cursor != null && cursor.moveToFirst() && !cursor.isNull(0)) return cursor.getString(0);
-        } catch (RuntimeException ignored) {
-            // The name the PC has is as good.
-        }
-        return fallback;
     }
 
     @Override
@@ -571,17 +414,14 @@ public class FileTransferActivity extends NightjarActivity implements FileTransf
     }
 
     private void render() {
-        if (status == null) return;
+        if (views == null || views.status == null) return;
         boolean picking = work.uuid == null;
-        if (!picking) {
-            pcs.removeAllViews();
-            shownPcs.clear();
-        }
+        if (!picking) views.clearPcs();
         int note;
         if (work.engine == null) {
             note = R.string.files_no_library;
         } else if (picking) {
-            note = showPcs() ? R.string.files_pick_pc : R.string.files_no_pc;
+            note = views.showPcs(work.computers, this::pick) ? R.string.files_pick_pc : R.string.files_no_pc;
         } else if (work.computer == null || work.controller == null) {
             note = work.computer == null ? R.string.files_checking : R.string.files_offline;
         } else if (uploadAccess != FileProblems.Access.READY) {
@@ -589,57 +429,25 @@ public class FileTransferActivity extends NightjarActivity implements FileTransf
         } else {
             note = FileProblems.accessText(downloadAccess, false);
         }
-        status.setText(note == 0 ? "" : getString(note));
-        status.setVisibility(note == 0 && work.waiting.isEmpty() ? View.GONE : View.VISIBLE);
+        views.status.setText(note == 0 ? "" : getString(note));
+        views.status.setVisibility(note == 0 && work.waiting.isEmpty() ? View.GONE : View.VISIBLE);
         if (!work.waiting.isEmpty() && !picking) {
-            status.append((note == 0 ? "" : "\n\n") + getString(R.string.files_waiting_to_send, work.waiting.size()));
+            views.status.append((note == 0 ? "" : "\n\n") + getString(R.string.files_waiting_to_send, work.waiting.size()));
         }
         boolean open = work.controller != null;
-        send.setVisibility(open ? View.VISIBLE : View.GONE);
-        send.setEnabled(uploadAccess == FileProblems.Access.READY);
-        refresh.setVisibility(open ? View.VISIBLE : View.GONE);
+        views.send.setVisibility(open ? View.VISIBLE : View.GONE);
+        views.send.setEnabled(uploadAccess == FileProblems.Access.READY);
+        views.refresh.setVisibility(open ? View.VISIBLE : View.GONE);
         boolean listed = open && (uploadAccess == FileProblems.Access.READY || downloadAccess == FileProblems.Access.READY);
-        filesHeading.setVisibility(listed ? View.VISIBLE : View.GONE);
-        folder.setVisibility(listed ? View.VISIBLE : View.GONE);
-        files.setVisibility(listed ? View.VISIBLE : View.GONE);
+        views.filesHeading.setVisibility(listed ? View.VISIBLE : View.GONE);
+        views.folder.setVisibility(listed ? View.VISIBLE : View.GONE);
+        views.files.setVisibility(listed ? View.VISIBLE : View.GONE);
         showTransfers(open ? work.controller.rows() : Collections.emptyList());
         // The chosen PC's button is gone: Send files, or Check again while sending is not allowed, takes the
         // focus once shown, instead of the Up button.
-        if (focusAfterPick && open) focusAfterPick = !(takesFocus(send) || takesFocus(refresh));
-    }
-
-    /**
-     * The PCs a share can go to; false when there is none. The buttons are made again only when the PCs or their
-     * names change, and the PC that had the focus keeps it.
-     */
-    private boolean showPcs() {
-        List<ComputerDetails> online = new ArrayList<>();
-        List<String> keys = new ArrayList<>();
-        for (ComputerDetails details : work.computers.values()) {
-            if (details.state != ComputerDetails.State.ONLINE || details.pairState != PairingManager.PairState.PAIRED
-                    || !details.caps.has(HostCapabilities.Feature.NATIVE_API)) {
-                continue;
-            }
-            online.add(details);
-            keys.add(details.uuid + "\n" + details.displayName());
+        if (focusAfterPick && open) {
+            focusAfterPick = !(FileTransferViews.takesFocus(views.send) || FileTransferViews.takesFocus(views.refresh));
         }
-        if (keys.equals(shownPcs)) return !keys.isEmpty();
-        Focus focused = focusIn(pcs);
-        boolean appeared = shownPcs.isEmpty();
-        pcs.removeAllViews();
-        shownPcs.clear();
-        shownPcs.addAll(keys);
-        for (ComputerDetails details : online) {
-            // By name: the label used to be the string resource 0, which crashed every share.
-            Button pick = button(pcs, details.displayName());
-            pick.setTag("pc:" + details.uuid);
-            pick.setOnClickListener(v -> pick(details.uuid, details));
-        }
-        // A PC that went away hands the focus to its neighbour. When the list first shows, the first PC takes
-        // the focus: it was on the Up button, and a remote's first OK closed the screen.
-        restoreFocus(pcs, focused, null);
-        if (focused == null && appeared && pcs.getChildCount() > 0) takesFocus(pcs.getChildAt(0));
-        return !keys.isEmpty();
     }
 
     /** A share's PC was picked; package-private for tests. */
@@ -685,44 +493,20 @@ public class FileTransferActivity extends NightjarActivity implements FileTransf
         return true;
     }
 
-    /**
-     * The transfers and the downloads left behind. While the same transfers keep the same buttons, a change only
-     * updates their texts and progress bars; otherwise the rows are made again, and the focus stays on its button,
-     * or goes to the same row's other button or a neighbouring row's (see {@link #restoreFocus}).
-     */
     private void showTransfers(List<FileRow> rows) {
-        work.seen(rows);
-        List<String> keys = new ArrayList<>();
-        boolean finished = false;
-        for (FileRow row : rows) {
-            keys.add(rowKey(row));
-            finished |= row.isFinished();
-        }
-        for (String name : work.leftovers) keys.add("left\n" + name);
-        boolean shown = !rows.isEmpty() || !work.leftovers.isEmpty();
-        transfersHeading.setVisibility(shown ? View.VISIBLE : View.GONE);
-        clearFinished.setVisibility(finished || !work.leftovers.isEmpty() ? View.VISIBLE : View.GONE);
-        if (keys.equals(shownRows)) {
-            for (int i = 0; i < rows.size(); i++) updateRow((RowViews) transfers.getChildAt(i).getTag(), rows.get(i));
-        } else {
-            Focus focused = focusIn(transfers);
-            transfers.removeAllViews();
-            shownRows.clear();
-            shownRows.addAll(keys);
-            for (FileRow row : rows) transfers.addView(transferRow(row));
-            for (String name : work.leftovers) {
-                text(transfers, android.R.style.TextAppearance_Material_Body1)
-                        .setText(getString(R.string.files_partial_left, name));
+        views.showTransfers(work, rows, id -> work.controller.cancel(id), row -> {
+            if (work.controller.needsNewDocument(row.id)) {
+                work.pendingDownload = null;
+                work.pendingRetry = row.id;
+                creator.launch(row.localName);
+            } else {
+                work.controller.retry(row.id);
             }
-            restoreFocus(transfers, focused, clearFinished.getVisibility() == View.VISIBLE ? clearFinished : send,
-                    otherButton(focused));
-        }
+        });
     }
 
-    /** What decides a transfer row's views: the transfer, whether it has a progress bar, and its buttons. */
     static String rowKey(FileRow row) {
-        return row.id + "\n" + (row.state == FileRow.State.RUNNING) + "\n" + (!row.isFinished() && !row.cancelling)
-                + "\n" + row.canRetry;
+        return FileTransferViews.rowKey(row);
     }
 
     /** Where the focus was in a group about to be made again: the focused view's tag and its row's index. */
@@ -736,75 +520,8 @@ public class FileTransferActivity extends NightjarActivity implements FileTransf
         }
     }
 
-    /** The focus in {@code group}, or null when it is elsewhere. */
-    private static Focus focusIn(LinearLayout group) {
-        View focused = group.findFocus();
-        if (focused == null) return null;
-        View row = focused;
-        while (row.getParent() != group) row = (View) row.getParent();
-        return new Focus(focused.getTag(), group.indexOfChild(row));
-    }
-
-    /** The other button of a focused transfer button's row: Try again for Cancel and the other way round. */
     static Object otherButton(Focus focus) {
-        if (focus == null || !(focus.tag instanceof String)) return null;
-        String tag = (String) focus.tag;
-        if (tag.startsWith("cancel:")) return "retry:" + tag.substring("cancel:".length());
-        if (tag.startsWith("retry:")) return "cancel:" + tag.substring("retry:".length());
-        return null;
-    }
-
-    /**
-     * Gives the focus back after {@code group} was made again: to the view with the same tag, else to one of
-     * {@code others}, else to the row now at the old index or the nearest one after or before it that takes the
-     * focus, else to {@code last}. Without a place it falls to the toolbar's Up button, and the next OK of a
-     * remote closes the screen and cancels the transfers.
-     */
-    private static void restoreFocus(LinearLayout group, Focus focus, View last, Object... others) {
-        if (focus == null) return;
-        if (focus.tag != null && focusTagged(group, focus.tag)) return;
-        for (Object other : others) {
-            if (other != null && focusTagged(group, other)) return;
-        }
-        int count = group.getChildCount();
-        for (int step = 0; step < count; step++) {
-            int after = focus.index + step;
-            int before = focus.index - step - 1;
-            if (after < count && takesFocus(group.getChildAt(after))) return;
-            if (before >= 0 && before < count && takesFocus(group.getChildAt(before))) return;
-        }
-        if (last != null && last.isShown()) last.requestFocus();
-    }
-
-    private static boolean focusTagged(LinearLayout group, Object tag) {
-        View view = group.findViewWithTag(tag);
-        return view != null && takesFocus(view);
-    }
-
-    private static boolean takesFocus(View view) {
-        return view.getVisibility() == View.VISIBLE && view.requestFocus();
-    }
-
-    /** A transfer row's views that change while it runs. */
-    private static final class RowViews {
-        TextView title;
-        TextView detail;
-        ProgressBar bar;
-    }
-
-    private String rowTitle(FileRow row) {
-        return row.upload && !row.name.equals(row.localName) ?
-                getString(R.string.files_upload_name, row.localName, row.name) : row.upload ? row.name : row.localName;
-    }
-
-    private void updateRow(RowViews views, FileRow row) {
-        views.title.setText(rowTitle(row));
-        views.detail.setText(describe(this, row));
-        if (views.bar != null) {
-            int percent = row.percent();
-            views.bar.setIndeterminate(percent < 0);
-            if (percent >= 0) views.bar.setProgress(percent);
-        }
+        return FileTransferViews.otherButton(focus);
     }
 
     /** A download's document that could not be deleted is named under the transfers. */
@@ -813,111 +530,12 @@ public class FileTransferActivity extends NightjarActivity implements FileTransf
         render();
     }
 
-    private View transferRow(FileRow row) {
-        LinearLayout item = new LinearLayout(this);
-        item.setOrientation(LinearLayout.VERTICAL);
-        item.setPadding(0, dp(6), 0, dp(6));
-        RowViews views = new RowViews();
-        item.setTag(views);
-        views.title = text(item, android.R.style.TextAppearance_Material_Subhead);
-        views.detail = text(item, android.R.style.TextAppearance_Material_Body1);
-        if (row.state == FileRow.State.RUNNING) {
-            views.bar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
-            views.bar.setMax(100);
-            item.addView(views.bar);
-        }
-        updateRow(views, row);
-        LinearLayout actions = new LinearLayout(this);
-        item.addView(actions);
-        if (!row.isFinished() && !row.cancelling) {
-            Button cancel = button(actions, android.R.string.cancel);
-            cancel.setTag("cancel:" + row.id);
-            cancel.setOnClickListener(v -> work.controller.cancel(row.id));
-        }
-        if (row.canRetry) {
-            Button retry = button(actions, R.string.files_retry);
-            retry.setTag("retry:" + row.id);
-            retry.setOnClickListener(v -> {
-                if (work.controller.needsNewDocument(row.id)) {
-                    work.pendingDownload = null;
-                    work.pendingRetry = row.id;
-                    creator.launch(row.localName);
-                } else {
-                    work.controller.retry(row.id);
-                }
-            });
-        }
-        return item;
-    }
-
-    /** The state line of a transfer. */
     static String describe(Context context, FileRow row) {
-        switch (row.state) {
-            case QUEUED:
-                return context.getString(R.string.files_queued);
-            case RUNNING:
-                if (row.cancelling) return context.getString(R.string.files_cancelling);
-                if (row.percent() < 0) {
-                    return context.getString(R.string.files_receiving_unknown, Formatter.formatShortFileSize(context, row.done));
-                }
-                return context.getString(row.upload ? R.string.files_sending : R.string.files_receiving, row.percent(),
-                        Formatter.formatShortFileSize(context, row.done), Formatter.formatShortFileSize(context, row.total));
-            case DONE:
-                if (!row.upload) return context.getString(R.string.files_saved);
-                return row.savedName != null && !row.savedName.equals(row.name) ?
-                        context.getString(R.string.files_sent_as, row.savedName) : context.getString(R.string.files_sent);
-            case CANCELLED:
-                return context.getString(R.string.files_cancelled);
-            case FAILED:
-            default:
-                return context.getString(FileProblems.text(row.problem));
-        }
+        return FileTransferViews.describe(context, row);
     }
 
-    /**
-     * The PC's folder. It is read again after every upload and on Check again; its rows are made again only when
-     * its files change, and the focus stays on the Download it was on or goes to a neighbouring one.
-     */
     private void showFiles(RemoteFiles list) {
-        List<String> keys = new ArrayList<>();
-        if (list != null && list.problem != null) {
-            folder.setText(FileProblems.text(list.problem));
-        } else if (list != null) {
-            folder.setText(getString(R.string.files_folder, list.folder, Formatter.formatShortFileSize(this, list.freeBytes)));
-            if (downloadAccess == FileProblems.Access.READY) {
-                if (list.files.isEmpty()) keys.add("empty");
-                for (RemoteFiles.Entry entry : list.files) {
-                    keys.add(entry.name + "\n" + entry.size + "\n" + entry.modifiedUnixMs);
-                }
-            }
-        }
-        if (keys.equals(shownFiles)) return;
-        Focus focused = focusIn(files);
-        files.removeAllViews();
-        shownFiles.clear();
-        shownFiles.addAll(keys);
-        if (keys.isEmpty() || list.files.isEmpty()) {
-            if (!keys.isEmpty()) text(files, android.R.style.TextAppearance_Material_Body1).setText(R.string.files_empty);
-            restoreFocus(files, focused, refresh);
-            return;
-        }
-        for (RemoteFiles.Entry entry : list.files) {
-            LinearLayout item = new LinearLayout(this);
-            item.setOrientation(LinearLayout.VERTICAL);
-            TextView name = text(item, android.R.style.TextAppearance_Material_Subhead);
-            name.setText(entry.name);
-            TextView detail = text(item, android.R.style.TextAppearance_Material_Body1);
-            detail.setText(getString(R.string.files_entry, Formatter.formatShortFileSize(this, entry.size),
-                    DateUtils.formatDateTime(this, entry.modifiedUnixMs,
-                            DateUtils.FORMAT_SHOW_DATE | DateUtils.FORMAT_SHOW_TIME)));
-            LinearLayout actions = new LinearLayout(this);
-            item.addView(actions);
-            Button download = button(actions, R.string.files_download);
-            download.setTag("download:" + entry.name);
-            download.setOnClickListener(v -> download(entry));
-            files.addView(item);
-        }
-        restoreFocus(files, focused, refresh);
+        views.showFiles(list, downloadAccess, this::download);
     }
 
     @Override
@@ -1060,7 +678,6 @@ public class FileTransferActivity extends NightjarActivity implements FileTransf
             }
             return false;
         }
-
     }
 
     /** Holds the screen's {@link TransferWork} through a configuration change; cleared when the screen goes for good. */

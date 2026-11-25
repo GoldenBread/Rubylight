@@ -6,169 +6,48 @@ import static com.limelight.nativeapi.NativeApiFixtures.nativeHost;
 import static com.limelight.nativeapi.NativeApiFixtures.ok;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 import static org.robolectric.Shadows.shadowOf;
 
 import android.app.Application;
 import android.app.Dialog;
-import android.content.Context;
 import android.content.Intent;
-import android.os.Bundle;
+import android.content.ServiceConnection;
+import android.os.Handler;
 import android.os.Looper;
-import android.preference.PreferenceManager;
+import android.os.SystemClock;
 import android.view.KeyEvent;
 import android.widget.TextView;
 
 import androidx.appcompat.app.AlertDialog;
 
+import com.limelight.Game;
 import com.limelight.PcViewLifecycleTest;
 import com.limelight.R;
-import com.limelight.computers.ComputerManagerListener;
-import com.limelight.computers.ComputerManagerService;
+import com.limelight.nativeapi.ConsoleRepository;
 import com.limelight.nativeapi.NativeApiFixtures;
 import com.limelight.nvstream.http.ComputerDetails;
 import com.limelight.nvstream.http.NvApp;
+import com.limelight.utils.LaunchSource;
 
-import org.junit.After;
-import org.junit.Before;
-import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TemporaryFolder;
 import org.junit.runner.RunWith;
 import org.robolectric.Robolectric;
 import org.robolectric.RobolectricTestRunner;
-import org.robolectric.RuntimeEnvironment;
-import org.robolectric.android.controller.ActivityController;
 import org.robolectric.annotation.Config;
 import org.robolectric.shadows.ShadowDialog;
+import org.robolectric.shadows.ShadowSystemClock;
 import org.robolectric.util.ReflectionHelpers;
 
-import java.util.ArrayList;
+import java.time.Duration;
+import java.util.Arrays;
 import java.util.Collections;
-import java.util.List;
-import java.util.concurrent.TimeUnit;
-import java.util.function.BooleanSupplier;
 
 /** The automatic start on a game's page: the countdown, its ways out, and what each ending leaves the guard as. */
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = 28, application = Application.class, shadows = PcViewLifecycleTest.NoNativeMoonBridge.class,
         instrumentedPackages = "com.limelight.nvstream.jni")
-public class GameDetailOpenPlayTest {
-    @Rule public TemporaryFolder temporary = new TemporaryFolder();
-
-    private Context context;
-    private ConsoleRig rig;
-    private static final String PORTAL_APP = "{\"install_id\":\"t-portal\",\"app_id\":11,\"title\":\"Portal\"}";
-    private static final String ZELDA_APP = "{\"install_id\":\"t-zelda\",\"app_id\":22,\"title\":\"Zelda\"}";
-
-    private String sessionThere = NativeApiFixtures.IDLE;
-    private String stableThere = null;
-    private String libraryThere = library("r", game("t-portal", 11, "Portal", "steam:400", false));
-    private ActivityController<GameDetailWakeTest.Detail> controller;
-    /** Every page a test opened: the ones it opened before its last must not outlive it either. */
-    private final List<ActivityController<GameDetailWakeTest.Detail>> opened = new ArrayList<>();
-    private GameDetailWakeTest.Detail screen;
-    private HostFeed feed;
-
-    @Before
-    public void setUp() throws Exception {
-        context = RuntimeEnvironment.getApplication();
-        PreferenceManager.getDefaultSharedPreferences(context).edit().clear().commit();
-        OpenPlay.disarm(context);
-        GameDetailWakeTest.Detail.woken.clear();
-        GameDetailWakeTest.Detail.played.clear();
-        ShadowDialog.reset();
-    }
-
-    @After
-    public void tearDown() {
-        // A read still under way must not start its game in the next test.
-        for (ActivityController<GameDetailWakeTest.Detail> page : opened) {
-            if (!page.get().isDestroyed()) page.destroy();
-        }
-        GameDetailWakeTest.Detail.repository = null;
-    }
-
-    private void open(boolean online, String mac, Bundle state) throws Exception {
-        rig = new ConsoleRig(temporary.newFolder());
-        rig.transport.reply("tower", "library", ok(libraryThere));
-        rig.transport.reply("tower", "session", sessionThere.startsWith("{\"error") ? sessionThere : ok(sessionThere));
-        rig.repository.refresh(Collections.singletonList(nativeHost("tower", "Tower", true)));
-        GameDetailWakeTest.Detail.repository = rig.repository;
-        Intent intent = new Intent(context, GameDetailWakeTest.Detail.class)
-                .putExtra(GameDetailActivity.EXTRA_HOST_UUID, "tower")
-                .putExtra(GameDetailActivity.EXTRA_APP_ID, 11)
-                .putExtra(GameDetailActivity.EXTRA_TITLE, "Portal")
-                .putExtra(GameDetailActivity.EXTRA_HOST_NAME, "Tower")
-                .putExtra(GameDetailActivity.EXTRA_STABLE_ID, stableThere)
-                .putExtra(GameDetailActivity.EXTRA_OPEN_PLAY, true);
-        controller = Robolectric.buildActivity(GameDetailWakeTest.Detail.class, intent);
-        opened.add(controller);
-        controller = state == null ? controller.setup() : controller.setup(state);
-        controller.visible();
-        screen = controller.get();
-        feed = ReflectionHelpers.getField(screen, "feed");
-        ReflectionHelpers.setField(feed, "binder", binder());
-        ComputerDetails tower = nativeHost("tower", "Tower", online);
-        tower.macAddress = mac;
-        feed.update(tower);
-    }
-
-    private static ComputerManagerService.ComputerManagerBinder binder() {
-        return new ComputerManagerService().new ComputerManagerBinder() {
-            @Override public boolean isPersistent() { return false; }
-            @Override public void startPolling(ComputerManagerListener listener) { }
-            @Override public void stopPolling() { }
-            @Override public void renameComputer(String uuid, String alias) { }
-            @Override public void removeComputer(ComputerDetails computer) { }
-            @Override public void invalidateStateForComputer(String uuid) { }
-            @Override public String getUniqueId() { return "unique"; }
-            @Override public void waitForPollingStopped() { }
-        };
-    }
-
-    private static void pass(long ms) {
-        shadowOf(Looper.getMainLooper()).idleFor(ms, TimeUnit.MILLISECONDS);
-    }
-
-    private static void await(BooleanSupplier done) throws Exception {
-        long end = System.currentTimeMillis() + 5000;
-        while (!done.getAsBoolean() && System.currentTimeMillis() < end) {
-            pass(50);
-            Thread.sleep(20);
-        }
-        assertTrue("in time", done.getAsBoolean());
-    }
-
-    /**
-     * Until every read the page handed its worker thread is over and what it found is posted. Waiting moves no clock.
-     *
-     * <p>Under Robolectric each frame moves the clock 15 ms on, inside whichever idle draws it, and the page's
-     * animations ask for frames for a while once a read's answer is drawn. A read still running during a {@link #pass}
-     * lands at a point of it set by real time, and its frames push the clock past where the test meant to stop:
-     * a countdown then ended inside a pass meant to stop 1 ms short of it, or its ticks fell later than the test
-     * allowed for. Tests that time something against the countdown let the read land first.
-     */
-    private void readsDone() throws Exception {
-        // One task at a time: once this one runs, the ones before it are over.
-        ReflectionHelpers.<java.util.concurrent.ExecutorService>getField(screen, "worker").submit(() -> { })
-                .get(5, TimeUnit.SECONDS);
-        pass(20);
-    }
-
-    /** The page's first read of the PC, due 250 ms after it opens, landed. */
-    private void loaded() throws Exception {
-        pass(300);
-        readsDone();
-        assertTrue("read", ReflectionHelpers.<Boolean>getField(screen, "modelLive"));
-    }
-
-    private static AlertDialog shown() {
-        Dialog dialog = ShadowDialog.getLatestDialog();
-        assertTrue("a dialog is up", dialog != null && dialog.isShowing());
-        return (AlertDialog) dialog;
-    }
+public class GameDetailOpenPlayTest extends GameDetailOpenPlayCase {
 
     @Test
     public void theCountdownNamesTheGameAndThePcWithCancelFocused() throws Exception {
@@ -178,7 +57,7 @@ public class GameDetailOpenPlayTest {
         assertTrue("Cancel takes the first press", dialog.getButton(AlertDialog.BUTTON_NEGATIVE).isFocused());
         assertTrue("also straight after a touch", dialog.getButton(AlertDialog.BUTTON_NEGATIVE).isFocusableInTouchMode());
         loaded();
-        pass(ReflectionHelpers.<Long>getField(screen, "countdownEnd") - android.os.SystemClock.elapsedRealtime() - 1500);
+        pass(ReflectionHelpers.<Long>getField(screen, "countdownEnd") - SystemClock.elapsedRealtime() - 1500);
         assertEquals("Starting on Tower in 2", ((TextView) dialog.findViewById(android.R.id.message)).getText().toString());
     }
 
@@ -215,7 +94,7 @@ public class GameDetailOpenPlayTest {
         assertEquals("Starting on Tower in 3", ((TextView) shown().findViewById(android.R.id.message)).getText().toString());
         loaded();
         long end = ReflectionHelpers.<Long>getField(screen, "countdownEnd");
-        pass(end - android.os.SystemClock.elapsedRealtime() - 1);
+        pass(end - SystemClock.elapsedRealtime() - 1);
         // This page's own starts: the shared list also takes a late start of a page an earlier test left.
         assertTrue("not before the countdown ends", screen.plays.isEmpty());
         assertFalse(OpenPlay.armed(context));
@@ -235,10 +114,9 @@ public class GameDetailOpenPlayTest {
         // The main thread busy for a while, as a slow frame or a pause of the collector: every tick after it runs later.
         // The span is chosen so that ticks re-posted 100 ms after a late one would pass the end by 50 ms, whatever the
         // phase of the ticks is by now.
-        final long busy = 100 + Math.floorMod(end - android.os.SystemClock.elapsedRealtime() - 50, 100);
-        new android.os.Handler(Looper.getMainLooper()).post(() ->
-                org.robolectric.shadows.ShadowSystemClock.advanceBy(java.time.Duration.ofMillis(busy)));
-        pass(end - android.os.SystemClock.elapsedRealtime() - 1);
+        final long busy = 100 + Math.floorMod(end - SystemClock.elapsedRealtime() - 50, 100);
+        new Handler(Looper.getMainLooper()).post(() -> ShadowSystemClock.advanceBy(Duration.ofMillis(busy)));
+        pass(end - SystemClock.elapsedRealtime() - 1);
         assertFalse("not before the end", OpenPlay.armed(context));
         pass(1);
         assertTrue("at the end, not a tick after it", OpenPlay.armed(context));
@@ -246,11 +124,11 @@ public class GameDetailOpenPlayTest {
 
     /** The page as it ships: {@code play} itself runs, up to the stream's intent. */
     public static class RealPlay extends GameDetailActivity {
-        @Override public boolean bindService(Intent intent, android.content.ServiceConnection connection, int flags) {
+        @Override public boolean bindService(Intent intent, ServiceConnection connection, int flags) {
             return false;
         }
 
-        @Override protected com.limelight.nativeapi.ConsoleRepository createRepository(String uniqueId) {
+        @Override protected ConsoleRepository createRepository(String uniqueId) {
             return GameDetailWakeTest.Detail.repository;
         }
     }
@@ -275,9 +153,9 @@ public class GameDetailOpenPlayTest {
         pass(3100);
         await(() -> shadowOf(page).peekNextStartedActivity() != null);
         Intent stream = shadowOf(page).getNextStartedActivity();
-        assertEquals(com.limelight.utils.LaunchSource.OPEN_PLAY, com.limelight.utils.LaunchSource.of(stream));
+        assertEquals(LaunchSource.OPEN_PLAY, LaunchSource.of(stream));
         assertTrue(OpenPlay.isAutoStart(stream));
-        assertEquals("Portal", stream.getStringExtra(com.limelight.Game.EXTRA_APP_NAME));
+        assertEquals("Portal", stream.getStringExtra(Game.EXTRA_APP_NAME));
         assertTrue("the stream's end lands on Home", page.isFinishing());
         assertEquals("the automatic part is over", "OFF", ReflectionHelpers.getField(page, "auto").toString());
         assertTrue("armed until the stream clears it", OpenPlay.armed(context));
@@ -287,7 +165,7 @@ public class GameDetailOpenPlayTest {
 
     @Test
     public void onlyAStreamThatLastedClearsTheGuard() {
-        android.os.Handler handler = new android.os.Handler(Looper.getMainLooper());
+        Handler handler = new Handler(Looper.getMainLooper());
         OpenPlay.arm(context);
         OpenPlay.settleAfter(context, handler);
         pass(9999);
@@ -354,7 +232,7 @@ public class GameDetailOpenPlayTest {
     @Test
     public void aPromptOfTheModelsOwnNamesTheGame() throws Exception {
         open(true, null, null);
-        rig.classicApps.put("tower", java.util.Arrays.asList(new NvApp("Portal", 11, false), new NvApp("Zelda", 22, false)));
+        rig.classicApps.put("tower", Arrays.asList(new NvApp("Portal", 11, false), new NvApp("Zelda", 22, false)));
         ComputerDetails tower = NativeApiFixtures.classicHost("tower", "Tower");
         tower.runningGameId = 22;
         feed.update(tower);
@@ -505,370 +383,5 @@ public class GameDetailOpenPlayTest {
         GameDetailWakeTest.Detail.played.clear();
         ShadowDialog.reset();
         assertEquals(null, startWithSession(NativeApiFixtures.session("stopped", "other_device", PORTAL_APP, "[]")));
-    }
-
-    @Test
-    public void aNetworkThatStaysAwayOpensAsUsualAfterAMinuteWithoutACountdownOrTheGuard() throws Exception {
-        android.net.ConnectivityManager connectivity = (android.net.ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE);
-        shadowOf(connectivity).setActiveNetworkInfo(null);
-        open(true, null, null);
-        assertEquals(context.getString(R.string.open_play_waiting_network),
-                ((TextView) shown().findViewById(android.R.id.message)).getText().toString());
-        pass(59_000);
-        assertEquals(context.getString(R.string.open_play_waiting_network),
-                ((TextView) shown().findViewById(android.R.id.message)).getText().toString());
-        pass(1_500);
-        assertEquals(context.getString(R.string.open_play_no_network),
-                ((TextView) shown().findViewById(android.R.id.message)).getText().toString());
-        pass(5000);
-        assertFalse(OpenPlay.armed(context));
-        assertTrue(GameDetailWakeTest.Detail.played.isEmpty());
-        shown().dismiss();
-        pass(100);
-        assertTrue(screen.isFinishing());
-    }
-
-    @Test
-    public void aNetworkThatComesBackGivesThePcAPollAndThenTheFullCountdown() throws Exception {
-        android.net.ConnectivityManager connectivity = (android.net.ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE);
-        android.net.NetworkInfo network = connectivity.getActiveNetworkInfo();
-        shadowOf(connectivity).setActiveNetworkInfo(null);
-        open(true, null, null);
-        loaded();
-        pass(30_000);
-        shadowOf(connectivity).setActiveNetworkInfo(network);
-        // The network is seen within a check and read again 250 ms later: that read lands before the clock goes on.
-        pass(1_000);
-        readsDone();
-        pass(4_000);
-        assertEquals(context.getString(R.string.open_play_waiting_network),
-                ((TextView) shown().findViewById(android.R.id.message)).getText().toString());
-        pass(1_500);
-        assertEquals("Starting on Tower in 3", ((TextView) shown().findViewById(android.R.id.message)).getText().toString());
-        assertFalse(OpenPlay.armed(context));
-        pass(3100);
-        assertTrue(OpenPlay.armed(context));
-        await(() -> !GameDetailWakeTest.Detail.played.isEmpty());
-    }
-
-    @Test
-    public void whatThePcSaysIsReadAgainOnceTheNetworkIsBack() throws Exception {
-        android.net.ConnectivityManager connectivity = (android.net.ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE);
-        android.net.NetworkInfo network = connectivity.getActiveNetworkInfo();
-        shadowOf(connectivity).setActiveNetworkInfo(null);
-        open(true, null, null);
-        loaded();
-        rig.transport.reply("tower", "session", ok(NativeApiFixtures.session("streaming", "other_device", ZELDA_APP, "[]")));
-        shadowOf(connectivity).setActiveNetworkInfo(network);
-        Dialog waiting = shown();
-        await(() -> {
-            pass(500);
-            // No dialog while the countdown's end reads the PC.
-            return ShadowDialog.getLatestDialog() != waiting && ShadowDialog.getLatestDialog().isShowing()
-                    && ((TextView) shown().findViewById(android.R.id.message)).getText()
-                    .toString().equals(context.getString(R.string.open_play_other_device, "Tower"));
-        });
-        assertTrue(GameDetailWakeTest.Detail.played.isEmpty());
-    }
-
-    @Test
-    public void leavingThePageEndsTheWaitForTheNetwork() throws Exception {
-        android.net.ConnectivityManager connectivity = (android.net.ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE);
-        android.net.NetworkInfo network = connectivity.getActiveNetworkInfo();
-        shadowOf(connectivity).setActiveNetworkInfo(null);
-        open(true, null, null);
-        pass(1000);
-        controller.pause();
-        shadowOf(connectivity).setActiveNetworkInfo(network);
-        pass(70_000);
-        Thread.sleep(200);
-        pass(100);
-        assertFalse(OpenPlay.armed(context));
-        assertTrue(GameDetailWakeTest.Detail.played.isEmpty());
-    }
-
-    @Test
-    public void theWaitForTheNetworkCancelsLikeTheCountdown() throws Exception {
-        android.net.ConnectivityManager connectivity = (android.net.ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE);
-        shadowOf(connectivity).setActiveNetworkInfo(null);
-        open(true, null, null);
-        pass(1000);
-        shown().getButton(AlertDialog.BUTTON_NEGATIVE).performClick();
-        pass(100);
-        assertTrue(screen.isFinishing());
-        pass(70_000);
-        assertFalse(OpenPlay.armed(context));
-        assertTrue(GameDetailWakeTest.Detail.played.isEmpty());
-    }
-
-    private void unknown() {
-        ComputerDetails tower = nativeHost("tower", "Tower", false);
-        tower.state = ComputerDetails.State.UNKNOWN;
-        feed.update(tower);
-    }
-
-    @Test
-    public void aPcNotHeardFromYetIsWaitedForAndNotCalledOffline() throws Exception {
-        open(true, null, null);
-        unknown();
-        Dialog countdown = shown();
-        pass(3100);
-        Thread.sleep(200);
-        pass(10_000);
-        Thread.sleep(200);
-        pass(10_000);
-        assertTrue("no failure yet", ShadowDialog.getLatestDialog() == countdown);
-        assertTrue(GameDetailWakeTest.Detail.played.isEmpty());
-        feed.update(nativeHost("tower", "Tower", true));
-        await(() -> !GameDetailWakeTest.Detail.played.isEmpty());
-    }
-
-    @Test
-    public void aPcNeverHeardFromFailsAtTheLimit() throws Exception {
-        open(true, null, null);
-        unknown();
-        Dialog countdown = shown();
-        pass(3100);
-        Thread.sleep(200);
-        pass(44_000);
-        assertTrue("within the limit", ShadowDialog.getLatestDialog() == countdown);
-        pass(1_100);
-        await(() -> ShadowDialog.getLatestDialog() != countdown);
-        assertEquals(context.getString(R.string.error_pc_offline),
-                ((TextView) shown().findViewById(android.R.id.message)).getText().toString());
-        assertTrue(OpenPlay.armed(context));
-    }
-
-    private static final String SESSION_FAILS = "{\"error\":{\"kind\":\"status\",\"message\":\"boom\",\"http_status\":500}}";
-
-    @Test
-    public void aSessionThatCouldNotBeReadIsAskedAgainAndAGameOfAnotherDeviceStillStopsTheStart() throws Exception {
-        sessionThere = SESSION_FAILS;
-        open(true, null, null);
-        Dialog countdown = shown();
-        pass(3100);
-        Thread.sleep(300);
-        pass(100);
-        Thread.sleep(300);
-        pass(100);
-        assertTrue("not read as free", GameDetailWakeTest.Detail.played.isEmpty());
-        rig.transport.reply("tower", "session", ok(NativeApiFixtures.session("streaming", "other_device", ZELDA_APP, "[]")));
-        await(() -> {
-            pass(2100);
-            return ShadowDialog.getLatestDialog() != countdown;
-        });
-        assertEquals(context.getString(R.string.open_play_other_device, "Tower"),
-                ((TextView) shown().findViewById(android.R.id.message)).getText().toString());
-        assertTrue(GameDetailWakeTest.Detail.played.isEmpty());
-    }
-
-    @Test
-    public void aGameAnotherDeviceStartedDuringTheCountdownStopsTheStart() throws Exception {
-        open(true, null, null);
-        loaded();
-        Dialog countdown = shown();
-        // The page read the PC as free; the other device starts after that read, and no poll comes before the end.
-        rig.transport.reply("tower", "session", ok(NativeApiFixtures.session("streaming", "other_device", ZELDA_APP, "[]")));
-        pass(3100);
-        await(() -> ShadowDialog.getLatestDialog() != countdown && ShadowDialog.getLatestDialog().isShowing());
-        assertEquals(context.getString(R.string.open_play_other_device, "Tower"),
-                ((TextView) shown().findViewById(android.R.id.message)).getText().toString());
-        assertTrue(GameDetailWakeTest.Detail.played.isEmpty());
-    }
-
-    @Test
-    public void aSessionReadThatRecoversStartsTheGame() throws Exception {
-        sessionThere = SESSION_FAILS;
-        open(true, null, null);
-        pass(3100);
-        Thread.sleep(300);
-        pass(100);
-        assertTrue("a failed read is not a free PC", GameDetailWakeTest.Detail.played.isEmpty());
-        rig.transport.reply("tower", "session", ok(NativeApiFixtures.IDLE));
-        await(() -> {
-            pass(2100);
-            return !GameDetailWakeTest.Detail.played.isEmpty();
-        });
-    }
-
-    @Test
-    public void aSessionThatNeverReadsFailsAtTheLimitWithTheGuardArmed() throws Exception {
-        sessionThere = SESSION_FAILS;
-        open(true, null, null);
-        // The limit names what the reads said: without one landed, it would say the list never came.
-        loaded();
-        Dialog countdown = shown();
-        pass(3100);
-        await(() -> {
-            pass(2100);
-            return ShadowDialog.getLatestDialog() != countdown;
-        });
-        assertEquals(context.getString(R.string.open_play_no_answer, "Tower"),
-                ((TextView) shown().findViewById(android.R.id.message)).getText().toString());
-        assertTrue(GameDetailWakeTest.Detail.played.isEmpty());
-        assertTrue(OpenPlay.armed(context));
-    }
-
-    @Test
-    public void anotherGameUnderTheSavedAppIdIsNotStartedUnderTheSavedTitle() throws Exception {
-        stableThere = "t-portal";
-        libraryThere = library("r", game("t-zelda", 11, "Zelda", "steam:500", false));
-        open(true, null, null);
-        Dialog countdown = shown();
-        pass(3100);
-        await(() -> ShadowDialog.getLatestDialog() != countdown && ShadowDialog.getLatestDialog().isShowing());
-        assertEquals(context.getString(R.string.open_play_not_listed, "Tower"),
-                ((TextView) shown().findViewById(android.R.id.message)).getText().toString());
-        assertTrue(GameDetailWakeTest.Detail.played.isEmpty());
-    }
-
-    @Test
-    public void aSavedGameTheHostMovedToAnotherAppIdStillStarts() throws Exception {
-        stableThere = "t-portal";
-        libraryThere = library("r", game("t-zelda", 11, "Zelda", "steam:500", false), game("t-portal", 33, "Portal", "steam:400", false));
-        open(true, null, null);
-        pass(3100);
-        await(() -> !GameDetailWakeTest.Detail.played.isEmpty());
-        assertEquals("Portal", GameDetailWakeTest.Detail.played.get(0));
-        assertEquals(33, ReflectionHelpers.<GameDetailModel>getField(screen, "model").appId);
-    }
-
-    @Test
-    public void aGameStartedFromALibraryIsRememberedByTheLibrarysIdWhichTheHostIsNotSent() throws Exception {
-        open(true, null, null);
-        ComputerDetails tower = nativeHost("tower", "Tower", true);
-        com.limelight.nvstream.http.NvApp app = CoverLoaders.appOf("Portal", 11,
-                rig.repository.cached(Collections.singletonList(tower)).host("tower").sources.get(0));
-        assertEquals("", app.getAppUuid());
-        assertEquals("t-portal", com.limelight.nativeapi.RecentsStore.Recent.of(tower, app, 1).stableId);
-        assertEquals("t-portal", com.limelight.pin.PinLockActivity.forStream(context, new Intent(), tower, app)
-                .getStringExtra("pin_recent_stable_id"));
-    }
-
-    @Test
-    public void aClassicEntryWithNoUuidGoesByItsAppIdAndAnotherUuidIsAnotherGame() throws Exception {
-        open(true, null, null);
-        ComputerDetails tower = nativeHost("tower", "Tower", true);
-        com.limelight.nvstream.http.NvApp entry = new com.limelight.nvstream.http.NvApp("Portal", 11, false);
-        rig.classicApps.put("tower", Collections.singletonList(entry));
-        assertTrue(rig.repository.classicListHas(tower, 11, "t-portal"));
-        assertFalse(rig.repository.classicListHas(tower, 12, "t-portal"));
-        entry.setAppUuid("t-zelda");
-        assertFalse(rig.repository.classicListHas(tower, 11, "t-portal"));
-    }
-
-    /** To just before the countdown's end on a page read while the PC was away, then the PC comes back. */
-    private Dialog pcBackAsTheCountdownEnds() throws Exception {
-        open(false, null, null);
-        loaded();
-        Dialog countdown = shown();
-        pass(ReflectionHelpers.<Long>getField(screen, "countdownEnd") - android.os.SystemClock.elapsedRealtime() - 100);
-        feed.update(nativeHost("tower", "Tower", true));
-        return countdown;
-    }
-
-    @Test
-    public void aPcBackJustBeforeTheReloadIsReadAgainAndTheGameStarts() throws Exception {
-        Dialog countdown = pcBackAsTheCountdownEnds();
-        pass(150);
-        assertTrue("armed, and no failure", OpenPlay.armed(context) && ShadowDialog.getLatestDialog() == countdown);
-        await(() -> !GameDetailWakeTest.Detail.played.isEmpty());
-        assertTrue(ShadowDialog.getLatestDialog() == countdown);
-    }
-
-    @Test
-    public void aPcBackJustBeforeTheReloadWaitsWithinTheSameLimit() throws Exception {
-        Dialog countdown = pcBackAsTheCountdownEnds();
-        // Nothing is read from here on: the service is gone, so the reload stops at its first line.
-        ReflectionHelpers.setField(feed, "binder", null);
-        pass(44_500);
-        assertTrue("within the limit", ShadowDialog.getLatestDialog() == countdown);
-        pass(1_000);
-        assertEquals(context.getString(R.string.open_play_no_list, "Tower"),
-                ((TextView) shown().findViewById(android.R.id.message)).getText().toString());
-        assertTrue(OpenPlay.armed(context));
-    }
-
-    @Test
-    public void aPcThatWokeStillHasALimitWhenItsReadNeverComesBack() throws Exception {
-        open(false, "00:11:22:33:44:55", null);
-        Dialog countdown = shown();
-        pass(3100);
-        await(() -> !GameDetailWakeTest.Detail.woken.isEmpty());
-        // Every read from here on queues behind this one.
-        java.util.concurrent.CountDownLatch hold = new java.util.concurrent.CountDownLatch(1);
-        ReflectionHelpers.<java.util.concurrent.ExecutorService>getField(screen, "worker").execute(() -> {
-            try {
-                hold.await();
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-            }
-        });
-        feed.update(nativeHost("tower", "Tower", true));
-        HostWaker waker = ReflectionHelpers.getField(screen, "waker");
-        await(() -> {
-            pass(1000);
-            return !waker.isWaiting();
-        });
-        pass(30_000);
-        assertTrue("within the limit", ShadowDialog.getLatestDialog() == countdown);
-        pass(16_000);
-        hold.countDown();
-        assertEquals(context.getString(R.string.open_play_no_list, "Tower"),
-                ((TextView) shown().findViewById(android.R.id.message)).getText().toString());
-        assertTrue(OpenPlay.armed(context));
-    }
-
-    /** Called directly: the page's own callers ask {@code wakeable} first, which says no for a PC that is online. */
-    @Test
-    public void theOnlineBranchOfTheWakeHasALimitOfItsOwn() throws Exception {
-        sessionThere = SESSION_FAILS;
-        open(true, null, null);
-        Dialog countdown = shown();
-        pass(3100);
-        // Nothing is read from here on: the service is gone, so the reload stops at its first line.
-        ReflectionHelpers.setField(feed, "binder", null);
-        Thread.sleep(300);
-        pass(100);
-        ReflectionHelpers.callInstanceMethod(screen, "stopAutoLimit");
-        ReflectionHelpers.callInstanceMethod(screen, "wakeAndPlay");
-        pass(44_000);
-        assertTrue("within the limit", ShadowDialog.getLatestDialog() == countdown);
-        pass(1_200);
-        assertTrue("the limit ended it", ShadowDialog.getLatestDialog() != countdown);
-        assertTrue(OpenPlay.armed(context));
-    }
-
-    @Test
-    public void aRecreatedPageDoesNothingByItself() throws Exception {
-        open(true, null, new Bundle());
-        assertNull(ShadowDialog.getLatestDialog());
-        pass(5000);
-        assertTrue(GameDetailWakeTest.Detail.played.isEmpty());
-        assertFalse(OpenPlay.armed(context));
-    }
-
-    @Test
-    public void theAppPinComesFirstAndTheFullCountdownFollowsIt() throws Exception {
-        com.limelight.pin.PinGate.resetForTests();
-        com.limelight.pin.PinStore.clearForTests(context);
-        com.limelight.pin.PinStore store = new com.limelight.pin.PinStore(context);
-        store.setPin("1234".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
-        store.setMode(com.limelight.pin.PinStore.Mode.APP);
-        try {
-            open(true, null, null);
-            assertNull("no countdown behind the PIN", ShadowDialog.getLatestDialog());
-            pass(5000);
-            assertFalse(OpenPlay.armed(context));
-            assertTrue(GameDetailWakeTest.Detail.played.isEmpty());
-
-            com.limelight.pin.PinGate.unlockApp();
-            controller.pause().resume();
-            assertEquals("Starting on Tower in 3", ((TextView) shown().findViewById(android.R.id.message)).getText().toString());
-        } finally {
-            store.removePin();
-            com.limelight.pin.PinGate.resetForTests();
-            com.limelight.pin.PinStore.clearForTests(context);
-        }
     }
 }

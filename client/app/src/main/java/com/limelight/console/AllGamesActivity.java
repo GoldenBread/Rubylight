@@ -1,50 +1,47 @@
 package com.limelight.console;
 
+import android.app.Activity;
+import android.content.Context;
 import android.content.res.Configuration;
-import android.graphics.drawable.ColorDrawable;
+import android.graphics.Rect;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
-import android.text.Editable;
+import android.preference.PreferenceManager;
 import android.text.SpannableStringBuilder;
 import android.text.Spanned;
 import android.text.TextPaint;
-import android.text.TextWatcher;
 import android.text.style.CharacterStyle;
-import android.view.KeyEvent;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
-import android.view.inputmethod.EditorInfo;
-import android.view.inputmethod.InputMethodManager;
-import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
-import androidx.activity.OnBackPressedCallback;
 import androidx.annotation.NonNull;
 import androidx.recyclerview.widget.GridLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
 import com.google.android.material.button.MaterialButton;
+import com.limelight.LimeLog;
 import com.limelight.R;
 import com.limelight.computers.ComputerManagerService;
 import com.limelight.computers.HostActions;
 import com.limelight.nativeapi.ConsoleRepository;
 import com.limelight.nativeapi.ConsoleSnapshot;
 import com.limelight.nvstream.http.ComputerDetails;
-import com.limelight.ui.AppTheme;
 import com.limelight.ui.GlassForm;
-import com.limelight.ui.GlassSurface;
-import com.limelight.ui.Motion;
+import com.limelight.ui.NavigationDialogBuilder;
 import com.limelight.ui.NightjarActivity;
 import com.limelight.ui.ShellBar;
 import com.limelight.ui.TopAppBar;
+import com.limelight.utils.FrontendSync;
 import com.limelight.utils.UiHelper;
 
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -59,8 +56,6 @@ public class AllGamesActivity extends NightjarActivity implements HostFeed.Liste
     public static final String EXTRA_FILTER = "filter";
     static final int MAX_COLUMNS = 6;
     private static final int COVER_WIDTH_DP = 140;
-    /** The narrowest a poster's card gets before the grid drops a column. */
-    private static final int MIN_CARD_WIDTH_DP = 120;
     /** How far a focused TV poster's glow reaches past its 24 dp bleed: the grid's frame keeps that much room. */
     static final int GLOW_ROOM_DP = 40;
     /** A TV's safe edge, the usual overscan margin: this share of the screen's height in from its bottom. */
@@ -70,7 +65,6 @@ public class AllGamesActivity extends NightjarActivity implements HostFeed.Liste
     private static final long DEBOUNCE_MS = 250;
     private static final String SHELF = "all-games";
     private static final String STATE_QUERY = "query";
-    private static final int SEARCH_FADE_MS = 150;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final ExecutorService worker = Executors.newSingleThreadExecutor(r -> {
@@ -82,8 +76,9 @@ public class AllGamesActivity extends NightjarActivity implements HostFeed.Liste
     private ShelfAdapter.Env env;
     private ShelfAdapter adapter;
     private GridLayoutManager grid;
-    /** On a TV, the room above the first row inside the grid's frame, which a focused row keeps for its glow; 0 elsewhere. */
-    private int roomAbove;
+    private AllGamesTvFrame tvFrame;
+    private AllGamesSearchBar searchBar;
+    private AllGamesFactFilter factFilter;
     private RecyclerView list;
     private LinearLayout filterRow;
     private View loading;
@@ -96,15 +91,6 @@ public class AllGamesActivity extends NightjarActivity implements HostFeed.Liste
     /** Home's View, whose Sort by and Order All games follows. */
     private HomeView view = HomeView.defaults(false);
     private String filter = HomeModel.FILTER_ALL;
-    // Genre and Length (IGDB facts): the chips show only while a game has facts, and only with IGDB keys set.
-    private static final String TAG_GENRE = "game_info:genre";
-    private static final String TAG_LENGTH = "game_info:length";
-    private final java.util.Map<String, org.json.JSONObject> facts = new java.util.HashMap<>();
-    private GameInfoModel.Library factsLibrary;
-    private String genreChoice;
-    private String lengthChoice;
-    private String factsLoadedFor;
-    private boolean factsReloadPending;
     private String filterSignature;
     private String refreshedSignature;
     /** What the last reload drew the PCs from; a poll that brings nothing else does not reload. */
@@ -118,10 +104,6 @@ public class AllGamesActivity extends NightjarActivity implements HostFeed.Liste
     private int focusedAt = -1;
     /** Each focus request outdates the ones still posted. */
     private int focusTicket;
-    private int lastWidthPx;
-    private int lastHeightPx;
-    /** Each column's width; on a TV a poster shrunk to fit the frame's height is narrower, the slack spread between. */
-    private int slotPx;
     private final Runnable reload = this::reloadNow;
 
     /** The data behind the screen; the debug demo overrides this with canned hosts. */
@@ -137,7 +119,7 @@ public class AllGamesActivity extends NightjarActivity implements HostFeed.Liste
     /** The games this screen is adding on a host now; see {@link GameOpener.Screen#adding}. */
     private final Set<String> adding = new HashSet<>();
     private final GameOpener.Screen opener = new GameOpener.Screen() {
-        @Override public android.app.Activity activity() { return AllGamesActivity.this; }
+        @Override public Activity activity() { return AllGamesActivity.this; }
         @Override public ConsoleRepository repository() { return repository; }
         @Override public ComputerDetails host(String uuid) { return feed.host(uuid); }
         @Override public Class<? extends GameDetailActivity> detailActivity() { return AllGamesActivity.this.detailActivity(); }
@@ -169,20 +151,8 @@ public class AllGamesActivity extends NightjarActivity implements HostFeed.Liste
         @Override public void resumePolling() { if (shown) feed.resume(); }
     });
     private HostCapsule capsule;
-
-    /** The search's words; empty while it is closed. The grid shows the filter's games that match them. */
-    private String query = "";
     private View topRow;
     private View tools;
-    private GlassSurface searchBar;
-    private EditText searchField;
-    private View searchClear;
-    private View searchButton;
-    private final OnBackPressedCallback closeSearchOnBack = new OnBackPressedCallback(false) {
-        @Override public void handleOnBackPressed() {
-            closeSearch();
-        }
-    };
 
     /** Its chrome follows the form: a rotation into another form lays it out again. */
     @Override
@@ -203,70 +173,13 @@ public class AllGamesActivity extends NightjarActivity implements HostFeed.Liste
         if (requested != null) filter = requested;
         setContentView(R.layout.activity_all_games);
         UiHelper.notifyNewRootView(this);
-        view = HomeView.read(android.preference.PreferenceManager.getDefaultSharedPreferences(this), isTelevision());
+        view = HomeView.read(PreferenceManager.getDefaultSharedPreferences(this), isTelevision());
 
         TopAppBar.configure(this, R.id.all_games_toolbar, getString(R.string.console_all_games_title), 0);
         // All games belongs to Home: Home in the bar is the page it came from, so it closes this one.
         ShellBar.install(this, ShellBar.Destination.HOME);
         findViewById(R.id.shell_home).setOnClickListener(v -> finish());
         setUpTopRow();
-        if (isTelevision()) {
-            getWindow().setBackgroundDrawable(new ColorDrawable(AppTheme.tvCanvas(this)));
-            // The sky of Home, PCs and Settings; the grid fills the screen, so no moon behind the posters.
-            com.limelight.ui.NightSkyView sky = findViewById(R.id.all_games_sky);
-            sky.setMoonShown(false);
-            sky.setVisibility(View.VISIBLE);
-            // Edge to edge, not inset by the TV margin as a lighter frame.
-            sky.bleedPastPadding();
-            // Rows scrolling up fade out under the heading and filters instead of stopping on a hard edge.
-            View grid = findViewById(R.id.all_games_grid);
-            grid.setVerticalFadingEdgeEnabled(true);
-            // The frame clips the grid. A focused poster's glow reaches past its 24 dp bleed and the row's top padding, and
-            // was cut square there: the frame stands further out at the top and sides, and the list pads by as much. The
-            // room above goes to the first row, not the padding: the fade starts at the padding's edge, and rows scrolled
-            // into an unfaded strip would stand under the focused title.
-            int room = Math.round(GLOW_ROOM_DP * getResources().getDisplayMetrics().density);
-            android.view.ViewGroup.MarginLayoutParams frame = (android.view.ViewGroup.MarginLayoutParams)
-                    ((View) grid.getParent()).getLayoutParams();
-            frame.topMargin -= room;
-            // That room lies over the focus line and filters: a touch there is theirs, not the grid's.
-            ((GridFrame) grid.getParent()).passTouchesAbove(room);
-            frame.setMarginStart(frame.getMarginStart() - room);
-            frame.setMarginEnd(frame.getMarginEnd() - room);
-            int above = grid.getPaddingTop() + room;
-            roomAbove = above;
-            // The last row can come up to the place every focused row takes: as much room below it as above (fitColumns).
-            int fitRoom = Math.round(FIT_ROOM_DP * getResources().getDisplayMetrics().density);
-            grid.setPaddingRelative(grid.getPaddingStart() + room, 0, grid.getPaddingEnd() + room, above + fitRoom);
-            ((RecyclerView) grid).addItemDecoration(new RecyclerView.ItemDecoration() {
-                @Override
-                public void getItemOffsets(@NonNull android.graphics.Rect out, @NonNull View card, @NonNull RecyclerView parent,
-                                           @NonNull RecyclerView.State state) {
-                    int at = parent.getChildAdapterPosition(card);
-                    int columns = AllGamesActivity.this.grid.getSpanCount();
-                    out.top = at != RecyclerView.NO_POSITION && at < columns ? above : 0;
-                    // Posters narrower than their columns keep the first at the start and the last at the end, the gaps even.
-                    int slack = Math.max(0, slotPx - env.cardWidthPx);
-                    if (at == RecyclerView.NO_POSITION || slack == 0 || columns < 2) return;
-                    int start = at % columns * slack / (columns - 1);
-                    boolean rtl = parent.getLayoutDirection() == View.LAYOUT_DIRECTION_RTL;
-                    out.left = rtl ? slack - start : start;
-                    out.right = rtl ? start : slack - start;
-                }
-            });
-            grid.setFadingEdgeLength(getResources().getDimensionPixelSize(R.dimen.all_games_fade) + room);
-            // The frame ends at the TV's safe edge, so a focused row's ring and glow fit whole. As the page's weighted last
-            // child it ended the glow room short of the page's margin: a LinearLayout gives a negative margin no space.
-            View gridFrame = (View) grid.getParent();
-            gridFrame.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) -> {
-                if (t != ot || b != ob) v.post(() -> reachSafeEdge(v));
-            });
-            // A handheld in the forced TV layout rotates without being made again: the screen's height changes, the
-            // frame's own place may not.
-            findViewById(R.id.all_games_page).addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) -> {
-                if (r - l != or - ol || b - t != ob - ot) v.post(() -> reachSafeEdge(gridFrame));
-            });
-        }
 
         loading = findViewById(R.id.all_games_loading);
         empty = findViewById(R.id.all_games_empty);
@@ -274,7 +187,6 @@ public class AllGamesActivity extends NightjarActivity implements HostFeed.Liste
         focusMeta = findViewById(R.id.all_games_focus_meta);
         focusTitle = findViewById(R.id.all_games_focus_title);
         list = findViewById(R.id.all_games_grid);
-        if (!isTelevision()) alignToGutter();
 
         feed = new HostFeed(this, this);
         env = new ShelfAdapter.Env(this, null, feed::host, new ConsoleHomeAdapter.Listener() {
@@ -296,9 +208,10 @@ public class AllGamesActivity extends NightjarActivity implements HostFeed.Liste
             // cut square: scrolling a card into view keeps the room the first row has above it.
             @Override
             public boolean requestChildRectangleOnScreen(@NonNull RecyclerView parent, @NonNull View child,
-                                                         @NonNull android.graphics.Rect rect, boolean immediate,
+                                                         @NonNull Rect rect, boolean immediate,
                                                          boolean focusedChildVisible) {
-                android.graphics.Rect withRoom = new android.graphics.Rect(rect);
+                Rect withRoom = new Rect(rect);
+                int roomAbove = tvFrame == null ? 0 : tvFrame.roomAbove();
                 if (roomAbove > 0) withRoom.top = Math.min(rect.top, 0) - roomAbove;
                 return super.requestChildRectangleOnScreen(parent, child, withRoom, immediate, focusedChildVisible);
             }
@@ -306,7 +219,9 @@ public class AllGamesActivity extends NightjarActivity implements HostFeed.Liste
         list.setLayoutManager(grid);
         list.setItemAnimator(null);
         list.setAdapter(adapter);
-        list.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) -> fitColumns(r - l, b - t));
+        tvFrame = new AllGamesTvFrame(this, isTelevision(), list, grid, adapter, env);
+        tvFrame.install();
+        factFilter = new AllGamesFactFilter(this, filterRow, () -> model, () -> filter, this::bindGrid);
         capsule = new HostCapsule(this, findViewById(android.R.id.content), findViewById(R.id.all_games_pc), new HostCapsule.Screen() {
             @Override public HomeModel model() { return model; }
             @Override public ComputerDetails host(String uuid) { return feed.host(uuid); }
@@ -317,7 +232,9 @@ public class AllGamesActivity extends NightjarActivity implements HostFeed.Liste
                 scheduleReload();
             }
         });
-        setUpSearch(state != null ? state.getString(STATE_QUERY) : null);
+        searchBar = new AllGamesSearchBar(this, topRow, tools, () -> focusPending = false,
+                this::bindGrid, this::focusFirstMatch);
+        searchBar.install(state != null ? state.getString(STATE_QUERY) : null);
         feed.bind();
     }
 
@@ -349,122 +266,23 @@ public class AllGamesActivity extends NightjarActivity implements HostFeed.Liste
         ShellBar.linkTopRow(this, R.id.all_games_pc, R.id.all_games_search);
     }
 
-    /**
-     * Search on the page, as on Home: the field takes the top row's place and the grid narrows to the games whose titles have
-     * every word, under the chosen filter. Back, or clearing it, brings the row and every game back.
-     */
-    private void setUpSearch(String restored) {
-        searchBar = findViewById(R.id.home_search_bar);
-        searchField = findViewById(R.id.home_search_field);
-        searchClear = findViewById(R.id.home_search_clear);
-        searchButton = findViewById(R.id.all_games_search);
-        searchButton.setOnClickListener(v -> openSearch());
-        getOnBackPressedDispatcher().addCallback(this, closeSearchOnBack);
-        searchField.setOnFocusChangeListener((v, focused) -> searchBar.setFocusShown(focused && !v.isInTouchMode()));
-        searchField.addTextChangedListener(new TextWatcher() {
-            @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) { }
-            @Override public void onTextChanged(CharSequence s, int start, int before, int count) { }
-            @Override public void afterTextChanged(Editable text) {
-                if (!isSearching()) return;
-                query = text.toString();
-                searchClear.setVisibility(query.isEmpty() ? View.GONE : View.VISIBLE);
-                bindGrid(true);
-            }
-        });
-        searchField.setOnEditorActionListener((v, action, event) -> {
-            if (action != EditorInfo.IME_ACTION_SEARCH) return false;
-            keyboard(false);
-            focusFirstMatch();
-            return true;
-        });
-        searchField.setOnKeyListener((v, keyCode, event) -> {
-            if (keyCode != KeyEvent.KEYCODE_DPAD_DOWN || event.getAction() != KeyEvent.ACTION_DOWN) return false;
-            keyboard(false);
-            return focusFirstMatch();
-        });
-        searchClear.setOnClickListener(v -> {
-            searchField.setText("");
-            searchField.requestFocus();
-        });
-        if (restored != null) {
-            openSearch();
-            searchField.setText(restored);
-            searchField.setSelection(restored.length());
-        }
-    }
-
     boolean isSearching() {
-        return searchBar != null && searchBar.getVisibility() == View.VISIBLE;
+        return searchBar != null && searchBar.isSearching();
     }
 
     void openSearch() {
-        if (isSearching()) return;
-        // The field has the keys now: a library that loads later leaves them there.
-        focusPending = false;
-        query = "";
-        searchField.setText("");
-        searchClear.setVisibility(View.GONE);
-        topRow.setVisibility(View.INVISIBLE);
-        tools.setVisibility(View.INVISIBLE);
-        searchBar.setVisibility(View.VISIBLE);
-        closeSearchOnBack.setEnabled(true);
-        comeIn(searchBar);
-        searchField.requestFocus();
-        keyboard(true);
+        if (searchBar != null) searchBar.open();
     }
 
     /** All the filter's games again, and focus back on Search. */
     void closeSearch() {
-        if (!isSearching()) return;
-        keyboard(false);
-        closeSearchOnBack.setEnabled(false);
-        searchBar.setVisibility(View.GONE);
-        topRow.setVisibility(View.VISIBLE);
-        tools.setVisibility(View.VISIBLE);
-        query = "";
-        bindGrid(true);
-        if (!searchButton.isInTouchMode()) searchButton.requestFocus();
+        if (searchBar != null) searchBar.close();
     }
 
     private boolean focusFirstMatch() {
         if (adapter.getItemCount() == 0) return false;
         focusCard(0, 0);
         return true;
-    }
-
-    private void keyboard(boolean show) {
-        InputMethodManager manager = (InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
-        if (manager == null) return;
-        if (show) manager.showSoftInput(searchField, InputMethodManager.SHOW_IMPLICIT);
-        else manager.hideSoftInputFromWindow(searchField.getWindowToken(), 0);
-    }
-
-    private void comeIn(View view) {
-        view.animate().cancel();
-        if (Motion.reduced(this)) {
-            view.setAlpha(1f);
-            return;
-        }
-        view.setAlpha(0f);
-        view.animate().alpha(1f).setDuration(SEARCH_FADE_MS).start();
-    }
-
-    /**
-     * The layout's insets are the TV's, inside its overscan margin. Elsewhere the title, the filters and the poster grid
-     * line up with the shell bar on the screen gutter, and the focus line goes: a phone's posters carry their own titles.
-     */
-    private void alignToGutter() {
-        int gutter = getResources().getDimensionPixelSize(R.dimen.screen_gutter);
-        for (int id : new int[] {R.id.all_games_title, R.id.all_games_filters_scroll}) {
-            View view = findViewById(id);
-            view.setPaddingRelative(gutter, view.getPaddingTop(), gutter, view.getPaddingBottom());
-        }
-        findViewById(R.id.all_games_focus).setVisibility(View.GONE);
-        // The grid's frame reaches 24 dp past the content on both sides; each phone card keeps its cover inset as margin.
-        int bleed = Math.round(24 * getResources().getDisplayMetrics().density);
-        int inset = getResources().getDimensionPixelSize(R.dimen.cover_inset);
-        int side = bleed + gutter - inset;
-        list.setPaddingRelative(side, list.getPaddingTop(), side, list.getPaddingBottom());
     }
 
     private boolean isTelevision() {
@@ -477,68 +295,11 @@ public class AllGamesActivity extends NightjarActivity implements HostFeed.Liste
         return Math.max(2, Math.min(MAX_COLUMNS, contentWidthPx / Math.max(1, minCardWidthPx)));
     }
 
-    /**
-     * Each poster fills its column, so the grid spans the screen's width whatever it is. On a TV a poster is at most as
-     * tall as lets a focused row's ring and glow fit the frame; one shrunk for that is narrower than its column.
-     */
-    private void fitColumns(int widthPx, int heightPx) {
-        if (widthPx <= 0 || (widthPx == lastWidthPx && heightPx == lastHeightPx)) return;
-        lastWidthPx = widthPx;
-        lastHeightPx = heightPx;
-        int content = widthPx - list.getPaddingLeft() - list.getPaddingRight();
-        int count = columnsFor(content, Math.round(MIN_CARD_WIDTH_DP * getResources().getDisplayMetrics().density));
-        int slot = content / count;
-        int cover = ShelfAdapter.coverHeight(this, isTelevision(), slot);
-        int card = slot;
-        int tallest = roomAbove > 0 ? tallestCover(heightPx) : 0;
-        if (tallest > 0 && cover > tallest) {
-            int poster = tallest * 2 / 3;
-            cover = poster * 3 / 2;
-            card = poster + 2 * getResources().getDimensionPixelSize(R.dimen.cover_inset);
-        }
-        if (count == grid.getSpanCount() && slot == slotPx && card == env.cardWidthPx && cover == env.coverHeightPx) return;
-        int width = card;
-        int height = cover;
-        list.post(() -> {
-            slotPx = slot;
-            env.cardWidthPx = width;
-            env.coverHeightPx = height;
-            grid.setSpanCount(count);
-            adapter.notifyDataSetChanged();
-            list.invalidateItemDecorations();
-        });
-    }
-
-    /**
-     * The tallest TV poster whose focused ring and glow fit the frame of the given height. A focused poster grows about its
-     * middle, so they reach as far below it as above; above, the first row's room holds them, so the frame keeps as much
-     * below the poster, and a little room.
-     */
-    private int tallestCover(int frameHeightPx) {
-        int inset = getResources().getDimensionPixelSize(R.dimen.cover_inset);
-        int fitRoom = Math.round(FIT_ROOM_DP * getResources().getDisplayMetrics().density);
-        return frameHeightPx - 2 * (roomAbove + inset) - fitRoom;
-    }
-
-    /** Gives the grid's frame the height that ends it at the TV's safe edge. */
-    private static void reachSafeEdge(View frame) {
-        int screen = frame.getRootView().getHeight();
-        if (screen <= 0) return;
-        int[] at = new int[2];
-        frame.getLocationInWindow(at);
-        int height = screen - Math.round(screen * SAFE_EDGE) - at[1];
-        LinearLayout.LayoutParams params = (LinearLayout.LayoutParams) frame.getLayoutParams();
-        if (height <= 0 || (params.height == height && params.weight == 0)) return;
-        params.height = height;
-        params.weight = 0;
-        frame.setLayoutParams(params);
-    }
-
     @Override
     protected void onSaveInstanceState(@NonNull Bundle out) {
         super.onSaveInstanceState(out);
         out.putString(EXTRA_FILTER, filter);
-        if (isSearching()) out.putString(STATE_QUERY, query);
+        if (isSearching()) out.putString(STATE_QUERY, searchBar.query());
     }
 
     @Override
@@ -611,7 +372,7 @@ public class AllGamesActivity extends NightjarActivity implements HostFeed.Liste
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
             } catch (RuntimeException e) {
-                com.limelight.LimeLog.warning("All games could not load: " + e);
+                LimeLog.warning("All games could not load: " + e);
                 show(mine, HomeModel.empty(), true);
                 redrawAtNextPoll(mine);
             }
@@ -646,170 +407,8 @@ public class AllGamesActivity extends NightjarActivity implements HostFeed.Liste
             capsule.show(next);
             bindFilters();
             bindGrid(false);
-            if (done) loadFacts();
+            if (done) factFilter.loadFacts();
         });
-    }
-
-    /** Reads the facts kept for the library's games, then asks for the missing ones in the background. */
-    private void loadFacts() {
-        if (!GameInfo.factsWanted(this)) return;
-        List<HomeModel.GameCard> cards = cardsOf(model, HomeModel.FILTER_ALL);
-        // The keys are part of it: corrected keys ask again for the games a refused key found nothing for.
-        StringBuilder signature = new StringBuilder(GameInfo.keys(this).json(true, true).toString()).append('|');
-        for (HomeModel.GameCard card : cards) signature.append(card.key).append(';');
-        if (signature.toString().equals(factsLoadedFor)) return;
-        factsLoadedFor = signature.toString();
-        List<String> keys = new ArrayList<>();
-        List<GameInfo.Game> games = new ArrayList<>();
-        for (HomeModel.GameCard card : cards) {
-            keys.add(card.key);
-            games.add(new GameInfo.Game(card.title, card.source == null ? null : card.source.gameId,
-                    card.source == null ? null : card.source.storeSource, card.source == null ? null : card.source.storeId));
-        }
-        GameInfo info = GameInfo.get(this);
-        Thread thread = new Thread(() -> {
-            java.util.Map<String, org.json.JSONObject> found = new java.util.HashMap<>();
-            List<GameInfo.Game> missing = new ArrayList<>();
-            for (int i = 0; i < games.size(); i++) {
-                org.json.JSONObject kept = info.cachedFacts(games.get(i));
-                if (kept != null) found.put(keys.get(i), kept);
-                else missing.add(games.get(i));
-            }
-            runOnUiThread(() -> {
-                if (isFinishing() || isDestroyed() || found.isEmpty()) return;
-                facts.putAll(found);
-                bindGrid(false);
-            });
-            info.prefetchFacts(missing, this::factsArrived);
-        }, "game-info-library");
-        thread.setDaemon(true);
-        thread.start();
-    }
-
-    /** A lookup found facts: read them again once things settle, not after each game. */
-    private void factsArrived() {
-        if (factsReloadPending || isFinishing() || isDestroyed()) return;
-        factsReloadPending = true;
-        new Handler(Looper.getMainLooper()).postDelayed(() -> {
-            factsReloadPending = false;
-            if (isFinishing() || isDestroyed()) return;
-            factsLoadedFor = null;
-            loadFacts();
-        }, 2000);
-    }
-
-    /** The cards the Genre and Length choices leave; every card when no game has facts. Draws the chips. */
-    private List<HomeModel.GameCard> withFacts(List<HomeModel.GameCard> cards) {
-        factsLibrary = null;
-        if (facts.isEmpty() || !GameInfo.factsWanted(this)) {
-            bindFactChips();
-            return cards;
-        }
-        List<HomeModel.GameCard> sourceCards = cardsOf(model, filter);
-        GameInfoFilter.Result<HomeModel.GameCard> result = GameInfoFilter.apply(sourceCards,
-                card -> facts.get(card.key), genreChoice, lengthChoice);
-        if (result == null) {
-            bindFactChips();
-            return cards;
-        }
-        // A choice the library no longer has (the last game of a genre went) falls back to Any.
-        boolean stale = false;
-        if (genreChoice != null && !hasValue(result.library.genres, genreChoice)) {
-            genreChoice = null;
-            stale = true;
-        }
-        if (lengthChoice != null && !hasValue(result.library.lengths, lengthChoice)) {
-            lengthChoice = null;
-            stale = true;
-        }
-        if (stale) {
-            result = GameInfoFilter.apply(sourceCards, card -> facts.get(card.key), genreChoice, lengthChoice);
-            if (result == null) {
-                bindFactChips();
-                return cards;
-            }
-        }
-        factsLibrary = result.library;
-        bindFactChips();
-        if (genreChoice == null && lengthChoice == null) return cards;
-        Set<String> keep = new HashSet<>();
-        for (HomeModel.GameCard card : result.shown) keep.add(card.key);
-        List<HomeModel.GameCard> out = new ArrayList<>();
-        for (HomeModel.GameCard card : cards) {
-            if (keep.contains(card.key)) out.add(card);
-        }
-        return out;
-    }
-
-    private static boolean hasValue(List<GameInfoModel.Count> counts, String value) {
-        for (GameInfoModel.Count count : counts) {
-            if (count.value.equals(value)) return true;
-        }
-        return false;
-    }
-
-    /** The Genre and Length chips after the source chips, present while some game has facts. */
-    private void bindFactChips() {
-        View genre = filterRow.findViewWithTag(TAG_GENRE);
-        View length = filterRow.findViewWithTag(TAG_LENGTH);
-        boolean show = factsLibrary != null && factsLibrary.any();
-        if (!show) {
-            if (genre != null) filterRow.removeView(genre);
-            if (length != null) filterRow.removeView(length);
-            return;
-        }
-        if (genre == null) genre = addFactChip(TAG_GENRE, this::chooseGenre);
-        if (length == null) length = addFactChip(TAG_LENGTH, this::chooseLength);
-        ((MaterialButton) genre).setText(genreChoice == null ? getString(R.string.game_info_genre) : genreChoice);
-        genre.setSelected(genreChoice != null);
-        ((MaterialButton) length).setText(lengthChoice == null ? getString(R.string.game_info_length)
-                : getString(GameInfoFilter.lengthLabel(lengthChoice)));
-        length.setSelected(lengthChoice != null);
-    }
-
-    private View addFactChip(String tag, Runnable open) {
-        MaterialButton chip = (MaterialButton) LayoutInflater.from(this).inflate(R.layout.view_filter_chip, filterRow, false);
-        chip.setTag(tag);
-        chip.setOnClickListener(v -> open.run());
-        filterRow.addView(chip);
-        return chip;
-    }
-
-    private void chooseGenre() {
-        if (factsLibrary == null) return;
-        List<GameInfoModel.Count> counts = factsLibrary.genres;
-        CharSequence[] names = new CharSequence[counts.size() + 1];
-        names[0] = getString(R.string.game_info_any_genre);
-        int checked = 0;
-        for (int i = 0; i < counts.size(); i++) {
-            names[i + 1] = counts.get(i).value + "  " + counts.get(i).count;
-            if (counts.get(i).value.equals(genreChoice)) checked = i + 1;
-        }
-        showFactChoices(R.string.game_info_genre, names, checked, which -> genreChoice = which == 0 ? null : counts.get(which - 1).value);
-    }
-
-    private void chooseLength() {
-        if (factsLibrary == null) return;
-        List<GameInfoModel.Count> counts = factsLibrary.lengths;
-        CharSequence[] names = new CharSequence[counts.size() + 1];
-        names[0] = getString(R.string.game_info_any_length);
-        int checked = 0;
-        for (int i = 0; i < counts.size(); i++) {
-            names[i + 1] = getString(GameInfoFilter.lengthLabel(counts.get(i).value)) + "  " + counts.get(i).count;
-            if (counts.get(i).value.equals(lengthChoice)) checked = i + 1;
-        }
-        showFactChoices(R.string.game_info_length, names, checked, which -> lengthChoice = which == 0 ? null : counts.get(which - 1).value);
-    }
-
-    /** A list dialog a controller or the D-pad reaches; the choice combines with the source filter. */
-    private void showFactChoices(int title, CharSequence[] names, int checked, java.util.function.IntConsumer pick) {
-        androidx.appcompat.app.AlertDialog dialog = new com.limelight.ui.NavigationDialogBuilder(this).setTitle(title)
-                .setSingleChoiceItems(names, checked, (d, which) -> {
-                    pick.accept(which);
-                    d.dismiss();
-                    bindGrid(true);
-                }).setNegativeButton(android.R.string.cancel, null).create();
-        UiHelper.showDialog(this, dialog);
     }
 
     static HomeModel.Filter filterOf(HomeModel model, String key) {
@@ -831,7 +430,7 @@ public class AllGamesActivity extends NightjarActivity implements HostFeed.Liste
     }
 
     /** A chip's name: All, Installed, Games, the store's or collection's, Other apps, Not added or Hidden. */
-    static CharSequence labelOf(android.content.Context context, HomeModel.Filter f) {
+    static CharSequence labelOf(Context context, HomeModel.Filter f) {
         if (f.storeName != null) return f.storeName;
         switch (f.key) {
             case HomeModel.FILTER_INSTALLED:
@@ -890,14 +489,14 @@ public class AllGamesActivity extends NightjarActivity implements HostFeed.Liste
             View chip = filterRow.getChildAt(i);
             chip.setSelected(filter.equals(chip.getTag()));
         }
-        bindFactChips();
+        factFilter.bindFactChips();
     }
 
     /** The name, then the count a shade lighter. */
     private static CharSequence chipText(CharSequence label, int count) {
         SpannableStringBuilder text = new SpannableStringBuilder(label).append("  ");
         int start = text.length();
-        text.append(String.format(java.util.Locale.getDefault(), "%d", count));
+        text.append(String.format(Locale.getDefault(), "%d", count));
         text.setSpan(new CharacterStyle() {
             @Override
             public void updateDrawState(TextPaint paint) {
@@ -920,8 +519,11 @@ public class AllGamesActivity extends NightjarActivity implements HostFeed.Liste
         // no position for it (the cached library, then a refresh that answers at once).
         String before = list.hasFocus() ? focusedKey : null;
         int at = focusedAt;
+        String query = searchBar == null ? "" : searchBar.query();
         List<ShelfAdapter.Item> items = new ArrayList<>();
-        for (HomeModel.GameCard card : withFacts(cardsOf(model, filter, query))) items.add(new ShelfAdapter.Item(card.key, card, null));
+        for (HomeModel.GameCard card : factFilter.withFacts(cardsOf(model, filter, query))) {
+            items.add(new ShelfAdapter.Item(card.key, card, null));
+        }
         adapter.setItems(SHELF, items);
         boolean none = items.isEmpty();
         ((TextView) empty).setText(query.trim().isEmpty() ? R.string.console_all_games_empty : R.string.library_no_matches);
@@ -991,14 +593,15 @@ public class AllGamesActivity extends NightjarActivity implements HostFeed.Liste
         CharSequence star = getString(remove ? R.string.console_favourite_remove : R.string.console_favourite_add);
         CharSequence hiding = getString(hide ? R.string.applist_menu_hide_app : R.string.applist_menu_show_app);
         CharSequence openPlay = OpenPlay.menuLabel(this, card.hostUuid, card.appId);
-        UiHelper.showDialog(this, new com.limelight.ui.NavigationDialogBuilder(this)
+        UiHelper.showDialog(this, new NavigationDialogBuilder(this)
                 .setTitle(card.title)
                 .setItems(copies.isEmpty() ? new CharSequence[]{star, openPlay}
                         : new CharSequence[]{star, openPlay, hiding}, (dialog, which) -> {
                     if (which == 0) {
                         setFavourite(card, !remove);
                     } else if (which == 1) {
-                        OpenPlay.toggle(this, card.hostUuid, card.hostName, card.appId, card.source != null ? card.source.stableId() : "", card.title);
+                        OpenPlay.toggle(this, card.hostUuid, card.hostName, card.appId,
+                                card.source != null ? card.source.stableId() : "", card.title);
                     } else {
                         setHidden(copies, hide);
                     }
@@ -1013,11 +616,11 @@ public class AllGamesActivity extends NightjarActivity implements HostFeed.Liste
             try {
                 repo.setHidden(copies, hide);
             } catch (RuntimeException e) {
-                com.limelight.LimeLog.warning("All games could not hide a game: " + e);
+                LimeLog.warning("All games could not hide a game: " + e);
             }
             runOnUiThread(() -> {
                 for (ConsoleSnapshot.Source copy : copies) {
-                    com.limelight.utils.FrontendSync.appListChanged(this, feed.host(copy.hostUuid));
+                    FrontendSync.appListChanged(this, feed.host(copy.hostUuid));
                 }
                 scheduleReload();
             });
@@ -1032,7 +635,7 @@ public class AllGamesActivity extends NightjarActivity implements HostFeed.Liste
             try {
                 repo.setFavourite(card.hostUuid, card.hostName, key, card.appId, card.title, starred);
             } catch (RuntimeException e) {
-                com.limelight.LimeLog.warning("All games could not update a favourite: " + e);
+                LimeLog.warning("All games could not update a favourite: " + e);
             }
             runOnUiThread(this::scheduleReload);
         });
