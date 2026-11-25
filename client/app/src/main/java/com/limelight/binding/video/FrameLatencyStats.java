@@ -5,23 +5,17 @@ import com.limelight.nvstream.DecodeTiming;
 
 import java.io.IOException;
 import java.io.Writer;
-import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.Iterator;
-import java.util.Arrays;
-import java.util.LinkedHashMap;
-import java.util.List;
 import java.util.Locale;
 
 class FrameLatencyStats {
     static final int WINDOW_SIZE = 600;
     // Cover the five-second callback timeout at the maximum 1000 FPS stream rate.
-    private static final int MAX_PENDING = 8192;
-    private static final int MAX_COMPLETED = 4096;
-    private static final long CALLBACK_TIMEOUT_NS = 5000000000L;
-    private static final long FPS_WINDOW_NS = 2000000000L;
+    static final int MAX_PENDING = 8192;
+    static final long CALLBACK_TIMEOUT_NS = 5000000000L;
+    static final long FPS_WINDOW_NS = 2000000000L;
     // Cap on compositor report lag (MediaCodec batching / Vulkan timing) compensated in Presented FPS.
-    private static final long MAX_PRESENT_REPORT_LAG_NS = 150_000_000L;
+    static final long MAX_PRESENT_REPORT_LAG_NS = 150_000_000L;
     // getFrameRates() indexes: frames submitted for display, and frames the compositor confirmed.
     static final int RENDERED_STAGE = 1;
     static final int PRESENTED_STAGE = 2;
@@ -35,7 +29,7 @@ class FrameLatencyStats {
     // (Vulkan, onFrameShown, and PyroWave, onPresentQueued). Android's compositor and the panel come
     // after that; that part only goes to stage 9, where the device reports it, which the stream doctor
     // judges and the overlays do not show.
-    private static final int STAGES = 10;
+    static final int STAGES = 10;
     private static final int HOST_STAGE = 4;
     static final int HOST_QUEUE_STAGE = 5;
     static final int HOST_SEND_STAGE = 7;
@@ -44,12 +38,8 @@ class FrameLatencyStats {
     // A display time further ahead than this is not a plan the compositor keeps (MediaCodec ignores
     // timestamps a second or more away), so the hand-off is the release itself.
     private static final long MAX_DISPLAY_AHEAD_NS = 1_000_000_000L;
-    // Reports that arrive before their frame, and frames finished before their report, are matched
-    // within these bounds; a report older than that is dropped.
-    private static final int MAX_EARLY_REPORTS = 256;
-    private static final int MAX_COMPLETED_SCAN = 512;
     // Queued frames Artemis never counts (replaced before display) are forgotten past this many.
-    private static final int MAX_ARTEMIS_QUEUED = 1024;
+    static final int MAX_ARTEMIS_QUEUED = 1024;
     static final String CSV_HEADER = "frame_number,pts_us,receive_ns,decoder_input_ns,decoder_output_ns," +
             "render_ns,release_ns,status,receive_to_input_ms,input_to_output_ms,output_to_render_ms," +
             "receive_to_render_ms,csv_rows_lost,host_processing_ms," +
@@ -76,73 +66,21 @@ class FrameLatencyStats {
 
     // Every renderer, decoder and display callback touches these per frame, under this lock:
     // primitive keys and recycled frames keep that path free of boxing and garbage.
-    private final PendingFrames pending = new PendingFrames(MAX_PENDING);
-    // Why outputs were dropped this stream (onDropReason), sorted for a stable report row; one
-    // holder per reason, so counting allocates nothing after a reason's first drop.
-    private final java.util.TreeMap<String, int[]> dropCounts = new java.util.TreeMap<>();
-    // Frames by output index. MediaCodec's buffer indices are small and live in a growing array;
-    // any other index (PyroWave passes its presentation time truncated to an int, which can be
-    // in the hundreds of millions or negative) goes to a fixed table keyed by Frame.outputIndex,
-    // so no index can size an allocation (the array once grew to 3 GB and threw OutOfMemoryError).
-    private static final int MAX_DENSE_OUTPUTS = 1024;
-    private static final int MAX_SPARSE_OUTPUTS = MAX_PENDING;
-    private Frame[] outputs = new Frame[64];
-    private Frame[] sparseOutputs; // allocated on the first index past the array
-    private int sparseOutputCount;
-    private final ArrayDeque<Frame> spareFrames = new ArrayDeque<>();
-    private static final int MAX_SPARE_FRAMES = 512;
-    // Direct-mapped O(1) lookup by frameNumber for onHostTiming (falls back to scan on slot collision).
-    private static final int BY_NUMBER_SIZE = 512;
-    private static final int BY_NUMBER_MASK = BY_NUMBER_SIZE - 1;
-    private final Frame[] byNumber = new Frame[BY_NUMBER_SIZE];
+    private final FrameLatencyTables.PendingFrames pending = new FrameLatencyTables.PendingFrames(MAX_PENDING);
+    private final FrameLatencyTables.OutputIndexTable outputTable = new FrameLatencyTables.OutputIndexTable(MAX_PENDING);
+    private final FrameLatencyTables.FrameStore store = new FrameLatencyTables.FrameStore();
+    private final FrameLatencyMetrics metrics = new FrameLatencyMetrics();
     private Frame lastRenderRelease;
-    private final ArrayDeque<Frame> completed = new ArrayDeque<>();
-    private final long[][] samples = new long[STAGES][WINDOW_SIZE];
-    private final long[][] sampleTimes = new long[STAGES][WINDOW_SIZE];
-    private final int[] counts = new int[STAGES];
-    private final int[] positions = new int[STAGES];
-    // Each stage's sample its last one replaced, for removeLastSample.
-    private final long[] overwritten = new long[STAGES];
-    private final long[] overwrittenTimes = new long[STAGES];
-    private final LinkedHashMap<Integer, HostTimingReport.Record> earlyReports = new LinkedHashMap<>();
-    private long csvRowsLost;
     private final boolean vrr;
     private long lastOutputNs;
     private long lastReleaseNs;
-    private long decodeTimeTotalNs;
-    private int decodeTimeSamples;
-    private long totalDecodeTimeNs;
-    private long totalDecodedFrames;
-    private long decodeTimingConsumedFrames, decodeTimingPollNs, decodeTimingGeneration;
-    private long totalClientTimeNs;
-    private long totalClientTimeSamples;
-    private final long[][] frameTimes = new long[3][2048];
-    private final int[] frameTimePositions = new int[3];
-    private long fpsStartNs;
-    private long latestPresentedNs;
-    private boolean renderCallbacksAvailable;
-    // The session's display drops for the CSV, and when each was counted for the overlay's window.
-    private long presentDrops;
-    private final long[] dropTimes = new long[2048];
-    private int dropTimePosition;
-    // The last expire(): frames released CALLBACK_TIMEOUT_NS before it are decided.
-    private long lastExpireNs;
-    // The decode time the app shows is counted the way Artemis counts it, so the two apps show the
-    // same figure for the same decoder work: each frame Artemis would count is timed from
-    // queueInputBuffer() returning to the decoder returning it, rounded down to whole milliseconds, and the
-    // sum is later divided by every frame received. The precise timings above stay as they are
-    // for adaptive bitrate and quality, the stream doctor, the stage breakdown and the CSV.
-    private final PtsTimes artemisQueuedNs = new PtsTimes(MAX_ARTEMIS_QUEUED);
-    // When the decoder returned each of those frames from dequeueOutputBuffer(). Kept apart from
-    // Frame because the render callback can finish a frame before the renderer thread counts it.
-    private final PtsTimes artemisOutputNs = new PtsTimes(MAX_ARTEMIS_QUEUED);
-    private long artemisDecodeMs;
-    // Decoded to on screen, from the codec's render callback or the Vulkan renderer's display timing; logged, not shown
-    private long scanoutTotalNs;
-    private long scanoutMaxNs;
-    private int scanoutFrames;
     // Present intervals for the overlay's frame pacing lines; records only while the overlay is on.
     private final PresentJitter presentJitter = new PresentJitter();
+    // Lowest latency and Balanced: watches the display's queue through the waits of handed-off frames.
+    private DisplayQueueWatch displayQueueWatch;
+    // A flush's rows and drained frames are reused across flushes; only the latency thread flushes.
+    private final StringBuilder csvRows = new StringBuilder(16 * 1024);
+    private final ArrayList<Frame> csvDrain = new ArrayList<>(256);
 
     FrameLatencyStats() {
         this(false);
@@ -206,244 +144,21 @@ class FrameLatencyStats {
         }
     }
 
-    private static int hashSlot(long key, int mask) {
-        long h = key * 0x9E3779B97F4A7C15L;
-        return (int) (h ^ (h >>> 32)) & mask;
-    }
-
-    /** Frames by ptsUs in arrival order: an open-addressed table and a list through the frames. */
-    private static final class PendingFrames {
-        private final Frame[] table;
-        private final int mask;
-        Frame oldest, newest;
-        int size;
-
-        PendingFrames(int capacity) {
-            table = new Frame[Integer.highestOneBit(capacity * 2 - 1) << 1];
-            mask = table.length - 1;
-        }
-
-        Frame get(long ptsUs) {
-            for (int i = hashSlot(ptsUs, mask); table[i] != null; i = (i + 1) & mask) {
-                if (table[i].ptsUs == ptsUs) return table[i];
-            }
-            return null;
-        }
-
-        /** Adds the newest frame; one already waiting with the same ptsUs is replaced, as a map would. */
-        void put(Frame frame) {
-            Frame previous = get(frame.ptsUs);
-            if (previous != null) remove(previous);
-            int i = hashSlot(frame.ptsUs, mask);
-            while (table[i] != null) i = (i + 1) & mask;
-            table[i] = frame;
-            frame.older = newest;
-            frame.newer = null;
-            if (newest != null) newest.newer = frame; else oldest = frame;
-            newest = frame;
-            size++;
-        }
-
-        void remove(Frame frame) {
-            int i = hashSlot(frame.ptsUs, mask);
-            while (table[i] != null && table[i] != frame) i = (i + 1) & mask;
-            if (table[i] == null) return;
-            // Backward-shift deletion keeps every probe chain unbroken.
-            int hole = i;
-            for (int j = (i + 1) & mask; table[j] != null; j = (j + 1) & mask) {
-                int home = hashSlot(table[j].ptsUs, mask);
-                if (((j - home) & mask) >= ((j - hole) & mask)) {
-                    table[hole] = table[j];
-                    hole = j;
-                }
-            }
-            table[hole] = null;
-            if (frame.older != null) frame.older.newer = frame.newer; else oldest = frame.newer;
-            if (frame.newer != null) frame.newer.older = frame.older; else newest = frame.older;
-            frame.older = frame.newer = null;
-            size--;
-        }
-    }
-
-    /**
-     * ptsUs to a time without boxing. A key is forgotten once {@code capacity} newer keys were
-     * added, like a LinkedHashMap that drops its eldest entry; updating a key keeps its age.
-     */
-    static final class PtsTimes {
-        static final long ABSENT = Long.MIN_VALUE;
-        private final long[] keys;
-        private final long[] values;
-        private final int mask;
-        private final long[] order;
-        private int orderHead;
-        private int size;
-
-        PtsTimes(int capacity) {
-            keys = new long[Integer.highestOneBit(capacity * 4 - 1) << 1];
-            values = new long[keys.length];
-            mask = keys.length - 1;
-            order = new long[capacity];
-            clear();
-        }
-
-        boolean isEmpty() {
-            return size == 0;
-        }
-
-        private int find(long key) {
-            for (int i = hashSlot(key, mask); keys[i] != ABSENT; i = (i + 1) & mask) {
-                if (keys[i] == key) return i;
-            }
-            return -1;
-        }
-
-        boolean contains(long key) {
-            return find(key) >= 0;
-        }
-
-        void put(long key, long value) {
-            int i = find(key);
-            if (i >= 0) {
-                values[i] = value;
-                return;
-            }
-            long eldest = order[orderHead];
-            if (eldest != ABSENT) remove(eldest);
-            order[orderHead] = key;
-            orderHead = (orderHead + 1) % order.length;
-            i = hashSlot(key, mask);
-            while (keys[i] != ABSENT) i = (i + 1) & mask;
-            keys[i] = key;
-            values[i] = value;
-            size++;
-        }
-
-        /** Removes the key and returns its time, or {@link #ABSENT}. */
-        long remove(long key) {
-            int i = find(key);
-            if (i < 0) return ABSENT;
-            long value = values[i];
-            int hole = i;
-            for (int j = (i + 1) & mask; keys[j] != ABSENT; j = (j + 1) & mask) {
-                int home = hashSlot(keys[j], mask);
-                if (((j - home) & mask) >= ((j - hole) & mask)) {
-                    keys[hole] = keys[j];
-                    values[hole] = values[j];
-                    hole = j;
-                }
-            }
-            keys[hole] = ABSENT;
-            size--;
-            return value;
-        }
-
-        void clear() {
-            Arrays.fill(keys, ABSENT);
-            Arrays.fill(order, ABSENT);
-            orderHead = 0;
-            size = 0;
-        }
-    }
-
-    private static boolean isDenseOutput(int index) {
-        return index >= 0 && index < MAX_DENSE_OUTPUTS;
-    }
-
-    // The table is never full (at most MAX_SPARSE_OUTPUTS of twice as many slots), so this ends.
-    private int sparseOutputSlot(int index) {
-        int mask = sparseOutputs.length - 1;
-        int i = hashSlot(index, mask);
-        while (sparseOutputs[i] != null && sparseOutputs[i].outputIndex != index) i = (i + 1) & mask;
-        return i;
-    }
-
-    private Frame output(int index) {
-        if (isDenseOutput(index)) return index < outputs.length ? outputs[index] : null;
-        return index == -1 || sparseOutputs == null ? null : sparseOutputs[sparseOutputSlot(index)];
-    }
-
-    // Sets frame.outputIndex; a frame already at that index loses it, as an overwritten slot would.
-    private void putOutput(int index, Frame frame) {
-        if (frame.outputIndex != -1 && frame.outputIndex != index) removeOutput(frame.outputIndex);
-        if (index == -1) return;
-        Frame previous;
-        if (isDenseOutput(index)) {
-            if (index >= outputs.length) {
-                outputs = Arrays.copyOf(outputs,
-                        Math.min(MAX_DENSE_OUTPUTS, Math.max(index + 1, outputs.length * 2)));
-            }
-            previous = outputs[index];
-            outputs[index] = frame;
-        } else {
-            if (sparseOutputs == null) {
-                sparseOutputs = new Frame[Integer.highestOneBit(MAX_SPARSE_OUTPUTS * 2 - 1) << 1];
-            }
-            int i = sparseOutputSlot(index);
-            previous = sparseOutputs[i];
-            if (previous == null) {
-                // Entries are frames still tracked, so this needs about MAX_PENDING outputs in
-                // flight; the frame then finishes as output_unobserved in the CSV.
-                if (sparseOutputCount == MAX_SPARSE_OUTPUTS) return;
-                sparseOutputCount++;
-            }
-            sparseOutputs[i] = frame;
-        }
-        if (previous != null && previous != frame) previous.outputIndex = -1;
-        frame.outputIndex = index;
-    }
-
-    private Frame removeOutput(int index) {
-        Frame frame;
-        if (isDenseOutput(index)) {
-            if (index >= outputs.length || (frame = outputs[index]) == null) return null;
-            outputs[index] = null;
-        } else {
-            if (index == -1 || sparseOutputs == null) return null;
-            Frame[] table = sparseOutputs;
-            int mask = table.length - 1;
-            int hole = sparseOutputSlot(index);
-            if ((frame = table[hole]) == null) return null;
-            // Backward-shift deletion keeps every probe chain unbroken.
-            for (int j = (hole + 1) & mask; table[j] != null; j = (j + 1) & mask) {
-                int home = hashSlot(table[j].outputIndex, mask);
-                if (((j - home) & mask) >= ((j - hole) & mask)) {
-                    table[hole] = table[j];
-                    hole = j;
-                }
-            }
-            table[hole] = null;
-            sparseOutputCount--;
-        }
-        frame.outputIndex = -1;
-        return frame;
-    }
-
     /** Slots the output index tables hold, for tests: bounded whatever the indices. */
     synchronized int outputSlotCount() {
-        return outputs.length + (sparseOutputs == null ? 0 : sparseOutputs.length);
-    }
-
-    private Frame newFrame() {
-        Frame frame = spareFrames.pollFirst();
-        return frame != null ? frame : new Frame();
+        return outputTable.slotCount();
     }
 
     // Only for frames nothing else holds: dropped from the completed queue or written to the CSV.
     private void recycle(Frame frame) {
-        int slot = frame.number & BY_NUMBER_MASK;
-        if (byNumber[slot] == frame) byNumber[slot] = null;
         if (lastRenderRelease == frame) lastRenderRelease = null;
-        if (spareFrames.size() < MAX_SPARE_FRAMES) {
-            frame.reset();
-            spareFrames.addFirst(frame);
-        }
+        store.recycle(frame);
     }
 
     final LatencyProbe latencyProbe = new LatencyProbe();
 
     synchronized void onFrameReceived(long receiveNs) {
-        if (fpsStartNs == 0) fpsStartNs = receiveNs;
-        recordFrameTime(0, receiveNs);
+        metrics.onFrameReceived(receiveNs);
         latencyProbe.onFrameReceived(receiveNs);
     }
 
@@ -458,7 +173,7 @@ class FrameLatencyStats {
         if (pending.size == MAX_PENDING) {
             finish(pending.oldest, "tracking_overflow");
         }
-        Frame frame = newFrame();
+        Frame frame = store.newFrame();
         frame.number = frameNumber;
         frame.ptsUs = ptsUs;
         frame.hostRtpUs = hostRtpUs;
@@ -469,13 +184,12 @@ class FrameLatencyStats {
         // The unsigned wire value is in 100 us units; zero means unavailable.
         frame.hostProcessingNs = hostProcessingLatency * 100000L;
         pending.put(frame);
-        byNumber[frameNumber & BY_NUMBER_MASK] = frame;
-        // Most frames have no early report: skip the Integer the lookup would box for each.
-        frame.hostTiming = earlyReports.isEmpty() ? null : earlyReports.remove(frameNumber);
+        store.indexByNumber(frame);
+        frame.hostTiming = store.takeEarlyReport(frameNumber);
         // Stage 4 is only ever the header's value. Never feed a host timing report into it:
         // present to last packet sent includes the network send and reads several times higher.
         if (frame.hostProcessingNs != 0) {
-            addDuration(HOST_STAGE, frame.hostProcessingNs, inputNs);
+            metrics.addDuration(HOST_STAGE, frame.hostProcessingNs, inputNs);
         }
     }
 
@@ -485,53 +199,25 @@ class FrameLatencyStats {
     synchronized void onHostTiming(HostTimingReport report, long nowNs) {
         for (int i = 0; i < report.size(); i++) {
             HostTimingReport.Record record = report.get(i);
-            addDuration(HOST_SENT_STAGE, record.hostUs * 1000L, nowNs);
-            addDuration(HOST_QUEUE_STAGE, record.queueUs * 1000L, nowNs);
-            addDuration(HOST_QUEUE_STAGE + 1, record.encodeUs * 1000L, nowNs);
-            addDuration(HOST_SEND_STAGE, record.sendUs * 1000L, nowNs);
-            Frame frame = findFrame(record.frame);
+            metrics.addDuration(HOST_SENT_STAGE, record.hostUs * 1000L, nowNs);
+            metrics.addDuration(HOST_QUEUE_STAGE, record.queueUs * 1000L, nowNs);
+            metrics.addDuration(HOST_QUEUE_STAGE + 1, record.encodeUs * 1000L, nowNs);
+            metrics.addDuration(HOST_SEND_STAGE, record.sendUs * 1000L, nowNs);
+            Frame frame = store.findFrame(record.frame, pending);
             if (frame != null) {
                 frame.hostTiming = record;
             } else {
-                if (earlyReports.size() == MAX_EARLY_REPORTS) {
-                    Iterator<Integer> oldest = earlyReports.keySet().iterator();
-                    oldest.next();
-                    oldest.remove();
-                }
-                earlyReports.put(record.frame, record);
+                store.putEarlyReport(record.frame, record);
             }
         }
-    }
-
-    private Frame findFrame(int frameNumber) {
-        Frame cached = byNumber[frameNumber & BY_NUMBER_MASK];
-        if (cached != null && cached.number == frameNumber) {
-            return cached;
-        }
-        for (Frame frame = pending.oldest; frame != null; frame = frame.newer) {
-            if (frame.number == frameNumber) {
-                return frame;
-            }
-        }
-        int scanned = 0;
-        for (Iterator<Frame> newest = completed.descendingIterator(); newest.hasNext() && scanned < MAX_COMPLETED_SCAN; scanned++) {
-            Frame frame = newest.next();
-            if (frame.number == frameNumber) {
-                return frame;
-            }
-        }
-        return null;
     }
 
     // queueInputBuffer() has returned: decode time starts here, like other Moonlight clients count
     // it, and the queue call itself belongs to the queue wait. A frame whose output already came
     // (the decoder beat the bookkeeping) keeps its earlier start.
     synchronized void onDecoderQueued(long ptsUs, long queuedNs) {
-        artemisQueuedNs.put(ptsUs, queuedNs);
         Frame frame = pending.get(ptsUs);
-        if (frame != null && frame.outputNs != 0) {
-            artemisOutputNs.put(ptsUs, frame.outputNs);
-        }
+        metrics.onArtemisQueued(ptsUs, queuedNs, frame != null ? frame.outputNs : 0);
         recordDecoderQueued(frame, queuedNs);
     }
 
@@ -593,15 +279,11 @@ class FrameLatencyStats {
         if (frame.outputNs == 0) {
             frame.inputNs = queuedNs;
         }
-        addSample(0, frame.enqueueNs, frame.inputNs);
+        metrics.addSample(0, frame.enqueueNs, frame.inputNs);
     }
 
     synchronized void onDecoderOutput(int index, long ptsUs, long outputNs) {
-        // PyroWave never fills the map, so its outputs skip the lookup (and its boxing) entirely.
-        if (!artemisQueuedNs.isEmpty() && artemisQueuedNs.contains(ptsUs)) {
-            // Decode time ends here, when the decoder hands the frame back.
-            artemisOutputNs.put(ptsUs, outputNs);
-        }
+        metrics.onArtemisOutput(ptsUs, outputNs);
         Frame frame = pending.get(ptsUs);
         if (frame != null) {
             frame.outputNs = outputNs;
@@ -609,17 +291,9 @@ class FrameLatencyStats {
                 frame.previousOutputNs = lastOutputNs;
                 lastOutputNs = outputNs;
             }
-            putOutput(index, frame);
+            outputTable.put(index, frame);
             if (frame.inputNs > 0 && outputNs >= frame.inputNs) {
-                addSample(1, frame.inputNs, outputNs);
-                decodeTimeTotalNs += outputNs - frame.inputNs;
-                decodeTimeSamples++;
-                totalDecodeTimeNs += outputNs - frame.inputNs;
-                totalDecodedFrames++;
-                if (frame.receiveNs > 0 && frame.inputNs >= frame.receiveNs) {
-                    totalClientTimeNs += outputNs - frame.receiveNs;
-                    totalClientTimeSamples++;
-                }
+                metrics.recordDecodedFrame(frame.inputNs, outputNs, frame.receiveNs);
             }
         }
     }
@@ -661,18 +335,17 @@ class FrameLatencyStats {
 
     private void onOutputReleased(int index, long releaseNs, long displayAtNs, boolean render, boolean hasRenderCallback,
                                   boolean handsOff) {
-        Frame frame = removeOutput(index);
+        Frame frame = outputTable.remove(index);
         if (frame != null) {
             frame.releaseNs = releaseNs;
             if (render && handsOff && frame.inputNs > 0 && frame.outputNs >= frame.inputNs && releaseNs >= frame.outputNs) {
                 frame.handoffNs = handoffNs(releaseNs, displayAtNs);
-                addSample(2, frame.outputNs, frame.handoffNs);
-                addSample(3, clientStartNs(frame), frame.handoffNs);
+                metrics.addSample(2, frame.outputNs, frame.handoffNs);
+                metrics.addSample(3, clientStartNs(frame), frame.handoffNs);
             }
             frame.awaitingRender = render && hasRenderCallback;
             if (render) {
-                renderCallbacksAvailable = hasRenderCallback;
-                recordFrameTime(RENDERED_STAGE, releaseNs);
+                metrics.onOutputRendered(releaseNs, hasRenderCallback);
                 lastRenderRelease = frame;
             }
             if (vrr && render && frame.outputNs > 0 && releaseNs >= frame.outputNs) {
@@ -701,15 +374,11 @@ class FrameLatencyStats {
         }
         lastRenderRelease = null;
         if (frame.handoffNs != 0) {
-            removeLastSample(2, frame.handoffNs);
-            removeLastSample(3, frame.handoffNs);
+            metrics.removeLastSample(2, frame.handoffNs);
+            metrics.removeLastSample(3, frame.handoffNs);
             frame.handoffNs = 0;
         }
-        long[] times = frameTimes[RENDERED_STAGE];
-        int last = (frameTimePositions[RENDERED_STAGE] + times.length - 1) % times.length;
-        if (times[last] == releaseNs) {
-            times[last] = 0;
-        }
+        metrics.undoLastRenderedFrameTime(releaseNs);
         frame.awaitingRender = false;
         if (pending.get(frame.ptsUs) == frame) {
             finish(frame, "release_failed");
@@ -720,7 +389,7 @@ class FrameLatencyStats {
 
     /** Input to output time of a still-owned output buffer, or zero when untracked. */
     synchronized long getInputToOutputNs(int outputIndex) {
-        Frame frame = output(outputIndex);
+        Frame frame = outputTable.get(outputIndex);
         return frame == null || frame.inputNs <= 0 || frame.outputNs < frame.inputNs ? 0 :
                 frame.outputNs - frame.inputNs;
     }
@@ -730,7 +399,7 @@ class FrameLatencyStats {
      * getInputToOutputNs it holds no jitter of the call's return, which no output can follow.
      */
     synchronized long getSubmitToOutputNs(int outputIndex) {
-        Frame frame = output(outputIndex);
+        Frame frame = outputTable.get(outputIndex);
         return frame == null || frame.submitNs <= 0 || frame.outputNs < frame.submitNs ? 0 :
                 frame.outputNs - frame.submitNs;
     }
@@ -747,7 +416,7 @@ class FrameLatencyStats {
      * output, under one lock instead of three. Zeros when untracked.
      */
     synchronized void readOutputTimes(int outputIndex, OutputTimes out) {
-        Frame frame = output(outputIndex);
+        Frame frame = outputTable.get(outputIndex);
         if (frame == null) {
             out.inputToOutputNs = out.submitToOutputNs = out.outputNs = 0;
             return;
@@ -759,13 +428,13 @@ class FrameLatencyStats {
 
     /** When a still-owned output buffer came out of the decoder, or zero when untracked. */
     synchronized long getOutputNs(int outputIndex) {
-        Frame frame = output(outputIndex);
+        Frame frame = outputTable.get(outputIndex);
         return frame == null ? 0 : frame.outputNs;
     }
 
     /** Notes where the scheduler planned a still-owned output; call before it is released. */
     synchronized void onScheduled(int outputIndex, long vsyncNs, long holdNs, boolean late, int inFlight) {
-        Frame frame = output(outputIndex);
+        Frame frame = outputTable.get(outputIndex);
         if (frame != null) {
             frame.schedVsyncNs = vsyncNs;
             frame.schedHoldNs = Math.max(0, holdNs);
@@ -776,7 +445,7 @@ class FrameLatencyStats {
 
     /** Notes the decoder queue seen by a still-owned output: frames behind it, and its residency excess. */
     synchronized void onQueueState(int outputIndex, int depth, long excessNs) {
-        Frame frame = output(outputIndex);
+        Frame frame = outputTable.get(outputIndex);
         if (frame != null) {
             frame.queueDepth = Math.max(0, depth);
             frame.residencyExcessNs = Math.max(0, excessNs);
@@ -785,11 +454,9 @@ class FrameLatencyStats {
 
     /** Notes why a still-owned output is about to be dropped; call before the release. */
     synchronized void onDropReason(int outputIndex, String reason) {
-        Frame frame = output(outputIndex);
+        Frame frame = outputTable.get(outputIndex);
         if (frame != null) frame.dropReason = reason;
-        int[] count = dropCounts.get(reason);
-        if (count == null) dropCounts.put(reason, count = new int[1]);
-        count[0]++;
+        metrics.recordDropReason(reason);
     }
 
     /**
@@ -797,19 +464,12 @@ class FrameLatencyStats {
      * without one (flushes, failed releases): notShown is frames out of the decoder minus rendered.
      */
     synchronized String describeDrops(long notShown) {
-        StringBuilder text = new StringBuilder();
-        long counted = 0;
-        for (java.util.Map.Entry<String, int[]> drop : dropCounts.entrySet()) {
-            text.append(text.length() == 0 ? "" : ", ").append(drop.getKey()).append(' ').append(drop.getValue()[0]);
-            counted += drop.getValue()[0];
-        }
-        if (notShown > counted) text.append(text.length() == 0 ? "" : ", ").append("other ").append(notShown - counted);
-        return text.length() == 0 ? "none" : text.toString();
+        return metrics.describeDrops(notShown);
     }
 
     /** The local queue timestamp for a still-owned output buffer, or zero when untracked. */
     synchronized long getEnqueueTimeNsForOutput(int outputIndex) {
-        Frame frame = output(outputIndex);
+        Frame frame = outputTable.get(outputIndex);
         return frame == null || frame.enqueueNs <= 0 || frame.enqueueNs > frame.outputNs ? 0 : frame.enqueueNs;
     }
 
@@ -825,9 +485,6 @@ class FrameLatencyStats {
         rendered(ptsUs, queuedNs > 0 ? queuedNs : scanoutNs, callbackReceivedNs, Math.max(0, scanoutNs));
     }
 
-    // Lowest latency and Balanced: watches the display's queue through the waits of handed-off frames.
-    private DisplayQueueWatch displayQueueWatch;
-
     synchronized void setDisplayQueueWatch(DisplayQueueWatch watch) { displayQueueWatch = watch; }
 
     // screenNs: when the frame reached the screen, 0 when unknown.
@@ -841,11 +498,10 @@ class FrameLatencyStats {
         if (valid) {
             // Presented FPS and present-interval jitter use scanoutNs when known (Vulkan passes queuedNs as renderNs).
             long presentedNs = screenNs > 0 && screenNs >= frame.outputNs ? screenNs : renderNs;
-            recordFrameTime(PRESENTED_STAGE, presentedNs);
-            if (presentedNs > latestPresentedNs) latestPresentedNs = presentedNs;
+            metrics.onFramePresented(presentedNs);
             if (frame.handoffNs == 0) {
-                addSample(2, frame.outputNs, renderNs);
-                addSample(3, clientStartNs(frame), renderNs);
+                metrics.addSample(2, frame.outputNs, renderNs);
+                metrics.addSample(3, clientStartNs(frame), renderNs);
             }
             latencyProbe.onFrameRendered(frame.receiveNs, renderNs);
             presentJitter.record(presentedNs);
@@ -857,11 +513,7 @@ class FrameLatencyStats {
             }
         }
         if (screenNs > 0 && frame.outputNs > 0 && screenNs >= frame.outputNs) {
-            long ns = screenNs - frame.outputNs;
-            addDuration(SCREEN_STAGE, ns, screenNs);
-            scanoutTotalNs += ns;
-            scanoutMaxNs = Math.max(scanoutMaxNs, ns);
-            scanoutFrames++;
+            metrics.recordScanout(screenNs - frame.outputNs, screenNs);
         }
         finish(frame, valid ? "rendered" : "invalid_render_time");
     }
@@ -871,15 +523,7 @@ class FrameLatencyStats {
      * not display wait: it adds the compositor's queueing and the panel to what display wait counts.
      */
     synchronized String takeScanoutLatency() {
-        if (scanoutFrames == 0) {
-            return null;
-        }
-        String line = String.format(Locale.US, "Scanout latency (decoded to on screen): avg %.1f ms, max %.1f ms, %d frames",
-                scanoutTotalNs / 1e6 / scanoutFrames, scanoutMaxNs / 1e6, scanoutFrames);
-        scanoutTotalNs = 0;
-        scanoutMaxNs = 0;
-        scanoutFrames = 0;
-        return line;
+        return metrics.takeScanoutLatency();
     }
 
     /**
@@ -889,7 +533,7 @@ class FrameLatencyStats {
     synchronized void onFrameReplaced(long ptsUs) {
         Frame frame = pending.get(ptsUs);
         if (frame != null) {
-            if (frame.awaitingRender) countPresentDrop(frame.releaseNs);
+            if (frame.awaitingRender) metrics.countPresentDrop(frame.releaseNs);
             finish(frame, "replaced");
         }
     }
@@ -898,7 +542,7 @@ class FrameLatencyStats {
         Frame frame = pending.get(ptsUs);
         if (frame != null) {
             // Vulkan discovers missing display timing when polling after the first release.
-            if ("render_unavailable".equals(reason)) renderCallbacksAvailable = false;
+            if ("render_unavailable".equals(reason)) metrics.markRenderCallbacksUnavailable();
             finish(frame, reason);
         }
     }
@@ -908,16 +552,8 @@ class FrameLatencyStats {
             finish(pending.oldest, reason);
         }
         lastOutputNs = lastReleaseNs = 0;
-        decodeTimeTotalNs = 0;
-        decodeTimeSamples = 0;
-        resetDecodeTiming();
-        artemisQueuedNs.clear();
-        artemisOutputNs.clear();
+        metrics.onDiscardPending();
         lastRenderRelease = null;
-        fpsStartNs = 0;
-        latestPresentedNs = 0;
-        for (long[] times : frameTimes) Arrays.fill(times, 0);
-        Arrays.fill(dropTimes, 0);
         presentJitter.clear();
     }
 
@@ -932,10 +568,7 @@ class FrameLatencyStats {
     }
 
     synchronized float takeDecodeTimeMs() {
-        float result = decodeTimeSamples == 0 ? -1 : decodeTimeTotalNs / (decodeTimeSamples * 1000000.0f);
-        decodeTimeTotalNs = 0;
-        decodeTimeSamples = 0;
-        return result;
+        return metrics.takeDecodeTimeMs();
     }
 
     /**
@@ -943,101 +576,41 @@ class FrameLatencyStats {
      * observing it neither consumes overlay/CSV data nor allocates anything per decoded frame.
      */
     synchronized DecodeTiming takeDecodeTiming(long nowNs, int fps) {
-        long startNs = Math.max(decodeTimingPollNs, Math.max(0, nowNs - FPS_WINDOW_NS));
-        int available = (int) Math.min(counts[1], totalDecodedFrames - decodeTimingConsumedFrames);
-        int sampled = 0, late = 0;
-        long first = 0, last = 0;
-        if (nowNs > 0 && nowNs >= decodeTimingPollNs && fps > 0) {
-            for (int offset = 1; offset <= available; offset++) {
-                int index = (positions[1] - offset + WINDOW_SIZE) % WINDOW_SIZE;
-                long observed = sampleTimes[1][index];
-                if (observed <= startNs || observed > nowNs) continue;
-                sampled++;
-                if (samples[1][index] > DecodeTiming.decodeBudgetMs(fps) * 1_000_000d) late++;
-                first = first == 0 ? observed : Math.min(first, observed);
-                last = Math.max(last, observed);
-            }
-        }
-        decodeTimingConsumedFrames = totalDecodedFrames;
-        decodeTimingPollNs = Math.max(0, nowNs);
-        return new DecodeTiming(decodeTimingGeneration, startNs, nowNs, first, last, fps, sampled, late);
+        return metrics.takeDecodeTiming(nowNs, fps);
     }
 
     /** A reset/reconfigure must not carry evidence from the previous decoder workload. */
     synchronized void resetDecodeTiming() {
-        decodeTimingGeneration++;
-        decodeTimingConsumedFrames = totalDecodedFrames;
-        decodeTimingPollNs = 0;
+        metrics.resetDecodeTiming();
     }
 
-    // A frame Artemis counts: the one it presents, or one it puts in the pacing queue without
-    // dropping an older one. Its decode time runs from queueInputBuffer() returning to the
-    // decoder returning the frame; release and pacing waits after that are not decode time. Like
-    // Artemis, a frame is rounded down to whole milliseconds and a second or more is left out.
     synchronized void onArtemisDecodeCounted(long ptsUs) {
-        long queuedNs = artemisQueuedNs.remove(ptsUs);
-        long outputNs = artemisOutputNs.remove(ptsUs);
-        if (queuedNs != PtsTimes.ABSENT && outputNs != PtsTimes.ABSENT && outputNs >= queuedNs) {
-            long ms = (outputNs - queuedNs) / 1000000L;
-            if (ms < 1000) {
-                artemisDecodeMs += ms;
-            }
-        }
+        metrics.onArtemisDecodeCounted(ptsUs);
     }
 
     synchronized long getArtemisDecodeMs() {
-        return artemisDecodeMs;
+        return metrics.getArtemisDecodeMs();
     }
 
     // Whole milliseconds counted since the last call; the caller divides by frames received.
     synchronized long takeArtemisDecodeMs() {
-        long result = artemisDecodeMs;
-        artemisDecodeMs = 0;
-        return result;
+        return metrics.takeArtemisDecodeMs();
     }
 
     synchronized int getAverageDecoderLatency() {
-        return totalDecodedFrames == 0 ? 0 : (int) (totalDecodeTimeNs / totalDecodedFrames / 1000000);
+        return metrics.getAverageDecoderLatency();
     }
 
     synchronized int getAverageEndToEndLatency() {
-        return totalClientTimeSamples == 0 ? 0 : (int) (totalClientTimeNs / totalClientTimeSamples / 1000000);
-    }
-
-    private void recordFrameTime(int stage, long timeNs) {
-        frameTimes[stage][frameTimePositions[stage]] = timeNs;
-        frameTimePositions[stage] = (frameTimePositions[stage] + 1) % frameTimes[stage].length;
+        return metrics.getAverageEndToEndLatency();
     }
 
     synchronized float[] getFrameRates(long nowNs) {
-        float[] rates = new float[3];
-        if (fpsStartNs != 0) {
-            for (int stage = 0; stage < rates.length; stage++) {
-                long endNs = nowNs;
-                if (stage == PRESENTED_STAGE && latestPresentedNs > 0 && latestPresentedNs < nowNs) {
-                    endNs = Math.max(latestPresentedNs, nowNs - MAX_PRESENT_REPORT_LAG_NS);
-                }
-                long startNs = Math.max(fpsStartNs, endNs - FPS_WINDOW_NS);
-                if (endNs <= startNs) continue;
-                int count = 0;
-                for (long timestamp : frameTimes[stage]) {
-                    if (timestamp > startNs && timestamp <= endNs) count++;
-                }
-                rates[stage] = (float) (count * 1000000000.0 / (endNs - startNs));
-            }
-        }
-        if (!renderCallbacksAvailable) rates[2] = -1;
-        return rates;
+        return metrics.getFrameRates(nowNs);
     }
 
     synchronized long getPresentDrops() {
-        return presentDrops;
-    }
-
-    private void countPresentDrop(long timeNs) {
-        presentDrops++;
-        dropTimes[dropTimePosition] = timeNs;
-        dropTimePosition = (dropTimePosition + 1) % dropTimes.length;
+        return metrics.getPresentDrops();
     }
 
     /**
@@ -1050,34 +623,16 @@ class FrameLatencyStats {
      * holds all of it.
      */
     synchronized float getDisplayDropPercent(long nowNs) {
-        long endNs = Math.min(nowNs, lastExpireNs) - CALLBACK_TIMEOUT_NS;
-        long startNs = Math.max(fpsStartNs, endNs - FPS_WINDOW_NS);
-        if (fpsStartNs == 0 || lastExpireNs == 0 || endNs <= startNs || !renderCallbacksAvailable) return -1;
-        int submitted = countWithin(frameTimes[RENDERED_STAGE], frameTimePositions[RENDERED_STAGE], startNs, endNs);
-        int drops = countWithin(dropTimes, dropTimePosition, startNs, endNs);
-        if (submitted <= 0 || drops < 0) return -1;
-        return Math.min(100f, 100f * drops / submitted);
-    }
-
-    // Timestamps in (startNs, endNs] of a ring whose next write goes to position; -1 when the ring
-    // has wrapped past startNs, so part of the window is gone.
-    private static int countWithin(long[] ring, int position, long startNs, long endNs) {
-        long oldest = ring[position];
-        if (oldest != 0 && oldest > startNs) return -1;
-        int count = 0;
-        for (long timestamp : ring) {
-            if (timestamp > startNs && timestamp <= endNs) count++;
-        }
-        return count;
+        return metrics.getDisplayDropPercent(nowNs);
     }
 
     synchronized void expire(long nowNs) {
-        lastExpireNs = Math.max(lastExpireNs, nowNs);
+        metrics.noteExpire(nowNs);
         for (Frame frame = pending.oldest, next; frame != null; frame = next) {
             next = frame.newer;
             if (nowNs - (frame.awaitingRender ? frame.releaseNs : frame.inputNs) >= CALLBACK_TIMEOUT_NS) {
                 // MediaCodec exposes no drop callback. Allow delayed render callbacks before estimating a drop.
-                if (frame.awaitingRender) countPresentDrop(frame.releaseNs);
+                if (frame.awaitingRender) metrics.countPresentDrop(frame.releaseNs);
                 finish(frame, frame.releaseNs != 0 ? "render_unobserved" : "output_unobserved");
             }
         }
@@ -1086,45 +641,12 @@ class FrameLatencyStats {
     private void finish(Frame frame, String status) {
         pending.remove(frame);
         if (frame.outputIndex != -1) {
-            removeOutput(frame.outputIndex);
+            outputTable.remove(frame.outputIndex);
         }
         frame.status = status;
-        if (completed.size() == MAX_COMPLETED) {
-            recycle(completed.removeFirst());
-            csvRowsLost++;
-        }
-        completed.addLast(frame);
-    }
-
-    private void addSample(int stage, long startNs, long endNs) {
-        if (startNs == 0 || endNs < startNs) {
-            return;
-        }
-        addDuration(stage, endNs - startNs, endNs);
-    }
-
-    private void addDuration(int stage, long durationNs, long observedAtNs) {
-        overwritten[stage] = samples[stage][positions[stage]];
-        overwrittenTimes[stage] = sampleTimes[stage][positions[stage]];
-        samples[stage][positions[stage]] = durationNs;
-        sampleTimes[stage][positions[stage]] = observedAtNs;
-        positions[stage] = (positions[stage] + 1) % WINDOW_SIZE;
-        counts[stage] = Math.min(counts[stage] + 1, WINDOW_SIZE);
-    }
-
-    // Takes back the stage's last sample if it was observed at observedAtNs, restoring the one it
-    // replaced in a full window.
-    private void removeLastSample(int stage, long observedAtNs) {
-        int last = (positions[stage] + WINDOW_SIZE - 1) % WINDOW_SIZE;
-        if (counts[stage] == 0 || sampleTimes[stage][last] != observedAtNs) return;
-        positions[stage] = last;
-        if (counts[stage] < WINDOW_SIZE) {
-            counts[stage]--;
-            samples[stage][last] = 0;
-            sampleTimes[stage][last] = 0;
-        } else {
-            samples[stage][last] = overwritten[stage];
-            sampleTimes[stage][last] = overwrittenTimes[stage];
+        Frame evicted = store.addCompleted(frame);
+        if (evicted != null) {
+            recycle(evicted);
         }
     }
 
@@ -1144,56 +666,24 @@ class FrameLatencyStats {
     }
 
     private double[][] summarize(long nowNs, long windowNs, boolean recentOnly, boolean median) {
-        long[][] snapshot = new long[samples.length][];
+        long[][] snapshot;
         synchronized (this) {
-            for (int stage = 0; stage < snapshot.length; stage++) {
-                long[] values = new long[counts[stage]];
-                int count = 0;
-                for (int i = 0; i < counts[stage]; i++) {
-                    long observedAt = sampleTimes[stage][i];
-                    if (!recentOnly || (observedAt > 0 && observedAt <= nowNs && nowNs - observedAt <= windowNs)) {
-                        values[count++] = samples[stage][i];
-                    }
-                }
-                snapshot[stage] = count == values.length ? values : Arrays.copyOf(values, count);
-            }
+            snapshot = metrics.snapshotSamples(nowNs, windowNs, recentOnly);
         }
-        // Per stage: samples, average, p95, p99 and, when asked for, median, in milliseconds.
-        double[][] summary = new double[samples.length][median ? 5 : 4];
-        for (int stage = 0; stage < snapshot.length; stage++) {
-            long[] values = snapshot[stage];
-            summary[stage][0] = values.length;
-            if (values.length == 0) {
-                continue;
-            }
-            Arrays.sort(values);
-            double sum = 0;
-            for (long value : values) {
-                sum += value;
-            }
-            summary[stage][1] = sum / values.length / 1000000;
-            summary[stage][2] = values[(int) Math.ceil(values.length * 0.95) - 1] / 1000000.0;
-            summary[stage][3] = values[(int) Math.ceil(values.length * 0.99) - 1] / 1000000.0;
-            if (median) summary[stage][4] = values[(int) Math.ceil(values.length * 0.5) - 1] / 1000000.0;
-        }
-        return summary;
+        return FrameLatencyMetrics.summarizeSnapshot(snapshot, median);
     }
 
     synchronized long getCsvRowsLost() {
-        return csvRowsLost;
+        return store.getCsvRowsLost();
     }
 
     synchronized boolean hasCompletedFrames() {
-        return !completed.isEmpty();
+        return store.hasCompletedFrames();
     }
 
     long writeCsv(Writer writer) throws IOException {
         return writeCsv(writer, null);
     }
-
-    // A flush's rows and drained frames are reused across flushes; only the latency thread flushes.
-    private final StringBuilder csvRows = new StringBuilder(16 * 1024);
-    private final ArrayList<Frame> csvDrain = new ArrayList<>(256);
 
     // The clock offset is read once per flush, before the lock: it calls into native code that
     // takes its own lock, and one value is plenty for the few hundred ms a flush covers.
@@ -1208,16 +698,10 @@ class FrameLatencyStats {
         float[] rates;
         csvDrain.clear();
         synchronized (this) {
-            csvDrain.addAll(completed);
-            completed.clear();
-            for (int i = 0; i < csvDrain.size(); i++) {
-                Frame f = csvDrain.get(i);
-                int slot = f.number & BY_NUMBER_MASK;
-                if (byNumber[slot] == f) byNumber[slot] = null;
-            }
-            lost = csvRowsLost;
-            dropped = presentDrops;
-            rates = getFrameRates(sampleNs);
+            store.drainCompleted(csvDrain);
+            lost = store.getCsvRowsLost();
+            dropped = metrics.getPresentDrops();
+            rates = metrics.getFrameRates(sampleNs);
         }
         // Disk I/O and formatting must never hold the lock used by the decoder threads.
         String frameRates = String.format(Locale.ROOT, "%.2f,%.2f,", rates[0], rates[1]) +
