@@ -158,7 +158,7 @@ impl Receiver {
                     ) => {}
                 // Windows reports an ICMP port unreachable for an earlier
                 // datagram as a reset on the next receive; nothing is lost.
-                Err(e) if e.kind() == std::io::ErrorKind::ConnectionReset => {}
+                Err(e) if butterpollo_win_io::net::datagram_lost(&e) => {}
                 Err(e) => {
                     failures += 1;
                     if failures == 1 {

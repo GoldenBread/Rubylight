@@ -361,6 +361,21 @@ impl SessionThread<'_> {
             }
             let period = stream_period;
             latest.check()?;
+            if latest.needs_release(&capture_wake) {
+                release_capture_resources(
+                    encoder,
+                    &mut last_image,
+                    &mut staging,
+                    &mut enhancer,
+                    &mut frame_warp,
+                    &mut pacer,
+                    s,
+                    latest,
+                    &capture_wake,
+                    &mut backend_due,
+                );
+                continue;
+            }
             // A WebRTC client has no video ping: its address is the pair ICE chose.
             let peer = match webrtc_sender {
                 Some(sender) => sender.peer(),
@@ -401,26 +416,18 @@ impl SessionThread<'_> {
                     )
                 })?;
             let Some(mut raw_image) = image else {
-                // The capture is being re-created on a new device.
-                // Release everything on the old one so Windows can
-                // give the new capture a current adapter.
-                if let Some(released) = encoder.take() {
-                    tracing::info!(
-                        client = %s.launch.client.name,
-                        in_flight = released.backlog(),
-                        "releasing the encoder while the capture recovers"
-                    );
-                    drop(released);
-                }
-                last_image = None;
-                staging = None;
-                enhancer.reset();
-                frame_warp.reset();
-                pacer.reset_source_phase();
-                latest.release_generation(&capture_wake);
-                // The reopened capture may run on another backend: read
-                // it again once this recovery ends with a new picture.
-                backend_due = true;
+                release_capture_resources(
+                    encoder,
+                    &mut last_image,
+                    &mut staging,
+                    &mut enhancer,
+                    &mut frame_warp,
+                    &mut pacer,
+                    s,
+                    latest,
+                    &capture_wake,
+                    &mut backend_due,
+                );
                 continue;
             };
             if backend_due {
@@ -736,4 +743,36 @@ impl SessionThread<'_> {
         }
         Ok(())
     }
+}
+
+/// Releases the encoder, held GPU frames/passes, and capture generation so Windows can recreate
+/// the capture device cleanly even while waiting on a video peer.
+#[allow(clippy::too_many_arguments)]
+fn release_capture_resources<S>(
+    encoder: &mut Option<Encoder>,
+    last_image: &mut Option<std::sync::Weak<GpuImage>>,
+    staging: &mut Option<S>,
+    enhancer: &mut crate::nvidia_enhance::Enhancer,
+    frame_warp: &mut crate::stream::frame_warp::VideoFrameWarp,
+    pacer: &mut butterpollo_media_policy::stream_policy::Pacer,
+    s: &Session,
+    latest: &Arc<Source>,
+    capture_wake: &Arc<capture::Consumer>,
+    backend_due: &mut bool,
+) {
+    if let Some(released) = encoder.take() {
+        tracing::info!(
+            client = %s.launch.client.name,
+            in_flight = released.backlog(),
+            "releasing the encoder while the capture recovers"
+        );
+        drop(released);
+    }
+    *last_image = None;
+    *staging = None;
+    enhancer.reset();
+    frame_warp.reset();
+    pacer.reset_source_phase();
+    latest.release_generation(capture_wake);
+    *backend_due = true;
 }

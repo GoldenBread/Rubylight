@@ -578,3 +578,18 @@ fn microphone_install_restores_defaults_on_success_timeout_and_error() {
     assert!(failed.is_err());
     assert_eq!(restored.load(Ordering::Relaxed), 1);
 }
+
+#[test]
+fn oversized_datagram_is_classified_as_datagram_lost_in_microphone_loop() {
+    let receiver = UdpSocket::bind("127.0.0.1:0").unwrap();
+    let sender = UdpSocket::bind("127.0.0.1:0").unwrap();
+    sender
+        .send_to(&vec![0xAA; 4096], receiver.local_addr().unwrap())
+        .unwrap();
+    let mut small = [0u8; 2048];
+    let err = receiver.recv_from(&mut small).unwrap_err();
+    assert!(
+        butterpollo_win_io::net::datagram_lost(&err),
+        "expected datagram_lost for oversized UDP datagram, got {err:?}"
+    );
+}

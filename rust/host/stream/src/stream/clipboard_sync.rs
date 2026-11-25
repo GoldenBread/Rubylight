@@ -478,6 +478,7 @@ impl<C: Clipboard> Watch<C> {
             return Ok(None);
         }
         self.seen = sequence;
+        let previous = self.last.take();
         if !self.allowed.read {
             bail!(Unread);
         }
@@ -497,7 +498,8 @@ impl<C: Clipboard> Watch<C> {
         } else {
             return Ok(None);
         };
-        if self.last.as_ref() == Some(&item) {
+        if previous.as_ref() == Some(&item) {
+            self.last = previous;
             return Ok(None);
         }
         self.last = Some(item.clone());

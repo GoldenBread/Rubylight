@@ -307,9 +307,12 @@ fn ping_session(
         if ping.len() >= 16 && crypto::equal(&ping[..16], s.launch.ping.as_bytes()) {
             return true;
         }
+        // Once a client negotiated the session ping payload (ML_FF_SESSION_ID_V1 = 0x02),
+        // never fall back to bare "PING", which can be guessed or spoofed behind NAT.
         // After a roam only the session's own ping proves a new address: behind a
         // CGNAT anyone may share the client's IP.
         ping == b"PING"
+            && (s.config.moonlight_features & 0x02) == 0
             && only_one
             && (s.roams() == 0 || peers.lock().unwrap().get(&s.launch.id, is_audio) == Some(peer))
     })?;
@@ -395,6 +398,41 @@ pub struct Media {
     /// Roaming seqs of the launches, kept across control worker restarts so no launch key
     /// repeats a nonce.
     roam_seqs: butterpollo_session::roaming::SeqMemory,
+    /// Control-stream AES-GCM send sequence & receive replay window per launch key,
+    /// kept across control worker restarts so no launch key repeats a nonce or resets replay state.
+    pub(crate) control_seqs: ControlSeqMemory,
+}
+
+#[derive(Default)]
+pub(crate) struct ControlSeqState {
+    pub(crate) sequence: u32,
+    pub(crate) received: butterpollo_media_policy::packet::ReplayWindow,
+}
+
+/// Control encryption sequences and replay windows per launch key, kept across control worker
+/// restarts so a live launch never repeats an AES-GCM nonce or clears its replay window.
+#[derive(Clone, Default)]
+pub(crate) struct ControlSeqMemory(Arc<Mutex<HashMap<[u8; 16], Arc<Mutex<ControlSeqState>>>>>);
+
+impl ControlSeqMemory {
+    pub(crate) fn for_launch(&self, key: [u8; 16]) -> Arc<Mutex<ControlSeqState>> {
+        Arc::clone(
+            self.0
+                .lock()
+                .unwrap()
+                .entry(key)
+                .or_insert_with(|| Arc::new(Mutex::new(ControlSeqState::default()))),
+        )
+    }
+
+    pub(crate) fn retain_launches<'a>(&self, rikeys: impl IntoIterator<Item = &'a [u8; 16]>) {
+        let keys: Vec<[u8; 16]> = rikeys.into_iter().copied().collect();
+        self.0.lock().unwrap().retain(|key, _| keys.contains(key));
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.0.lock().unwrap().is_empty()
+    }
 }
 /// The first video ping from the path a client roamed to: the client needs a keyframe,
 /// and what the link-rate controller learned about the old path no longer holds.
@@ -540,6 +578,7 @@ impl Media {
             shutdown_elapsed_ms: std::sync::atomic::AtomicU64::new(0),
             shutdown_done: AtomicBool::new(false),
             roam_seqs: Default::default(),
+            control_seqs: Default::default(),
         });
         for is_audio in [false, true] {
             let socket = if is_audio {

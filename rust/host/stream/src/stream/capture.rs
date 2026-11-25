@@ -281,6 +281,10 @@ impl<T> Latest<T> {
         }
     }
     /// Call only after releasing every resource belonging to this capture.
+    pub(super) fn needs_release(&self, consumer: &Consumer) -> bool {
+        let state = self.state.lock().unwrap();
+        state.image.is_none() && consumer.released.load(Ordering::Acquire) != state.generation
+    }
     pub(super) fn release_generation(&self, consumer: &Consumer) {
         let state = self.state.lock().unwrap();
         consumer.released.store(state.generation, Ordering::Release);

@@ -381,3 +381,33 @@ fn a_copy_put_after_the_loops_look_is_taken_on_the_next_one() {
     assert_eq!(sync.take(now, || false), None);
     assert!(!sync.queued(), "the refused copy was dropped");
 }
+
+#[test]
+fn last_is_cleared_when_clipboard_changes_to_unsynced_content() {
+    let fake = Fake::default();
+    let mut watch = Watch::new(
+        fake.clone(),
+        Allowed {
+            write: true,
+            read: true,
+            png: None,
+        },
+    );
+    fake.copy("repeat me");
+    let first = watch.poll().unwrap().unwrap();
+    assert_eq!(first.payload, b"repeat me");
+    // Clipboard changes to an image while images are disabled -> unsynced Ok(None).
+    fake.write_png(b"png-data").unwrap();
+    assert_eq!(watch.poll().unwrap(), None);
+    // Copying the same text again on the PC must be delivered now.
+    fake.copy("repeat me");
+    let second = watch.poll().unwrap().unwrap();
+    assert_eq!(second.payload, b"repeat me");
+
+    // Same when clipboard changes to an oversized copy (Err(Large)).
+    fake.copy(&"x".repeat(MAX_PAYLOAD_BYTES + 1));
+    assert!(watch.poll().unwrap_err().downcast_ref::<Large>().is_some());
+    fake.copy("repeat me");
+    let third = watch.poll().unwrap().unwrap();
+    assert_eq!(third.payload, b"repeat me");
+}
