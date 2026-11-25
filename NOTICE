@@ -113,8 +113,10 @@ Copyright (c) Foundation Sunshine authors, GPL-3.0.
 
 mac-precision-touchpad
 
-The virtual precision touchpad's report layout and the certification blob Windows
-asks precision touchpads for (rust/core/input-policy/src/virtual_hid.rs) follow imbushuo's
+The virtual precision touchpad's report layout (PrecisionTouchpad in
+rust/core/input-policy/src/virtual_hid/touchpad.rs) and the certification blob Windows
+asks precision touchpads for (PTP_CERTIFICATION_BLOB in
+rust/core/input-policy/src/virtual_hid/descriptors.rs) follow imbushuo's
 mac-precision-touchpad, AmtPtpDeviceSpiKm/Hid.h
 (https://github.com/imbushuo/mac-precision-touchpad). Copyright 2018 Bingxing Wang,
 MIT License; full text in third-party/licenses/mac-precision-touchpad-LICENSE.txt.
@@ -131,7 +133,7 @@ rust/windows/graphics/src/gpu_color.rs), the conversion shaders' output layout
 (src_assets/windows/assets/shaders/directx/include/convert_yuv444_ps_base.hlsl and
 convert_yuv444_planar_vs.hlsl; yuv444_* in rust/windows/abi/src/shaders/color.hlsl), and
 the YUV 4:4:4 capability check (validate_encoder_capabilities in src/nvenc/nvenc_base.cpp;
-rust/windows/graphics/src/nvenc.rs). The dscp_tagging switch, on by default, that turns off the
+rust/windows/graphics/src/nvenc/config.rs). The dscp_tagging switch, on by default, that turns off the
 DSCP marks on video and audio (rust/core/media-policy/src/stream_policy.rs) follows LizardByte
 Sunshine pull request 6067. Copyright (c) LizardByte and the Sunshine contributors, GPL-3.0.
 
@@ -300,7 +302,7 @@ rubylight_protocol::steam_controller already credits.
 
 DualShock 4 on ViGEmBus
 
-The DualShock 4 on ViGEmBus (rust/windows/io/src/input/vigem.rs: the report and its
+The DualShock 4 on ViGEmBus (rust/windows/io/src/input/vigem/ds4.rs: the report and its
 button, stick, motion, touch and battery conversions, the 100 ms keepalive, the stale
 gyro, the motion re-request and lightbar forwarding without repeats; Back as a touchpad
 click in rust/windows/io/src/input/gamepads.rs) was ported for Rubylight on 2026-11-14 from
@@ -429,7 +431,7 @@ Its Settings screen predicts the display mode Windows' Fullscreen takes as SDL 3
 SDL_GetClosestFullscreenDisplayMode chooses it (src/video/SDL_video.c, SDL 3.4.20,
 https://github.com/libsdl-org/SDL, zlib license, Copyright (C) 1997-2026 Sam Lantinga):
 the smallest mode that holds the stream, the closest aspect ratio, then the closest
-refresh with the slower one on a tie (client/protocol/desktop-ui/src/ui/settings.rs,
+refresh with the slower one on a tie (client/protocol/desktop-ui/src/ui/settings/choices.rs,
 closest_fullscreen_mode, which quotes SDL's notice). zlib License; full text in
 third-party/licenses/SDL-LICENSE.txt.
 Nightjar desktop's high-performance GPU power while streaming on Linux, which holds an AMD
@@ -438,8 +440,8 @@ src/stream/gpu_hold.rs), is ported from Nonary's moonlight-qt fork
 (https://github.com/Nonary/moonlight-qt, GPL-3.0): app/streaming/gpuperformancehold.{h,cpp}
 at commit 19758e5e6, with the same GPU selection, requests and release.
 From the same project and commit, on Windows: the measurement switch NIGHTJAR_VRR_SYNC=blank
-(client/protocol/desktop-media/src/stream/present/pacer.rs, `latch`, `planned_latch`,
-`present_adaptive`, `flip_statistics`; stream/render.rs, `blank_present`) is ported from its
+(client/protocol/desktop-media/src/stream/present/{pacer,vrr}.rs, `latch`, `planned_latch`,
+`present_adaptive`, `flip_statistics`; stream/render/pacing.rs, `blank_present`) is ported from its
 D3D11 flip protection (app/streaming/video/ffmpeg-renderers/d3d11presentpolicy.h,
 d3d11va.cpp, pacer/vrr/vrrtimingcontroller.cpp), with its test cases
 (tests/vrr/tst_dxgipresent.cpp); and on macOS what is read from NSScreen and the tests for a
