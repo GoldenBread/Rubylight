@@ -45,6 +45,47 @@ impl Prediction {
         skips
     }
 }
+/// Gate for dropping output units after a `RepairHeaders` rewrite fails until
+/// a *subsequent* requested keyframe begins at its first unit. Recording the
+/// last dropped PTS ensures remaining slices of a failed multi-slice IDR
+/// (which still carry `idr && requested_idr == true` while the submission
+/// stays in `in_flight`) cannot prematurely clear the drop state and emit a
+/// headless IDR missing VPS/SPS/PPS and slice 0.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) enum RepairDrop {
+    #[default]
+    Off,
+    Dropping {
+        last_dropped_pts: i64,
+    },
+}
+impl RepairDrop {
+    pub(super) fn fail(&mut self, pts: i64) {
+        *self = Self::Dropping {
+            last_dropped_pts: pts,
+        };
+    }
+    /// Returns true when the unit for `pts` may pass through; clears the gate
+    /// only on a requested keyframe belonging to a frame whose earlier slices
+    /// were not dropped.
+    pub(super) fn allow(&mut self, pts: i64, requested_keyframe: bool) -> bool {
+        match *self {
+            Self::Off => true,
+            Self::Dropping { last_dropped_pts } => {
+                if requested_keyframe && pts != last_dropped_pts {
+                    *self = Self::Off;
+                    true
+                } else {
+                    *self = Self::Dropping {
+                        last_dropped_pts: pts,
+                    };
+                    false
+                }
+            }
+        }
+    }
+}
+
 impl Encoder {
     fn expire_unreturned(&mut self) {
         // A submission the driver never answers would otherwise keep every
@@ -53,7 +94,9 @@ impl Encoder {
         while self.in_flight.front().is_some_and(|s| s.unreturned(now)) {
             let stale = self.in_flight.pop_front();
             if let Some(stale) = &stale {
-                self.units.forget(stale.pts);
+                if self.units.forget(stale.pts) {
+                    self.frame_bytes = 0;
+                }
                 self.release_vpe_kept(stale.pts);
             }
             match unreturned_notice(self.probe, stale.map(|s| s.pts)) {
@@ -283,6 +326,7 @@ impl Encoder {
                 self.release_vpe_kept(pts);
             }
             let Some(sent) = self.repaired(
+                pts,
                 std::slice::from_raw_parts(raw, size),
                 skipped,
                 idr && requested_idr,
@@ -291,11 +335,15 @@ impl Encoder {
                 if self.slice_blocks > 0 {
                     self.units.forget(pts);
                 }
+                self.frame_bytes = 0;
                 if last {
                     self.frame_completed(timing, false);
                 }
                 return Ok(more);
             };
+            if self.slice_blocks > 0 && self.units.open_pts().is_some_and(|open| open != pts) {
+                self.frame_bytes = 0;
+            }
             self.frame_bytes += sent.len();
             if last {
                 let frame_bytes = std::mem::take(&mut self.frame_bytes);
@@ -504,6 +552,7 @@ impl Encoder {
     /// [`RepairHeaders`]: butterpollo_media_policy::bitstream::RepairHeaders
     fn repaired<'a>(
         &mut self,
+        pts: i64,
         bytes: &'a [u8],
         skipped: u64,
         requested_keyframe: bool,
@@ -512,11 +561,8 @@ impl Encoder {
         if let Some(unrewritten) = self.unrewritten.as_mut() {
             unrewritten.extend_from_slice(bytes);
         }
-        if self.repair_dropping {
-            if !requested_keyframe {
-                return None;
-            }
-            self.repair_dropping = false;
+        if !self.repair_dropping.allow(pts, requested_keyframe) {
+            return None;
         }
         let headroom = self
             .dynamic
@@ -551,7 +597,7 @@ impl Encoder {
                 self.repair_headers = None;
                 self.references.disable();
                 self.recover = true;
-                self.repair_dropping = true;
+                self.repair_dropping.fail(pts);
                 None
             }
         }
@@ -682,5 +728,31 @@ mod prediction_tests {
         assert!(poll(&mut on, accepted, accepted, false));
         assert_eq!(on.predicted(None, true), None, "nothing in flight");
         assert_eq!(on.skipped, 2);
+    }
+
+    #[test]
+    fn repair_drop_keeps_dropping_remaining_slices_of_a_failed_idr() {
+        let mut drop_gate = RepairDrop::default();
+        assert!(drop_gate.allow(10, true));
+        // Slice 0 of requested IDR (pts 10) fails header repair (e.g. unsupported SPS).
+        drop_gate.fail(10);
+        // Slices 1..3 of the SAME IDR (pts 10) still carry `requested_keyframe == true`
+        // while the submission stays in `in_flight`; they must stay dropped so we never
+        // emit a headless IDR missing VPS/SPS/PPS and slice 0.
+        assert!(!drop_gate.allow(10, true));
+        assert!(!drop_gate.allow(10, true));
+        assert!(!drop_gate.allow(10, true));
+        // Subsequent P-frame slices (pts 11) stay dropped too.
+        assert!(!drop_gate.allow(11, false));
+        assert!(!drop_gate.allow(11, false));
+        // If slice 0 of pts 12 was dropped (non-keyframe), later slices of pts 12 stay dropped.
+        assert!(!drop_gate.allow(12, false));
+        assert!(!drop_gate.allow(12, true));
+        // A fresh subsequent requested IDR (pts 13) starting at slice 0 clears the gate.
+        assert!(drop_gate.allow(13, true));
+        assert_eq!(drop_gate, RepairDrop::Off);
+        // Remaining slices of pts 13 pass through normally.
+        assert!(drop_gate.allow(13, true));
+        assert!(drop_gate.allow(14, false));
     }
 }

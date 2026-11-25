@@ -529,3 +529,45 @@ fn refresh_now_replaces_stale_pre_open_snapshot_before_check_interval() {
     assert_eq!(in_hdr(next.0.unwrap()), Some(true));
     assert_eq!(next.3, 480.0);
 }
+
+#[test]
+fn stale_watcher_snapshot_cannot_overwrite_newer_refresh_now() {
+    let now = Instant::now();
+    let sdr = description(false, 80.);
+    let hdr = description(true, 1000.);
+    let watched = watched(now, Some(sdr));
+    let _ = watched.read_with(now, |_| Ok(()));
+
+    // Simulate `display-watch`'s `tick()` completing `self.check()` with the
+    // pre-HDR snapshot (older generation) and releasing `self.cache` BEFORE
+    // acquiring `self.published`.
+    let (stale_snapshot, stale_gen) = watched.check(now + CHECK_INTERVAL);
+    assert_eq!(in_hdr(stale_snapshot.0.clone().unwrap()), Some(false));
+
+    // Meanwhile, `DuplicateOutput1` triggers `refresh_now_with`, advancing the
+    // cache generation and publishing the fresh HDR snapshot.
+    {
+        let mut cache = watched.cache.lock().unwrap();
+        cache.source.current = false;
+        cache.source.candidates = vec![(identity(), Some(hdr))];
+        cache.source.sdr_white = 400.0;
+    }
+    let refreshed = watched.refresh_now_with(now + CHECK_INTERVAL + Duration::from_millis(5));
+    assert_eq!(in_hdr(refreshed.0.unwrap()), Some(true));
+    assert_eq!(refreshed.3, 400.0);
+
+    // Now the delayed watcher thread acquires `self.published` and attempts to
+    // publish its older pre-HDR snapshot; the generation guard must reject it.
+    watched
+        .published
+        .lock()
+        .unwrap()
+        .publish(stale_snapshot, stale_gen);
+
+    let after = watched.read_with(
+        now + CHECK_INTERVAL + Duration::from_millis(10),
+        |_| unreachable!(),
+    );
+    assert_eq!(in_hdr(after.0.unwrap()), Some(true));
+    assert_eq!(after.3, 400.0);
+}

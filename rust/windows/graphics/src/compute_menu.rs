@@ -16,6 +16,10 @@ struct Image {
     /// The last conversion reading it, `u64::MAX` from its submission until
     /// its fence is known.
     read: u64,
+    /// True from creation (`D3D12_RESOURCE_STATE_COPY_DEST`) until a command
+    /// list copying into it and transitioning to `NON_PIXEL_SHADER_RESOURCE`
+    /// is actually submitted (`menu_submitted`).
+    in_copy_dest: bool,
 }
 struct Upload {
     buffer: ID3D12Resource,
@@ -206,17 +210,18 @@ impl Converter {
                 let picked = pick(&ring, current.map(|(index, _)| index), size, |value| {
                     self.compute.completed(value)
                 });
-                let (index, fresh) = match picked {
-                    Pick::Reuse(index) => (index, false),
+                let index = match picked {
+                    Pick::Reuse(index) => index,
                     Pick::Push => {
                         self.menu.ring.push(menu_texture(&device, size)?);
-                        (self.menu.ring.len() - 1, true)
+                        self.menu.ring.len() - 1
                     }
                     Pick::Replace(index) => {
                         self.menu.ring[index] = menu_texture(&device, size)?;
-                        (index, true)
+                        index
                     }
                 };
+                let fresh = self.menu.ring[index].in_copy_dest;
                 let buffer = self.menu_upload(&overlay)?;
                 self.menu.uploads += 1;
                 (index, Some((buffer, size, fresh)))
@@ -300,6 +305,7 @@ impl Converter {
     pub(super) fn menu_submitted(&mut self, pass: &Pass, fence: u64) {
         self.menu.current = Some((pass.index, pass.revision));
         self.menu.ring[pass.index].read = fence;
+        self.menu.ring[pass.index].in_copy_dest = false;
         if pass.copy.is_some()
             && let Some(upload) = &mut self.menu.upload
         {
@@ -341,6 +347,7 @@ fn menu_texture(device: &ID3D12Device, [width, height]: [u32; 2]) -> Result<Imag
         texture: texture.context("no couch menu texture")?,
         size: [width, height],
         read: 0,
+        in_copy_dest: true,
     })
 }
 impl Pass {
@@ -457,5 +464,30 @@ mod tests {
         let full = [(size, 11), ([16, 16], 3), (size, 12)];
         assert_eq!(pick(&full, Some(2), size, done), Pick::Replace(0));
         assert_eq!(pick(&full, Some(2), [16, 16], done), Pick::Reuse(1));
+    }
+
+    #[test]
+    fn reused_texture_stays_in_copy_dest_after_pre_submission_failure() {
+        // Simulate `menu_texture()` creating a slot in `COPY_DEST` with `read = 0`,
+        // followed by a pre-submission error (so `menu_submitted()` never ran).
+        let size = [32, 16];
+        let mut in_copy_dest = true;
+        let mut read = 0u64;
+        // Next frame picks `Reuse(0)` because `read == 0` is completed.
+        assert_eq!(
+            pick(&[(size, read)], None, size, |v| v <= 5),
+            Pick::Reuse(0)
+        );
+        // `Pass::copy` must see `fresh = in_copy_dest == true` so it does NOT emit
+        // a `NON_PIXEL_SHADER_RESOURCE -> COPY_DEST` barrier on a `COPY_DEST` resource.
+        assert!(in_copy_dest);
+        // Once submission succeeds (`menu_submitted`), the texture transitions to SRV.
+        read = 6;
+        in_copy_dest = false;
+        assert_eq!(
+            pick(&[(size, read)], Some(0), size, |v| v <= 6),
+            Pick::Reuse(0)
+        );
+        assert!(!in_copy_dest);
     }
 }

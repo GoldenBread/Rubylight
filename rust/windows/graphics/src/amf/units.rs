@@ -227,10 +227,18 @@ impl Sequencer {
             abandoned,
         }
     }
-    /// A frame AMF never finished: forget its units.
-    pub fn forget(&mut self, pts: i64) {
+    /// PTS of the unfinished frame currently buffered/streamed, if any.
+    pub fn open_pts(&self) -> Option<i64> {
+        self.open.as_ref().map(|open| open.pts)
+    }
+    /// A frame AMF never finished: forget its units. Returns true when an open
+    /// frame for `pts` was discarded.
+    pub fn forget(&mut self, pts: i64) -> bool {
         if self.open.as_ref().is_some_and(|open| open.pts == pts) {
             self.open = None;
+            true
+        } else {
+            false
         }
     }
 }

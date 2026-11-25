@@ -219,31 +219,14 @@ impl Compute {
             dxgi.GetAdapter()?.GetDesc()?.AdapterLuid
         };
         let key = (luid.LowPart, luid.HighPart);
-        // Drop any rejected `Compute` outside `SHARED` so `Compute::drop` never
-        // drains its queue while holding the adapter cache lock.
-        let mut rejected = Vec::new();
-        let result = (|| {
-            let mut shared = SHARED.lock().unwrap();
-            shared.retain(|(_, compute)| compute.strong_count() > 0);
-            for (owner, weak) in shared.iter() {
-                if *owner != key {
-                    continue;
-                }
-                let Some(compute) = weak.upgrade() else {
-                    continue;
-                };
-                if !compute.stuck.load(std::sync::atomic::Ordering::Acquire) && compute.completed(0)
-                {
-                    return Ok(compute);
-                }
-                rejected.push(compute);
-            }
-            let compute = Self::new(luid)?;
-            shared.push((key, Arc::downgrade(&compute)));
-            Ok(compute)
-        })();
-        drop(rejected);
-        result
+        get_or_create_shared(
+            &SHARED,
+            key,
+            |compute| {
+                !compute.stuck.load(std::sync::atomic::Ordering::Acquire) && compute.completed(0)
+            },
+            || Self::new(luid),
+        )
     }
     /// Signal the fence after the work submitted so far; returns its value.
     #[cfg(test)]
@@ -433,5 +416,148 @@ impl Drop for Compute {
             work.keep(&d3d12);
         }
         work.finish(self);
+    }
+}
+
+/// Look up a healthy cached adapter entry under `cache`, releasing both the
+/// mutex and any rejected entries BEFORE running `create` so D3D12 can drop a
+/// removed device before `FRESH_DEVICE_WAIT` retries and concurrent adapters
+/// are never blocked across sleeps.
+fn get_or_create_shared<K: Copy + Eq, T>(
+    cache: &Mutex<Vec<(K, std::sync::Weak<T>)>>,
+    key: K,
+    is_healthy: impl Fn(&T) -> bool,
+    create: impl FnOnce() -> Result<Arc<T>>,
+) -> Result<Arc<T>> {
+    let mut rejected = Vec::new();
+    {
+        let mut shared = cache.lock().unwrap();
+        shared.retain(|(_, entry)| entry.strong_count() > 0);
+        for (owner, weak) in shared.iter() {
+            if *owner != key {
+                continue;
+            }
+            let Some(entry) = weak.upgrade() else {
+                continue;
+            };
+            if is_healthy(&entry) {
+                return Ok(entry);
+            }
+            rejected.push(entry);
+        }
+        if !rejected.is_empty() {
+            shared.retain(|(owner, weak)| {
+                *owner != key
+                    || weak
+                        .upgrade()
+                        .is_none_or(|entry| !rejected.iter().any(|r| Arc::ptr_eq(r, &entry)))
+            });
+        }
+    }
+    drop(rejected);
+    let created = create()?;
+    let mut shared = cache.lock().unwrap();
+    shared.retain(|(_, entry)| entry.strong_count() > 0);
+    for (owner, weak) in shared.iter() {
+        if *owner != key {
+            continue;
+        }
+        if let Some(existing) = weak.upgrade()
+            && is_healthy(&existing)
+        {
+            return Ok(existing);
+        }
+    }
+    shared.push((key, Arc::downgrade(&created)));
+    Ok(created)
+}
+
+#[cfg(test)]
+mod shared_cache_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    struct FakeDevice {
+        healthy: AtomicBool,
+        dropped: Arc<AtomicBool>,
+    }
+    impl Drop for FakeDevice {
+        fn drop(&mut self) {
+            self.dropped.store(true, Ordering::Release);
+        }
+    }
+
+    #[test]
+    fn rejected_removed_device_and_cache_lock_are_released_before_recreate() {
+        let cache: Mutex<Vec<(u32, std::sync::Weak<FakeDevice>)>> = Mutex::new(Vec::new());
+        let old_dropped = Arc::new(AtomicBool::new(false));
+        let old = Arc::new(FakeDevice {
+            healthy: AtomicBool::new(false),
+            dropped: old_dropped.clone(),
+        });
+        cache.lock().unwrap().push((1, Arc::downgrade(&old)));
+        // Drop our own handle inside `create`'s view by upgrading/unlinking: first test
+        // when the cache's temporary upgrade is the last strong reference (concurrent drop).
+        let weak_old = Arc::downgrade(&old);
+        drop(old);
+        // Re-populate with an entry whose only strong ref is owned by the test until upgraded.
+        let old2_dropped = Arc::new(AtomicBool::new(false));
+        let old2 = Arc::new(FakeDevice {
+            healthy: AtomicBool::new(false),
+            dropped: old2_dropped.clone(),
+        });
+        let weak_old2 = Arc::downgrade(&old2);
+        cache.lock().unwrap().push((1, weak_old2.clone()));
+        assert!(old_dropped.load(Ordering::Acquire));
+        assert_eq!(weak_old.strong_count(), 0);
+        // Simulate a removed device whose only surviving reference is dropped right after
+        // lookup upgrades it (or held in `rejected`): `create` must see `strong_count == 1`
+        // (only our outer handle, never an extra ref from `rejected`) and an unlocked cache.
+        let new_dropped = Arc::new(AtomicBool::new(false));
+        let fresh = get_or_create_shared(
+            &cache,
+            1,
+            |d| d.healthy.load(Ordering::Acquire),
+            || {
+                assert!(
+                    cache.try_lock().is_ok(),
+                    "SHARED mutex must not be held during create()"
+                );
+                assert_eq!(
+                    weak_old2.strong_count(),
+                    1,
+                    "rejected Arc must be dropped before create() retries D3D12CreateDevice"
+                );
+                Ok(Arc::new(FakeDevice {
+                    healthy: AtomicBool::new(true),
+                    dropped: new_dropped.clone(),
+                }))
+            },
+        )
+        .unwrap();
+        assert!(fresh.healthy.load(Ordering::Acquire));
+        drop(old2);
+        assert!(old2_dropped.load(Ordering::Acquire));
+        // Concurrent creator racing on the same adapter reuses the healthy winner.
+        let winner = Arc::new(FakeDevice {
+            healthy: AtomicBool::new(true),
+            dropped: Arc::new(AtomicBool::new(false)),
+        });
+        let loser_dropped = Arc::new(AtomicBool::new(false));
+        let got = get_or_create_shared(
+            &cache,
+            2,
+            |d| d.healthy.load(Ordering::Acquire),
+            || {
+                cache.lock().unwrap().push((2, Arc::downgrade(&winner)));
+                Ok(Arc::new(FakeDevice {
+                    healthy: AtomicBool::new(true),
+                    dropped: loser_dropped.clone(),
+                }))
+            },
+        )
+        .unwrap();
+        assert!(Arc::ptr_eq(&got, &winner));
+        assert!(loser_dropped.load(Ordering::Acquire));
     }
 }

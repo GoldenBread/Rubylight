@@ -87,6 +87,9 @@ struct Cache<S: Source> {
     refresh: u32,
     /// Windows "SDR content brightness" in nits at the last check.
     sdr_white_nits: f32,
+    /// Monotonic counter incremented on every poll/refresh so a slower watcher
+    /// pass can never overwrite a fresher `refresh_now` snapshot.
+    generation: u64,
 }
 
 impl<S: Source> Cache<S> {
@@ -100,11 +103,13 @@ impl<S: Source> Cache<S> {
             metadata: Default::default(),
             refresh: 0,
             sdr_white_nits: 100.0,
+            generation: 0,
         }
     }
 
     fn poll(&mut self, now: Instant) -> Result<Option<Description>> {
         if now >= self.next_check {
+            self.generation += 1;
             self.next_check = now + CHECK_INTERVAL;
             // Read with the colour, at its interval only.
             self.refresh = self.source.refresh_hz(&self.identity);
@@ -362,10 +367,21 @@ pub(super) struct Watched<S: Source> {
 struct Published {
     /// Kept current by the watcher while it runs.
     snapshot: Option<Snapshot>,
+    /// Monotonic `Cache::generation` of `snapshot`; older snapshots are dropped.
+    generation: u64,
     last_read: Option<Instant>,
     watching: bool,
     /// The watcher thread could not start; told once.
     spawn_failed: bool,
+}
+
+impl Published {
+    fn publish(&mut self, snapshot: Snapshot, generation: u64) {
+        if self.watching && generation >= self.generation {
+            self.snapshot = Some(snapshot);
+            self.generation = generation;
+        }
+    }
 }
 
 pub(super) type Color = Watched<Dxgi>;
@@ -403,21 +419,22 @@ where
     }
 
     fn refresh_now_with(&self, now: Instant) -> Snapshot {
-        let snapshot = {
+        let (snapshot, generation) = {
             let mut cache = self.cache.lock().unwrap();
             let _ = cache.refresh_now(now);
             (
-                cache.snapshot.clone(),
-                cache.metadata,
-                cache.refresh,
-                cache.sdr_white_nits,
+                (
+                    cache.snapshot.clone(),
+                    cache.metadata,
+                    cache.refresh,
+                    cache.sdr_white_nits,
+                ),
+                cache.generation,
             )
         };
         let mut published = self.published.lock().unwrap();
         published.last_read = Some(now);
-        if published.watching {
-            published.snapshot = Some(snapshot.clone());
-        }
+        published.publish(snapshot.clone(), generation);
         snapshot
     }
 
@@ -433,7 +450,7 @@ where
                 return snapshot.clone();
             }
         }
-        let snapshot = self.check(now);
+        let (snapshot, generation) = self.check(now);
         let mut published = self.published.lock().unwrap();
         if !published.watching && !published.spawn_failed {
             match spawn(Arc::downgrade(self)) {
@@ -445,20 +462,21 @@ where
                 }
             }
         }
-        if published.watching {
-            published.snapshot = Some(snapshot.clone());
-        }
+        published.publish(snapshot.clone(), generation);
         snapshot
     }
 
-    fn check(&self, now: Instant) -> Snapshot {
+    fn check(&self, now: Instant) -> (Snapshot, u64) {
         let mut cache = self.cache.lock().unwrap();
         let _ = cache.poll(now);
         (
-            cache.snapshot.clone(),
-            cache.metadata,
-            cache.refresh,
-            cache.sdr_white_nits,
+            (
+                cache.snapshot.clone(),
+                cache.metadata,
+                cache.refresh,
+                cache.sdr_white_nits,
+            ),
+            cache.generation,
         )
     }
 
@@ -479,11 +497,9 @@ where
                 return false;
             }
         }
-        let snapshot = self.check(now);
+        let (snapshot, generation) = self.check(now);
         let mut published = self.published.lock().unwrap();
-        if published.watching {
-            published.snapshot = Some(snapshot);
-        }
+        published.publish(snapshot, generation);
         true
     }
 }

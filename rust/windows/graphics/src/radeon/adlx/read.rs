@@ -402,8 +402,8 @@ pub(super) fn groups(c: &Ctx) -> Vec<GroupRaw> {
         })),
     );
     if let Some((i, t)) = i.zip(t) {
-        ratio.options_queried = true;
         ratio.options = frame_gen_ratios(i, t);
+        ratio.options_queried = !ratio.options.is_empty();
     }
     let fields = vec![
         toggle(

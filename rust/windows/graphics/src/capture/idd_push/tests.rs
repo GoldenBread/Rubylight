@@ -418,3 +418,50 @@ fn failed_fence_ordering_and_stalled_queues_reopen_the_capture_device() {
         Some(FenceRecovery::Reopen(_))
     ));
 }
+
+#[test]
+fn latest_written_seq_tracks_latest_published_and_in_flight_writing_slots() {
+    use rubylight_vdisplay_proto::ring::{HEADER_WORDS, SlotMeta, SlotState, Token};
+    use std::sync::atomic::AtomicU64;
+
+    let words: Vec<AtomicU64> = (0..HEADER_WORDS).map(|_| AtomicU64::new(0)).collect();
+    let header = Header::new(&words).unwrap();
+    header.init(Layout {
+        kind: Kind::Fence,
+        slot_count: 4,
+        width: 1920,
+        height: 1080,
+        format: ring::FORMAT_BGRA8,
+        generation: 1,
+    });
+    assert_eq!(fences::latest_written_seq_in(&header, 4), 0);
+
+    // Slot 0 published at seq 7.
+    header.write_slot(
+        0,
+        SlotMeta {
+            seq: 7,
+            ..Default::default()
+        },
+    );
+    assert!(header.swap_state(
+        0,
+        SlotState::Free { release: 0 },
+        SlotState::Published { seq: 7 },
+    ));
+    header.publish(Token {
+        generation: 1,
+        seq: 7,
+        slot: 0,
+    });
+    assert_eq!(fences::latest_written_seq_in(&header, 4), 7);
+
+    // Slot 1 currently being written by WUDFHost at seq 8 (before W_LATEST updates):
+    // teardown must see 8 so `written` fence wait covers the in-flight copy (#148).
+    assert!(header.swap_state(
+        1,
+        SlotState::Free { release: 0 },
+        SlotState::Writing { seq: 8 },
+    ));
+    assert_eq!(fences::latest_written_seq_in(&header, 4), 8);
+}

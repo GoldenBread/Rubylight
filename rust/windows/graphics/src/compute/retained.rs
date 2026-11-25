@@ -5,9 +5,12 @@
 //! until the GPU reaches a tail marker or the device is removed, and gates new
 //! compute generations on that adapter until it clears.
 
-use super::{Compute, completed_value, wait_fence};
+use super::{Compute, completed_value, wait_fence_until};
 use anyhow::Result;
-use std::sync::Mutex;
+use std::{
+    sync::Mutex,
+    time::{Duration, Instant},
+};
 use windows::{
     Win32::{
         Foundation::LUID,
@@ -26,7 +29,7 @@ pub(crate) struct RetainedWork {
     device: ID3D12Device,
     pub(super) adapter: (u32, i32),
     pub(super) tail: Option<ID3D12Fence>,
-    pub(super) waits: Vec<(ID3D12Fence, u64)>,
+    pub(crate) waits: Vec<(ID3D12Fence, u64)>,
     objects: Vec<IUnknown>,
     pub(super) captures: Vec<crate::capture::GpuImage>,
 }
@@ -88,16 +91,29 @@ impl RetainedWork {
             .push(unsafe { IUnknown::from_raw(object.clone().into_raw()) });
     }
 
+    fn tail_complete(&self) -> bool {
+        if crate::device_loss::DeviceLost::d3d12(&self.device).is_some() {
+            return true;
+        }
+        // SAFETY: `tail` is retained by this bundle; device removal is handled above.
+        unsafe {
+            self.tail.as_ref().is_some_and(|fence| {
+                completed_value(fence.GetCompletedValue()).is_ok_and(|done| done >= 1)
+            })
+        }
+    }
+
     fn complete(&self) -> bool {
+        if !self.tail_complete() {
+            return false;
+        }
         if crate::device_loss::DeviceLost::d3d12(&self.device).is_some() {
             return true;
         }
         // SAFETY: Every queried fence is retained by this bundle. Device
         // removal is handled above, not mistaken for a completed UINT64_MAX.
         unsafe {
-            self.tail.as_ref().is_some_and(|fence| {
-                completed_value(fence.GetCompletedValue()).is_ok_and(|done| done >= 1)
-            }) && self.waits.iter().all(|(fence, value)| {
+            self.waits.iter().all(|(fence, value)| {
                 completed_value(fence.GetCompletedValue()).is_ok_and(|done| done >= *value)
             })
         }
@@ -108,18 +124,46 @@ impl RetainedWork {
             self.complete(),
             compute.is_stuck(),
             has_retained(self.adapter),
-        ) && let Some(fence) = &self.tail
-        {
-            let _ = wait_fence(fence, 1);
+        ) {
+            let deadline = Instant::now() + Duration::from_secs(2);
+            if let Some(fence) = &self.tail {
+                let _ = wait_fence_until(fence, 1, deadline);
+            }
+            for (fence, value) in &self.waits {
+                if *value > 0 {
+                    let _ = wait_fence_until(fence, *value, deadline);
+                }
+            }
         }
-        if !self.complete() {
+        let decision = finish_decision(self.tail_complete(), self.complete());
+        if decision.retire_compute {
             compute.retire();
+        }
+        if decision.retain {
             tracing::warn!(
                 retained_objects = self.objects.len(),
+                compute_retired = decision.retire_compute,
                 "retaining unfinished GPU resources; compute recovery waits for this adapter to drain"
             );
             RETAINED.lock().unwrap().push(self);
         }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct FinishDecision {
+    retire_compute: bool,
+    retain: bool,
+}
+
+/// Only retire the shared compute queue when its own `tail` marker failed to
+/// complete; an unfinished external fence in `waits` (such as AMF's VCN queue
+/// or the virtual display driver's written fence) still retains target
+/// resources without falsely poisoning the healthy compute queue.
+fn finish_decision(tail_complete: bool, all_complete: bool) -> FinishDecision {
+    FinishDecision {
+        retire_compute: !tail_complete,
+        retain: !all_complete,
     }
 }
 
@@ -155,7 +199,7 @@ pub(super) fn allow_compute_generation(luid: LUID) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::should_wait_tail;
+    use super::{FinishDecision, finish_decision, should_wait_tail};
 
     #[test]
     fn retaining_on_an_already_stuck_adapter_skips_redundant_tail_waits() {
@@ -171,5 +215,34 @@ mod tests {
         assert!(should_wait_tail(false, false, true));
         // Incomplete once the queue is stuck AND the adapter already retained work: skips another wait.
         assert!(!should_wait_tail(false, true, true));
+    }
+
+    #[test]
+    fn unfinished_external_waits_retain_without_retiring_healthy_compute_queue() {
+        assert_eq!(
+            finish_decision(true, true),
+            FinishDecision {
+                retire_compute: false,
+                retain: false,
+            }
+        );
+        // Compute queue finished `tail`, but an external fence (e.g. AMF VCN or
+        // driver `written` fence) is still draining: keep resources alive without
+        // falsely retiring the shared compute queue.
+        assert_eq!(
+            finish_decision(true, false),
+            FinishDecision {
+                retire_compute: false,
+                retain: true,
+            }
+        );
+        // Compute queue itself failed to finish `tail`: retire and retain.
+        assert_eq!(
+            finish_decision(false, false),
+            FinishDecision {
+                retire_compute: true,
+                retain: true,
+            }
+        );
     }
 }

@@ -239,9 +239,16 @@ fn levels_that_cannot_be_written_back_are_never_configurable() {
 
 #[test]
 fn queried_option_list_makes_a_choice_writable() {
-    let mut field = choice("fidelityfx_frame_gen.ratio", FFX_FRAME_GEN_RATIO, 1);
+    let unqueried = &classify_group(&group(
+        "sample",
+        Some(Ok(true)),
+        vec![choice("sample.ratio", FFX_FRAME_GEN_RATIO, 1)],
+    ))[0];
+    assert_eq!(unqueried.writable, Writable::Unverified);
+    assert_eq!(unqueried.state, State::ReadOnly);
+    let mut field = choice("sample.ratio", FFX_FRAME_GEN_RATIO, 1);
     field.options_queried = true;
-    let s = &classify_group(&group("fidelityfx_frame_gen", Some(Ok(true)), vec![field]))[0];
+    let s = &classify_group(&group("sample", Some(Ok(true)), vec![field]))[0];
     assert_eq!(s.writable, Writable::Yes);
     assert_eq!(s.state, State::Configurable);
 }
@@ -354,4 +361,27 @@ fn markdown_rows_carry_state_value_range_and_notes() {
         "{row}"
     );
     assert!(row.contains("excludes anti_lag"), "{row}");
+}
+
+#[test]
+fn settings_without_adlx_setters_stay_read_only_even_when_supported() {
+    let sharpen = classify_group(&group(
+        "image_sharpen_desktop",
+        Some(Ok(true)),
+        vec![toggle("image_sharpen_desktop.enabled", Ok(true))],
+    ));
+    assert_eq!(sharpen[0].state, State::ReadOnly);
+    assert_eq!(sharpen[0].writable, Writable::No);
+
+    let mut ratio = choice("fidelityfx_frame_gen.ratio", FFX_FRAME_GEN_RATIO, 0);
+    ratio.options_queried = true;
+    let frame_gen = classify_group(&group(
+        "fidelityfx_frame_gen",
+        Some(Ok(true)),
+        vec![toggle("fidelityfx_frame_gen.enabled", Ok(false)), ratio],
+    ));
+    assert_eq!(frame_gen[0].state, State::ReadOnly);
+    assert_eq!(frame_gen[0].writable, Writable::No);
+    assert_eq!(frame_gen[1].state, State::ReadOnly);
+    assert_eq!(frame_gen[1].writable, Writable::No);
 }

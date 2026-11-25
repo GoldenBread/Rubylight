@@ -509,6 +509,27 @@ fn lend(
     ))
 }
 
+impl Session {
+    /// Synchronously clear the active ring in the display driver (waiting for
+    /// `rlvd-swapchain` to drain its D3D11 GPU work and drop its shared handles)
+    /// and then CPU-wait on the latest driver `written` fence before releasing
+    /// our D3D12 shared textures, fences and compute device (#148).
+    pub(super) fn clear_ring(&self) {
+        let cleared = if self.control.caps() & CAP_SCOPED_CLEAR != 0 {
+            self.control
+                .clear_frame_ring_generation(self.monitor.session_id, self.ring.layout.generation)
+        } else {
+            self.control.clear_frame_ring(self.monitor.session_id)
+        };
+        if let Err(error) = cleared {
+            tracing::debug!(error = %format!("{error:#}"), "Rubylight frame ring was already gone");
+        }
+        if let Some(fences) = &self.ring.fences {
+            fences.wait_written();
+        }
+    }
+}
+
 impl Drop for Session {
     fn drop(&mut self) {
         // A direct reader error can close the capture before its next periodic check.
@@ -521,17 +542,10 @@ impl Drop for Session {
                 .unwrap()
                 .failed(FenceScope::new(&self.monitor, self.adapter));
         }
-        // The driver closes its duplicates; ours close with the ring. Only this ring is
-        // cleared: one registered since (another process's, say) stays.
-        let cleared = if self.control.caps() & CAP_SCOPED_CLEAR != 0 {
-            self.control
-                .clear_frame_ring_generation(self.monitor.session_id, self.ring.layout.generation)
-        } else {
-            self.control.clear_frame_ring(self.monitor.session_id)
-        };
-        if let Err(error) = cleared {
-            tracing::debug!(error = %format!("{error:#}"), "Rubylight frame ring was already gone");
-        }
+        // Wait for the driver to drain D3D11 and release its duplicates before
+        // `self.ring` and `self.compute` drop. Only this ring generation is
+        // cleared so one registered since (another process's, say) stays.
+        self.clear_ring();
     }
 }
 

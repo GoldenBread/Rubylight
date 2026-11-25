@@ -6,6 +6,7 @@
 
 use super::{Consumer, Device, Section};
 use anyhow::{Context, Result};
+use rubylight_vdisplay_proto::ring::{Header, MAX_SLOTS, SlotState};
 use std::{
     os::windows::io::OwnedHandle,
     sync::{
@@ -167,16 +168,64 @@ impl Fences {
         );
         Ok(())
     }
+    /// Highest driver-published or in-flight `written` fence sequence visible in
+    /// the shared header for this ring.
+    pub(super) fn latest_written_seq(&self) -> u64 {
+        let header = self.section.header();
+        let slots = header
+            .layout()
+            .map_or(MAX_SLOTS, |layout| layout.slot_count as usize);
+        latest_written_seq_in(&header, slots)
+    }
+
+    /// CPU-wait (bounded by `compute::wait_fence`'s 2 s timeout) for the driver's
+    /// latest published GPU copy on this ring to signal `written`, so the host
+    /// never releases D3D12 shared textures/fences while WUDFHost's D3D11 GPU
+    /// copy is still in flight (Rubylight #148).
+    pub(super) fn wait_written(&self) {
+        let target = self.latest_written_seq();
+        if target == 0 {
+            return;
+        }
+        if let Err(error) = crate::compute::wait_fence(&self.written, target) {
+            tracing::debug!(
+                target,
+                error = %format!("{error:#}"),
+                "waiting for driver written fence before releasing frame ring"
+            );
+        }
+    }
+}
+
+/// Highest sequence number written or being written into `header` across
+/// `W_LATEST`, each slot's `SlotMeta::seq`, and each slot's atomic `SlotState`.
+pub(super) fn latest_written_seq_in(header: &Header<'_>, slot_count: usize) -> u64 {
+    let mut max_seq = header.latest().map_or(0, |token| u64::from(token.seq));
+    for slot in 0..slot_count.min(MAX_SLOTS) {
+        max_seq = max_seq.max(header.slot(slot).seq);
+        let state_seq = match header.slot_state(slot) {
+            SlotState::Writing { seq }
+            | SlotState::Published { seq }
+            | SlotState::Reading { seq } => u64::from(seq),
+            SlotState::Free { .. } | SlotState::Invalid(_) => 0,
+        };
+        max_seq = max_seq.max(state_seq);
+    }
+    max_seq
 }
 
 impl Drop for Fences {
     fn drop(&mut self) {
         // The last lent image's `Lent::drop` calls `Fences::free`, queuing
         // `compute.queue.Signal(&self.released, release)` (and optionally
-        // `Wait(&self.bridge.0, ...)`) right before `Fences` drops. Drain the
-        // compute queue and keep the shared fences, context and imported ring
-        // textures alive until that work completes on the GPU.
+        // `Wait(&self.bridge.0, ...)`) right before `Fences` drops. Also wait
+        // on the driver's latest `written` fence value before freeing the
+        // shared D3D12 textures, fences, context or compute device (#148).
         let mut work = crate::compute::RetainedWork::new(&self.compute, &self.compute.queue);
+        let written_target = self.latest_written_seq();
+        if written_target > 0 {
+            work.waits.push((self.written.clone(), written_target));
+        }
         work.keep(&self.written);
         work.keep(&self.written11);
         work.keep(&self.released);

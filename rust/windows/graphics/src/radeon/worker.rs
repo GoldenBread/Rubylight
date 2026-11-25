@@ -374,7 +374,8 @@ fn set_status(status: &Mutex<Status>, next: Status) {
     *status.lock().unwrap_or_else(|e| e.into_inner()) = next;
 }
 
-/// One recovery pass. Returns whether anything is still unrestored (or could not be tried).
+/// One recovery pass. Returns whether another recovery pass is needed (either
+/// settings failed to restore or another user's entries wait for sign-in).
 fn recover<B: RadeonBackend>(
     controller: &mut Controller<B>,
     status: &Mutex<Status>,
@@ -384,6 +385,9 @@ fn recover<B: RadeonBackend>(
     controller.set_deadline(Some(Instant::now() + timing.recovery_limit));
     let result = controller.recover_on_startup();
     controller.set_deadline(None);
+    let deferred = result
+        .as_ref()
+        .map_or(0, |report| report.deferred_other_users);
     let next = match &result {
         Ok(report) => Status {
             phase: if report.is_clean() {
@@ -426,11 +430,17 @@ fn recover<B: RadeonBackend>(
                 "Radeon recovery could not run; the host retries"
             ),
         }
+    } else if deferred > 0 {
+        tracing::debug!(
+            deferred_other_users = deferred,
+            retry_in_seconds = timing.retry_every.as_secs(),
+            "Radeon recovery waits for the owning user to sign in"
+        );
     } else if retry {
         tracing::info!("Radeon settings from an earlier run are restored");
     }
     set_status(status, next);
-    degraded
+    degraded || deferred > 0
 }
 
 fn run<B: RadeonBackend>(
@@ -531,6 +541,9 @@ fn run<B: RadeonBackend>(
                                 error: Some(format!("{error:#}")),
                             },
                         );
+                    }
+                    Ok(report) if report.deferred_other_users > 0 => {
+                        degraded = true;
                     }
                     Ok(_) => {}
                 }

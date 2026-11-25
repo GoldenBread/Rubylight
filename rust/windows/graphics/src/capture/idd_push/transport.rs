@@ -49,7 +49,13 @@ impl Session {
         let mut layout = self.ring.layout;
         layout.kind = Kind::KeyedMutex;
         layout.generation = next_generation(layout.generation);
-        self.ring = Ring::keyed(&self.gpu, layout)?;
+        let next = Ring::keyed(&self.gpu, layout)?;
+        if self.ring.fences.is_some() {
+            // Drain the driver's D3D11 work on the old fence ring before dropping
+            // its D3D12 shared textures and fences (#148).
+            self.clear_ring();
+        }
+        self.ring = next;
         self.compute = None;
         self.consumer = Consumer::new(layout.generation, layout.slot_count);
         self.opened = Instant::now();
@@ -186,7 +192,7 @@ impl Session {
             format,
             "rebuilding the Rubylight frame ring for the composed surface"
         );
-        self.ring = Self::make_ring(
+        let next = Self::make_ring(
             &self.gpu,
             self.compute.clone(),
             layout,
@@ -194,6 +200,12 @@ impl Session {
             &self.pool.warnings,
             FenceScope::new(&self.monitor, self.adapter),
         )?;
+        if self.ring.fences.is_some() {
+            // Synchronously clear and drain the previous fence ring before dropping
+            // its shared D3D12 resources (#148).
+            self.clear_ring();
+        }
+        self.ring = next;
         self.compute = self
             .ring
             .fences

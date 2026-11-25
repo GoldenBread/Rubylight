@@ -64,6 +64,8 @@ struct Driver {
     log: Vec<String>,
     /// Refuse a write of this id.
     refuse: Option<&'static str>,
+    /// Refuse a write of this id when writing this specific value.
+    refuse_value: Option<(&'static str, Value)>,
     /// Ignore writes of this id (the read-back keeps the old value).
     ignore: Option<&'static str>,
     /// Writing `.0` to true also sets `.1` to false.
@@ -142,6 +144,12 @@ impl RadeonBackend for Fake {
         }
         if d.refuse == Some(id) {
             return Err(BackendError("ADLX_NOT_SUPPORTED".into()));
+        }
+        if d.refuse_value
+            .as_ref()
+            .is_some_and(|(target, refused)| *target == id && refused == value)
+        {
+            return Err(BackendError("ADLX_FAIL".into()));
         }
         if d.ignore == Some(id) {
             return Ok(());

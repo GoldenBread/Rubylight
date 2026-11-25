@@ -372,7 +372,7 @@ impl Encoder {
                 preparing: false,
                 references: Default::default(),
                 repair_headers: None,
-                repair_dropping: false,
+                repair_dropping: output::RepairDrop::default(),
                 #[cfg(test)]
                 unrewritten: None,
                 frame_bytes: 0,

@@ -26,7 +26,20 @@ thread_local! {
 /// The copies wait for fences another device signals; after that device is
 /// lost they may never complete, and an unbounded wait froze the stream for
 /// good with no error to recover from.
-pub(super) fn wait_fence(fence: &ID3D12Fence, value: u64) -> Result<()> {
+pub(crate) fn wait_fence(fence: &ID3D12Fence, value: u64) -> Result<()> {
+    wait_fence_until(
+        fence,
+        value,
+        std::time::Instant::now() + std::time::Duration::from_secs(2),
+    )
+}
+
+/// Wait on the CPU until `fence` reaches `value` or `deadline` passes.
+pub(crate) fn wait_fence_until(
+    fence: &ID3D12Fence,
+    value: u64,
+    deadline: std::time::Instant,
+) -> Result<()> {
     use windows::Win32::Foundation::{WAIT_FAILED, WAIT_OBJECT_0};
     use windows::Win32::System::Threading::*;
     // SAFETY: `fence` is a live D3D12 fence. The auto-reset event is owned exclusively by this
@@ -36,6 +49,11 @@ pub(super) fn wait_fence(fence: &ID3D12Fence, value: u64) -> Result<()> {
         if completed_value(fence.GetCompletedValue())? >= value {
             return Ok(());
         }
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        if remaining.is_zero() {
+            bail!("GPU work did not finish within two seconds");
+        }
+        let timeout_ms = remaining.as_millis().clamp(1, u32::MAX as u128) as u32;
         let event = match FENCE_EVENT
             .try_with(|cell| cell.borrow_mut().take())
             .ok()
@@ -45,7 +63,7 @@ pub(super) fn wait_fence(fence: &ID3D12Fence, value: u64) -> Result<()> {
             None => FenceEvent(CreateEventW(None, false, false, PCWSTR::null())?),
         };
         let waited = fence.SetEventOnCompletion(value, event.0).and_then(|()| {
-            let waited = WaitForSingleObject(event.0, 2000);
+            let waited = WaitForSingleObject(event.0, timeout_ms);
             if waited == WAIT_FAILED {
                 Err(windows::core::Error::from_thread())
             } else {

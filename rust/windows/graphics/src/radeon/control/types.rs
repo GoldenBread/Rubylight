@@ -216,6 +216,9 @@ pub struct Outcome {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct RestoreReport {
     pub outcomes: Vec<Outcome>,
+    /// Journal entries belonging to another Windows user (or when nobody is signed in)
+    /// that were left in place until that user signs in.
+    pub deferred_other_users: usize,
 }
 impl RestoreReport {
     pub fn failed(&self) -> impl Iterator<Item = &Outcome> {

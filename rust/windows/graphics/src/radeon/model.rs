@@ -376,6 +376,18 @@ const NEVER_WRITTEN: &[(&str, &str)] = &[
         "anisotropic_filtering.level",
         "not written: while filtering is left to the application the level reads 'invalid', and ADLX refuses to write that back, so a change could not be restored",
     ),
+    (
+        "image_sharpen_desktop.enabled",
+        "not written: no ADLX setter is bound and hardware-verified yet",
+    ),
+    (
+        "fidelityfx_frame_gen.enabled",
+        "not written: no ADLX setter is bound and hardware-verified yet",
+    ),
+    (
+        "fidelityfx_frame_gen.ratio",
+        "not written: no ADLX setter is bound and hardware-verified yet",
+    ),
 ];
 
 /// Choice settings whose write and restore round-trip was proven on hardware

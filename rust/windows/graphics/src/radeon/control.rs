@@ -405,32 +405,86 @@ impl<B: RadeonBackend> Controller<B> {
                 "Radeon journal entries belong to another user; left in place until that user is signed in"
             );
         }
+        let deferred_other_users = others.len();
         // Requested changes first, newest first; then what the driver switched as a consequence.
         let mut order: Vec<Entry> = mine.into_iter().cloned().collect();
         order.reverse();
         order.sort_by_key(|e| e.side_effect);
         let mut results: Vec<(Entry, RestoreResult)> = vec![];
         let mut pending = order;
-        for _ in 0..2 {
+        for pass in 0..2 {
             let mut failed = vec![];
+            let mut follow_up = vec![];
+            let mut extra_failed = vec![];
             for entry in pending {
-                let result = if self.expired() {
-                    RestoreResult::Failed("the restore time limit passed".into())
+                let entry = journal
+                    .entries
+                    .iter()
+                    .find(|e| e.is(&entry.user, entry.gpu, &entry.id))
+                    .cloned()
+                    .unwrap_or(entry);
+                let (result, mut extra, mut sticky_failures) = if self.expired() {
+                    (
+                        RestoreResult::Failed("the restore time limit passed".into()),
+                        vec![],
+                        vec![],
+                    )
                 } else {
                     self.restore_one(&mut journal, &entry, startup)
                 };
                 if matches!(result, RestoreResult::Failed(_)) {
                     failed.push(entry.clone());
                 }
+                follow_up.append(&mut extra);
+                extra_failed.append(&mut sticky_failures);
                 results.retain(|(e, _)| !e.is(&entry.user, entry.gpu, &entry.id));
                 results.push((entry, result));
+            }
+            for (extra_entry, message) in extra_failed {
+                results.retain(|(e, _)| !e.is(&extra_entry.user, extra_entry.gpu, &extra_entry.id));
+                results.push((extra_entry, RestoreResult::Failed(message)));
+            }
+            for extra_entry in follow_up {
+                if failed
+                    .iter()
+                    .any(|e| e.is(&extra_entry.user, extra_entry.gpu, &extra_entry.id))
+                {
+                    continue;
+                }
+                if self
+                    .backend
+                    .read_value(extra_entry.gpu, &extra_entry.id)
+                    .ok()
+                    .as_ref()
+                    == Some(&extra_entry.original)
+                {
+                    continue;
+                }
+                if pass == 1 {
+                    // Final pass: temporary switches that could not be reverted must
+                    // stay journaled and mark the report unclean so the worker retries.
+                    results.retain(|(e, _)| {
+                        !e.is(&extra_entry.user, extra_entry.gpu, &extra_entry.id)
+                    });
+                    results.push((
+                        extra_entry,
+                        RestoreResult::Failed(
+                            "temporary feature switch could not be restored".into(),
+                        ),
+                    ));
+                } else {
+                    failed.push(extra_entry);
+                }
             }
             pending = failed;
             if pending.is_empty() {
                 break;
             }
         }
-        let mut report = RestoreReport::default();
+        let mut report = RestoreReport {
+            deferred_other_users,
+            ..RestoreReport::default()
+        };
         let mut changed = false;
         for (entry, result) in results {
             match &result {
@@ -477,35 +531,40 @@ impl<B: RadeonBackend> Controller<B> {
         journal: &mut Journal,
         entry: &Entry,
         startup: bool,
-    ) -> RestoreResult {
+    ) -> (RestoreResult, Vec<Entry>, Vec<(Entry, String)>) {
         let now = match self.backend.read_value(entry.gpu, &entry.id) {
             Ok(now) => now,
-            Err(e) => return RestoreResult::Failed(e.0),
+            Err(e) => return (RestoreResult::Failed(e.0), vec![], vec![]),
         };
         if now == entry.original {
             if startup && let Err(e) = self.backend.write(entry.gpu, &entry.id, &entry.original) {
                 // It reads as the original, and the write is only for safety.
                 tracing::debug!(setting = %entry.id, error = %e, "startup write-back of the original");
             }
-            return RestoreResult::AlreadyOriginal;
+            return (RestoreResult::AlreadyOriginal, vec![], vec![]);
         }
         if now != entry.written {
-            return RestoreResult::ChangedElsewhere {
-                current: now,
-                written: entry.written.clone(),
-            };
+            return (
+                RestoreResult::ChangedElsewhere {
+                    current: now,
+                    written: entry.written.clone(),
+                },
+                vec![],
+                vec![],
+            );
         }
         if let Some(toggle) = model::feature_toggle(&entry.id) {
             match self.backend.read_value(entry.gpu, &toggle) {
                 Ok(Value::Bool(false)) => return self.restore_through(journal, entry, &toggle),
                 Ok(_) => {}
-                Err(e) => return RestoreResult::Failed(e.0),
+                Err(e) => return (RestoreResult::Failed(e.0), vec![], vec![]),
             }
         }
-        match self.put_back(entry) {
+        let result = match self.put_back(entry) {
             Ok(()) => RestoreResult::Restored,
             Err(message) => RestoreResult::Failed(message),
-        }
+        };
+        (result, vec![], vec![])
     }
 
     /// Write the original and check the read-back.
@@ -535,7 +594,7 @@ impl<B: RadeonBackend> Controller<B> {
         journal: &mut Journal,
         entry: &Entry,
         toggle: &str,
-    ) -> RestoreResult {
+    ) -> (RestoreResult, Vec<Entry>, Vec<(Entry, String)>) {
         let group = toggle.strip_suffix(".enabled").unwrap_or(toggle);
         let partners: Vec<String> = model::excluded_by(group)
             .map(|other| format!("{other}.enabled"))
@@ -547,83 +606,186 @@ impl<B: RadeonBackend> Controller<B> {
             })
             .collect();
         let mut temporary: Vec<String> = vec![];
-        let wanted = std::iter::once((toggle.to_string(), false, true))
-            .chain(partners.iter().map(|id| (id.clone(), true, false)));
-        for (id, original, written) in wanted {
-            if journal
+        // Existing journal entries whose `written` is temporarily updated to match the
+        // driver state while the feature is toggled, so a failure or crash cannot make a
+        // subsequent restore misclassify our temporary switch as `ChangedElsewhere`.
+        let mut saved_written: Vec<(String, Value, Value)> = vec![];
+        let wanted: Vec<(String, bool, bool)> = std::iter::once((toggle.to_string(), false, true))
+            .chain(partners.iter().map(|id| (id.clone(), true, false)))
+            .collect();
+        for (id, original, written) in &wanted {
+            if let Some(existing) = journal
                 .entries
-                .iter()
-                .any(|e| e.is(&entry.user, entry.gpu, &id))
+                .iter_mut()
+                .find(|e| e.is(&entry.user, entry.gpu, id))
             {
+                saved_written.push((id.clone(), existing.written.clone(), Value::Bool(*original)));
+                existing.written = Value::Bool(*written);
                 continue;
             }
             temporary.push(id.clone());
             journal.entries.push(Entry {
                 user: entry.user.clone(),
                 gpu: entry.gpu,
-                id,
+                id: id.clone(),
                 session: entry.session.clone(),
-                original: Value::Bool(original),
-                written: Value::Bool(written),
+                original: Value::Bool(*original),
+                written: Value::Bool(*written),
                 side_effect: true,
             });
         }
-        let forget = |journal: &mut Journal| {
+        let restore_saved_written = |journal: &mut Journal, only_ids: Option<&[String]>| {
+            for (id, previous_written, _) in &saved_written {
+                if only_ids.is_some_and(|ids| !ids.iter().any(|wanted_id| wanted_id == id)) {
+                    continue;
+                }
+                if let Some(existing) = journal
+                    .entries
+                    .iter_mut()
+                    .find(|e| e.is(&entry.user, entry.gpu, id))
+                {
+                    existing.written = previous_written.clone();
+                }
+            }
+        };
+        let rollback = |journal: &mut Journal| {
             journal.entries.retain(|e| {
                 !(e.user == entry.user && e.gpu == entry.gpu && temporary.contains(&e.id))
             });
+            restore_saved_written(journal, None);
         };
         if let Err(e) = journal.save(&self.journal) {
-            forget(journal);
-            return RestoreResult::Failed(format!(
-                "journaling the temporary switch of {toggle}: {e:#}"
-            ));
-        }
-        if let Err(message) = self.through_toggle(entry, toggle, &partners) {
-            // The temporary entries stay: the next restore puts the switches back.
-            return RestoreResult::Failed(message);
-        }
-        forget(journal);
-        if let Err(e) = journal.save(&self.journal) {
-            tracing::warn!(
-                error = format!("{e:#}"),
-                "drop the temporary Radeon entries"
+            rollback(journal);
+            return (
+                RestoreResult::Failed(format!(
+                    "journaling the temporary switch of {toggle}: {e:#}"
+                )),
+                vec![],
+                vec![],
             );
         }
-        RestoreResult::Restored
+        match self.through_toggle(entry, toggle, &partners) {
+            Ok(()) => {
+                rollback(journal);
+                if let Err(e) = journal.save(&self.journal) {
+                    tracing::warn!(
+                        error = format!("{e:#}"),
+                        "drop the temporary Radeon entries"
+                    );
+                }
+                (RestoreResult::Restored, vec![], vec![])
+            }
+            Err((message, false)) => {
+                // `entry` failed to restore, but the temporary switch itself was reverted (or
+                // never flipped). Restore pre-existing entries' `written` values while leaving
+                // temporary entries journaled for the next recovery pass.
+                if !saved_written.is_empty() {
+                    restore_saved_written(journal, None);
+                    if let Err(e) = journal.save(&self.journal) {
+                        tracing::warn!(
+                            error = format!("{e:#}"),
+                            "restore pre-existing Radeon journal entries"
+                        );
+                    }
+                }
+                (RestoreResult::Failed(message), vec![], vec![])
+            }
+            Err((message, true)) => {
+                // Switching the feature or its partners back failed: keep displaced entries
+                // journaled (with their updated `written`) and schedule pass-2 retries / sticky
+                // failures so pass 2 cannot mask the failure into `is_clean() == true`.
+                let mut reverted_existing = vec![];
+                let mut follow_up = vec![];
+                let mut sticky_failures = vec![];
+                for (id, desired_original, _) in &wanted {
+                    let at_desired = self.backend.read_value(entry.gpu, id).ok()
+                        == Some(Value::Bool(*desired_original));
+                    if at_desired {
+                        reverted_existing.push(id.clone());
+                        continue;
+                    }
+                    let Some(tracked) = journal
+                        .entries
+                        .iter()
+                        .find(|e| e.is(&entry.user, entry.gpu, id))
+                        .cloned()
+                    else {
+                        continue;
+                    };
+                    if tracked.original == Value::Bool(*desired_original) {
+                        follow_up.push(tracked);
+                    } else {
+                        sticky_failures.push((tracked, message.clone()));
+                    }
+                }
+                if !reverted_existing.is_empty() && !saved_written.is_empty() {
+                    restore_saved_written(journal, Some(&reverted_existing));
+                    if let Err(e) = journal.save(&self.journal) {
+                        tracing::warn!(
+                            error = format!("{e:#}"),
+                            "update reverted Radeon journal entries"
+                        );
+                    }
+                }
+                (RestoreResult::Failed(message), follow_up, sticky_failures)
+            }
+        }
     }
 
+    /// Returns `Err((message, tail_failed))` where `tail_failed` is true if reverting `toggle` or
+    /// its excluded `partners` failed and may have left them displaced in the driver.
     fn through_toggle(
         &mut self,
         entry: &Entry,
         toggle: &str,
         partners: &[String],
-    ) -> Result<(), String> {
+    ) -> Result<(), (String, bool)> {
         let gpu = entry.gpu;
         let switch = |backend: &mut B, id: &str, on: bool| {
             backend
                 .write(gpu, id, &Value::Bool(on))
                 .map_err(|e| format!("{id}: {e}"))
         };
-        switch(&mut self.backend, toggle, true)?;
+        let switch_checked = |backend: &mut B, id: &str, on: bool| -> Result<(), String> {
+            let target = Value::Bool(on);
+            backend
+                .write(gpu, id, &target)
+                .map_err(|e| format!("{id}: {e}"))?;
+            let actual = backend
+                .read_value(gpu, id)
+                .map_err(|e| format!("{id}: {e}"))?;
+            if actual != target {
+                return Err(format!(
+                    "{id}: wrote {} and the driver reads back {}",
+                    target.display(),
+                    actual.display()
+                ));
+            }
+            Ok(())
+        };
+        switch(&mut self.backend, toggle, true).map_err(|e| (e, false))?;
         let put = self.put_back(entry);
         // Back to how the feature was whether or not the field went back: a failed put-back must
         // not leave the feature on.
         let tail = (|| {
-            switch(&mut self.backend, toggle, false)?;
+            switch_checked(&mut self.backend, toggle, false)?;
             for partner in partners {
                 let now = self.backend.read_value(gpu, partner).map_err(|e| e.0)?;
                 if now != Value::Bool(true) {
-                    switch(&mut self.backend, partner, true)?;
+                    switch_checked(&mut self.backend, partner, true)?;
                 }
             }
             Ok(())
         })();
         match (put, tail) {
-            (Ok(()), tail) => tail,
-            (Err(put), Ok(())) => Err(format!("{put}; {toggle} was switched back")),
-            (Err(put), Err(tail)) => Err(format!(
-                "{put}; switching {toggle} back also failed ({tail}), the temporary entries stay journaled"
+            (Ok(()), Ok(())) => Ok(()),
+            (Ok(()), Err(tail)) => Err((tail, true)),
+            (Err(put), Ok(())) => Err((format!("{put}; {toggle} was switched back"), false)),
+            (Err(put), Err(tail)) => Err((
+                format!(
+                    "{put}; switching {toggle} back also failed ({tail}), the temporary entries stay journaled"
+                ),
+                true,
             )),
         }
     }

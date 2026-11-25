@@ -391,3 +391,52 @@ fn a_panel_read_behind_a_stuck_driver_gives_up_after_its_wait() {
     assert!(error.0.contains("did not answer"), "{error}");
     open.send(()).unwrap();
 }
+
+#[test]
+fn startup_recovery_retries_until_owning_user_signs_in() {
+    const USER_A: &str = "S-1-5-21-1-2-3-1001";
+    let dir = tempfile::tempdir().unwrap();
+    let journal = dir.path().join(JOURNAL_FILE);
+    Journal {
+        version: 1,
+        owner: None,
+        entries: vec![Entry {
+            user: USER_A.into(),
+            gpu: 1,
+            id: "anti_lag.enabled".into(),
+            session: "crashed".into(),
+            original: Value::Bool(true),
+            written: Value::Bool(false),
+            side_effect: false,
+        }],
+    }
+    .save(&journal)
+    .unwrap();
+    let (driver, _open) = Driver::new();
+    let driver = driver.without_gate();
+    let signed_in: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+    let lookup = signed_in.clone();
+    let worker = Worker::start_with_user(
+        driver.clone(),
+        journal.clone(),
+        quick(),
+        Box::new(move || lookup.lock().unwrap().clone()),
+    );
+    until("initial startup pass to finish", || {
+        worker.status().phase == Phase::Ready
+    });
+    assert_eq!(
+        driver.value("anti_lag.enabled"),
+        Value::Bool(false),
+        "must not write while nobody is signed in"
+    );
+    assert_eq!(Journal::load(&journal).unwrap().entries.len(), 1);
+
+    // Once the owning user signs in, the active retry timer must recover their setting.
+    *signed_in.lock().unwrap() = Some(USER_A.into());
+    until("deferred user recovery to restore", || {
+        driver.value("anti_lag.enabled") == Value::Bool(true)
+            && Journal::load(&journal).unwrap().entries.is_empty()
+    });
+    assert_eq!(worker.status().phase, Phase::Ready);
+}

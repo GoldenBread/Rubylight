@@ -534,3 +534,141 @@ fn restore_stops_at_its_deadline_and_keeps_what_is_left() {
     assert!(c.recover_on_startup().unwrap().is_clean());
     assert_eq!(fake.value("pacing.limit"), Value::Int(140));
 }
+
+#[test]
+fn failed_temporary_toggle_revert_is_not_masked_by_pass_two() {
+    let fake = panel();
+    let (mut c, _dir) = controller(&fake);
+    {
+        let mut d = fake.0.borrow_mut();
+        d.needs_on = vec![("chill.max_fps", "chill.enabled")];
+        d.excludes = vec![("chill.enabled", "anti_lag.enabled")];
+        // Allow toggling Chill on to restore chill.max_fps, then refuse switching Chill back off.
+        d.refuse_value = Some(("chill.enabled", on(false)));
+    }
+    fake.set("chill.max_fps", Value::Int(150));
+    let mut journal = Journal::default();
+    journal.record(Entry {
+        user: me(),
+        gpu: 1,
+        id: "chill.max_fps".into(),
+        session: "s1".into(),
+        original: Value::Int(140),
+        written: Value::Int(150),
+        side_effect: false,
+    });
+    journal.save(&c.journal).unwrap();
+
+    let report = c.restore(Scope::Session("s1")).unwrap();
+    assert!(
+        !report.is_clean(),
+        "pass 2 must not mask a failed temporary toggle revert into a clean report: {report:?}"
+    );
+    assert_eq!(fake.value("chill.max_fps"), Value::Int(140));
+    assert_eq!(fake.value("chill.enabled"), on(true));
+    let remaining = c.journal().unwrap();
+    assert!(
+        remaining.entries.iter().any(|e| e.id == "chill.enabled"),
+        "stuck temporary toggle must stay journaled for retry: {remaining:?}"
+    );
+
+    // Once the driver accepts writes again, the next restore puts the toggle back.
+    fake.0.borrow_mut().refuse_value = None;
+    let report = c.recover_on_startup().unwrap();
+    assert!(report.is_clean(), "{report:?}");
+    assert_eq!(fake.value("chill.enabled"), on(false));
+    assert_eq!(fake.value("anti_lag.enabled"), on(true));
+    assert!(c.journal().unwrap().entries.is_empty());
+
+    // Partner revert failure alone must also stay unclean and journaled across pass 2.
+    fake.set("chill.max_fps", Value::Int(150));
+    fake.0.borrow_mut().refuse = Some("anti_lag.enabled");
+    let mut journal = Journal::default();
+    journal.record(Entry {
+        user: me(),
+        gpu: 1,
+        id: "chill.max_fps".into(),
+        session: "s1".into(),
+        original: Value::Int(140),
+        written: Value::Int(150),
+        side_effect: false,
+    });
+    journal.save(&c.journal).unwrap();
+
+    let report = c.restore(Scope::Session("s1")).unwrap();
+    assert!(
+        !report.is_clean(),
+        "pass 2 must not mask a failed displaced partner revert: {report:?}"
+    );
+    assert_eq!(fake.value("chill.max_fps"), Value::Int(140));
+    assert_eq!(fake.value("chill.enabled"), on(false));
+    assert_eq!(fake.value("anti_lag.enabled"), on(false));
+    let remaining = c.journal().unwrap();
+    assert!(
+        remaining.entries.iter().any(|e| e.id == "anti_lag.enabled"),
+        "displaced partner must stay journaled for retry: {remaining:?}"
+    );
+
+    fake.0.borrow_mut().refuse = None;
+    let report = c.recover_on_startup().unwrap();
+    assert!(report.is_clean(), "{report:?}");
+    assert_eq!(fake.value("anti_lag.enabled"), on(true));
+    assert!(c.journal().unwrap().entries.is_empty());
+}
+
+#[test]
+fn restore_through_updates_preexisting_toggle_written_before_switching() {
+    let fake = panel();
+    let (mut c, _dir) = controller(&fake);
+    {
+        let mut d = fake.0.borrow_mut();
+        d.needs_on = vec![("chill.max_fps", "chill.enabled")];
+        d.excludes = vec![("chill.enabled", "anti_lag.enabled")];
+    }
+    // Enable Chill + change chill.max_fps, then disable Chill in a follow-up request so
+    // `chill.enabled` stays in the journal with `original = false, written = false`.
+    c.apply(
+        "s1",
+        1,
+        &[
+            change("chill.enabled", on(true)),
+            change("chill.max_fps", Value::Int(150)),
+        ],
+    )
+    .unwrap();
+    c.apply("s1", 1, &[change("chill.enabled", on(false))])
+        .unwrap();
+    let before = c.journal().unwrap();
+    let existing = entry_of(&before, "chill.enabled");
+    assert_eq!(
+        (&existing.original, &existing.written),
+        (&on(false), &on(false))
+    );
+
+    // Refuse turning Chill back off after `restore_through` turns it on to restore chill.max_fps.
+    fake.0.borrow_mut().refuse_value = Some(("chill.enabled", on(false)));
+    let report = c.restore(Scope::Session("s1")).unwrap();
+    assert!(!report.is_clean(), "{report:?}");
+    assert_eq!(fake.value("chill.enabled"), on(true));
+    let stuck = c.journal().unwrap();
+    assert_eq!(
+        entry_of(&stuck, "chill.enabled").written,
+        on(true),
+        "journal must record the temporary toggle state so later recovery does not classify it as ChangedElsewhere"
+    );
+
+    fake.0.borrow_mut().refuse_value = None;
+    let report = c.recover_on_startup().unwrap();
+    assert!(report.is_clean(), "{report:?}");
+    assert_eq!(
+        report
+            .outcomes
+            .iter()
+            .find(|o| o.id == "chill.enabled")
+            .map(|o| &o.result),
+        Some(&RestoreResult::Restored)
+    );
+    assert_eq!(fake.value("chill.enabled"), on(false));
+    assert_eq!(fake.value("anti_lag.enabled"), on(true));
+    assert!(c.journal().unwrap().entries.is_empty());
+}

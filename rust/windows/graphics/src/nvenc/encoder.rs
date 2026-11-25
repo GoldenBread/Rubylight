@@ -488,6 +488,16 @@ impl Encoder {
             self.session
                 .submit_frame(slot, Some(kept), idr, image.captured, None, true)?;
             self.last_submitted = Some(Instant::now());
+            // Harvest any completed GPU HDR statistics pass from the last fresh
+            // frame so static repeat screens do not carry stale dynamic metadata.
+            crate::amf::dynamic::sample(
+                &mut self.dynamic,
+                stats(self.compute.as_deref_mut(), self.stats.as_deref_mut()),
+                &self.warnings,
+            );
+            if self.dynamic.is_none() {
+                self.session.dynamic_headroom = 0;
+            }
             return self.finish_poll(self.session.pending.len() > 1);
         }
         self.last_converted = None;
@@ -602,5 +612,65 @@ impl Encoder {
             self.session.dynamic_headroom = 0;
         }
         self.finish_poll(self.session.pending.len() > 1)
+    }
+}
+
+#[cfg(test)]
+mod repeat_dynamic_tests {
+    use crate::amf::dynamic::{self, Dynamic, Stats, Wanted};
+    use crate::compute::HdrStatsReadout;
+    use butterpollo_media_policy::{RecordedWarnings, hdr_dynamic::Codec};
+
+    struct DelayedStats {
+        ready: Option<HdrStatsReadout>,
+        submits: u32,
+    }
+    impl Stats for DelayedStats {
+        fn enable(&mut self) -> anyhow::Result<()> {
+            Ok(())
+        }
+        fn submit(&mut self) -> anyhow::Result<()> {
+            self.submits += 1;
+            Ok(())
+        }
+        fn latest(&self, newer_than: u64) -> anyhow::Result<Option<HdrStatsReadout>> {
+            Ok(self.ready.clone().filter(|r| r.conversion > newer_than))
+        }
+        fn stop(&mut self) {}
+    }
+
+    #[test]
+    fn repeat_frame_sampling_harvests_completed_hdr_histogram_from_last_fresh_frame() {
+        let warnings = RecordedWarnings::default();
+        let mut dynamic = Some(Box::new(Dynamic::with(
+            Wanted {
+                codec: Codec::Hevc,
+                t35: true,
+                dolby_vision: false,
+                hlg: false,
+            },
+            true,
+        )));
+        let mut stats = DelayedStats {
+            ready: None,
+            submits: 0,
+        };
+        // Frame 1 (fresh): submits GPU pass, readout not ready yet.
+        dynamic::sample(&mut dynamic, Some(&mut stats), &warnings);
+        assert_eq!(dynamic.as_deref().unwrap().sampled(), 0);
+        // GPU finishes histogram before frame 2 (cached repeat hit).
+        let mut histogram = vec![0u32; crate::compute::HDR_STATS_BINS];
+        histogram[256] = 100;
+        histogram[512] = 200;
+        stats.ready = Some(HdrStatsReadout {
+            conversion: 1,
+            histogram,
+            min_pq: 0.25,
+            max_pq: 0.5,
+        });
+        // Frame 2 (cached repeat hit): sampling harvests conversion 1.
+        dynamic::sample(&mut dynamic, Some(&mut stats), &warnings);
+        assert_eq!(dynamic.as_deref().unwrap().sampled(), 1);
+        assert_eq!(stats.submits, 2);
     }
 }

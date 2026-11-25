@@ -232,9 +232,9 @@ pub struct Encoder {
     /// AMF's H.264 and HEVC headers as a client that dropped frames until a
     /// long-term reference repair needs them: only on a stream with LTR.
     repair_headers: Option<butterpollo_media_policy::bitstream::RepairHeaders>,
-    /// A header rewrite failed: outputs are dropped until the keyframe it
-    /// asked for, as their headers no longer match what the client has.
-    repair_dropping: bool,
+    /// A header rewrite failed: outputs are dropped until the first slice of a
+    /// subsequent requested keyframe, as earlier slices' headers no longer match.
+    repair_dropping: output::RepairDrop,
     /// AMF's bytes before any rewrite, kept when a test asks: a decoder that
     /// got every frame needs AMF's own numbering.
     #[cfg(test)]

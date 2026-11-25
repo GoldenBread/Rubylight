@@ -34,7 +34,8 @@ use windows::{
 use butterpollo_win_abi::shaders::shader_bytecode;
 mod handoff;
 mod retained;
-use handoff::wait_fence;
+pub(crate) use handoff::wait_fence;
+use handoff::wait_fence_until;
 pub use handoff::*;
 #[cfg(test)]
 use retained::RETAINED;

@@ -516,23 +516,22 @@ impl GpuPool {
                         gpu.context.CopyResource(texture.as_ref(), source);
                     }
                     if self.shared {
-                        let signal = self.d3d11_signal.get_or_insert_with(|| {
-                            crate::compute::Compute::for_device(&gpu.device)
-                                .and_then(|compute| crate::compute::D3d11Signal::new(compute, gpu))
-                                .ok()
-                        });
-                        match signal.as_mut().map(|s| s.signal()) {
-                            Some(Ok(ready)) => Some(ready),
-                            Some(Err(error)) => {
-                                tracing::debug!(%error, "shared D3D11 fence signal failed; flushing context");
-                                *signal = None;
-                                gpu.context.Flush();
-                                None
+                        if let Some(ready) = self.signal_shared_d3d11(gpu) {
+                            Some(ready)
+                        } else {
+                            if let Some(loss) = crate::device_loss::DeviceLost::d3d11(&gpu.device) {
+                                return Err(anyhow::Error::new(loss));
                             }
-                            None => {
-                                gpu.context.Flush();
-                                None
-                            }
+                            // Never hand a `SHARED_NTHANDLE` texture with `ready: None` to
+                            // downstream D3D12 compute readers: downgrade to a non-shared
+                            // D3D11 pool and re-copy into a plain texture instead.
+                            tracing::warn!(
+                                "shared D3D11 fence unavailable; downgrading capture pool to non-shared D3D11 textures"
+                            );
+                            self.shared = false;
+                            self.d3d11_signal = None;
+                            self.textures.clear();
+                            return self.copy(gpu, source, crop);
                         }
                     } else {
                         None
@@ -547,6 +546,57 @@ impl GpuPool {
                 pixel,
                 ready,
             )))
+        }
+    }
+
+    /// Signal the shared D3D11->D3D12 fence after a D3D11 copy into a shared
+    /// pool texture, retrying creation once if the cached `Compute` was retired.
+    fn signal_shared_d3d11(&mut self, gpu: &Device) -> Option<crate::compute::Ready> {
+        let mut current = self.d3d11_signal.take().flatten();
+        let ready = resolve_shared_signal(
+            &mut current,
+            |signal| signal.signal(),
+            || {
+                if crate::device_loss::DeviceLost::d3d11(&gpu.device).is_some() {
+                    return None;
+                }
+                crate::compute::Compute::for_device(&gpu.device)
+                    .and_then(|compute| crate::compute::D3d11Signal::new(compute, gpu))
+                    .ok()
+            },
+        );
+        self.d3d11_signal = Some(current);
+        ready
+    }
+}
+
+/// Signal an existing shared fence or recreate it once if signalling failed
+/// (for example after a retired compute queue). Returns `None` if no working
+/// shared fence can be signalled, so the caller must downgrade off shared
+/// textures rather than emit an unsynchronized `SHARED_NTHANDLE` image.
+fn resolve_shared_signal<S, R, E: std::fmt::Display>(
+    slot: &mut Option<S>,
+    mut signal: impl FnMut(&mut S) -> std::result::Result<R, E>,
+    mut create: impl FnMut() -> Option<S>,
+) -> Option<R> {
+    if let Some(existing) = slot.as_mut() {
+        match signal(existing) {
+            Ok(ready) => return Some(ready),
+            Err(error) => {
+                tracing::debug!(%error, "shared D3D11 fence signal failed; recreating signal");
+                *slot = None;
+            }
+        }
+    }
+    let mut fresh = create()?;
+    match signal(&mut fresh) {
+        Ok(ready) => {
+            *slot = Some(fresh);
+            Some(ready)
+        }
+        Err(error) => {
+            tracing::debug!(%error, "recreated shared D3D11 fence signal failed");
+            None
         }
     }
 }
@@ -648,5 +698,55 @@ impl GpuImage {
             }
         }
         Ok(source)
+    }
+}
+
+#[cfg(test)]
+mod shared_signal_tests {
+    use super::resolve_shared_signal;
+
+    #[test]
+    fn shared_d3d11_signal_recreates_once_and_downgrades_when_unavailable() {
+        // Steady-state existing signal succeeds without recreating.
+        let mut slot = Some(1u32);
+        let mut created = 0u32;
+        let ready = resolve_shared_signal(
+            &mut slot,
+            |id| Ok::<u32, &'static str>(*id * 10),
+            || {
+                created += 1;
+                Some(2)
+            },
+        );
+        assert_eq!(ready, Some(10));
+        assert_eq!(created, 0);
+
+        // Retired compute queue: existing signal errors once -> recreated signal succeeds.
+        let mut slot = Some(1u32);
+        let mut created = 0u32;
+        let ready = resolve_shared_signal(
+            &mut slot,
+            |id| {
+                if *id == 1 {
+                    Err("shared compute queue is retired")
+                } else {
+                    Ok(*id * 10)
+                }
+            },
+            || {
+                created += 1;
+                Some(2)
+            },
+        );
+        assert_eq!(ready, Some(20));
+        assert_eq!(created, 1);
+        assert_eq!(slot, Some(2));
+
+        // Recreation unavailable: returns None (caller must downgrade off SHARED_NTHANDLE
+        // instead of emitting an unsynchronized shared texture with `ready: None`).
+        let mut slot = Some(1u32);
+        let ready = resolve_shared_signal(&mut slot, |_| Err::<u32, _>("retired"), || None);
+        assert_eq!(ready, None);
+        assert_eq!(slot, None);
     }
 }
