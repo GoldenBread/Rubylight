@@ -4,7 +4,7 @@
 //! Streaming Microphone by a render thread that runs only while it speaks;
 //! a second client is heard once the first has been quiet for a second.
 use crate::state::{Session, Shared};
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use butterpollo_config::config::Config;
 use butterpollo_media_policy::packet::{CbcKey, mic_open_into};
 use butterpollo_session::mic::{self, Arrival, Playout, Sequencer};
@@ -721,72 +721,10 @@ fn gain_failed(
         warnings.set(GAIN_WARNING, format!("Microphone may sound distorted: Steam Streaming Microphone's recording level could not be checked ({error:#}). Set Microphone (Steam Streaming Microphone) to 54 or lower in Windows' Sound settings."));
     }
 }
-/// After an install that did not bring the device, the next one waits this
-/// long: each holds the audio routes while it waits for the device.
-const INSTALL_BACKOFF: Duration = Duration::from_secs(120);
-/// Whether Steam Streaming Microphone may be installed now.
-struct Install {
-    installed: bool,
-    /// When the last install that has not succeeded started.
-    tried: Option<Instant>,
-}
-impl Install {
-    /// Claims an install unless one succeeded, runs, or failed recently.
-    fn begin(&mut self, now: Instant) -> bool {
-        let due = !self.installed
-            && self
-                .tried
-                .is_none_or(|at| now.saturating_duration_since(at) >= INSTALL_BACKOFF);
-        if due {
-            self.tried = Some(now);
-        }
-        due
-    }
-}
-/// Steam Streaming Microphone's playback endpoint, installed from Steam's
-/// drivers the first time a client sends its microphone, when Steam is
-/// installed and "install_steam_audio_drivers" is on. A failed install is
-/// tried again on a later connection.
-fn endpoint(config: &Config) -> Result<String> {
-    let find = || -> Result<Option<String>> {
-        Ok(audio_route::steam_microphone(&audio_route::endpoints()?).map(|e| e.id.clone()))
-    };
-    if let Some(id) = find()? {
-        return Ok(id);
-    }
-    static INSTALL: Mutex<Install> = Mutex::new(Install {
-        installed: false,
-        tried: None,
-    });
-    if INSTALL.lock().unwrap().begin(Instant::now()) {
-        let saved = audio_route::install_steam_microphone(config);
-        if matches!(saved, Ok(None)) {
-            // Nothing was tried (no Steam, or the setting is off): the next
-            // connection checks again, as the advice below suggests.
-            INSTALL.lock().unwrap().tried = None;
-        }
-        if let Some(saved) = saved? {
-            let deadline = Instant::now() + Duration::from_secs(10);
-            while Instant::now() < deadline {
-                thread::sleep(Duration::from_millis(250));
-                if let Some(id) = find()? {
-                    // Windows may make the new device a default when its
-                    // endpoints arrive; give it a moment, then put them back.
-                    thread::sleep(Duration::from_millis(500));
-                    if let Err(error) = saved.restore() {
-                        tracing::warn!(error = %format!("{error:#}"), "default audio devices could not be restored after installing Steam Streaming Microphone");
-                    }
-                    INSTALL.lock().unwrap().installed = true;
-                    tracing::info!("Steam Streaming Microphone installed");
-                    return Ok(id);
-                }
-            }
-        }
-    }
-    bail!(
-        "Steam Streaming Microphone is not installed. It comes with Steam: install Steam on this PC and keep \"Install Steam streaming audio drivers\" on, then reconnect."
-    )
-}
+mod install;
+use install::endpoint;
+#[cfg(test)]
+use install::{INSTALL_BACKOFF, Install, wait_for_installed_endpoint};
 
 #[cfg(test)]
 mod tests;

@@ -234,21 +234,11 @@ impl Server {
                 if !std::mem::take(&mut state.dirty[usize::from(slot)]) {
                     continue;
                 }
-                if let Some(pad) = state.slots.pad(slot).cloned() {
-                    changed.push((slot, pad, state.slots.next_number(slot)));
-                }
+                let pad = state.slots.pad(slot).cloned();
+                changed.push((slot, pad, state.slots.next_number(slot)));
             }
             drop(state);
-            let mut packets = Vec::new();
-            if !changed.is_empty() {
-                let mut clients = self.clients.lock().unwrap();
-                for (slot, pad, number) in changed {
-                    let subscribers = clients.subscribers(slot, now);
-                    if !subscribers.is_empty() {
-                        packets.push((dsu::pad_data(self.id, slot, &pad, number), subscribers));
-                    }
-                }
-            }
+            let packets = build_packets(self.id, &self.clients, changed, now);
             for (packet, subscribers) in &packets {
                 for to in subscribers {
                     self.reply(packet, *to);
@@ -265,6 +255,30 @@ impl Server {
     }
 }
 
+fn build_packets(
+    server_id: u32,
+    clients: &Mutex<Clients>,
+    changed: Vec<(u8, Option<dsu::Pad>, u32)>,
+    now: Instant,
+) -> Vec<(Vec<u8>, Vec<SocketAddr>)> {
+    let mut packets = Vec::new();
+    if changed.is_empty() {
+        return packets;
+    }
+    let mut clients = clients.lock().unwrap();
+    for (slot, pad, number) in changed {
+        let subscribers = clients.subscribers(slot, now);
+        if !subscribers.is_empty() {
+            let packet = match pad {
+                Some(pad) => dsu::pad_data(server_id, slot, &pad, number),
+                None => dsu::pad_data_disconnected(server_id, slot, number),
+            };
+            packets.push((packet, subscribers));
+        }
+    }
+    packets
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -279,5 +293,94 @@ mod tests {
         let lan = bind_address(26760, true);
         assert!(lan.ip().is_unspecified());
         assert_eq!(lan.port(), 26760);
+    }
+
+    #[test]
+    fn disconnect_and_session_forget_emit_disconnected_neutral_pad_data() {
+        let mut state = State::default();
+        let clients = Mutex::new(Clients::default());
+        let sub: SocketAddr = "127.0.0.1:41234".parse().unwrap();
+        let now = Instant::now();
+        clients.lock().unwrap().register(sub, 0, 0, [0; 6], now);
+
+        // Connect controller 0 with held A button and stick deflection.
+        let slot = state
+            .slots
+            .apply(
+                "s1",
+                &Input::Controller {
+                    id: 0,
+                    active: 1,
+                    buttons: dsu::button::A,
+                    left_trigger: 200,
+                    right_trigger: 100,
+                    sticks: [20_000, -20_000, 0, 0],
+                },
+                100,
+            )
+            .unwrap();
+        assert_eq!(slot, 0);
+
+        // Disconnect controller via active = 0: must emit disconnected neutral MSG_PAD_DATA.
+        let cleared = state
+            .slots
+            .apply(
+                "s1",
+                &Input::Controller {
+                    id: 0,
+                    active: 0,
+                    buttons: 0,
+                    left_trigger: 0,
+                    right_trigger: 0,
+                    sticks: [0; 4],
+                },
+                200,
+            )
+            .unwrap();
+        assert_eq!(cleared, 0);
+        let pad = state.slots.pad(0).cloned();
+        assert!(pad.is_none());
+        let packets = build_packets(
+            42,
+            &clients,
+            vec![(0, pad, state.slots.next_number(0))],
+            now,
+        );
+        assert_eq!(packets.len(), 1);
+        let (pkt, recipients) = &packets[0];
+        assert_eq!(recipients, &[sub]);
+        assert_eq!(pkt.len(), 100);
+        assert_eq!(pkt[21], 0, "slot state must be 0 (not connected)");
+        assert_eq!(pkt[31], 0, "connected byte must be 0");
+        assert_eq!(pkt[36..40], [0, 0, 0, 0], "buttons cleared");
+        assert_eq!(pkt[40..44], [128, 128, 128, 128], "sticks centered");
+
+        // Reconnect and end session via `forget`: also emits disconnected neutral MSG_PAD_DATA.
+        state
+            .slots
+            .apply(
+                "s2",
+                &Input::Controller {
+                    id: 0,
+                    active: 1,
+                    buttons: dsu::button::B,
+                    left_trigger: 255,
+                    right_trigger: 0,
+                    sticks: [0; 4],
+                },
+                300,
+            )
+            .unwrap();
+        let freed = state.slots.forget("s2");
+        assert_eq!(freed, vec![0]);
+        let packets = build_packets(
+            42,
+            &clients,
+            vec![(0, state.slots.pad(0).cloned(), state.slots.next_number(0))],
+            now,
+        );
+        assert_eq!(packets.len(), 1);
+        assert_eq!(packets[0].0[21], 0);
+        assert_eq!(packets[0].0[31], 0);
     }
 }

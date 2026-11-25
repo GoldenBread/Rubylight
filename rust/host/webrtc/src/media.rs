@@ -50,9 +50,6 @@ pub const DEFAULT_AUDIO_QUEUE: usize = 64;
 pub const DEFAULT_DATAGRAM_QUEUE: usize = 2048;
 /// How often a stalled encoder (waiting for a keyframe) is asked again.
 const IDR_REQUEST_INTERVAL: Duration = Duration::from_millis(250);
-/// The UDP payload size str0m targets (`DATAGRAM_MTU_TARGET`), for the pacer's frame maths.
-const DATAGRAM_TARGET: usize = 1150;
-const RTP_PAYLOAD_TARGET: usize = DATAGRAM_TARGET - 50;
 /// An ICE path that stays down this long ends the session. A shorter outage is a network
 /// handover, and the session resumes with a keyframe when the path comes back.
 pub const DISCONNECT_TIMEOUT: Duration = Duration::from_secs(3);

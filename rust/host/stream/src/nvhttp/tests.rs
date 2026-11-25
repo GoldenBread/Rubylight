@@ -191,6 +191,88 @@ fn only_the_games_owner_may_terminate_it_while_remote_sessions_are_active() {
     assert!(f.host.current_app.lock().unwrap().is_none());
 }
 #[test]
+fn non_terminating_switch_enforces_owner_webrtc_exclusivity_and_preserves_nucleus_streams() {
+    use super::{StopStreams, stop_streams_for};
+    use crate::state::test_support::Fixture;
+    use butterpollo_session::session::{Role, Seat, Transport};
+    let f = Fixture::new();
+    running_app(&f, "owner");
+
+    // Active RemoteMonitor blocks another device's non-terminating switch (`stop_app = false`).
+    let mut owner_client = f.client(u32::MAX);
+    owner_client.uuid = "owner".into();
+    let owner_stream = f.session(owner_client.clone(), Role::Stream);
+    let monitor = f.session(owner_client.clone(), Role::RemoteMonitor);
+    assert_eq!(
+        stop_streams_for(&f.host, "other", false),
+        StopStreams::Refused
+    );
+    assert!(!owner_stream.stopping());
+    f.host
+        .sessions
+        .lock()
+        .unwrap()
+        .active
+        .remove(&monitor.launch.id);
+    f.host
+        .sessions
+        .lock()
+        .unwrap()
+        .active
+        .remove(&owner_stream.launch.id);
+
+    // Active WebRTC stream owned by `owner` blocks another device's non-terminating switch.
+    let mut webrtc_launch = f.launch(owner_client.clone(), Role::Stream);
+    webrtc_launch.transport = Transport::WebRtc;
+    let webrtc_stream = f
+        .host
+        .sessions
+        .lock()
+        .unwrap()
+        .start(webrtc_launch, Default::default())
+        .unwrap();
+    assert_eq!(
+        stop_streams_for(&f.host, "other", false),
+        StopStreams::Refused
+    );
+    assert!(!webrtc_stream.stopping());
+
+    // A concurrent Nucleus stream is preserved when `owner` switches or stops host streams.
+    let mut coop_client = f.client(u32::MAX);
+    coop_client.uuid = "coop-player".into();
+    let mut coop_launch = f.launch(coop_client, Role::Stream);
+    coop_launch.nucleus = Some(Seat {
+        session: 1,
+        slot: 0,
+    });
+    let coop_stream = f
+        .host
+        .sessions
+        .lock()
+        .unwrap()
+        .start(coop_launch, Default::default())
+        .unwrap();
+    let host = f.host.clone();
+    let id = webrtc_stream.launch.id.clone();
+    let worker = std::thread::spawn({
+        let s = webrtc_stream.clone();
+        move || {
+            while !s.stopping() {
+                std::thread::sleep(std::time::Duration::from_millis(2));
+            }
+            host.sessions.lock().unwrap().active.remove(&id);
+        }
+    });
+    assert_eq!(
+        stop_streams_for(&f.host, "owner", false),
+        StopStreams::Stopped
+    );
+    worker.join().unwrap();
+    assert!(webrtc_stream.stopping());
+    assert!(!coop_stream.stopping());
+    assert!(f.host.current_app.lock().unwrap().is_some());
+}
+#[test]
 fn a_failed_app_lookup_keeps_its_own_status_and_only_an_unknown_app_is_a_404() {
     use super::{APPLICATION_NOT_FOUND, LaunchFailure, launch_app_error};
     let status = |error: anyhow::Error| {

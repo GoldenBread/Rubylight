@@ -181,11 +181,11 @@ impl InlineSender {
                             .filter(|outage| outage.active(self.start, Instant::now()))
                         {
                             Some(outage) if outage.in_air() => {
-                                Ok(remaining[..count].iter().map(Vec::len).sum())
+                                Ok((remaining[..count].iter().map(Vec::len).sum(), count))
                             }
                             Some(_) => {
                                 self.batch.refuse(count);
-                                Ok(0)
+                                Ok((0, 0))
                             }
                             None => match self.send_drop.as_mut() {
                                 Some(drop) => slices::send_lossy(
@@ -194,36 +194,40 @@ impl InlineSender {
                                     &remaining[..count],
                                     peer,
                                     drop,
-                                ),
-                                None => self.batch.send(&ctx.m.video, &remaining[..count], peer),
+                                )
+                                .map(|bytes| {
+                                    let sent = count
+                                        .saturating_sub((self.batch.dropped - refused) as usize);
+                                    (bytes, sent)
+                                }),
+                                None => self
+                                    .batch
+                                    .send(&ctx.m.video, &remaining[..count], peer)
+                                    .map(|bytes| (bytes, self.batch.sent_packets().min(count))),
                             },
                         };
-                        let bytes = match result {
-                            Ok(bytes) => bytes,
+                        let (bytes, sent_count) = match result {
+                            Ok(pair) => pair,
                             Err(error) => {
                                 fatal = Some(error);
                                 return Ok(());
                             }
                         };
-                        if bytes > 0 {
-                            ctx.s.record_transport_sent(
-                                &remaining[..count],
-                                butterpollo_media_policy::network_pacing::overhead(
-                                    peer.ip().to_canonical().is_ipv6(),
-                                ),
-                            );
-                        }
-                        sent.first_sent.get_or_insert(Instant::now());
+                        let ipv6 = peer.ip().to_canonical().is_ipv6();
+                        let now = Instant::now();
+                        super::record_inline_sent(
+                            ctx.s,
+                            &mut self.network_pacer,
+                            &remaining[..count],
+                            (bytes, sent_count),
+                            ipv6,
+                            bps,
+                            now,
+                        );
+                        sent.first_sent.get_or_insert(now);
                         remaining = &remaining[count..];
                         sent.packets += count;
                         sent.bytes += bytes;
-                        self.network_pacer.sent(
-                            Instant::now(),
-                            bytes,
-                            if bytes > 0 { count } else { 0 },
-                            peer.ip().to_canonical().is_ipv6(),
-                            bps,
-                        );
                         ctx.s
                             .stats
                             .packets

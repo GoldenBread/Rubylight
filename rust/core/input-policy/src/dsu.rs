@@ -185,9 +185,22 @@ pub fn port_info(server: u32, slot: u8, pad: Option<&Pad>) -> Vec<u8> {
 
 /// One slot's pad data, the `number`th packet sent for it.
 pub fn pad_data(server: u32, slot: u8, pad: &Pad, number: u32) -> Vec<u8> {
+    pad_data_slot(server, slot, Some(pad), number)
+}
+
+/// A disconnected/neutral pad-data packet for `slot`, emitted when a controller
+/// or session leaves its slot so subscribed emulators release held inputs.
+pub fn pad_data_disconnected(server: u32, slot: u8, number: u32) -> Vec<u8> {
+    pad_data_slot(server, slot, None, number)
+}
+
+fn pad_data_slot(server: u32, slot: u8, pad: Option<&Pad>, number: u32) -> Vec<u8> {
+    let neutral = Pad::default();
+    let active = pad.is_some();
+    let pad = pad.unwrap_or(&neutral);
     let mut p = Vec::with_capacity(PAD_DATA_BYTES - HEADER - 4);
-    p.extend_from_slice(&slot_info(slot, Some(pad)));
-    p.push(1);
+    p.extend_from_slice(&slot_info(slot, active.then_some(pad)));
+    p.push(u8::from(active));
     p.extend_from_slice(&number.to_le_bytes());
     let (b1, b2) = pad.dsu_buttons();
     p.extend_from_slice(&[b1, b2]);
@@ -226,8 +239,12 @@ pub fn pad_data(server: u32, slot: u8, pad: &Pad, number: u32) -> Vec<u8> {
         p.extend_from_slice(&y.to_le_bytes());
     }
     p.extend_from_slice(&pad.motion_us.to_le_bytes());
-    for v in pad.dsu_accel().into_iter().chain(pad.dsu_gyro()) {
-        p.extend_from_slice(&v.to_le_bytes());
+    if active {
+        for v in pad.dsu_accel().into_iter().chain(pad.dsu_gyro()) {
+            p.extend_from_slice(&v.to_le_bytes());
+        }
+    } else {
+        p.extend_from_slice(&[0u8; 24]);
     }
     packet(server, MSG_PAD_DATA, &p)
 }

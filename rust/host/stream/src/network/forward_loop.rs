@@ -247,8 +247,16 @@ pub fn port_forward(h: Shared, bind: IpAddr) -> Option<PortForward> {
                     }
                 }
             }
+            let wake_at = h
+                .guest_net
+                .next_expiry()
+                .map_or(next_search, |expiry| next_search.min(expiry));
             tokio::select! {
-                () = until_renewal_or_stop(&stopped, next_search) => {}
+                () = until_renewal_or_stop(&stopped, wake_at) => {
+                    if wake_at < next_search && Instant::now() >= wake_at {
+                        next_search = Instant::now();
+                    }
+                }
                 // A link made or revoked for the internet: map or unmap the guest ports now.
                 () = h.guest_net.mapping_changed() => next_search = Instant::now(),
                 // The start cleanup finished: a guest link asked for meanwhile goes now.

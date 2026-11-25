@@ -172,10 +172,35 @@ pub(super) fn refuse_path(exe_path: &str) -> Result<(), Missing> {
     }
 }
 
+/// Runs `work` under [`Pc::as_game_user`] so game-folder probes never traverse
+/// user-writable paths or junctions as SYSTEM.
+pub(super) fn probe_as_user<T>(pc: &dyn Pc, work: impl FnOnce() -> T) -> Result<T> {
+    let mut work = Some(work);
+    let mut out = None;
+    pc.as_game_user(&mut || {
+        if let Some(work) = work.take() {
+            out = Some(work());
+        }
+    })?;
+    out.ok_or_else(|| anyhow::anyhow!("user probe did not run"))
+}
+
+fn probe_failed(exe: &str, error: anyhow::Error) -> NoRun {
+    NoRun {
+        lasting: false,
+        missing: Missing::Refused {
+            reason: format!(
+                "Rubylight could not check {} as the signed-in user: {error:#}",
+                file_name(exe)
+            ),
+        },
+    }
+}
+
 /// `setup` as Rubylight's own handler starts it: refused for a path the host
 /// must not open or for a launcher, and an Unreal root stub's game in its
 /// place. The hub and anti-cheat checks come after.
-fn prepared(mut setup: Setup) -> Result<Setup, Missing> {
+fn prepared(pc: &dyn Pc, mut setup: Setup) -> Result<Setup, NoRun> {
     // Before anything reads its folders.
     refuse_path(&setup.exe_path)?;
     if generic::launcher(&setup.exe_path) {
@@ -184,9 +209,12 @@ fn prepared(mut setup: Setup) -> Result<Setup, Missing> {
                 "{} is a launcher, not the game: set the app's command to the game's .exe",
                 file_name(&setup.exe_path)
             ),
-        });
+        }
+        .into());
     }
-    if let Some(shipping) = generic::unreal_shipping(&setup.exe_path) {
+    let shipping = probe_as_user(pc, || generic::unreal_shipping(&setup.exe_path))
+        .map_err(|error| probe_failed(&setup.exe_path, error))?;
+    if let Some(shipping) = shipping {
         tracing::debug!(
             stub = setup.exe_path,
             shipping,
@@ -203,12 +231,15 @@ pub fn file_name(path: &str) -> &str {
 
 /// Refuses a game shipping anti-cheat: Nucleus Co-op's hooks would look
 /// like cheating.
-fn refuse_anti_cheat(setup: &Setup) -> Result<(), Missing> {
-    match generic::anti_cheat(setup) {
+fn refuse_anti_cheat(pc: &dyn Pc, setup: &Setup) -> Result<(), NoRun> {
+    let found = probe_as_user(pc, || generic::anti_cheat(setup))
+        .map_err(|error| probe_failed(&setup.exe_path, error))?;
+    match found {
         Some(anti_cheat) => Err(Missing::AntiCheat {
             executable: file_name(&setup.exe_path).into(),
             anti_cheat: anti_cheat.into(),
-        }),
+        }
+        .into()),
         None => Ok(()),
     }
 }
@@ -233,14 +264,16 @@ pub(super) fn own_status(pc: &dyn Pc, app: &App) -> Result<Option<Run>, NoRun> {
         }
         .into());
     }
-    let setup = prepared(Setup::new(exe, &app.name, None))?;
-    if !Path::new(&setup.exe_path).is_file() {
+    let setup = prepared(pc, Setup::new(exe, &app.name, None))?;
+    let exists = probe_as_user(pc, || Path::new(&setup.exe_path).is_file())
+        .map_err(|error| probe_failed(&setup.exe_path, error))?;
+    if !exists {
         return Err(Missing::Refused {
             reason: not_on_this_pc(exe),
         }
         .into());
     }
-    refuse_anti_cheat(&setup)?;
+    refuse_anti_cheat(pc, &setup)?;
     run_of(pc, &setup, false).map(Some).map_err(|not| NoRun {
         lasting: matches!(not, NotRun::Refused(_)),
         missing: Missing::Refused { reason: not.into() },
@@ -339,13 +372,13 @@ impl Chosen {
 /// hub handler. A game shipping anti-cheat is refused: Nucleus Co-op's
 /// hooks would look like cheating.
 pub(super) fn own_handler(pc: &dyn Pc, catalog: &Catalog, app: &App) -> Result<Chosen, Refusal> {
-    let setup = prepared(pc.one_player(app)?).map_err(|missing| Refusal::missing(&missing))?;
+    let setup = prepared(pc, pc.one_player(app)?).map_err(|no| Refusal::missing(&no.missing))?;
     // Found by another path than the app's command: the game the user added
     // at exactly that path keeps its hub handler. A file-name match is
     // another game's (Portal's hl2.exe is not Half-Life 2).
     if let Some(found) = catalog.added(&setup.exe_path) {
         return Ok(Chosen::Hub(found));
     }
-    refuse_anti_cheat(&setup).map_err(|missing| Refusal::missing(&missing))?;
+    refuse_anti_cheat(pc, &setup).map_err(|no| Refusal::missing(&no.missing))?;
     Ok(Chosen::Own(setup))
 }

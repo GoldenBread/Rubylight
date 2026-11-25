@@ -527,3 +527,54 @@ fn idle_microphone_socket_waits_for_the_receive_timeout() -> Result<()> {
     assert!(started.elapsed() >= Duration::from_millis(100));
     Ok(())
 }
+
+#[test]
+fn microphone_install_restores_defaults_on_success_timeout_and_error() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    // Found: restores defaults once and returns the endpoint id.
+    let restored = AtomicUsize::new(0);
+    let found = wait_for_installed_endpoint(
+        Duration::from_millis(50),
+        Duration::ZERO,
+        Duration::ZERO,
+        || Ok(Some("mic-id".into())),
+        || {
+            restored.fetch_add(1, Ordering::Relaxed);
+            Ok(())
+        },
+    )
+    .unwrap();
+    assert_eq!(found.as_deref(), Some("mic-id"));
+    assert_eq!(restored.load(Ordering::Relaxed), 1);
+
+    // Timeout: never found, yet defaults are still restored once.
+    let restored = AtomicUsize::new(0);
+    let timed_out = wait_for_installed_endpoint(
+        Duration::from_millis(5),
+        Duration::from_millis(1),
+        Duration::ZERO,
+        || Ok(None),
+        || {
+            restored.fetch_add(1, Ordering::Relaxed);
+            Ok(())
+        },
+    )
+    .unwrap();
+    assert_eq!(timed_out, None);
+    assert_eq!(restored.load(Ordering::Relaxed), 1);
+
+    // Enumeration error: propagates the error AND restores defaults once.
+    let restored = AtomicUsize::new(0);
+    let failed = wait_for_installed_endpoint(
+        Duration::from_millis(50),
+        Duration::ZERO,
+        Duration::ZERO,
+        || anyhow::bail!("COM disconnected"),
+        || {
+            restored.fetch_add(1, Ordering::Relaxed);
+            Ok(())
+        },
+    );
+    assert!(failed.is_err());
+    assert_eq!(restored.load(Ordering::Relaxed), 1);
+}

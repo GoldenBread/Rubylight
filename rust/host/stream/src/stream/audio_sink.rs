@@ -195,6 +195,11 @@ impl AudioPace {
         self.next.max(self.heard + self.idle())
     }
 
+    /// Whether `now` is past the silence threshold and a silence packet would be generated.
+    pub(super) fn silence_due(&self, now: Instant) -> bool {
+        now >= self.next && now.saturating_duration_since(self.heard) >= self.idle()
+    }
+
     /// Windows reported `skipped` of audio it had no room for. `lost` says whether the read
     /// that found it was late enough to explain it; a skip nothing explains is the endpoint
     /// falling quiet and starting again, and is no gap.
@@ -495,6 +500,109 @@ pub(super) fn collect_into<C: AudioCapture>(
     }
     pace.stamp_into(at, packets, silence);
     pace.host_dropped(queued);
+}
+
+/// Chunk size (5 ms at 48 kHz) used to tap audio haptics before accumulating
+/// 32 ms AC3/E-AC3 passthrough frames, keeping pushes within `Tap::KEEP`.
+pub(super) const HAPTICS_TAP_FRAMES: usize = 240;
+
+/// Accumulates small capture chunks (e.g. 5 ms) into larger passthrough encoder
+/// frames (32 ms AC3/E-AC3) while allowing audio haptics to tap every chunk
+/// immediately without waiting 32 ms or overflowing `Tap::KEEP`.
+pub(super) struct ChunkAssembler {
+    chunk_frames: usize,
+    target_samples: usize,
+    channels: usize,
+    pending: Vec<f32>,
+    scratch: Vec<f32>,
+}
+
+impl ChunkAssembler {
+    pub(super) fn new(chunk_frames: usize, target_frames: usize, channels: usize) -> Self {
+        let target_samples = target_frames * channels;
+        Self {
+            chunk_frames,
+            target_samples,
+            channels,
+            pending: Vec::with_capacity(target_samples + chunk_frames * channels),
+            scratch: Vec::with_capacity(chunk_frames * channels),
+        }
+    }
+
+    pub(super) fn is_empty(&self) -> bool {
+        self.pending.is_empty()
+    }
+
+    /// Discards any buffered partial packet, returning the discarded 48 kHz frames.
+    pub(super) fn discard_frames(&mut self) -> u64 {
+        let frames = self.pending.len() / self.channels.max(1);
+        self.pending.clear();
+        frames as u64
+    }
+}
+
+/// Variant of [`collect_into`] for large passthrough frames (>10 ms): reads
+/// `assembler.chunk_frames` sub-chunks, invokes `on_chunk` on each immediately
+/// (for DSP + low-latency audio-haptics tapping), and emits whole encoder
+/// frames. Returns the number of captured (already `on_chunk`-processed)
+/// packets in `packets.samples`; any trailing packet is silence.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn collect_chunked_into<C: AudioCapture>(
+    capture: &mut Option<C>,
+    assembler: &mut ChunkAssembler,
+    loss: &mut HostLoss,
+    pace: &mut AudioPace,
+    silence: &[f32],
+    now: impl Fn() -> Instant,
+    mut interrupted: impl FnMut(&anyhow::Error),
+    mut on_chunk: impl FnMut(&mut Vec<f32>),
+    packets: &mut Packets,
+) -> usize {
+    packets.clear();
+    let mut queued = 0;
+    let waited = capture.as_mut().and_then(AudioCapture::since_drained);
+    while let Some(capturing) = capture.as_mut() {
+        assembler.scratch.clear();
+        match capturing.read_into(assembler.chunk_frames, &mut assembler.scratch) {
+            Ok(true) => {
+                on_chunk(&mut assembler.scratch);
+                assembler.pending.extend_from_slice(&assembler.scratch);
+                while assembler.pending.len() >= assembler.target_samples {
+                    let mut room = packets.room();
+                    room.extend_from_slice(&assembler.pending[..assembler.target_samples]);
+                    assembler.pending.drain(..assembler.target_samples);
+                    packets.samples.push(room);
+                }
+            }
+            Ok(false) => break,
+            Err(error) => {
+                interrupted(&error);
+                queued += retire_read(capturing, waited, loss, pace, now());
+                queued += assembler.discard_frames();
+                *capture = None;
+            }
+        }
+    }
+    if let Some(capturing) = capture.as_mut() {
+        let delivered = capturing.take_delivered();
+        if let Some(waited) = waited {
+            let lost = loss.read(waited, delivered, capturing.buffer());
+            let skipped = delivered.unwrap_or_default();
+            pace.windows_dropped(lost, skipped);
+        }
+        pace.host_dropped(capturing.take_trimmed());
+    }
+    let at = now();
+    if capture.is_some() && !packets.samples.is_empty() {
+        pace.capture_delivered(at);
+    }
+    if packets.samples.is_empty() && !assembler.is_empty() && pace.silence_due(at) {
+        pace.host_dropped(assembler.discard_frames());
+    }
+    let captured = packets.samples.len();
+    pace.stamp_into(at, packets, silence);
+    pace.host_dropped(queued);
+    captured
 }
 
 /// RTP with FEC on the client's audio port.

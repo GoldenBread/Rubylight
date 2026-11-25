@@ -347,7 +347,9 @@ async fn guest(
         id,
         handle: Some(handle),
     };
-    guests.keyframe(&owner.session, Instant::now());
+    // Keyframe requests wait until ICE/DTLS connects (`IdrReason::Connected` /
+    // `TransportEvent::Connected`), so joining never burns `KEYFRAME_INTERVAL`
+    // while `write_video` would still drop the IDR.
 
     let connect = tokio::time::sleep(CONNECT_TIMEOUT);
     tokio::pin!(connect);

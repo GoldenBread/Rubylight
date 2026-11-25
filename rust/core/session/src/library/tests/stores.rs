@@ -112,7 +112,7 @@ fn battlenet_finds_a_product_by_its_code_when_the_uid_is_long() {
                 }),
             },
             BattleInstall {
-                uid: "wowf".into(),
+                uid: "wow_retail".into(),
                 product: "wow".into(),
                 settings: Some(BattleSettings {
                     path: r"E:\Jeux\World of Warcraft".into(),
@@ -145,12 +145,38 @@ fn battlenet_finds_a_product_by_its_code_when_the_uid_is_long() {
         r#""D:\Launchers\Battle.net Launcher.exe" --exec="launch Fen""#
     );
     assert_eq!(games[1].name, "World of Warcraft");
-    assert_eq!(games[1].id, "wowf");
+    assert_eq!(games[1].id, "wow_retail");
     assert_eq!(games[1].unavailable_reason, None);
     assert_eq!(
         games[1].launch.as_ref().unwrap().command(),
         r#""D:\Launchers\Battle.net Launcher.exe" --exec="launch WoW""#
     );
+    // World of Warcraft: Forever (`WoWF` / `wow_forever`) resolves to its own product code (#137).
+    for (uid, product, expected_id) in [
+        ("wowf", "", "wowf"),
+        ("wowf", "wow", "wowf"),
+        ("wow_forever", "", "wow_forever"),
+        ("", "WoWF", "wowf"),
+    ] {
+        let game = battlenet(
+            uid,
+            product,
+            Path::new(r"E:\Jeux\World of Warcraft"),
+            Some(launcher),
+        )
+        .unwrap();
+        assert_eq!(
+            game.name, "World of Warcraft: Forever",
+            "{uid:?} {product:?}"
+        );
+        assert_eq!(game.id, expected_id, "{uid:?} {product:?}");
+        assert_eq!(game.unavailable_reason, None, "{uid:?} {product:?}");
+        assert_eq!(
+            game.launch.as_ref().unwrap().command(),
+            r#""D:\Launchers\Battle.net Launcher.exe" --exec="launch WoWF""#,
+            "{uid:?} {product:?}"
+        );
+    }
     // The same id each scan, so a synced app keeps matching its game.
     assert_eq!(
         battlenet("fenris", "fen", Path::new("E:/Jeux/Diablo IV"), None)

@@ -167,6 +167,16 @@ impl VideoFrameWarp {
         }
     }
 
+    /// Releases GPU passes and remembered device-failure state on capture
+    /// generation reset so no dead `ID3D11Device` or capture texture survives
+    /// `release_generation`, while keeping the off-thread learning worker.
+    #[allow(dead_code)]
+    pub(crate) fn reset(&mut self) {
+        self.passes = None;
+        self.failed_on = None;
+        self.mask_due = None;
+    }
+
     /// The passes stop on this graphics device, loudly; the stream goes on without them.
     fn fail(&mut self, s: &Session, image: &GpuImage, error: &anyhow::Error) {
         tracing::warn!(
@@ -454,5 +464,21 @@ mod tests {
         store(Some("uuid:b")).save(prior(2.5));
         assert_eq!(store(Some("uuid:b")).load(), Some(prior(2.5)));
         let _ = std::fs::remove_dir_all(&directory);
+    }
+
+    #[test]
+    fn reset_clears_gpu_state_and_mask_timer_while_keeping_session_flags() {
+        let mut warp = VideoFrameWarp {
+            mask_due: Some(Instant::now()),
+            picture: Some(((1920, 1080), (1920, 1080))),
+            stopped: true,
+            ..VideoFrameWarp::default()
+        };
+        warp.reset();
+        assert!(warp.passes.is_none());
+        assert!(warp.failed_on.is_none());
+        assert!(warp.mask_due.is_none());
+        assert!(warp.stopped);
+        assert_eq!(warp.picture, Some(((1920, 1080), (1920, 1080))));
     }
 }

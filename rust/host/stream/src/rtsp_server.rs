@@ -394,43 +394,6 @@ async fn connection(
                         &launch.warnings,
                     );
                     negotiated.validate()?;
-                    if negotiated.chroma_packing != 0 {
-                        anyhow::ensure!(
-                            config.packed_444(),
-                            "experimental packed 4:4:4 is disabled on the host"
-                        );
-                        let mode = rubylight_protocol::packed444::mode_bit(
-                            negotiated.codec,
-                            negotiated.ten_bit(),
-                        );
-                        anyhow::ensure!(
-                            h.packed_modes.load(std::sync::atomic::Ordering::Acquire) & mode != 0,
-                            "requested packed codec or bit depth failed the host hardware probe"
-                        );
-                        // Initialize the requested coded geometry and rate before accepting PLAY.
-                        let probe_config = config.clone();
-                        let probe_negotiated = negotiated.clone();
-                        tokio::task::spawn_blocking(move || {
-                            butterpollo_win_graphics::codec_probe::packed_with(
-                                &probe_config,
-                                &probe_negotiated,
-                                &|| false,
-                                &crate::win_bridge::HostUserLauncher,
-                            )
-                        })
-                        .await
-                        .context("packed 4:4:4 probe did not finish")?
-                        .with_context(|| {
-                            format!(
-                                "packed 4:4:4 probe failed for {}x{} at {} fps, {}-bit {}",
-                                negotiated.width,
-                                negotiated.height,
-                                negotiated.fps,
-                                if negotiated.ten_bit() { 10 } else { 8 },
-                                if negotiated.codec == 2 { "AV1" } else { "HEVC" },
-                            )
-                        })?;
-                    }
                     negotiated.mic = mics.lock().unwrap().contains(&launch.id);
                     if negotiated.mic
                         && negotiated.encryption & butterpollo_session::mic::ENCRYPTION == 0
@@ -498,6 +461,52 @@ async fn connection(
                         h.record_launch_failure(&launch.client.uuid, &detail);
                         note_codec_refusal(&launch.warnings, Some(detail));
                     } else {
+                        if negotiated.chroma_packing != 0 {
+                            anyhow::ensure!(
+                                config.packed_444(),
+                                "experimental packed 4:4:4 is disabled on the host"
+                            );
+                            let mode = rubylight_protocol::packed444::mode_bit(
+                                negotiated.codec,
+                                negotiated.ten_bit(),
+                            );
+                            anyhow::ensure!(
+                                h.packed_modes.load(std::sync::atomic::Ordering::Acquire) & mode
+                                    != 0,
+                                "requested packed codec or bit depth failed the host hardware probe"
+                            );
+                            // Initialize the requested coded geometry and rate before accepting
+                            // PLAY, serialized against optional probes and active video streams.
+                            let probe_host = h.clone();
+                            let probe_config = config.clone();
+                            let probe_negotiated = negotiated.clone();
+                            tokio::task::spawn_blocking(move || {
+                                probe_host.probe_packed_for_announce(
+                                    &probe_config,
+                                    &probe_negotiated,
+                                    |cfg, neg, cancel| {
+                                        butterpollo_win_graphics::codec_probe::packed_with(
+                                            cfg,
+                                            neg,
+                                            cancel,
+                                            &crate::win_bridge::HostUserLauncher,
+                                        )
+                                    },
+                                )
+                            })
+                            .await
+                            .context("packed 4:4:4 probe did not finish")?
+                            .with_context(|| {
+                                format!(
+                                    "packed 4:4:4 probe failed for {}x{} at {} fps, {}-bit {}",
+                                    negotiated.width,
+                                    negotiated.height,
+                                    negotiated.fps,
+                                    if negotiated.ten_bit() { 10 } else { 8 },
+                                    if negotiated.codec == 2 { "AV1" } else { "HEVC" },
+                                )
+                            })?;
+                        }
                         // A retry that asks for an available codec drops the
                         // refusal the earlier attempt left on this launch.
                         note_codec_refusal(&launch.warnings, None);

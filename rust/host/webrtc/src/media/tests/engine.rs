@@ -517,3 +517,65 @@ fn av1_frames_keep_their_buffer_when_delimiters_go() {
         assert_eq!(stripped.as_ptr(), at);
     }
 }
+
+#[test]
+fn multi_frame_drain_reports_each_emitted_frames_wire_bytes_to_the_pacer() {
+    let mut link = Link::connected(spec(VideoCodec::H264, false));
+    // Queue a tiny delta frame F1 and a huge keyframe F2 back-to-back before `advance()`,
+    // reproducing `media_loop` draining multiple `Command::Video` messages together.
+    let small = h264_frame(false, 400);
+    let big = h264_frame(true, 180_000);
+    link.video(small, 0, false);
+    link.video(big, 16, true);
+
+    let mut queue = SendQueue::new(
+        Pacing::Paced {
+            configured_kbps: 20_000,
+            link_bps: 0,
+            wireless: true,
+        },
+        20_000,
+        Duration::from_millis(16),
+        false,
+        link.now,
+    );
+
+    // Advance repeatedly (just like `media_loop`), draining `queue` as packets go out.
+    let mut saw_large_frame = false;
+    for _ in 0..10 {
+        let _ = link.host.advance(link.now).unwrap();
+        let frame_wire = link.host.take_frame_wire_bytes();
+        if frame_wire > 0 {
+            queue.note_frame(frame_wire);
+            if frame_wire >= 150_000 {
+                saw_large_frame = true;
+            }
+        }
+        let mut paced_count = 0;
+        for out in link.host.drain_outgoing() {
+            if out.paced {
+                paced_count += 1;
+            }
+            queue.push(out);
+        }
+        // A lone large keyframe must NEVER trip `backlog_exceeded` even after F1 drained `queue`.
+        assert!(
+            !queue.backlog_exceeded(),
+            "lone keyframe tripped backlog_exceeded (frame_wire={frame_wire}, paced_wire={})",
+            queue.paced_wire_bytes
+        );
+        if paced_count > 0 {
+            // Drain all queued packets (simulating F1 finishing before F2 is emitted next tick).
+            while let Some(due) = queue.due(link.now) {
+                link.now = link.now.max(due);
+                let batch = queue.next_batch(link.now);
+                queue.sent(link.now, &batch);
+            }
+        }
+        link.now += Duration::from_millis(1);
+    }
+    assert!(
+        saw_large_frame,
+        "expected F2's large wire-byte count to be reported on its own advance() turn"
+    );
+}

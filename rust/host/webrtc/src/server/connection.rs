@@ -168,8 +168,8 @@ pub(super) async fn connection(
             .client
             .is_none()
             .then_some(state.unauthenticated_until);
-        // Biased: a host-side close, a pairing result and the idle limit are
-        // answered before a busy peer's next message.
+        // Biased: a host-side close, console revocation, a pairing result and the
+        // idle limit are answered before a busy peer's next message.
         tokio::select! {
             biased;
             Some(reason) = closed.recv() => {
@@ -185,6 +185,17 @@ pub(super) async fn connection(
                     }
                     Close::TooManyUnauthenticated => flow = Flow::Close,
                 }
+            }
+            reason = console_revoked(&h, &mut signed_in) => {
+                tracing::info!(peer = %peer.address, id, reason, "WebRTC console connection closed");
+                let _ = send(&mut socket, &mut out).await;
+                let _ = socket
+                    .send(Message::Close(Some(CloseFrame {
+                        code: close_code::POLICY,
+                        reason: reason.into(),
+                    })))
+                    .await;
+                break;
             }
             Some(message) = replied.recv() => out.push(message),
             outcome = state.pairing_outcome() => flow = state.finish_pairing(outcome, &mut out),
@@ -206,17 +217,6 @@ pub(super) async fn connection(
                 Some(Ok(_)) => {}
             },
             _ = tick.tick() => state.refresh_capabilities(&mut out),
-            reason = console_revoked(&h, &mut signed_in) => {
-                tracing::info!(peer = %peer.address, id, reason, "WebRTC console connection closed");
-                let _ = send(&mut socket, &mut out).await;
-                let _ = socket
-                    .send(Message::Close(Some(CloseFrame {
-                        code: close_code::POLICY,
-                        reason: reason.into(),
-                    })))
-                    .await;
-                break;
-            }
         }
     }
     drop(state);

@@ -150,43 +150,65 @@ pub enum StopStreams {
     /// A stream worker outlived the wait.
     TimedOut,
 }
-/// Stop every stream, and the running app with them when `terminate_app` names the client asking,
-/// as the `cancel` request does, for WebRTC's stop-host-session and switch-session. Remote Monitor
-/// and Remote Input sessions stay, and are not waited for.
+/// Stop every non-Nucleus host stream, and the running app with them when `terminate_app` names
+/// the client asking. Remote Monitor, InputOnly, and Nucleus Co-op/background sessions stay.
 pub fn stop_streams(h: &Shared, terminate_app: Option<&str>) -> StopStreams {
     if let Some(client) = terminate_app {
-        h.stop_launch(|device| same_device(device, client));
+        return stop_streams_for(h, client, true);
     }
     let _transition = h.launch_transition.lock().unwrap();
-    if let Some(ids) = terminate_app.and_then(|client| quit_nucleus_player(h, client, false, false))
-    {
+    stop_host_streams_locked(h, None)
+}
+
+/// Stop streams on behalf of `client` (WebRTC `switch-session` with `stop_app = false` or `true`,
+/// and `stop-host-session` with `stop_app = true`). Always enforces Nucleus player scoping,
+/// `terminate_refused` (game owner / Remote Monitor / Continue Here claim), and WebRTC stream
+/// exclusivity on non-terminating switches, while leaving concurrent Nucleus Co-op/background,
+/// Remote Monitor, and InputOnly sessions untouched.
+pub fn stop_streams_for(h: &Shared, client: &str, stop_app: bool) -> StopStreams {
+    h.stop_launch(|device| same_device(device, client));
+    let _transition = h.launch_transition.lock().unwrap();
+    if let Some(ids) = quit_nucleus_player(h, client, false, false) {
         return if wait_for_teardown(&h.sessions, &ids, Duration::from_secs(10)) {
             StopStreams::Stopped
         } else {
             StopStreams::TimedOut
         };
     }
-    if terminate_app.is_some_and(|client| terminate_refused(h, client)) {
+    if terminate_refused(h, client) {
         return StopStreams::Refused;
     }
-    if terminate_app.is_some() {
+    if !stop_app
+        && h.sessions.lock().unwrap().held_by_other(
+            Role::Stream,
+            butterpollo_session::session::Transport::WebRtc,
+            client,
+        )
+    {
+        return StopStreams::Refused;
+    }
+    if stop_app {
         // While the stream a move waited for still runs: see `Host::stop_app`.
         h.settle_move();
     }
+    stop_host_streams_locked(h, stop_app.then_some(client))
+}
+
+fn stop_host_streams_locked(h: &Shared, stop_app_for: Option<&str>) -> StopStreams {
     let (canceled, ids) = {
         let mut sessions = h.sessions.lock().unwrap();
-        // The streams `stop_role` ends, and the teardowns already under way.
+        // The host streams `stop_host_streams` ends, and the teardowns already under way.
         let ids: Vec<String> = sessions
             .active
             .values()
-            .filter(|s| s.launch.role == Role::Stream)
+            .filter(|s| s.launch.role == Role::Stream && s.launch.nucleus.is_none())
             .map(|s| s.launch.id.clone())
             .chain(sessions.teardown.keys().cloned())
             .collect();
-        (sessions.stop_role(Role::Stream, None), ids)
+        (sessions.stop_host_streams(), ids)
     };
     drop(canceled);
-    if let Some(client) = terminate_app {
+    if let Some(client) = stop_app_for {
         h.stop_app(AppStop::WebRtc(client));
     }
     if wait_for_teardown(&h.sessions, &ids, Duration::from_secs(10)) {

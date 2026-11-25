@@ -91,6 +91,10 @@ pub struct Pc {
     pub removed_in: Mutex<Vec<Option<PathBuf>>>,
     /// Why reading a game's needs fails.
     pub need_error: Mutex<Option<String>>,
+    /// How often game-folder probes ran under `Pc::as_game_user`.
+    pub user_probes: AtomicUsize,
+    /// Why `Pc::as_game_user` fails (e.g. nobody signed in).
+    pub user_probe_error: Mutex<Option<String>>,
 }
 impl Pc {
     pub fn unavailable() -> Self {
@@ -165,6 +169,8 @@ impl Pc {
             copied_while: Mutex::new(Vec::new()),
             removed_in: Mutex::new(Vec::new()),
             need_error: Mutex::new(None),
+            user_probes: AtomicUsize::new(0),
+            user_probe_error: Mutex::new(None),
         }
     }
     /// The session started last.
@@ -282,6 +288,14 @@ impl super::Pc for Pc {
             need(&self.needs),
             need(&self.folder_needs),
         ]))
+    }
+    fn as_game_user(&self, work: &mut dyn FnMut()) -> Result<()> {
+        self.user_probes.fetch_add(1, Ordering::Relaxed);
+        if let Some(error) = self.user_probe_error.lock().unwrap().clone() {
+            anyhow::bail!(error);
+        }
+        work();
+        Ok(())
     }
     fn reads_direct_input(&self, exe: &str) -> Result<bool> {
         if let Some(error) = self.direct_input_error.lock().unwrap().clone() {

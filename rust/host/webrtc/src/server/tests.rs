@@ -400,3 +400,130 @@ fn capabilities_follow_the_amf_probe_bits() {
     let (codecs, hdr) = listed(0x30101);
     assert!(has(&codecs, "av1") && has(&hdr, "av1"));
 }
+
+#[tokio::test]
+async fn console_revocation_is_not_starved_by_continuous_websocket_pong_frames() {
+    use axum::{Router, extract::WebSocketUpgrade, routing::get};
+    use butterpollo_stream::webrtc_bridge::ConsoleSignIn;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let f = Fixture::new();
+    let h = f.host.clone();
+    let clients = crate::WebRtcRuntime::for_host(&h).clients;
+    let device = clients.console_device(&h, "owner").unwrap();
+    let client_id = device.webrtc().unwrap().0.to_owned();
+    let signed_in = Arc::new(AtomicBool::new(true));
+    let signed_in_check = signed_in.clone();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let app = Router::new().route(
+        "/ws",
+        get({
+            let h = h.clone();
+            let clients = clients.clone();
+            let name = device.name.clone();
+            move |ws: WebSocketUpgrade| {
+                let h = h.clone();
+                let clients = clients.clone();
+                let client_id = client_id.clone();
+                let name = name.clone();
+                let signed_in_check = signed_in_check.clone();
+                async move {
+                    ws.on_upgrade(move |socket| async move {
+                        let peer = Peer {
+                            address: addr,
+                            local: addr,
+                            this_pc: true,
+                        };
+                        let sign_in = ConsoleSignIn {
+                            client_id,
+                            name,
+                            peer: addr,
+                            local: addr,
+                            this_pc: true,
+                            signed_in: Box::new(move || signed_in_check.load(Ordering::Acquire)),
+                        };
+                        connection(
+                            h,
+                            clients,
+                            Limits::default(),
+                            None,
+                            peer,
+                            Some((sign_in, Duration::from_millis(20))),
+                            socket,
+                        )
+                        .await;
+                    })
+                }
+            }
+        }),
+    );
+    let server = tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+
+    let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+    stream
+        .write_all(
+            b"GET /ws HTTP/1.1\r\nHost: 127.0.0.1\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n",
+        )
+        .await
+        .unwrap();
+    let mut header = Vec::new();
+    let mut byte = [0u8; 1];
+    while !header.ends_with(b"\r\n\r\n") {
+        stream.read_exact(&mut byte).await.unwrap();
+        header.push(byte[0]);
+    }
+    assert!(
+        String::from_utf8_lossy(&header).starts_with("HTTP/1.1 101"),
+        "{}",
+        String::from_utf8_lossy(&header)
+    );
+
+    // Revoke the console sign-in, then continuously flood masked empty Pong frames
+    // so `socket.recv()` stays permanently ready.
+    signed_in.store(false, Ordering::Release);
+    let (mut reader, mut writer) = stream.into_split();
+    let flood = tokio::spawn(async move {
+        let pong = [0x8A, 0x80, 0x00, 0x00, 0x00, 0x00];
+        loop {
+            if writer.write_all(&pong).await.is_err() {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    });
+
+    let close_code = tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            let mut h2 = [0u8; 2];
+            reader.read_exact(&mut h2).await.ok()?;
+            let opcode = h2[0] & 0x0f;
+            let len = match h2[1] & 0x7f {
+                126 => {
+                    let mut ext = [0u8; 2];
+                    reader.read_exact(&mut ext).await.ok()?;
+                    usize::from(u16::from_be_bytes(ext))
+                }
+                127 => {
+                    let mut ext = [0u8; 8];
+                    reader.read_exact(&mut ext).await.ok()?;
+                    u64::from_be_bytes(ext) as usize
+                }
+                n => usize::from(n),
+            };
+            let mut payload = vec![0u8; len];
+            reader.read_exact(&mut payload).await.ok()?;
+            if opcode == 0x8 && payload.len() >= 2 {
+                return Some(u16::from_be_bytes([payload[0], payload[1]]));
+            }
+        }
+    })
+    .await
+    .expect("console_revoked was starved by continuous Pong frames");
+    assert_eq!(close_code, Some(axum::extract::ws::close_code::POLICY));
+    flood.abort();
+    server.abort();
+}

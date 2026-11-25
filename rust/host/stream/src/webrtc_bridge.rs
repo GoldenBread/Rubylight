@@ -22,9 +22,9 @@ use std::{
     net::SocketAddr,
     sync::{
         Mutex,
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        atomic::{AtomicU64, Ordering},
     },
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use tokio::sync::Notify;
 
@@ -139,30 +139,105 @@ impl WebRtcLinks {
     }
 }
 
+/// Snapshot of active browser-guest counts and invite/prepare expiry deadlines so
+/// `GuestNetworkState` evaluates expiry live without waiting for a mutation.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct GuestNetDeadlines {
+    pub joined_any: bool,
+    pub joined_internet: bool,
+    /// Latest expiry (unix seconds) among live invites, if any.
+    pub open_until_unix: Option<u64>,
+    /// Latest expiry (unix seconds) among live internet invites, if any.
+    pub internet_until_unix: Option<u64>,
+    /// Monotonic deadline of `prepare_internet()` ("On the internet" dialog).
+    pub prepared_until: Option<Instant>,
+}
+
+fn unix_now() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs())
+}
+
+fn unix_deadline(exp: u64, now_sys: SystemTime, now: Instant) -> Option<Instant> {
+    let target = UNIX_EPOCH + Duration::from_secs(exp);
+    let remaining = target.duration_since(now_sys).ok()?;
+    (!remaining.is_zero()).then(|| now + remaining)
+}
+
 /// Shared network/port-mapping state for browser guests read by `network` and `web`.
 #[derive(Default)]
 pub struct GuestNetworkState {
-    open: AtomicBool,
-    internet_wanted: AtomicBool,
+    deadlines: Mutex<GuestNetDeadlines>,
     internet_round: AtomicU64,
     mapping_notify: Notify,
 }
 
 impl GuestNetworkState {
-    pub fn open(&self) -> bool {
-        self.open.load(Ordering::Acquire)
+    pub fn update(&self, deadlines: GuestNetDeadlines) {
+        *self
+            .deadlines
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = deadlines;
     }
 
-    pub fn set_open(&self, open: bool) {
-        self.open.store(open, Ordering::Release);
+    pub fn open(&self) -> bool {
+        self.open_at(unix_now())
+    }
+
+    pub fn open_at(&self, now_unix: u64) -> bool {
+        let d = *self
+            .deadlines
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        d.joined_any || d.open_until_unix.is_some_and(|exp| now_unix < exp)
     }
 
     pub fn internet_wanted(&self) -> bool {
-        self.internet_wanted.load(Ordering::Acquire)
+        self.internet_wanted_at(unix_now(), Instant::now())
     }
 
-    pub fn set_internet_wanted(&self, wanted: bool) {
-        self.internet_wanted.store(wanted, Ordering::Release);
+    pub fn internet_wanted_at(&self, now_unix: u64, now: Instant) -> bool {
+        let d = *self
+            .deadlines
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        d.joined_internet
+            || d.internet_until_unix.is_some_and(|exp| now_unix < exp)
+            || d.prepared_until.is_some_and(|until| now < until)
+    }
+
+    /// Earliest future instant when an invite or `prepare_internet()` window
+    /// expires and can change [`Self::open`] or [`Self::internet_wanted`].
+    pub fn next_expiry(&self) -> Option<Instant> {
+        self.next_expiry_at(SystemTime::now(), Instant::now())
+    }
+
+    pub fn next_expiry_at(&self, now_sys: SystemTime, now: Instant) -> Option<Instant> {
+        let d = *self
+            .deadlines
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut earliest: Option<Instant> = None;
+        let mut consider = |at: Option<Instant>| {
+            if let Some(at) = at.filter(|&t| t > now) {
+                earliest = Some(earliest.map_or(at, |cur| cur.min(at)));
+            }
+        };
+        if !d.joined_any {
+            consider(
+                d.open_until_unix
+                    .and_then(|exp| unix_deadline(exp, now_sys, now)),
+            );
+        }
+        if !d.joined_internet {
+            consider(d.prepared_until);
+            consider(
+                d.internet_until_unix
+                    .and_then(|exp| unix_deadline(exp, now_sys, now)),
+            );
+        }
+        earliest
     }
 
     pub fn internet_round(&self) -> u64 {
@@ -297,5 +372,64 @@ impl WebRtcMediaLink for DummyMediaLink {
             }
         }
         Box::new(DummyVideoSink)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn guest_network_state_evaluates_invite_and_prepare_deadlines_live() {
+        let net = GuestNetworkState::default();
+        let now = Instant::now();
+        let sys = UNIX_EPOCH + Duration::from_secs(1_000);
+        assert!(!net.open_at(1_000));
+        assert!(!net.internet_wanted_at(1_000, now));
+        assert_eq!(net.next_expiry_at(sys, now), None);
+
+        // Prepared window alone expires automatically without any state mutation.
+        let prep_end = now + Duration::from_secs(120);
+        net.update(GuestNetDeadlines {
+            prepared_until: Some(prep_end),
+            ..Default::default()
+        });
+        assert!(!net.open_at(1_000));
+        assert!(net.internet_wanted_at(1_000, now));
+        assert_eq!(net.next_expiry_at(sys, now), Some(prep_end));
+        assert!(!net.internet_wanted_at(1_000, prep_end));
+        assert_eq!(net.next_expiry_at(sys, prep_end), None);
+
+        // Live invite + internet invite both flip closed at expiry unless a guest watches.
+        net.update(GuestNetDeadlines {
+            open_until_unix: Some(1_060),
+            internet_until_unix: Some(1_030),
+            ..Default::default()
+        });
+        assert!(net.open_at(1_029));
+        assert!(net.internet_wanted_at(1_029, now));
+        assert_eq!(
+            net.next_expiry_at(sys, now),
+            Some(now + Duration::from_secs(30))
+        );
+        assert!(net.open_at(1_030));
+        assert!(!net.internet_wanted_at(1_030, now));
+        assert!(!net.open_at(1_060));
+        assert_eq!(
+            net.next_expiry_at(UNIX_EPOCH + Duration::from_secs(1_060), now),
+            None
+        );
+
+        // Joined guests keep open/internet wanted past link expiry with no spurious wakeup.
+        net.update(GuestNetDeadlines {
+            joined_any: true,
+            joined_internet: true,
+            open_until_unix: Some(1_060),
+            internet_until_unix: Some(1_030),
+            ..Default::default()
+        });
+        assert!(net.open_at(2_000));
+        assert!(net.internet_wanted_at(2_000, now));
+        assert_eq!(net.next_expiry_at(sys, now), None);
     }
 }

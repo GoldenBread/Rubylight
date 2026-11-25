@@ -78,7 +78,10 @@ pub use pairing::pairing_id;
 use pairing::*;
 use probe::*;
 use quit::*;
-pub use quit::{StopStreams, quit_nucleus_stream, same_device, stop_streams, terminate_refused};
+pub use quit::{
+    StopStreams, quit_nucleus_stream, same_device, stop_streams, stop_streams_for,
+    terminate_refused,
+};
 pub use serverinfo::ServerInfoCache;
 #[cfg(any(test, feature = "test-support"))]
 pub use serverinfo::serverinfo_response;

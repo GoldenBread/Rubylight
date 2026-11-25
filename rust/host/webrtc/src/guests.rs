@@ -21,7 +21,7 @@ use butterpollo_session::webrtc::guests::{
 };
 use butterpollo_stream::{
     state::Session,
-    webrtc_bridge::{GuestNetworkState, InviteInfo, MAX_GUESTS},
+    webrtc_bridge::{GuestNetDeadlines, GuestNetworkState, InviteInfo, MAX_GUESTS},
 };
 use serde::Serialize;
 use std::{
@@ -217,10 +217,30 @@ impl Guests {
 
     fn sync_network(&self, inner: &mut Inner) {
         let now = unix_now();
-        let wanted = inner.internet_wanted(now, Instant::now());
-        let open = !inner.joined.is_empty() || inner.invites.live(now).next().is_some();
-        self.net.set_internet_wanted(wanted);
-        self.net.set_open(open);
+        let instant = Instant::now();
+        inner.prune(now);
+        if inner.prepared_until.is_some_and(|until| until <= instant) {
+            inner.prepared_until = None;
+        }
+        let open_until_unix = inner.invites.live(now).map(|invite| invite.expires).max();
+        let internet_until_unix = inner
+            .invites
+            .live(now)
+            .filter(|invite| inner.internet.contains(&invite.id))
+            .map(|invite| invite.expires)
+            .max();
+        let joined_any = !inner.joined.is_empty();
+        let joined_internet = inner
+            .joined
+            .values()
+            .any(|guest| inner.internet.contains(&guest.link.id));
+        self.net.update(GuestNetDeadlines {
+            joined_any,
+            joined_internet,
+            open_until_unix,
+            internet_until_unix,
+            prepared_until: inner.prepared_until,
+        });
     }
 }
 
@@ -263,6 +283,7 @@ impl Inner {
 
     /// Whether the guest ports should be mapped for the internet: the dialog asked within
     /// [`INTERNET_PREPARE`], an internet link works, or a guest who joined with one watches.
+    #[cfg(test)]
     fn internet_wanted(&mut self, now: u64, instant: Instant) -> bool {
         self.prune(now);
         if self.prepared_until.is_some_and(|until| until <= instant) {
@@ -337,9 +358,8 @@ impl Guests {
     /// Whether the guest ports should be mapped for guests on the internet now.
     pub fn internet_wanted(&self) -> bool {
         let mut inner = self.inner.lock().unwrap();
-        let wanted = inner.internet_wanted(unix_now(), Instant::now());
-        self.net.set_internet_wanted(wanted);
-        wanted
+        self.sync_network(&mut inner);
+        self.net.internet_wanted()
     }
 
     /// The last request for the guest ports ([`prepare_internet`](Self::prepare_internet) or an
@@ -511,6 +531,7 @@ impl Guests {
                 leave,
             },
         );
+        self.sync_network(&mut inner);
         Ok(Admission {
             id,
             slot,

@@ -354,10 +354,24 @@ impl Actor {
         };
         let running = running_app(&self.h);
         let same = running == Some(checked.app_id);
-        // Replacing the app ends it, which `cancel` allows its owner, or anyone with no remote
-        // session active.
-        if !same && nvhttp::terminate_refused(&self.h, &checked.client.uuid) {
+        // Replacing or taking over the running app must honor owner/remote-session/Continue Here
+        // guards and WebRTC exclusivity before stopping any stream.
+        if nvhttp::terminate_refused(&self.h, &checked.client.uuid) {
             self.say(Self::not_the_owner(KIND));
+            return Flow::Done;
+        }
+        if same
+            && self.h.sessions.lock().unwrap().held_by_other(
+                butterpollo_session::session::Role::Stream,
+                butterpollo_session::session::Transport::WebRtc,
+                &checked.client.uuid,
+            )
+        {
+            self.say(ServerMessage::error(
+                KIND,
+                ErrorCode::SessionActive,
+                "Another device is streaming over WebRTC",
+            ));
             return Flow::Done;
         }
         self.say(host_status(
@@ -370,9 +384,7 @@ impl Actor {
             Some(checked.app_id),
             None,
         ));
-        let stopped = self
-            .stop_streams((!same).then(|| checked.client.uuid.clone()))
-            .await;
+        let stopped = self.stop_streams(checked.client.uuid.clone(), !same).await;
         if stopped == StopStreams::Refused {
             self.say(Self::not_the_owner(KIND));
             return Flow::Done;
@@ -427,7 +439,7 @@ impl Actor {
             return Flow::Done;
         }
         self.say(host_status(HostSessionState::Stopping, running, None, None));
-        let stopped = self.stop_streams(Some(client.uuid)).await;
+        let stopped = self.stop_streams(client.uuid, true).await;
         if stopped == StopStreams::Refused {
             self.say(Self::not_the_owner(KIND));
             return Flow::Done;
@@ -457,10 +469,10 @@ impl Actor {
         )
     }
 
-    /// Stop every stream on the blocking pool, and the app for the client named.
-    async fn stop_streams(&self, terminate_app_for: Option<String>) -> StopStreams {
+    /// Stop host streams on the blocking pool, and the app when `stop_app` is true.
+    async fn stop_streams(&self, client: String, stop_app: bool) -> StopStreams {
         let h = self.h.clone();
-        tokio::task::spawn_blocking(move || nvhttp::stop_streams(&h, terminate_app_for.as_deref()))
+        tokio::task::spawn_blocking(move || nvhttp::stop_streams_for(&h, &client, stop_app))
             .await
             .unwrap_or(StopStreams::TimedOut)
     }

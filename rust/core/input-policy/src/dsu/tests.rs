@@ -399,3 +399,23 @@ fn clients_and_their_addresses_are_capped() {
         assert_eq!(clients.subscribers(slot, t0), vec![address(1)]);
     }
 }
+
+#[test]
+fn disconnected_pad_data_packet_clears_slot_state_and_centers_sticks() {
+    let packet = pad_data_disconnected(0x1122_3344, 2, 77);
+    assert_eq!(packet.len(), PAD_DATA_BYTES);
+    assert_eq!(&packet[..4], b"DSUS");
+    assert_eq!(
+        u32::from_le_bytes(packet[16..20].try_into().unwrap()),
+        MSG_PAD_DATA
+    );
+    assert_eq!(packet[20], 2, "slot index");
+    assert_eq!(packet[21], 0, "state = not connected");
+    assert_eq!(&packet[24..30], &[0; 6], "disconnected MAC is zeroed");
+    assert_eq!(packet[31], 0, "connected byte = 0");
+    assert_eq!(u32::from_le_bytes(packet[32..36].try_into().unwrap()), 77);
+    assert_eq!(&packet[36..40], &[0; 4], "digital buttons zeroed");
+    assert_eq!(&packet[40..44], &[128, 128, 128, 128], "sticks centered");
+    assert_eq!(&packet[44..56], &[0; 12], "analog buttons/triggers zeroed");
+    assert_eq!(&packet[56..100], &[0; 44], "touch/timestamp/motion zeroed");
+}

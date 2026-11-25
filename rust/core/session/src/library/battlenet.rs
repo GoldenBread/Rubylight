@@ -60,6 +60,7 @@ pub fn battlenet_uninstall(command: &str) -> Option<(String, String)> {
 /// Battle.net writes long uids such as `fenris` beside the code `fen`. All match in any case.
 const BATTLENET_PRODUCTS: &[(&str, &str, &[&str])] = &[
     ("WoW", "World of Warcraft", &[]),
+    ("WoWF", "World of Warcraft: Forever", &["wow_forever"]),
     ("D3", "Diablo III", &["diablo3"]),
     ("S2", "StarCraft II", &[]),
     ("S1", "StarCraft", &[]),

@@ -253,7 +253,7 @@ fn local_mac_never_reports_a_virtual_adapter() -> Result<()> {
 fn qos_leaves_clients_it_cannot_tag_alone() -> Result<()> {
     let socket = UdpSocket::bind("127.0.0.1:0")?;
     assert!(QosFlow::new(&socket, "127.0.0.1:9".parse()?, false)?.is_none());
-    let dual = UdpSocket::bind("[::]:0")?;
+    let dual = UdpSocket::bind("[::1]:0")?;
     assert!(QosFlow::new(&dual, "[::ffff:192.0.2.10]:9".parse()?, true)?.is_none());
     Ok(())
 }

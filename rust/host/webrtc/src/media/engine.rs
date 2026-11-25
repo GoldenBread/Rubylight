@@ -1,9 +1,6 @@
 //! Sans-IO str0m [`Engine`], RTP timestamping, DataChannel lifecycle and AV1 OBU stripping.
 
-use super::{
-    DATAGRAM_TARGET, DISCONNECT_TIMEOUT, Datagram, IdrReason, Outgoing, RTP_PAYLOAD_TARGET,
-    TransportEvent, VideoFrame,
-};
+use super::{DISCONNECT_TIMEOUT, Datagram, IdrReason, Outgoing, TransportEvent, VideoFrame};
 use crate::sdp::{
     AUDIO_PT, CONTROL_LABEL, GAMEPAD_LABEL, INPUT_LABEL, OfferSpec, SessionIds, VIDEO_PT,
     VideoCodec,
@@ -110,7 +107,11 @@ pub struct Engine {
     closed: bool,
     /// Since when the ICE path has been down, while it is.
     pub(super) disconnected_since: Option<Instant>,
-    /// Wire bytes of the biggest frame written since [`Engine::take_frame_wire_bytes`].
+    /// RTP timestamp and accumulated wire bytes of the video frame currently being emitted in `poll`.
+    emitting_rtp_ts: Option<u32>,
+    emitting_frame_bytes: usize,
+    /// Wire bytes of the biggest video frame emitted by `advance()` since
+    /// [`Engine::take_frame_wire_bytes`].
     frame_wire_bytes: usize,
     /// Datagrams that reached the socket, whoever sent them.
     pub(super) received: u64,
@@ -149,6 +150,8 @@ impl Engine {
             connected: false,
             closed: false,
             disconnected_since: None,
+            emitting_rtp_ts: None,
+            emitting_frame_bytes: 0,
             frame_wire_bytes: 0,
             received: 0,
             rejected: 0,
@@ -277,6 +280,19 @@ impl Engine {
                     let data: Vec<u8> = t.contents.into();
                     // Only video waits for the pacer. The payload type sits in the clear.
                     let paced = is_media_rtp(&data) && data[1] & 0x7f != AUDIO_PT;
+                    if paced {
+                        let ts = u32::from_be_bytes([data[4], data[5], data[6], data[7]]);
+                        let wire = data.len()
+                            + network_pacing::overhead(t.destination.ip().to_canonical().is_ipv6());
+                        if self.emitting_rtp_ts == Some(ts) {
+                            self.emitting_frame_bytes += wire;
+                        } else {
+                            self.emitting_rtp_ts = Some(ts);
+                            self.emitting_frame_bytes = wire;
+                        }
+                        self.frame_wire_bytes =
+                            self.frame_wire_bytes.max(self.emitting_frame_bytes);
+                    }
                     self.outgoing.push_back(Outgoing {
                         destination: t.destination,
                         data,
@@ -441,7 +457,6 @@ impl Engine {
         if !self.is_connected() {
             return Ok(false);
         }
-        let packets = frame.data.len().div_ceil(RTP_PAYLOAD_TARGET).max(1);
         // The conversion str0m's writer makes of a `Vec` anyway; a shared frame has it done.
         let data = frame.data.share(self.codec)?;
         let time = MediaTime::new(
@@ -460,8 +475,6 @@ impl Engine {
                 data,
             )
             .map_err(|e| anyhow!("video write failed: {e}"))?;
-        let wire = packets * (DATAGRAM_TARGET + network_pacing::overhead(self.local.is_ipv6()));
-        self.frame_wire_bytes = self.frame_wire_bytes.max(wire);
         Ok(true)
     }
 

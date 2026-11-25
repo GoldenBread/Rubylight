@@ -225,6 +225,42 @@ impl Host {
         }
     }
 
+    /// Runs a per-ANNOUNCE packed 4:4:4 probe serialized against background
+    /// optional probes and concurrent ANNOUNCEs (`optional_probe`), and skips
+    /// hardware probing while another video stream is active to avoid
+    /// concurrent AMD AMF encoder sessions.
+    pub(crate) fn probe_packed_for_announce(
+        &self,
+        config: &Config,
+        negotiated: &butterpollo_media_policy::rtsp::Negotiated,
+        probe: impl FnOnce(
+            &Config,
+            &butterpollo_media_policy::rtsp::Negotiated,
+            &dyn Fn() -> bool,
+        ) -> Result<()>,
+    ) -> Result<()> {
+        use std::sync::atomic::Ordering;
+        let _probe = self.optional_probe.lock().unwrap();
+        let active_video = || {
+            self.sessions.lock().unwrap().active.values().any(|s| {
+                !s.stopping() && s.launch.role != butterpollo_session::session::Role::InputOnly
+            })
+        };
+        if active_video() {
+            tracing::info!(
+                width = negotiated.width,
+                height = negotiated.height,
+                fps = negotiated.fps,
+                codec = negotiated.codec,
+                "skipping packed 4:4:4 ANNOUNCE hardware probe while another video stream is active"
+            );
+            return Ok(());
+        }
+        probe(config, negotiated, &|| {
+            self.stop.load(Ordering::Acquire) || active_video()
+        })
+    }
+
     /// Offer what a probe of the `probed` modes found, beside the modes it
     /// did not probe, narrowed to the modes the settings saved by now allow:
     /// a save during the probe that turned a mode off withdrew it, and one
@@ -364,5 +400,60 @@ pub(super) fn packed_mode_names(modes: u8) -> String {
         "none".into()
     } else {
         names.join(", ")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state::test_support::Fixture;
+    use butterpollo_session::session::Role;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+    #[test]
+    fn announce_packed_probe_serializes_with_optional_probe_and_skips_when_video_active() {
+        let f = Fixture::new();
+        let config = Config::default();
+        let negotiated = butterpollo_media_policy::rtsp::Negotiated::default();
+
+        // While an active video stream runs, hardware probing is skipped to avoid AMD hangs.
+        let active = f.session(f.client(u32::MAX), Role::Stream);
+        let called = AtomicUsize::new(0);
+        f.host
+            .probe_packed_for_announce(&config, &negotiated, |_, _, _| {
+                called.fetch_add(1, Ordering::Relaxed);
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(called.load(Ordering::Relaxed), 0);
+        f.host
+            .sessions
+            .lock()
+            .unwrap()
+            .active
+            .remove(&active.launch.id);
+
+        // An InputOnly session has no video encoder, so probing still runs.
+        let _input_only = f.session(f.client(u32::MAX), Role::InputOnly);
+        // Holding `optional_probe` blocks the announce probe until released.
+        let guard = f.host.optional_probe.lock().unwrap();
+        let entered = Arc::new(AtomicBool::new(false));
+        let host = f.host.clone();
+        let entered_bg = entered.clone();
+        let handle = std::thread::spawn(move || {
+            host.probe_packed_for_announce(&Config::default(), &Default::default(), |_, _, _| {
+                entered_bg.store(true, Ordering::Release);
+                Ok(())
+            })
+            .unwrap();
+        });
+        std::thread::sleep(Duration::from_millis(30));
+        assert!(
+            !entered.load(Ordering::Acquire),
+            "ANNOUNCE packed probe must wait for optional_probe lock"
+        );
+        drop(guard);
+        handle.join().unwrap();
+        assert!(entered.load(Ordering::Acquire));
     }
 }

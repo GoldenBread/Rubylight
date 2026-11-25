@@ -141,6 +141,13 @@ pub trait Pc: Send + Sync {
     /// whether the signed-in user may change its folder's files as Nucleus
     /// does (a walk of the folder: at launch, not for the console).
     fn game_need(&self, exe: &str, folder: bool) -> Result<Need>;
+    /// Runs a game-folder filesystem probe as the signed-in user so a host
+    /// running as SYSTEM never traverses a user-writable game folder (or a
+    /// junction inside it) with SYSTEM credentials.
+    fn as_game_user(&self, work: &mut dyn FnMut()) -> Result<()> {
+        work();
+        Ok(())
+    }
     /// Whether the game at `exe` imports DirectInput, read as the signed-in
     /// user.
     fn reads_direct_input(&self, exe: &str) -> Result<bool>;

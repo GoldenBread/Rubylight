@@ -69,7 +69,17 @@ impl Pc for OnPc {
                 })
             })?;
         refuse_path(exe).map_err(|missing| Refusal::missing(&missing))?;
-        if !Path::new(exe).is_file() {
+        let mut is_file = false;
+        self.as_game_user(&mut || {
+            is_file = Path::new(exe).is_file();
+        })
+        .map_err(|error| {
+            Refusal::unavailable(format!(
+                "Rubylight could not check {} as the signed-in user: {error:#}",
+                file_name(exe)
+            ))
+        })?;
+        if !is_file {
             return Err(Refusal::not_found(not_on_this_pc(exe)));
         }
         // An .exe in a Steam library is its Steam app's, as a link would be.
@@ -94,6 +104,9 @@ impl Pc for OnPc {
                 ..Setup::new(exe, &app.name, None)
             },
         })
+    }
+    fn as_game_user(&self, work: &mut dyn FnMut()) -> Result<()> {
+        butterpollo_win_io::user_folder::as_user(work).map_err(|error| anyhow::anyhow!("{error}"))
     }
     fn account(&self) -> Result<Account> {
         butterpollo_win_io::process::user_account()

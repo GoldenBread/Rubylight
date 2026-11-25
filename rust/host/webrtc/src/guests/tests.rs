@@ -441,3 +441,53 @@ async fn an_internet_link_keeps_the_guest_ports_wanted_while_it_works_or_its_gue
     assert!(guests.revoke(&other.id));
     assert!(!guests.internet_wanted());
 }
+
+#[test]
+fn shared_guest_network_state_expires_without_polling_guests() {
+    let net = Arc::new(GuestNetworkState::default());
+    let guests = Guests::with_network(net.clone());
+    guests.owner_started(owner());
+
+    // prepare_internet expires automatically on `net` with zero calls back into `Guests`.
+    guests.prepare_internet();
+    let now = Instant::now();
+    assert!(net.internet_wanted_at(unix_now(), now));
+    assert!(net.next_expiry().is_some());
+    let after_prepare = now + INTERNET_PREPARE + Duration::from_secs(1);
+    assert!(!net.internet_wanted_at(unix_now(), after_prepare));
+
+    // An internet invite expires automatically on `net`, unless a guest joined with it.
+    let (invite, token) = guests
+        .create_for(Permission::View, MIN_LIFETIME, None, true)
+        .unwrap();
+    let after_invite = invite.expires;
+    assert!(net.open_at(invite.expires - 1));
+    assert!(net.internet_wanted_at(invite.expires - 1, now));
+    assert!(!net.open_at(after_invite));
+    assert!(!net.internet_wanted_at(after_invite, now));
+
+    // Once a guest joins, `sync_network` marks them joined so expiry does not drop their ports.
+    let admitted = join(&guests, v4(9), &token, now).unwrap();
+    assert!(net.open_at(after_invite + 60));
+    assert!(net.internet_wanted_at(after_invite + 60, now));
+    guests.left(admitted.id);
+    assert!(!net.open_at(after_invite + 60));
+    assert!(!net.internet_wanted_at(after_invite + 60, now));
+}
+
+#[test]
+fn connecting_a_guest_requests_keyframe_immediately_without_prior_throttle_burn() {
+    use butterpollo_session::session::Role;
+    use butterpollo_stream::state::test_support::Fixture;
+    let f = Fixture::new();
+    let session = f.session(f.client(u32::MAX), Role::Stream);
+    // Clear initial stream-start IDR flag.
+    assert!(session.idr.swap(false, std::sync::atomic::Ordering::AcqRel));
+    let guests = Guests::default();
+    let now = Instant::now();
+    // Without a premature pre-ICE keyframe call, Connected triggers an IDR on the first tick.
+    assert!(guests.keyframe(&Arc::downgrade(&session), now));
+    assert!(session.idr.load(std::sync::atomic::Ordering::Acquire));
+    // A second request within KEYFRAME_INTERVAL is throttled (confirming why pre-ICE burn broke it).
+    assert!(!guests.keyframe(&Arc::downgrade(&session), now + Duration::from_millis(100)));
+}

@@ -533,9 +533,14 @@ impl Registry {
             return own_status(self.pc().as_ref(), app).map_err(|no| no.missing);
         };
         refuse_path(exe)?;
-        let modified = std::fs::metadata(exe)
-            .and_then(|metadata| metadata.modified())
-            .ok();
+        let pc = self.pc();
+        let modified = apps::probe_as_user(pc.as_ref(), || {
+            std::fs::metadata(exe)
+                .and_then(|metadata| metadata.modified())
+                .ok()
+        })
+        .ok()
+        .flatten();
         let fresh = |status: &&OwnStatus| {
             status.modified == modified && status.at.elapsed() < OWN_STATUS_TTL
         };
@@ -548,7 +553,7 @@ impl Registry {
         {
             return status.status.clone();
         }
-        let status = own_status(self.pc().as_ref(), app);
+        let status = own_status(pc.as_ref(), app);
         let lasting = status.as_ref().err().is_none_or(|no| no.lasting);
         let status = status.map_err(|no| no.missing);
         let mut statuses = self

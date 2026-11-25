@@ -153,7 +153,7 @@ impl RunningApp {
     /// devices game-only audio sets. None for an app without one (Desktop, a
     /// detached command).
     pub fn game_pids(&self) -> Result<Vec<u32>> {
-        if self.steam.is_none() && self.playnite.is_none() && self.child.is_none() {
+        if !self.has_game_process() {
             return Ok(Vec::new());
         }
         let (owned, processes) = self.game_processes()?;
@@ -484,7 +484,7 @@ impl RunningApp {
                 {
                     std::fs::create_dir_all(parent)?;
                 }
-                format!("({}) 1>>\"{}\" 2>&1", app.cmd, output)
+                redirected_command(&app.cmd, output)
             } else {
                 app.cmd.clone()
             };
@@ -525,5 +525,14 @@ impl RunningApp {
         self.game_seen = true;
     }
 }
+
+/// Wraps `cmd` with output redirection after applying `shell_command` so URI
+/// schemes (`steam://`, `ms-settings:`) and `.lnk`/document targets still open
+/// through `cmd /c start` instead of having a leading `(` break scheme parsing.
+pub(crate) fn redirected_command(cmd: &str, output: &str) -> String {
+    let inner = butterpollo_win_io::process::shell_command(cmd);
+    format!("({inner}) 1>>\"{output}\" 2>&1")
+}
+
 #[cfg(test)]
 mod tests;

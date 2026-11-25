@@ -202,38 +202,48 @@ impl InlineSender {
                 let count = butterpollo_win_io::net::Batch::count(remaining, budget);
                 let send_started = Instant::now();
                 let refused = self.batch.dropped;
-                let bytes = match self
+                let (bytes, sent_count) = match self
                     .send_outage
                     .filter(|outage| outage.active(self.start, Instant::now()))
                 {
                     // Lost after the socket: counted as sent, only the client sees it.
                     Some(outage) if outage.in_air() => {
-                        remaining[..count].iter().map(Vec::len).sum()
+                        (remaining[..count].iter().map(Vec::len).sum(), count)
                     }
                     Some(_) => {
                         self.batch.refuse(count);
-                        0
+                        (0, 0)
                     }
                     None => match self.send_drop.as_mut() {
-                        Some(drop) => slices::send_lossy(
-                            &mut self.batch,
-                            &ctx.m.video,
-                            &remaining[..count],
-                            peer,
-                            drop,
-                        )?,
-                        None => self.batch.send(&ctx.m.video, &remaining[..count], peer)?,
+                        Some(drop) => {
+                            let bytes = slices::send_lossy(
+                                &mut self.batch,
+                                &ctx.m.video,
+                                &remaining[..count],
+                                peer,
+                                drop,
+                            )?;
+                            let sent =
+                                count.saturating_sub((self.batch.dropped - refused) as usize);
+                            (bytes, sent)
+                        }
+                        None => {
+                            let bytes = self.batch.send(&ctx.m.video, &remaining[..count], peer)?;
+                            (bytes, self.batch.sent_packets().min(count))
+                        }
                     },
                 };
-                if bytes > 0 {
-                    ctx.s.record_transport_sent(
-                        &remaining[..count],
-                        butterpollo_media_policy::network_pacing::overhead(
-                            peer.ip().to_canonical().is_ipv6(),
-                        ),
-                    );
-                }
+                let ipv6 = peer.ip().to_canonical().is_ipv6();
                 let finished = Instant::now();
+                super::record_inline_sent(
+                    ctx.s,
+                    &mut self.network_pacer,
+                    &remaining[..count],
+                    (bytes, sent_count),
+                    ipv6,
+                    bps,
+                    finished,
+                );
                 first_sent.get_or_insert(finished);
                 send_time += finished.duration_since(send_started);
                 if self.trace_send {
@@ -244,13 +254,6 @@ impl InlineSender {
                 remaining = &remaining[count..];
                 sent_packets += count;
                 sent_bytes += bytes;
-                self.network_pacer.sent(
-                    Instant::now(),
-                    bytes,
-                    if bytes > 0 { count } else { 0 },
-                    peer.ip().to_canonical().is_ipv6(),
-                    bps,
-                );
                 ctx.s
                     .stats
                     .packets

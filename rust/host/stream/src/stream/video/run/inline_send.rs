@@ -335,3 +335,79 @@ impl InlineSender {
         routed
     }
 }
+
+/// Records only the `sent_count` packets that actually reached the socket
+/// (clamped to `packets.len()`) into congestion tracking and network pacing,
+/// matching `video_send::transport`.
+pub(super) fn record_inline_sent(
+    session: &Session,
+    pacer: &mut butterpollo_media_policy::network_pacing::Pacer,
+    packets: &[Vec<u8>],
+    (sent_bytes, sent_count): (usize, usize),
+    ipv6: bool,
+    bps: u64,
+    now: Instant,
+) {
+    let sent = sent_count.min(packets.len());
+    if sent > 0 {
+        session.record_transport_sent(
+            &packets[..sent],
+            butterpollo_media_policy::network_pacing::overhead(ipv6),
+        );
+    }
+    pacer.sent(now, sent_bytes, sent, ipv6, bps);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state::test_support::Fixture;
+    use butterpollo_session::session::Role;
+
+    #[test]
+    fn partial_batch_send_records_only_packets_that_reached_the_socket() {
+        let f = Fixture::new();
+        let session = f.session(f.client(u32::MAX), Role::Stream);
+        let mut pacer = butterpollo_media_policy::network_pacing::Pacer::new(Instant::now());
+        // Construct 4 synthetic RTP-like packets with sequence numbers 1..=4.
+        let packets: Vec<Vec<u8>> = (1u16..=4)
+            .map(|seq| {
+                let mut p = vec![0u8; 1024];
+                p[0] = 0x80;
+                p[2..4].copy_from_slice(&seq.to_be_bytes());
+                p
+            })
+            .collect();
+        let now = Instant::now();
+        // Simulate a partial batch where only 2 of 4 packets left the socket.
+        record_inline_sent(
+            &session,
+            &mut pacer,
+            &packets,
+            (2048, 2),
+            false,
+            80_000_000,
+            now,
+        );
+        // Pacer due time must reflect 2 packets' overhead, not 4.
+        let expected_wire = 2048 + 2 * butterpollo_media_policy::network_pacing::overhead(false);
+        let expected_ns = (expected_wire as f64 * 8.0 / 80_000_000.0 * 1e9) as u64;
+        let actual_ns = pacer.due().saturating_duration_since(now).as_nanos() as u64;
+        assert!(
+            actual_ns.abs_diff(expected_ns) <= 2_000,
+            "expected ~{expected_ns} ns for 2 packets, got {actual_ns} ns"
+        );
+        // Zero sent packets must not advance the pacer.
+        let due_before = pacer.due();
+        record_inline_sent(
+            &session,
+            &mut pacer,
+            &packets,
+            (0, 0),
+            false,
+            80_000_000,
+            now,
+        );
+        assert_eq!(pacer.due(), due_before);
+    }
+}

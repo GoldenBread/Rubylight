@@ -307,6 +307,19 @@ impl<P, A> Sessions<P, A> {
         }
         canceled
     }
+    /// Stop non-Nucleus host `Role::Stream` sessions and pending launches without
+    /// disrupting concurrent Nucleus Co-op/background, Remote Monitor, or InputOnly sessions.
+    #[must_use = "drop canceled launches after releasing the sessions lock"]
+    pub fn stop_host_streams(&mut self) -> Vec<Launch<P, A>> {
+        let host_stream = |l: &Launch<P, A>| l.role == Role::Stream && l.nucleus.is_none();
+        let canceled = self.remove_pending(host_stream);
+        for s in self.active.values() {
+            if host_stream(&s.launch) {
+                s.stop();
+            }
+        }
+        canceled
+    }
 }
 
 #[cfg(test)]

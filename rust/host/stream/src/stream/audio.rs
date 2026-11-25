@@ -290,6 +290,11 @@ impl Media {
         let silence = couch.silence(frames);
         // Each pass's packets, in room kept from pass to pass.
         let mut packets = audio_sink::Packets::default();
+        // Passthrough codecs (32 ms AC3/E-AC3) tap audio haptics at 5 ms cadence
+        // before accumulating full 1536-frame packets, avoiding Tap::KEEP truncation.
+        let mut assembler = (frames > 480).then(|| {
+            audio_sink::ChunkAssembler::new(audio_sink::HAPTICS_TAP_FRAMES, frames, client_channels)
+        });
         while !s.stopping() && !h.stop.load(Ordering::Acquire) {
             // The wait runs to the earliest deadline, not on a fixed tick: the
             // next packet deadline, or the once-a-second device check when that
@@ -324,6 +329,9 @@ impl Media {
                 game_capture.update(&s, &mut capture, &mut |mut old| {
                     let waited = old.since_drained();
                     audio_sink::retire(&mut old, waited, &mut loss, &mut pace, Instant::now());
+                    if let Some(assembler) = &mut assembler {
+                        pace.host_dropped(assembler.discard_frames());
+                    }
                 });
             }
             if !muted && !game_audio && Instant::now() >= audio_check {
@@ -383,6 +391,9 @@ impl Media {
                                 &mut pace,
                                 Instant::now(),
                             );
+                            if let Some(assembler) = &mut assembler {
+                                pace.host_dropped(assembler.discard_frames());
+                            }
                         }
                         sink = selected;
                     }
@@ -437,37 +448,65 @@ impl Media {
             // Every whole packet the endpoint has delivered goes out at once, as
             // Sunshine sends them. On a fixed tick each waited up to a packet,
             // and a tick just before a late chunk sent silence in its place.
-            audio_sink::collect_into(
-                &mut capture,
-                frames,
-                &mut loss,
-                &mut pace,
-                &silence,
-                Instant::now,
-                |error| {
-                    let recovery = if game_audio {
-                        "sending silence until a verified game process can be captured again. No system audio is captured. Check the game's launch entry if this repeats."
-                    } else {
-                        "reopening WASAPI and sending silence until it recovers. Check the playback device if this repeats."
-                    };
-                    s.launch.warnings.set(
-                        "audio_capture",
-                        format!("Audio capture interrupted ({error:#}); {recovery}"),
-                    );
-                    // The capture is gone: open it again on the next pass, not at the next
-                    // once-a-second check.
-                    audio_check = audio_sink::reopen_check(audio_check, capture_opened);
-                },
-                &mut packets,
-            );
+            let mut on_interrupted = |error: &anyhow::Error| {
+                let recovery = if game_audio {
+                    "sending silence until a verified game process can be captured again. No system audio is captured. Check the game's launch entry if this repeats."
+                } else {
+                    "reopening WASAPI and sending silence until it recovers. Check the playback device if this repeats."
+                };
+                s.launch.warnings.set(
+                    "audio_capture",
+                    format!("Audio capture interrupted ({error:#}); {recovery}"),
+                );
+                // The capture is gone: open it again on the next pass, not at the next
+                // once-a-second check.
+                audio_check = audio_sink::reopen_check(audio_check, capture_opened);
+            };
+            let pre_processed = if let Some(assembler) = &mut assembler {
+                audio_sink::collect_chunked_into(
+                    &mut capture,
+                    assembler,
+                    &mut loss,
+                    &mut pace,
+                    &silence,
+                    Instant::now,
+                    &mut on_interrupted,
+                    |chunk| {
+                        couch.process(&s.audio, &s.launch.warnings, chunk);
+                        if ready {
+                            s.audio_haptics.push(chunk, client_channels);
+                        }
+                    },
+                    &mut packets,
+                )
+            } else {
+                audio_sink::collect_into(
+                    &mut capture,
+                    frames,
+                    &mut loss,
+                    &mut pace,
+                    &silence,
+                    Instant::now,
+                    &mut on_interrupted,
+                    &mut packets,
+                );
+                0
+            };
             if let (Some(cadence), Some(capturing)) = (&mut cadence, &mut capture) {
                 capturing.drain_trace(&mut cadence.trace);
             }
             let now = Instant::now();
             if ready {
                 output.begin_pass();
-                for (samples, &at) in packets.samples.iter_mut().zip(&packets.positions) {
-                    couch.process(&s.audio, &s.launch.warnings, samples);
+                for (index, (samples, &at)) in packets
+                    .samples
+                    .iter_mut()
+                    .zip(&packets.positions)
+                    .enumerate()
+                {
+                    if index >= pre_processed {
+                        couch.process(&s.audio, &s.launch.warnings, samples);
+                    }
                     for _ in 0..encoder.send(output.as_mut(), samples, now, at)? {
                         loss.unsent();
                     }
@@ -481,7 +520,17 @@ impl Media {
                     }
                     // Haptics from game audio analyse a copy of what went out,
                     // on the control thread; one atomic load while unused.
-                    s.audio_haptics.push(samples, client_channels);
+                    if index >= pre_processed {
+                        if frames > 480 {
+                            for chunk in
+                                samples.chunks(audio_sink::HAPTICS_TAP_FRAMES * client_channels)
+                            {
+                                s.audio_haptics.push(chunk, client_channels);
+                            }
+                        } else {
+                            s.audio_haptics.push(samples, client_channels);
+                        }
+                    }
                 }
             }
             let now = Instant::now();
@@ -495,5 +544,121 @@ impl Media {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::audio_sink::{
+        AudioCapture, AudioPace, ChunkAssembler, HAPTICS_TAP_FRAMES, Packets, collect_chunked_into,
+    };
+    use anyhow::Result;
+    use butterpollo_input_policy::audio_haptics::{Arbiter, Settings, Tap};
+    use butterpollo_input_policy::haptics;
+    use butterpollo_input_policy::input::Input;
+    use butterpollo_media_policy::audio::HostLoss;
+    use std::collections::VecDeque;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn chunked_passthrough_taps_audio_haptics_at_5ms_without_truncation() {
+        struct FakeCapture {
+            channels: usize,
+            queued: VecDeque<f32>,
+        }
+        impl AudioCapture for FakeCapture {
+            fn since_drained(&mut self) -> Option<Duration> {
+                None
+            }
+            fn read_into(&mut self, frames: usize, out: &mut Vec<f32>) -> Result<bool> {
+                let need = frames * self.channels;
+                if self.queued.len() < need {
+                    return Ok(false);
+                }
+                out.clear();
+                out.extend(self.queued.drain(..need));
+                Ok(true)
+            }
+            fn take_delivered(&mut self) -> Option<Duration> {
+                None
+            }
+            fn buffer(&self) -> Duration {
+                Duration::from_millis(20)
+            }
+            fn take_trimmed(&mut self) -> u64 {
+                0
+            }
+            fn take_discarded(&mut self) -> u64 {
+                (self.queued.len() / self.channels) as u64
+            }
+        }
+
+        let channels = 6usize;
+        let target_frames = 1536usize; // 32 ms AC3/E-AC3 passthrough
+        let mut capture = Some(FakeCapture {
+            channels,
+            queued: VecDeque::new(),
+        });
+        let mut assembler = ChunkAssembler::new(HAPTICS_TAP_FRAMES, target_frames, channels);
+        let mut loss = HostLoss::default();
+        let base = Instant::now();
+        let mut pace = AudioPace::new(base, Duration::from_millis(32), target_frames);
+        let silence = vec![0.0; target_frames * channels];
+        let mut packets = Packets::default();
+        let tap = Tap::default();
+        let mut arbiter = Arbiter::default();
+        arbiter.set_settings(Settings {
+            enabled: true,
+            ..Settings::default()
+        });
+        arbiter.input(&Input::Arrival {
+            id: 0,
+            kind: 2,
+            capabilities: haptics::CAPABILITY,
+            buttons: 0,
+        });
+        assert!(arbiter.generate(true, &tap, base).is_empty());
+        assert!(tap.wanted());
+
+        let mut emitted_positions = Vec::new();
+        let mut haptics_frames = 0usize;
+        let mut sample_idx = 0usize;
+        // Simulate 16 x 10 ms WASAPI wakes (= 160 ms = 5 complete 32 ms AC3 packets).
+        for wake in 0..16u64 {
+            let now = base + Duration::from_millis((wake + 1) * 10);
+            if let Some(cap) = &mut capture {
+                for _ in 0..480 {
+                    let s =
+                        0.2 * (std::f32::consts::TAU * 60.0 * sample_idx as f32 / 48_000.0).sin();
+                    sample_idx += 1;
+                    cap.queued.extend([s, s, 0.0, s, 0.0, 0.0]);
+                }
+            }
+            let mut chunks_this_wake = 0usize;
+            let captured = collect_chunked_into(
+                &mut capture,
+                &mut assembler,
+                &mut loss,
+                &mut pace,
+                &silence,
+                || now,
+                |e| panic!("unexpected capture error: {e}"),
+                |chunk| {
+                    assert_eq!(chunk.len(), HAPTICS_TAP_FRAMES * channels);
+                    tap.push(chunk, channels);
+                    chunks_this_wake += 1;
+                },
+                &mut packets,
+            );
+            assert_eq!(chunks_this_wake, 2);
+            assert_eq!(captured, packets.samples.len());
+            emitted_positions.extend_from_slice(&packets.positions);
+            for pkt in &packets.samples {
+                assert_eq!(pkt.len(), target_frames * channels);
+            }
+            haptics_frames += arbiter.generate(true, &tap, now).len();
+        }
+        assert_eq!(emitted_positions, [0, 1536, 3072, 4608, 6144]);
+        assert!(haptics_frames >= 25, "got only {haptics_frames} frames");
     }
 }

@@ -584,3 +584,41 @@ fn client_hooks_use_the_saved_environment_on_disconnect() {
     assert!(ClientCommands::with_environment(&invalid, environment).is_err());
     assert!(!path.exists());
 }
+#[test]
+fn output_redirection_preserves_shell_opening_for_uris_and_shortcuts() {
+    assert_eq!(
+        redirected_command("steam://rungameid/570", "NUL"),
+        r#"(start "" "steam://rungameid/570") 1>>"NUL" 2>&1"#
+    );
+    assert_eq!(
+        redirected_command("ms-settings:display", r"C:\logs\out.txt"),
+        r#"(start "" "ms-settings:display") 1>>"C:\logs\out.txt" 2>&1"#
+    );
+    assert_eq!(
+        redirected_command(r#""C:\Games\My Game.lnk""#, "NUL"),
+        r#"(start "" "C:\Games\My Game.lnk") 1>>"NUL" 2>&1"#
+    );
+    assert_eq!(
+        redirected_command(r#""C:\Games\game.exe" --windowed"#, "NUL"),
+        r#"("C:\Games\game.exe" --windowed) 1>>"NUL" 2>&1"#
+    );
+}
+#[test]
+fn game_pids_includes_foreign_tracked_processes_for_audio_restore() {
+    let app: App = serde_json::from_value(serde_json::json!({
+        "name": "Store Game",
+    }))
+    .unwrap();
+    let mut running = RunningApp::with_environment(&app, BTreeMap::new()).unwrap();
+    assert!(running.game_pids().unwrap().is_empty());
+    let current = std::process::id();
+    let started = butterpollo_win_io::process::processes()
+        .unwrap()
+        .into_iter()
+        .find(|p| p.pid == current)
+        .expect("current process in snapshot")
+        .started;
+    running.foreign.insert(current, started);
+    assert!(running.has_game_process());
+    assert!(running.game_pids().unwrap().contains(&current));
+}
