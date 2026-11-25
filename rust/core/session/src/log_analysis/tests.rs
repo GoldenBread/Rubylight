@@ -84,6 +84,10 @@ const LINES: &[(&str, &str)] = &[
         "2026-10-02T05:37:03.590000Z ERROR butterpollo: host failed error=bind 0.0.0.0:47989: Normalerweise darf jede Socketadresse (Protokoll, Netzwerkadresse oder Anschluss) nur jeweils einmal verwendet werden. (os error 10048)",
     ),
     (
+        "port_in_use",
+        "2026-10-02T05:37:03.590000Z ERROR butterpollo: host failed error=bind 0.0.0.0:47989: Zugriff verweigert (os error 10013)",
+    ),
+    (
         "upnp_failed",
         "2026-10-02T05:37:13.000000Z  WARN butterpollo::network: UPnP mapping timed out error=deadline has elapsed port=47984",
     ),

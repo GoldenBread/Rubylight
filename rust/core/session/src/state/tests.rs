@@ -325,19 +325,25 @@ fn existing_credentials_format() {
     assert!(!c.verifies("other", "password"));
     assert!(!c.verifies("user", "wrong"));
     // Independent SHA-256/password+salt vector in C++ util::hex byte order.
-    let previous = Credentials {
+    let mut previous = Credentials {
         password: "F88D961F52F30D505CC0CBB98D01B38D0D789C075812B3C38748CEEAFFB73367".into(),
         ..c
     };
+    assert!(previous.needs_rehash());
     assert!(previous.verifies("USER", "password"));
     assert!(!previous.verifies("user", "wrong"));
     assert!(!previous.verifies("other", "password"));
-    let current = Credentials::new("user".into(), "new-password").unwrap();
-    assert_eq!(
-        current.password,
-        crypto::legacy_hash(format!("new-password{}", current.salt).as_bytes())
-    );
+    previous.upgrade("password").unwrap();
+    assert!(!previous.needs_rehash());
+    assert!(previous.password.starts_with("pbkdf2-sha256$600000$"));
+    assert!(previous.verifies("USER", "password"));
+    let current = Credentials::new(" user ".into(), "new-password").unwrap();
+    assert_eq!(current.username, "user");
+    assert_eq!(current.salt.len(), 32);
+    assert!(current.password.starts_with("pbkdf2-sha256$600000$"));
+    assert!(!current.needs_rehash());
     assert!(current.verifies("user", "new-password"));
+    assert!(!current.verifies("user", "wrong"));
 }
 
 #[test]

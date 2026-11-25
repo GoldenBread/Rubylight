@@ -634,3 +634,50 @@ fn a_steam_launch_option_outside_its_folder_or_missing_is_refused() {
         (String::new(), String::new())
     );
 }
+
+#[test]
+fn steam_rejects_escaped_or_remote_installdir_and_preserves_unreadable_library_apps() {
+    let steam = tempfile::tempdir().unwrap();
+    let apps = steam.path().join("steamapps");
+    let outside = tempfile::tempdir().unwrap();
+    let escaped_dir = outside.path().join("Secret");
+    std::fs::create_dir_all(apps.join("common").join("ValidGame")).unwrap();
+    std::fs::create_dir_all(&escaped_dir).unwrap();
+    for (id, name, dir) in [
+        (100, "UNC", r"\\attacker\share"),
+        (101, "Traversal", r"..\..\Outside"),
+        (102, "Drive", r"D:\Other"),
+        (103, "ValidGame", "ValidGame"),
+    ] {
+        std::fs::write(
+            apps.join(format!("appmanifest_{id}.acf")),
+            format!(
+                "\"AppState\" {{ \"appid\" \"{id}\" \"name\" \"{name}\" \"installdir\" \"{dir}\" }}"
+            ),
+        )
+        .unwrap();
+    }
+    // Unreadable/oversized manifest marks discovery incomplete and preserves appid 104.
+    std::fs::write(
+        apps.join("appmanifest_104.acf"),
+        vec![b' '; (MAX_STEAM_TEXT as usize) + 64],
+    )
+    .unwrap();
+    let discovery = discover_checked(&[steam.path().to_path_buf()]);
+    let ids: Vec<u32> = discovery.games.iter().map(|g| g.appid).collect();
+    assert_eq!(ids, [103]);
+    assert!(discovery.incomplete);
+    assert!(discovery.unreadable_apps.contains(&104));
+    assert!(discovery.unreadable_libraries.contains(&apps));
+
+    // Lexical dotdot resolving back inside ValidGame still finds ValidGame cleanly.
+    let linked_install = apps.join("common").join("ValidGame").join("sub");
+    std::fs::create_dir_all(&linked_install).unwrap();
+    let exe = apps.join("common").join("ValidGame").join("game.exe");
+    std::fs::write(&exe, b"").unwrap();
+    assert_eq!(
+        super::super::launch::library_folder(&linked_install.join("..").join("game.exe"))
+            .map(|(lib, game, rel)| (same_path(&lib, &apps), game, rel)),
+        Some((true, "ValidGame".into(), "game.exe".into()))
+    );
+}

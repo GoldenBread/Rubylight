@@ -39,6 +39,28 @@ impl ProfileFiles {
         }
     }
 }
+const PBKDF2_PREFIX: &str = "pbkdf2-sha256";
+const PBKDF2_ITERATIONS: u32 = 600_000;
+const MAX_PBKDF2_ITERATIONS: u32 = 5_000_000;
+
+fn derive_pbkdf2(salt_hex: &str, password: &str) -> Result<String> {
+    let salt = hex::decode(salt_hex).context("invalid credential salt")?;
+    let iterations =
+        std::num::NonZeroU32::new(PBKDF2_ITERATIONS).context("invalid PBKDF2 iteration count")?;
+    let mut derived = [0u8; 32];
+    ring::pbkdf2::derive(
+        ring::pbkdf2::PBKDF2_HMAC_SHA256,
+        iterations,
+        &salt,
+        password.as_bytes(),
+        &mut derived,
+    );
+    Ok(format!(
+        "{PBKDF2_PREFIX}${PBKDF2_ITERATIONS}${}",
+        hex::encode(derived)
+    ))
+}
+
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Credentials {
     pub username: String,
@@ -57,22 +79,67 @@ impl Credentials {
         ))
     }
     pub fn new(username: String, password: &str) -> Result<Self> {
+        let username = username.trim().to_owned();
         if username.is_empty() || username.len() > 128 || password.len() < 8 {
             bail!("username required; password must have at least 8 characters");
         }
-        let salt = hex::encode(crypto::random::<8>());
+        let salt = hex::encode(crypto::random::<16>());
+        let password = derive_pbkdf2(&salt, password)?;
         Ok(Self {
             username,
-            password: crypto::legacy_hash(format!("{password}{salt}").as_bytes()),
+            password,
             salt,
         })
     }
     pub fn verifies(&self, username: &str, password: &str) -> bool {
-        self.username.eq_ignore_ascii_case(username)
-            && crypto::matches_hash(
-                format!("{password}{}", self.salt).as_bytes(),
-                &self.password,
+        if !self.username.trim().eq_ignore_ascii_case(username.trim()) {
+            return false;
+        }
+        if let Some(rest) = self.password.strip_prefix(&format!("{PBKDF2_PREFIX}$")) {
+            let Some((iters, digest_hex)) = rest.split_once('$') else {
+                return false;
+            };
+            let Ok(iters) = iters.parse::<u32>() else {
+                return false;
+            };
+            let Some(iterations) =
+                std::num::NonZeroU32::new(iters).filter(|n| n.get() <= MAX_PBKDF2_ITERATIONS)
+            else {
+                return false;
+            };
+            let (Ok(salt), Ok(expected)) = (hex::decode(&self.salt), hex::decode(digest_hex))
+            else {
+                return false;
+            };
+            if expected.len() != 32 {
+                return false;
+            }
+            return ring::pbkdf2::verify(
+                ring::pbkdf2::PBKDF2_HMAC_SHA256,
+                iterations,
+                &salt,
+                password.as_bytes(),
+                &expected,
             )
+            .is_ok();
+        }
+        crypto::matches_hash(
+            format!("{password}{}", self.salt).as_bytes(),
+            &self.password,
+        )
+    }
+
+    pub fn needs_rehash(&self) -> bool {
+        self.username != self.username.trim()
+            || !self
+                .password
+                .starts_with(&format!("{PBKDF2_PREFIX}${PBKDF2_ITERATIONS}$"))
+    }
+
+    pub fn upgrade(&mut self, password: &str) -> Result<()> {
+        let upgraded = Self::new(self.username.clone(), password)?;
+        *self = upgraded;
+        Ok(())
     }
 }
 #[derive(Clone, Serialize, Deserialize, Debug)]

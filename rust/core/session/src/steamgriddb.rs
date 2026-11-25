@@ -188,8 +188,15 @@ pub fn matching_game(body: &[u8], name: &str) -> Option<u64> {
         })
         .collect();
     let starts = |long: &str, short: &str| {
-        long.strip_prefix(short)
-            .is_some_and(|rest| rest.starts_with(' '))
+        let Some(rest) = long.strip_prefix(short).and_then(|s| s.strip_prefix(' ')) else {
+            return false;
+        };
+        let first = rest.split_whitespace().next().unwrap_or("");
+        let is_sequel = matches!(
+            first,
+            "ii" | "iii" | "iv" | "v" | "vi" | "vii" | "viii" | "ix" | "x"
+        ) || (first.chars().all(|c| c.is_ascii_digit()) && !first.is_empty());
+        !is_sequel
     };
     named
         .iter()
@@ -384,5 +391,19 @@ mod tests {
             "the mask is no key"
         );
         assert_eq!(read("steamgriddb_api_key = a b\n"), None);
+    }
+
+    #[test]
+    fn sequel_names_do_not_prefix_match_base_games() {
+        let payload = |name: &str| {
+            format!(r#"{{"success":true,"data":[{{"id":42,"name":"{name}"}}]}}"#).into_bytes()
+        };
+        assert_eq!(matching_game(&payload("Hades"), "Hades II"), None);
+        assert_eq!(matching_game(&payload("Hades II"), "Hades"), None);
+        assert_eq!(matching_game(&payload("Portal"), "Portal 2"), None);
+        assert_eq!(
+            matching_game(&payload("Hades: Deluxe Edition"), "Hades"),
+            Some(42)
+        );
     }
 }

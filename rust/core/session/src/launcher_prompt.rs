@@ -82,10 +82,10 @@ pub fn opens_launcher_itself(command: &str) -> bool {
     launcher_of(target).is_some() && !starts_a_game(rest)
 }
 
-/// What a title asks for, from its words.
+/// What a title asks for, from its words (English and common localized launcher titles).
 fn kind_of(title: &str) -> Option<LauncherKind> {
     let title = title.to_lowercase();
-    const SIGN_IN: [&str; 9] = [
+    const SIGN_IN: &[&str] = &[
         "sign in",
         "sign-in",
         "log in",
@@ -95,8 +95,24 @@ fn kind_of(title: &str) -> Option<LauncherKind> {
         "two-factor",
         "authenticator",
         "security code",
+        "anmelden",
+        "connexion",
+        "iniciar sesión",
+        "iniciar sesion",
+        "entrar",
+        "accedi",
+        "zaloguj",
+        "oturum aç",
+        "giriş yap",
+        "войти",
+        "вход",
+        "ログイン",
+        "サインイン",
+        "登录",
+        "登入",
+        "로그인",
     ];
-    const UPDATE: [&str; 8] = [
+    const UPDATE: &[&str] = &[
         "updat",
         "download",
         "installing",
@@ -105,6 +121,22 @@ fn kind_of(title: &str) -> Option<LauncherKind> {
         "preparing",
         "verifying",
         "required files",
+        "aktualisier",
+        "herunterladen",
+        "wird installiert",
+        "wird vorbereitet",
+        "mise à jour",
+        "téléchargement",
+        "actualiz",
+        "descargando",
+        "atualiz",
+        "aggiorn",
+        "güncell",
+        "обновлен",
+        "загрузк",
+        "アップデート",
+        "更新",
+        "업데이트",
     ];
     if SIGN_IN.iter().any(|word| title.contains(word)) {
         Some(LauncherKind::SignIn)

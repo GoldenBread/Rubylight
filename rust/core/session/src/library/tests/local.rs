@@ -230,3 +230,14 @@ fn a_game_folder_import_starts_its_program_from_its_folder() {
     assert_eq!(app["working-dir"], r"D:\Games\Hades");
     assert!(hades.matches(app));
 }
+
+#[test]
+fn helper_token_check_does_not_hide_dispatcher_exe() {
+    let folder = Path::new(r"D:\Games\Dispatcher");
+    let programs = [Program {
+        path: "Dispatcher.exe".into(),
+        size: 1_000_000,
+    }];
+    let game = local(folder, &programs).expect("Dispatcher.exe must not match patcher substring");
+    assert_eq!(game.name, "Dispatcher");
+}

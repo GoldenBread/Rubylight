@@ -552,11 +552,24 @@ fn parse(line: &str) -> Option<(&str, &str, &str)> {
 }
 
 fn matches(rule: &Rule, text: &str) -> bool {
-    rule.all.iter().all(|needle| text.contains(needle))
+    let basic = rule.all.iter().all(|needle| text.contains(needle))
         && (rule.any.is_empty() || rule.any.iter().any(|needle| text.contains(needle)))
         && rule
             .at_least
-            .is_none_or(|(key, min)| field(text, key).is_some_and(|value| value >= min))
+            .is_none_or(|(key, min)| field(text, key).is_some_and(|value| value >= min));
+    if !basic {
+        return false;
+    }
+    if rule.id == "port_in_use"
+        && !text.contains("(os error 10048)")
+        && !text.contains("Another program may be using the port")
+    {
+        let lower = text.to_ascii_lowercase();
+        return ["bind", "listen", "port", "socket"]
+            .iter()
+            .any(|kw| lower.contains(kw));
+    }
+    true
 }
 
 /// The number in a ` key=123` field.

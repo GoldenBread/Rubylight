@@ -44,24 +44,64 @@ fn webhook_urls(config: &Config) -> Vec<String> {
         .collect()
 }
 
+/// All known webhook `url -> secret` pairs from `credentials/webhook_secrets.json` and any legacy
+/// inline secrets still inside `config`.
+fn existing_webhook_secrets(config: &Config, directory: &Path) -> BTreeMap<String, String> {
+    let mut secrets =
+        crate::webhook::load_secrets(&crate::webhook::secrets_path(directory)).unwrap_or_default();
+    if let Some(raw) = config.values.get("webhooks")
+        && let Some((_, inline)) = crate::webhook::split_json_secrets(raw)
+    {
+        for (url, secret) in inline {
+            secrets.entry(url).or_insert(secret);
+        }
+    }
+    secrets
+}
+
+fn archived_webhook_secrets(archive: &Archive) -> BTreeMap<String, String> {
+    let mut secrets = archive
+        .json(crate::webhook::SECRETS_FILE)
+        .and_then(|v| v.get("secrets")?.as_object().cloned())
+        .map(|map| {
+            map.into_iter()
+                .filter_map(|(k, v)| Some((k, v.as_str()?.to_owned())))
+                .filter(|(_, s)| !s.is_empty())
+                .collect::<BTreeMap<String, String>>()
+        })
+        .unwrap_or_default();
+    if let Some(raw) = archive.config().values.get("webhooks")
+        && let Some((_, inline)) = crate::webhook::split_json_secrets(raw)
+    {
+        for (url, secret) in inline {
+            secrets.entry(url).or_insert(secret);
+        }
+    }
+    secrets
+}
+
 /// What restoring `archive` changes on the host whose data folder is
 /// `directory`.
 pub fn summarize(archive: &Archive, directory: &Path) -> Summary {
     let secrets = archive.manifest.secrets;
     let current = current_config(directory);
-    // As `apply` writes it, so a webhook whose secret this PC keeps does not
-    // show as a change; one that gets a fresh secret does.
-    let restored = merged_config(archive, &current, String::new);
+    let restored = merged_config(archive, &current);
+    let mut current_clean = current.clone();
+    if let Some(hooks) = current_clean.values.get_mut("webhooks")
+        && let Some((stripped, _)) = crate::webhook::split_json_secrets(hooks)
+    {
+        *hooks = stripped;
+    }
     let mut changes = Vec::new();
     let keys: BTreeSet<&String> = restored
         .values
         .keys()
-        .chain(current.values.keys())
+        .chain(current_clean.values.keys())
         .collect();
     let changed: Vec<&str> = keys
         .into_iter()
         .filter(|key| secrets || !secret_key(key))
-        .filter(|key| restored.values.get(*key) != current.values.get(*key))
+        .filter(|key| restored.values.get(*key) != current_clean.values.get(*key))
         .map(String::as_str)
         .collect();
     changes.push(Change {
@@ -176,11 +216,14 @@ pub fn summarize(archive: &Archive, directory: &Path) -> Summary {
     }
     let hooks = webhook_urls(&restored);
     if !hooks.is_empty() {
-        let urls = webhook_urls(&current);
+        let existing = existing_webhook_secrets(&current, directory);
         let fresh = if secrets {
             0
         } else {
-            hooks.iter().filter(|url| !urls.contains(url)).count()
+            hooks
+                .iter()
+                .filter(|url| existing.get(*url).is_none_or(String::is_empty))
+                .count()
         };
         changes.push(Change {
             item: "webhooks",
@@ -202,10 +245,10 @@ pub fn summarize(archive: &Archive, directory: &Path) -> Summary {
     }
 }
 
-/// The restored configuration: the archive's, with this PC's secret keys and
-/// webhook secrets when the archive has none (a webhook this PC does not have
-/// gets `fresh()`).
-fn merged_config(archive: &Archive, current: &Config, mut fresh: impl FnMut() -> String) -> Config {
+/// The restored configuration: the archive's, preserving this PC's `LOCATION_KEYS`, keeping its
+/// secret keys when `!archive.manifest.secrets`, and always keeping webhook inline secrets out of
+/// `sunshine.conf`.
+fn merged_config(archive: &Archive, current: &Config) -> Config {
     let mut config = archive.config();
     // Where this PC keeps its files stays this PC's: a backup from another
     // PC, or a crafted one, never moves them or makes the restore write
@@ -216,51 +259,17 @@ fn merged_config(archive: &Archive, current: &Config, mut fresh: impl FnMut() ->
             None => config.values.remove(key),
         };
     }
-    if archive.manifest.secrets {
-        return config;
-    }
-    for (key, value) in &current.values {
-        if secret_key(key) {
-            config.values.insert(key.clone(), value.clone());
-        }
-    }
-    let secrets: BTreeMap<String, String> =
-        serde_json::from_str::<Value>(current.get("webhooks", "[]"))
-            .ok()
-            .and_then(|v| v.as_array().cloned())
-            .unwrap_or_default()
-            .iter()
-            .filter_map(|hook| {
-                Some((
-                    hook.get("url")?.as_str()?.to_owned(),
-                    hook.get("secret")?.as_str()?.to_owned(),
-                ))
-            })
-            .collect();
-    if let Some(hooks) = config.values.get_mut("webhooks")
-        && let Ok(Value::Array(mut list)) = serde_json::from_str::<Value>(hooks)
-    {
-        for hook in &mut list {
-            let url = hook
-                .get("url")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_owned();
-            if let Some(object) = hook.as_object_mut()
-                && object
-                    .get("secret")
-                    .and_then(Value::as_str)
-                    .is_none_or(str::is_empty)
-            {
-                let secret = secrets
-                    .get(&url)
-                    .filter(|s| !s.is_empty())
-                    .cloned()
-                    .unwrap_or_else(&mut fresh);
-                object.insert("secret".into(), Value::String(secret));
+    if !archive.manifest.secrets {
+        for (key, value) in &current.values {
+            if secret_key(key) {
+                config.values.insert(key.clone(), value.clone());
             }
         }
-        *hooks = Value::Array(list).to_string();
+    }
+    if let Some(hooks) = config.values.get_mut("webhooks")
+        && let Some((stripped, _)) = crate::webhook::split_json_secrets(hooks)
+    {
+        *hooks = stripped;
     }
     config
 }
@@ -312,41 +321,144 @@ fn folder_target(directory: &Path, name: &str) -> PathBuf {
         .fold(directory.to_path_buf(), |path, part| path.join(part))
 }
 
+/// Records the original file bytes before each mutation so a mid-restore error rolls back cleanly.
+struct TxWriter {
+    originals: BTreeMap<PathBuf, Option<Vec<u8>>>,
+    latest: BTreeMap<PathBuf, Option<Vec<u8>>>,
+}
+
+impl TxWriter {
+    fn new() -> Self {
+        Self {
+            originals: BTreeMap::new(),
+            latest: BTreeMap::new(),
+        }
+    }
+
+    fn snapshot(&mut self, path: &Path) -> Result<()> {
+        if !self.originals.contains_key(path) {
+            let original = read_optional(path)?;
+            self.latest.insert(path.to_path_buf(), original.clone());
+            self.originals.insert(path.to_path_buf(), original);
+        }
+        Ok(())
+    }
+
+    fn write(&mut self, path: &Path, bytes: &[u8]) -> Result<()> {
+        self.snapshot(path)?;
+        crate::state::atomic_write(path, bytes)?;
+        self.latest.insert(path.to_path_buf(), Some(bytes.to_vec()));
+        Ok(())
+    }
+
+    fn remove(&mut self, path: &Path) -> Result<()> {
+        self.snapshot(path)?;
+        match std::fs::remove_file(path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(error).with_context(|| format!("removing {}", path.display()));
+            }
+        }
+        self.latest.insert(path.to_path_buf(), None);
+        Ok(())
+    }
+
+    fn read(&self, path: &Path) -> Result<Option<Vec<u8>>> {
+        if let Some(cached) = self.latest.get(path) {
+            return Ok(cached.clone());
+        }
+        read_optional(path)
+    }
+
+    fn rollback(self) -> Result<()> {
+        for (path, original) in self.originals.into_iter().rev() {
+            match original {
+                Some(bytes) => crate::state::atomic_write(&path, &bytes)?,
+                None => match std::fs::remove_file(&path) {
+                    Ok(()) => {}
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(error) => {
+                        return Err(error)
+                            .with_context(|| format!("rolling back {}", path.display()));
+                    }
+                },
+            }
+        }
+        Ok(())
+    }
+}
+
 /// Writes `archive` over the settings of the host whose data folder is
 /// `directory`. Files that only this PC has (covers, game settings files)
-/// stay.
+/// stay. Any write failure rolls back all changes made so far.
 pub fn apply(archive: &Archive, directory: &Path, fresh: impl FnMut() -> String) -> Result<()> {
-    use crate::state::atomic_write;
+    let mut tx = TxWriter::new();
+    match apply_inner(&mut tx, archive, directory, fresh) {
+        Ok(()) => Ok(()),
+        Err(error) => match tx.rollback() {
+            Ok(()) => Err(error),
+            Err(rollback_error) => Err(error.context(format!(
+                "restoring files after error failed: {rollback_error:#}"
+            ))),
+        },
+    }
+}
+
+fn apply_inner(
+    tx: &mut TxWriter,
+    archive: &Archive,
+    directory: &Path,
+    mut fresh: impl FnMut() -> String,
+) -> Result<()> {
     let current = current_config(directory);
-    let config = merged_config(archive, &current, fresh);
-    atomic_write(&directory.join(CONFIG), config.text().as_bytes())?;
+    let config = merged_config(archive, &current);
+    tx.write(&directory.join(CONFIG), config.text().as_bytes())?;
     let files = ProfileFiles::new(&config, directory);
     if let Some(bytes) = archive.files.get(APPS) {
-        atomic_write(&files.apps, bytes)?;
+        tx.write(&files.apps, bytes)?;
     }
     if let Some(bytes) = archive.files.get(ALIASES) {
         // The target's console sign-in sessions (and API tokens when restoring without secrets)
         // stay as they are.
-        let current = read_optional(&files.aliases)?;
-        atomic_write(
+        let current = tx.read(&files.aliases)?;
+        tx.write(
             &files.aliases,
             &keeping_sessions(bytes, current.as_deref(), archive.manifest.secrets)?,
         )?;
     }
     for (name, bytes) in archive.under(COVERS).chain(archive.under(GAME_SETTINGS)) {
-        atomic_write(&folder_target(directory, name), bytes)?;
+        tx.write(&folder_target(directory, name), bytes)?;
     }
+    let hooks_secrets_file = crate::webhook::secrets_path(directory);
     if archive.manifest.secrets {
         if let Some(bytes) = archive.files.get(PAIRED) {
-            atomic_write(&files.paired, bytes)?;
+            tx.write(&files.paired, bytes)?;
         }
         if let Some(bytes) = archive.files.get(CREDENTIALS_FILE) {
-            let target = if files.credentials == files.paired {
-                directory.join(CREDENTIALS_FILE)
+            if files.credentials == files.paired {
+                // `credentials_file` matches the paired-state file (or no separate credentials
+                // file exists): merge sign-in fields into `files.paired` so they are read.
+                let creds: Value = serde_json::from_slice(bytes)
+                    .context("the archive's sunshine_credentials.json is not JSON")?;
+                let mut doc = match tx.read(&files.paired)? {
+                    Some(existing) => serde_json::from_slice::<Value>(&existing)
+                        .context("the paired devices file is not JSON")?,
+                    None => Value::Object(Default::default()),
+                };
+                if let (Some(dst), Some(src)) = (doc.as_object_mut(), creds.as_object()) {
+                    for key in ["username", "password", "salt"] {
+                        if let Some(value) = src.get(key) {
+                            dst.insert(key.into(), value.clone());
+                        } else {
+                            dst.remove(key);
+                        }
+                    }
+                }
+                tx.write(&files.paired, &serde_json::to_vec_pretty(&doc)?)?;
             } else {
-                files.credentials.clone()
-            };
-            atomic_write(&target, bytes)?;
+                tx.write(&files.credentials, bytes)?;
+            }
         } else if archive.files.contains_key(PAIRED) && files.credentials != files.paired {
             // The backup keeps console sign-in credentials inside sunshine_state.json;
             // a stale separate credentials file on this PC would otherwise shadow them
@@ -360,36 +472,55 @@ pub fn apply(archive: &Archive, directory: &Path, fresh: impl FnMut() -> String)
                         }
                     }
                 }
-                crate::state::write_json(&files.credentials, &Value::Object(creds))?;
+                tx.write(&files.credentials, &serde_json::to_vec_pretty(&creds)?)?;
             } else {
-                match std::fs::remove_file(&files.credentials) {
-                    Ok(()) => {}
-                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                    Err(error) => {
-                        return Err(error).with_context(|| {
-                            format!("removing stale {}", files.credentials.display())
-                        });
-                    }
-                }
+                tx.remove(&files.credentials)?;
             }
         }
         for (name, bytes) in archive.under(CREDENTIALS_DIR) {
-            atomic_write(&folder_target(directory, name), bytes)?;
+            tx.write(&folder_target(directory, name), bytes)?;
         }
         for (name, path) in [(CERTIFICATE, &files.certificate), (KEY, &files.key)] {
             if let Some(bytes) = archive.files.get(name)
                 && *path != folder_target(directory, name)
             {
-                atomic_write(path, bytes)?;
+                tx.write(path, bytes)?;
             }
         }
-    } else if let Some(backup) = archive.json(DEVICES)
-        && let Some(bytes) = read_optional(&files.paired)?
-    {
-        let mut paired: Value =
-            serde_json::from_slice(&bytes).context("the paired devices file is not JSON")?;
-        merge_devices(&mut paired, &backup);
-        crate::state::write_json(&files.paired, &paired)?;
+        let archived = archived_webhook_secrets(archive);
+        if !archived.is_empty() {
+            tx.write(
+                &hooks_secrets_file,
+                &crate::webhook::encode_secrets(&archived)?,
+            )?;
+        }
+    } else {
+        if let Some(backup) = archive.json(DEVICES)
+            && let Some(bytes) = tx.read(&files.paired)?
+        {
+            let mut paired: Value =
+                serde_json::from_slice(&bytes).context("the paired devices file is not JSON")?;
+            merge_devices(&mut paired, &backup);
+            tx.write(&files.paired, &serde_json::to_vec_pretty(&paired)?)?;
+        }
+        let existing = existing_webhook_secrets(&current, directory);
+        let urls = webhook_urls(&config);
+        if !urls.is_empty() {
+            let mut next = BTreeMap::new();
+            for url in urls {
+                let secret = existing
+                    .get(&url)
+                    .filter(|s| !s.is_empty())
+                    .cloned()
+                    .unwrap_or_else(&mut fresh);
+                if !secret.is_empty() {
+                    next.insert(url, secret);
+                }
+            }
+            if !next.is_empty() {
+                tx.write(&hooks_secrets_file, &crate::webhook::encode_secrets(&next)?)?;
+            }
+        }
     }
     Ok(())
 }
@@ -400,20 +531,32 @@ pub fn apply(archive: &Archive, directory: &Path, fresh: impl FnMut() -> String)
 pub fn apply_staged(directory: &Path, fresh: impl FnMut() -> String) -> Result<bool> {
     let backups = directory.join(BACKUPS);
     let staged = backups.join(STAGED);
-    if !staged.exists() {
-        return Ok(false);
+    let applying = backups.join("restore-applying.zip");
+    let _ = std::fs::remove_file(&applying);
+    match std::fs::rename(&staged, &applying) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => {
+            return Err(error).context("the staged restore could not be claimed");
+        }
     }
-    let result = std::fs::File::open(&staged)
+    let result = std::fs::File::open(&applying)
         .context("the staged restore could not be opened")
         .and_then(|file| read(std::io::BufReader::new(file)))
         .and_then(|archive| apply(&archive, directory, fresh));
     match result {
         Ok(()) => {
-            std::fs::remove_file(&staged)?;
+            if let Err(error) = std::fs::remove_file(&applying) {
+                tracing::warn!(
+                    error = %error,
+                    "applied staged restore could not be deleted cleanly; renaming aside"
+                );
+                let _ = std::fs::rename(&applying, backups.join("restore-done.zip"));
+            }
             Ok(true)
         }
         Err(error) => {
-            let _ = std::fs::rename(&staged, backups.join("restore-failed.zip"));
+            let _ = std::fs::rename(&applying, backups.join("restore-failed.zip"));
             Err(error)
         }
     }

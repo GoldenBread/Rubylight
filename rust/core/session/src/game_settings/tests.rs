@@ -726,3 +726,49 @@ fn the_last_three_pc_files_put_back_stay_as_backups() {
     assert_eq!(text(&numbered(1)), "pc-3");
     assert_eq!(text(&numbered(2)), "pc-2");
 }
+
+#[test]
+fn missing_kept_original_drops_swap_with_warning_and_recreates_atomically() {
+    let s = Scratch::new();
+    let store = s.store();
+    let (written, path) = s.file("Settings.ini", "pc-data");
+    let begun = store
+        .start(
+            "app",
+            "Game",
+            "tv",
+            "TV",
+            &[(written.clone(), path.clone())],
+            NONE,
+        )
+        .unwrap();
+    // Missing kept original during finish must clear the journal instead of bricking launches.
+    let kept = store.swap_folder("app", &begun.id).join(file_key(&written));
+    std::fs::remove_file(&kept).unwrap();
+    let report = store.finish(&begun.id).unwrap();
+    assert!(
+        report
+            .warnings
+            .iter()
+            .any(|w| w.contains("original") || w.contains("missing")),
+        "{:?}",
+        report.warnings
+    );
+    assert!(store.journal().unwrap().swaps.is_empty());
+
+    // Recreate a file removed mid-session atomically and confirm original contents come back.
+    let (recreate_key, recreate_path) = s.file("recreate.ini", "pc-recreate");
+    let recreated = store
+        .start(
+            "app",
+            "Game",
+            "tv",
+            "TV",
+            &[(recreate_key, recreate_path.clone())],
+            NONE,
+        )
+        .unwrap();
+    std::fs::remove_file(&recreate_path).unwrap();
+    store.cancel(&recreated.id).unwrap();
+    assert_eq!(text(&recreate_path), "pc-recreate");
+}

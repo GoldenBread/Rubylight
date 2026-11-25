@@ -28,13 +28,50 @@ pub const LOCAL_SKIPPED_FOLDERS: [&str; 16] = [
 ];
 /// Whether a program (by file name) is part of a game's install, not the game: setup,
 /// uninstallers, redistributables, crash reporters, updaters and anti-cheat services.
+/// Split a filename stem into lowercase word tokens on separators and CamelCase
+/// boundaries so e.g. `"patcher"` matches `"GamePatcher.exe"` without
+/// falsely hiding `"dispatcher.exe"`.
+fn filename_tokens(stem: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    let chars: Vec<char> = stem.chars().collect();
+    for (i, &c) in chars.iter().enumerate() {
+        if !c.is_ascii_alphanumeric() {
+            if !current.is_empty() {
+                tokens.push(std::mem::take(&mut current));
+            }
+            continue;
+        }
+        let boundary = i > 0
+            && c.is_ascii_uppercase()
+            && (chars[i - 1].is_ascii_lowercase()
+                || (chars[i - 1].is_ascii_uppercase()
+                    && chars.get(i + 1).is_some_and(|n| n.is_ascii_lowercase())));
+        if boundary && !current.is_empty() {
+            tokens.push(std::mem::take(&mut current));
+        }
+        current.push(c.to_ascii_lowercase());
+    }
+    if !current.is_empty() {
+        tokens.push(current);
+    }
+    tokens
+}
+
 fn helper_program(file: &str) -> bool {
-    let stem = file.to_lowercase();
-    let stem = stem.strip_suffix(".exe").unwrap_or(&stem);
-    [
+    let raw = file
+        .strip_suffix(".exe")
+        .or_else(|| file.strip_suffix(".EXE"))
+        .unwrap_or(file);
+    let stem = raw.to_lowercase();
+    let tokens = filename_tokens(raw);
+    const TOKEN_EXACT: &[&str] = &[
         "unins",
+        "uninstall",
+        "uninstaller",
         "setup",
         "install",
+        "installer",
         "redist",
         "directx",
         "dotnet",
@@ -46,8 +83,10 @@ fn helper_program(file: &str) -> bool {
         "errorreport",
         "reporter",
         "update",
+        "updater",
         "patcher",
         "prereq",
+        "prereqs",
         "easyanticheat",
         "battleye",
         "uploader",
@@ -57,10 +96,21 @@ fn helper_program(file: &str) -> bool {
         "cleanup",
         "activation",
         "config",
-    ]
-    .iter()
-    .any(|part| stem.contains(part))
-        || matches!(stem, "eac" | "be" | "be_service" | "dxsetup")
+        "eac",
+        "be",
+        "be_service",
+        "dxsetup",
+    ];
+    tokens.iter().any(|token| {
+        TOKEN_EXACT.contains(&token.as_str())
+            || token.starts_with("unins")
+            || token.ends_with("setup")
+            || token.ends_with("redist")
+            || token.ends_with("updater")
+    }) || matches!(stem.as_str(), "be_service")
+        || stem.contains("crashhandler")
+        || stem.contains("easyanticheat")
+        || stem.contains("cefprocess")
 }
 /// The game in `folder`, a subfolder of one of the configured game folders, started by
 /// the program `programs` lists below it (at most two folders deep). Helpers
