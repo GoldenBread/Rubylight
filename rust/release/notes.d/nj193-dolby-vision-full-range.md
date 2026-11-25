@@ -1,0 +1,2 @@
+# Dolby Vision with full color range
+- **Dolby Vision with full color range could restart an NVIDIA Shield TV** ([Nightjar #193](https://github.com/RamazanKara/nightjar/issues/193)). Since 6.4.1 the PC left the Dolby Vision metadata out when the device asked for full color range, but the device still opened its Dolby Vision decoder. Such a stream now keeps Dolby Vision and is limited range, as its metadata describes.

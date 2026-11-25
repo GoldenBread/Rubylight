@@ -178,7 +178,7 @@ fn a_native_444_stream_drops_dolby_vision_loudly_and_streams_hdr10() {
     }
 }
 #[test]
-fn a_full_range_stream_drops_dolby_vision_loudly_and_streams_hdr10() {
+fn a_dolby_vision_stream_gives_up_full_range_loudly_and_keeps_its_rpus() {
     use rubylight_protocol::hdr;
     let warnings = crate::TestWarnings::default();
     for (codec, format) in [(1, hdr::DV_81), (1, hdr::DV_84), (2, hdr::DV_101)] {
@@ -190,14 +190,26 @@ fn a_full_range_stream_drops_dolby_vision_loudly_and_streams_hdr10() {
         )
         .unwrap();
         assert!(full.full_range());
-        assert!(packed_drops_dolby_vision(&mut full, &warnings));
-        assert!(full.hdr && full.hdr_format == 0 && !full.hlg());
-        assert_eq!(crate::dovi::negotiated(&full), None);
+        // The client decodes it with its Dolby Vision decoder (nightjar#193).
+        assert!(!packed_drops_dolby_vision(&mut full, &warnings));
+        assert!(full.hdr && full.hdr_format == format);
+        assert!(!full.full_range() && full.color_matrix() == 2);
+        assert!(crate::dovi::negotiated(&full).is_some());
         let shown = warnings.snapshot();
         assert_eq!(shown.len(), 1);
         assert_eq!(shown[0].code, "hdr_dolby_vision");
-        assert_eq!(shown[0].message, FULL_RANGE_DOLBY_VISION);
+        assert_eq!(shown[0].message, DOLBY_VISION_LIMITED_RANGE);
+        // A limited-range pick clears the warning.
+        assert!(!packed_drops_dolby_vision(&mut full, &warnings));
+        assert!(warnings.snapshot().is_empty());
     }
+    // Full range stays on an HDR stream that picked no Dolby Vision.
+    let mut hdr10 = Negotiated::from_sdp(
+        b"a=x-nv-video[0].dynamicRangeMode:1\na=x-nv-video[0].encoderCscMode:5\na=x-nv-vqos[0].bitStreamFormat:1\n",
+    )
+    .unwrap();
+    assert!(!packed_drops_dolby_vision(&mut hdr10, &warnings));
+    assert!(hdr10.full_range());
 }
 #[test]
 fn a_packed_stream_drops_hlg_loudly_and_streams_hdr10() {
