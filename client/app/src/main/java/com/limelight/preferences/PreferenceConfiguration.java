@@ -493,6 +493,9 @@ public class PreferenceConfiguration extends SettingsCatalogGen {
         PreferenceMigrations.migrateToNativeDefaults(context);
     }
 
+    // Auto, On or Off for the HEVC low-latency flags, as Moonlight V+'s "HEVC low-latency decoding"
+    // (qiin2333/moonlight-vplus, GPL-3.0). Off stays stored in the switch's key above, so saved
+    // values, profiles and the benchmark key keep their meaning; this key tells Auto from On.
     /** The HEVC low-latency mode. */
     public static int readHevcLowLatencyMode(SharedPreferences prefs) {
         if (prefs.getBoolean(DISABLE_HEVC_LOW_LATENCY_PREF_STRING, false)) return HEVC_LOW_LATENCY_OFF;

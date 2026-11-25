@@ -204,6 +204,8 @@ final class PreferenceReader {
     private static void readAudioConfig(Context context, SharedPreferences prefs, PreferenceConfiguration config) {
         String audioConfig = prefs.getString(AUDIO_CONFIG_PREF_STRING, DEFAULT_AUDIO_CONFIG);
         if (audioConfig.equals(AUDIO_CONFIG_714)) {
+            // Moonlight V+'s 7.1.4 where this device plays it (the route may have changed since it
+            // was picked), and 7.1 otherwise.
             if (Surround714.playable(context)) {
                 config.audioConfiguration = MoonBridge.AUDIO_CONFIGURATION_714_SURROUND;
             } else {
