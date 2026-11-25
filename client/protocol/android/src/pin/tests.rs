@@ -82,7 +82,7 @@ fn evict_cache_removes_both_raw_and_canonical_keys() {
 
     let h = open_store(&target, true);
     let canon = canonical_dir(&target);
-    let raw_variant = root.join(".").join("sub");
+    let raw_variant = root.join("sub").join("..").join("sub");
     assert_ne!(raw_variant, canon);
     lock(&STORE_CACHE).insert(raw_variant.clone(), h.clone());
 

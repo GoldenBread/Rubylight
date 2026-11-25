@@ -51,8 +51,8 @@ impl Residency {
         }
         self.current_min_ns = self.current_min_ns.min(input_to_output_ns);
         let mut baseline = self.current_min_ns;
-        for i in 0..self.windows {
-            baseline = baseline.min(self.window_min_ns[i]);
+        for &w in self.window_min_ns.iter().take(self.windows) {
+            baseline = baseline.min(w);
         }
         input_to_output_ns - baseline
     }

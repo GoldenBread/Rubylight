@@ -503,7 +503,7 @@ pub fn replace_file(part: &Path, target: &Path) -> Result<(), String> {
     #[cfg(unix)]
     if let Some(dir) = target.parent() {
         // The rename reaches the disk; the new file itself already has (download).
-        if let Err(e) = File::open(dir).and_then(|dir| dir.sync_all()) { eprintln!("nightjar: update: {}: {e}", dir.display()); }
+        if let Err(e) = std::fs::File::open(dir).and_then(|dir| dir.sync_all()) { eprintln!("nightjar: update: {}: {e}", dir.display()); }
     }
     Ok(())
 }

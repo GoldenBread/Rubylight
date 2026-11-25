@@ -29,7 +29,6 @@ directories = "6"
 libloading = "0.8"
 ash = { version = "0.38", default-features = false, features = ["std", "loaded"] }
 rusb = { version = "0.9", features = ["vendored"] }
-sha2 = "0.10"
 
 [target.'cfg(windows)'.dependencies]
 sdl3-sys = { version = "0.7", default-features = false, features = ["use-pkg-config"] }
@@ -55,6 +54,7 @@ pkg-config = "0.3"
 
 [dev-dependencies]
 nightjar-desktop-config = { path = "../desktop-config", features = ["test-lang"] }
+sha2 = "0.10"
 
 [lints]
 workspace = true
