@@ -1,0 +1,4516 @@
+# Canonical declarative catalog of Nightjar client settings (Android + Desktop).
+# Parsed with Python stdlib `tomllib` by `client/scripts/generate-settings.py`.
+# Generates:
+#   - `client/protocol/policy/src/settings_catalog_gen.rs`
+#   - `client/protocol/desktop-config/src/config/defaults_gen.rs`
+#   - `client/app/src/main/java/com/limelight/preferences/SettingsCatalogGen.java`
+#   - `client/docs/settings.md` (between generated markers)
+
+[constants]
+guide_hold_ms = [0, 500, 1000, 1500, 2000]
+default_guide_menu_hold_ms = 1000
+display_scales = [0, 100, 125, 150, 175, 200, 225, 250, 300, 350, 400, 450, 500]
+render_scale_min = 50
+render_scale_max = 200
+deadzone_min = 0
+deadzone_max = 50
+mic_gain_min = 25
+mic_gain_max = 400
+mic_gain_step = 5
+ui_zoom_steps = [85, 100, 115, 130, 150, 200, 250]
+error_correction_percentages = [10, 20, 30, 50]
+decode_queue_frames_default = 15
+quality_min_short_edges = [360, 540, 720, 1080, 1440]
+quality_min_fps = [30, 45, 60, 90, 120]
+network_grace_choices_s = [0, 15, 20, 30, 60]
+sharp_color_desktop_keys = ["prefer_yuv444", "experimental_packed_444"]
+sharp_color_android_keys = ["checkbox_yuv444", "experimental_packed_444"]
+low_latency_decoding_android_keys = ["checkbox_codec_low_latency", "checkbox_vendor_low_latency", "checkbox_phone_performance_hints"]
+removed_auto_bitrate_limit_android_keys = ["list_auto_bitrate_min_kbps", "list_auto_bitrate_max_kbps"]
+
+[android]
+small_icon_min_sw_dp = 500
+default_touchscreen_trackpad = true
+
+# ---------- Retired & renamed keys (never reused) ----------
+
+[[retired]]
+platform = "android"
+key = "checkbox_gl_render"
+replacement = "checkbox_vulkan_render"
+in_android_retired_set = true
+reason = "Render through OpenGL replaced by Render through Vulkan"
+
+[[retired]]
+platform = "android"
+key = "checkbox_auto_bitrate"
+replacement = "adaptive_bitrate"
+in_android_retired_set = true
+reason = "Renamed to adaptive_bitrate before folding into lower_bitrate"
+
+[[retired]]
+platform = "android"
+key = "adaptive_bitrate"
+replacement = "lower_bitrate"
+in_android_retired_set = true
+reason = "Folded into lower_bitrate choice"
+
+[[retired]]
+platform = "android"
+key = "checkbox_rate_change_bitrate"
+replacement = "lower_bitrate"
+in_android_retired_set = true
+reason = "Folded into lower_bitrate choice"
+
+[[retired]]
+platform = "android"
+key = "keep_bitrate"
+replacement = "lower_bitrate"
+in_android_retired_set = true
+reason = "Folded into lower_bitrate choice"
+
+[[retired]]
+platform = "android"
+key = "checkbox_trackpad_acceleration"
+replacement = "list_trackpad_acceleration_curve"
+in_android_retired_set = true
+reason = "Moved to _v2 then folded into list_trackpad_acceleration_curve"
+
+[[retired]]
+platform = "android"
+key = "checkbox_disable_rumble"
+replacement = "list_rumble_feel"
+in_android_retired_set = true
+reason = "Folded into list_rumble_feel"
+
+[[retired]]
+platform = "android"
+key = "checkbox_trackpad_acceleration_v2"
+replacement = "list_trackpad_acceleration_curve"
+in_android_retired_set = true
+reason = "Folded into list_trackpad_acceleration_curve"
+
+[[retired]]
+platform = "android"
+key = "checkbox_trackpad_momentum"
+replacement = "list_trackpad_momentum_glide"
+in_android_retired_set = true
+reason = "Folded into list_trackpad_momentum_glide"
+
+[[retired]]
+platform = "android"
+key = "checkbox_always_dark"
+replacement = "theme"
+in_android_retired_set = true
+reason = "Folded into theme choice"
+
+[[retired]]
+platform = "android"
+key = "checkbox_oled_black"
+replacement = "theme"
+in_android_retired_set = true
+reason = "Folded into theme choice"
+
+[[retired]]
+platform = "android"
+key = "list_osc_style"
+replacement = ""
+in_android_retired_set = true
+reason = "Controller style removed with classic on-screen controller"
+
+[[retired]]
+platform = "android"
+key = "checkbox_rust_engine"
+replacement = ""
+in_android_retired_set = true
+reason = "New streaming engine switch removed with classic engine"
+
+[[retired]]
+platform = "android"
+key = "rust_engine_default_on"
+replacement = ""
+in_android_retired_set = true
+reason = "Marker for retired streaming engine default migration"
+
+[[retired]]
+platform = "android"
+key = "checkbox_pyrowave_front_buffer"
+replacement = ""
+reason = "Front-buffer rendering removed"
+
+[[retired]]
+platform = "android"
+key = "list_auto_bitrate_min_kbps"
+replacement = ""
+reason = "Removed auto-bitrate limit preference"
+
+[[retired]]
+platform = "android"
+key = "list_auto_bitrate_max_kbps"
+replacement = ""
+reason = "Removed auto-bitrate limit preference"
+
+[[retired]]
+platform = "desktop"
+key = "adaptive_bitrate"
+replacement = "lower_bitrate"
+reason = "Folded into lower_bitrate choice"
+
+[[retired]]
+platform = "desktop"
+key = "client_hint_bitrate"
+replacement = "lower_bitrate"
+reason = "Folded into lower_bitrate choice"
+
+[[retired]]
+platform = "desktop"
+key = "keep_bitrate"
+replacement = "lower_bitrate"
+reason = "Folded into lower_bitrate choice"
+
+[[renamed]]
+platform = "android"
+old = "checkbox_auto_bitrate"
+new = "adaptive_bitrate"
+reason = "Lower bitrate when the network is busy, before folding into lower_bitrate"
+
+# ---------- Android PreferenceConfiguration constants ----------
+
+[[android_const]]
+name = "LEGACY_RES_FPS_PREF_STRING"
+vis = "package"
+type = "String"
+value = "list_resolution_fps"
+
+[[android_const]]
+name = "LEGACY_ENABLE_51_SURROUND_PREF_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_51_surround"
+
+[[android_const]]
+name = "RESOLUTION_PREF_STRING"
+vis = "package"
+type = "String"
+value = "list_resolution"
+
+[[android_const]]
+name = "FPS_PREF_STRING"
+vis = "package"
+type = "String"
+value = "list_fps"
+
+[[android_const]]
+name = "BITRATE_PREF_STRING"
+vis = "package"
+type = "String"
+value = "seekbar_bitrate_kbps"
+
+[[android_const]]
+name = "BITRATE_USER_SET_PREF_STRING"
+vis = "package"
+type = "String"
+value = "bitrate_user_set"
+
+[[android_const]]
+name = "MOBILE_BITRATE_PREF_STRING"
+vis = "package"
+type = "String"
+value = "list_mobile_bitrate_kbps"
+
+[[android_const]]
+name = "PREFS_VERSION_PREF_STRING"
+vis = "package"
+type = "String"
+value = "prefs_version"
+
+[[android_const]]
+name = "NATIVE_DEFAULTS_VERSION"
+vis = "package"
+type = "int"
+value = 2
+
+[[android_const]]
+name = "FOLLOW_SCREEN_VERSION"
+vis = "package"
+type = "int"
+value = 3
+
+[[android_const]]
+name = "PROFILE_NATIVE_VERSION"
+vis = "package"
+type = "int"
+value = 4
+
+[[android_const]]
+name = "RESOLUTION_FOLLOWS_SCREEN_PREF_STRING"
+vis = "package"
+type = "String"
+value = "resolution_follows_screen"
+
+[[android_const]]
+name = "BITRATE_PREF_OLD_STRING"
+vis = "package"
+type = "String"
+value = "seekbar_bitrate"
+
+[[android_const]]
+name = "STRETCH_PREF_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_stretch_video"
+
+[[android_const]]
+name = "SOPS_PREF_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_enable_sops"
+
+[[android_const]]
+name = "DISABLE_TOASTS_PREF_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_disable_warnings"
+
+[[android_const]]
+name = "HOST_AUDIO_PREF_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_host_audio"
+
+[[android_const]]
+name = "ENABLE_MIC_PREF_STRING"
+vis = "public"
+type = "String"
+value = "checkbox_enable_mic"
+
+[[android_const]]
+name = "MIC_ECHO_PREF_STRING"
+vis = "package"
+type = "String"
+value = "list_mic_echo_cancel"
+
+[[android_const]]
+name = "MIC_ECHO_ENGINE_PREF_STRING"
+vis = "public"
+type = "String"
+value = "debug_mic_echo_engine"
+
+[[android_const]]
+name = "MIC_NOISE_PREF_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_mic_noise_suppression"
+
+[[android_const]]
+name = "MIC_AUTO_GAIN_PREF_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_mic_auto_gain"
+
+[[android_const]]
+name = "MIC_GAIN_PREF_STRING"
+vis = "package"
+type = "String"
+value = "seekbar_mic_gain"
+
+[[android_const]]
+name = "MIC_BUTTON_PREF_STRING"
+vis = "public"
+type = "String"
+value = "checkbox_mic_button"
+
+[[android_const]]
+name = "FLOATING_MENU_BUTTON_PREF_STRING"
+vis = "public"
+type = "String"
+value = "checkbox_floating_menu_button"
+
+[[android_const]]
+name = "RETIRED_OSC_STYLE_PREF_STRING"
+vis = "package"
+type = "String"
+value = "list_osc_style"
+
+[[android_const]]
+name = "OSC_STICK_MODE_PREF_STRING"
+vis = "public"
+type = "String"
+value = "list_osc_stick_mode"
+
+[[android_const]]
+name = "OSC_STICK_DEADZONE_PREF_STRING"
+vis = "public"
+type = "String"
+value = "seekbar_osc_stick_deadzone"
+
+[[android_const]]
+name = "OSC_AUTO_HIDE_PREF_STRING"
+vis = "public"
+type = "String"
+value = "checkbox_osc_auto_hide"
+
+[[android_const]]
+name = "OSC_STICK_FLOATING"
+vis = "public"
+type = "String"
+value = "floating"
+
+[[android_const]]
+name = "OSC_STICK_FIXED"
+vis = "public"
+type = "String"
+value = "fixed"
+
+[[android_const]]
+name = "DEFAULT_OSC_STICK_DEADZONE"
+vis = "public"
+type = "int"
+value = 8
+
+[[android_const]]
+name = "MAX_OSC_STICK_DEADZONE"
+vis = "public"
+type = "int"
+value = 30
+
+[[android_const]]
+name = "DEADZONE_PREF_STRING"
+vis = "package"
+type = "String"
+value = "seekbar_deadzone"
+
+[[android_const]]
+name = "TRIGGER_DEADZONE_PREF_STRING"
+vis = "package"
+type = "String"
+value = "seekbar_trigger_deadzone"
+
+[[android_const]]
+name = "DEFAULT_TRIGGER_DEADZONE"
+vis = "public"
+type = "int"
+value = 2
+
+[[android_const]]
+name = "MAX_TRIGGER_DEADZONE"
+vis = "public"
+type = "int"
+value = 30
+
+[[android_const]]
+name = "OSC_OPACITY_PREF_STRING"
+vis = "package"
+type = "String"
+value = "seekbar_osc_opacity"
+
+[[android_const]]
+name = "LANGUAGE_PREF_STRING"
+vis = "package"
+type = "String"
+value = "list_languages"
+
+[[android_const]]
+name = "SMALL_ICONS_PREF_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_small_icon_mode"
+
+[[android_const]]
+name = "MULTI_CONTROLLER_PREF_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_multi_controller"
+
+[[android_const]]
+name = "SEND_CONTROLLERS_PREF_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_send_controllers"
+
+[[android_const]]
+name = "AUDIO_CONFIG_PREF_STRING"
+vis = "package"
+type = "String"
+value = "list_audio_config"
+
+[[android_const]]
+name = "AUDIO_CONFIG_714"
+vis = "package"
+type = "String"
+value = "714"
+
+[[android_const]]
+name = "USB_DRIVER_PREF_SRING"
+vis = "package"
+type = "String"
+value = "checkbox_usb_driver"
+
+[[android_const]]
+name = "USB_DUALSENSE_PREF_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_usb_dualsense"
+
+[[android_const]]
+name = "USB_SWITCH_PRO_PREF_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_usb_switch_pro"
+
+[[android_const]]
+name = "USB_FORWARDING_PREF_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_usb_forwarding"
+
+[[android_const]]
+name = "VIDEO_FORMAT_PREF_STRING"
+vis = "package"
+type = "String"
+value = "video_format"
+
+[[android_const]]
+name = "ONSCREEN_CONTROLLER_PREF_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_show_onscreen_controls"
+
+[[android_const]]
+name = "ONLY_L3_R3_PREF_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_only_show_L3R3"
+
+[[android_const]]
+name = "ONSCREEN_OWN_PLAYER_PREF_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_onscreen_own_player"
+
+[[android_const]]
+name = "SHOW_GUIDE_BUTTON_PREF_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_show_guide_button"
+
+[[android_const]]
+name = "SHOW_TOUCHPAD_BUTTON_PREF_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_show_touchpad_button"
+
+[[android_const]]
+name = "OSC_STEAM_CONTROLS_PREF_STRING"
+vis = "public"
+type = "String"
+value = "checkbox_osc_steam_controls"
+
+[[android_const]]
+name = "LEGACY_DISABLE_FRAME_DROP_PREF_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_disable_frame_drop"
+
+[[android_const]]
+name = "ENABLE_HDR_PREF_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_enable_hdr"
+
+[[android_const]]
+name = "THERMAL_PROTECTION_PREF_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_thermal_protection"
+
+[[android_const]]
+name = "ENABLE_SDR10_PREF_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_enable_sdr_10bit"
+
+[[android_const]]
+name = "ENABLE_PIP_PREF_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_enable_pip"
+
+[[android_const]]
+name = "AUTO_RECONNECT_PREF_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_auto_reconnect"
+
+[[android_const]]
+name = "NETWORK_GRACE_PREF_STRING"
+vis = "package"
+type = "String"
+value = "list_network_grace"
+
+[[android_const]]
+name = "TELL_HOST_WIRELESS_PREF_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_tell_host_wireless"
+
+[[android_const]]
+name = "TELL_HOST_LINK_SPEED_PREF_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_tell_host_link_speed"
+
+[[android_const]]
+name = "FEC_CHOICE_PREF_STRING"
+vis = "package"
+type = "String"
+value = "list_fec_choice"
+
+[[android_const]]
+name = "LINK_PROBE_PREF_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_link_probe"
+
+[[android_const]]
+name = "QUICK_RESUME_PREF_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_quick_resume"
+
+[[android_const]]
+name = "ENABLE_PERF_OVERLAY_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_enable_perf_overlay"
+
+[[android_const]]
+name = "BIND_ALL_USB_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_usb_bind_all"
+
+[[android_const]]
+name = "MOUSE_EMULATION_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_mouse_emulation"
+
+[[android_const]]
+name = "MOUSE_EMULATION_FIXED_STEP_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_mouse_emulation_fixed_step"
+
+[[android_const]]
+name = "BACK_AS_META_PREF_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_back_as_meta"
+
+[[android_const]]
+name = "BACK_OPENS_MENU_PREF_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_back_opens_menu"
+
+[[android_const]]
+name = "GAMEPAD_QUIT_COMBO_PREF_STRING"
+vis = "package"
+type = "String"
+value = "list_gamepad_quit_combo"
+
+[[android_const]]
+name = "BACK_AS_GUIDE_PREF_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_back_as_guide"
+
+[[android_const]]
+name = "GUIDE_MENU_HOLD_PREF_STRING"
+vis = "package"
+type = "String"
+value = "list_guide_menu_hold"
+
+[[android_const]]
+name = "DEFAULT_GUIDE_MENU_HOLD_MS"
+vis = "public"
+type = "int"
+value = 1000
+
+[[android_const]]
+name = "CAPTURE_SYSTEM_KEYS_PREF_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_capture_system_keys"
+
+[[android_const]]
+name = "SYSTEM_KEYS_FULLSCREEN_ONLY_PREF_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_system_keys_fullscreen_only"
+
+[[android_const]]
+name = "RIGHT_ALT_AS_META_PREF_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_right_alt_as_meta"
+
+[[android_const]]
+name = "KEYBOARD_FOLLOWS_TEXT_FIELDS_PREF_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_keyboard_follows_text_fields"
+
+[[android_const]]
+name = "CLIPBOARD_SYNC_PREF_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_clipboard_sync"
+
+[[android_const]]
+name = "ANALOG_SCROLLING_PREF_STRING"
+vis = "package"
+type = "String"
+value = "analog_scrolling"
+
+[[android_const]]
+name = "MOUSE_NAV_BUTTONS_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_mouse_nav_buttons"
+
+[[android_const]]
+name = "INPUT_ONLY_ANY_HOST_PREF_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_input_only_any_host"
+
+[[android_const]]
+name = "UNLOCK_FPS_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_unlock_fps"
+
+[[android_const]]
+name = "VIBRATE_OSC_PREF_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_vibrate_osc"
+
+[[android_const]]
+name = "VIBRATE_FALLBACK_PREF_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_vibrate_fallback"
+
+[[android_const]]
+name = "VIBRATE_FALLBACK_STRENGTH_PREF_STRING"
+vis = "package"
+type = "String"
+value = "seekbar_vibrate_fallback_strength"
+
+[[android_const]]
+name = "FLIP_FACE_BUTTONS_PREF_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_flip_face_buttons"
+
+[[android_const]]
+name = "TOUCHSCREEN_TRACKPAD_PREF_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_touchscreen_trackpad"
+
+[[android_const]]
+name = "TRACKPAD_SPEED_PREF_STRING"
+vis = "package"
+type = "String"
+value = "seekbar_trackpad_speed"
+
+[[android_const]]
+name = "LOCAL_CURSOR_SPEED_PREF_STRING"
+vis = "package"
+type = "String"
+value = "seekbar_local_cursor_speed"
+
+[[android_const]]
+name = "TRACKPAD_AREA_PREF_STRING"
+vis = "package"
+type = "String"
+value = "list_trackpad_area"
+
+[[android_const]]
+name = "THREE_FINGER_TAP_PREF_STRING"
+vis = "package"
+type = "String"
+value = "list_three_finger_tap"
+
+[[android_const]]
+name = "FOUR_FINGER_TAP_PREF_STRING"
+vis = "package"
+type = "String"
+value = "list_four_finger_tap"
+
+[[android_const]]
+name = "MULTI_TOUCH_FINGER_TAPS_PREF_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_multi_touch_finger_taps"
+
+[[android_const]]
+name = "FINGER_TAP_ON_CANCEL_PREF_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_finger_tap_on_cancel"
+
+[[android_const]]
+name = "PC_KEYBOARD_LAYOUT_PREF_STRING"
+vis = "package"
+type = "String"
+value = "list_pc_keyboard_layout"
+
+[[android_const]]
+name = "PC_KEYBOARD_SIZE_PREF_STRING"
+vis = "package"
+type = "String"
+value = "seekbar_pc_keyboard_size"
+
+[[android_const]]
+name = "PC_KEYBOARD_OPACITY_PREF_STRING"
+vis = "package"
+type = "String"
+value = "seekbar_pc_keyboard_opacity"
+
+[[android_const]]
+name = "MOUSE_SPEED_PREF_STRING"
+vis = "package"
+type = "String"
+value = "seekbar_mouse_speed"
+
+[[android_const]]
+name = "TRACKPAD_SENSITIVITY_X_PREF_STRING"
+vis = "package"
+type = "String"
+value = "seekbar_trackpad_sensitivity_x"
+
+[[android_const]]
+name = "TRACKPAD_SENSITIVITY_Y_PREF_STRING"
+vis = "package"
+type = "String"
+value = "seekbar_trackpad_sensitivity_y"
+
+[[android_const]]
+name = "TRACKPAD_SWAP_AXIS_PREF_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_trackpad_swap_axis"
+
+[[android_const]]
+name = "TRACKPAD_SCROLL_SPEED_PREF_STRING"
+vis = "package"
+type = "String"
+value = "seekbar_trackpad_scroll_speed"
+
+[[android_const]]
+name = "NATIVE_TOUCHPAD_PREF_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_native_touchpad"
+
+[[android_const]]
+name = "LATENCY_TOAST_PREF_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_enable_post_stream_toast"
+
+[[android_const]]
+name = "RETIRED_RUST_ENGINE_PREF_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_rust_engine"
+
+[[android_const]]
+name = "RETIRED_RUST_ENGINE_DEFAULT_ON_PREF_STRING"
+vis = "package"
+type = "String"
+value = "rust_engine_default_on"
+
+[[android_const]]
+name = "PACKED_444_PREF_STRING"
+vis = "package"
+type = "String"
+value = "experimental_packed_444"
+
+[[android_const]]
+name = "FRAME_WARP_PREF_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_frame_warp"
+
+[[android_const]]
+name = "CHIPSET_TUNING_PREF_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_experimental_chipset_tuning"
+
+[[android_const]]
+name = "TV_DISPLAY_COMPATIBILITY_PREF_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_tv_display_compatibility"
+
+[[android_const]]
+name = "FRAME_PACING_PREF_STRING"
+vis = "package"
+type = "String"
+value = "frame_pacing"
+
+[[android_const]]
+name = "ABSOLUTE_MOUSE_MODE_PREF_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_absolute_mouse_mode"
+
+[[android_const]]
+name = "ENABLE_AUDIO_FX_PREF_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_enable_audiofx"
+
+[[android_const]]
+name = "AUDIO_PASSTHROUGH_PREF_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_audio_passthrough"
+
+[[android_const]]
+name = "MUTE_AUDIO_PREF_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_mute_audio"
+
+[[android_const]]
+name = "DUAL_SCREEN_PREF_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_dual_screen"
+
+[[android_const]]
+name = "SECOND_SCREEN_RESOLUTION_PREF_STRING"
+vis = "package"
+type = "String"
+value = "list_resolution_screen2"
+
+[[android_const]]
+name = "SECOND_SCREEN_NATIVE"
+vis = "public"
+type = "String"
+value = "native"
+
+[[android_const]]
+name = "REDUCE_REFRESH_RATE_PREF_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_reduce_refresh_rate"
+
+[[android_const]]
+name = "FULL_RANGE_PREF_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_full_range"
+
+[[android_const]]
+name = "GAMEPAD_TOUCHPAD_AS_MOUSE_PREF_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_gamepad_touchpad_as_mouse"
+
+[[android_const]]
+name = "GAMEPAD_MOTION_SENSORS_PREF_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_gamepad_motion_sensors"
+
+[[android_const]]
+name = "GAMEPAD_MOTION_FALLBACK_PREF_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_gamepad_motion_fallback"
+
+[[android_const]]
+name = "CODEC_LOW_LATENCY_PREF_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_codec_low_latency"
+
+[[android_const]]
+name = "VENDOR_LOW_LATENCY_PREF_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_vendor_low_latency"
+
+[[android_const]]
+name = "DISABLE_HEVC_LOW_LATENCY_PREF_STRING"
+vis = "public"
+type = "String"
+value = "checkbox_disable_hevc_low_latency"
+
+[[android_const]]
+name = "HEVC_LOW_LATENCY_MODE_PREF_STRING"
+vis = "public"
+type = "String"
+value = "list_hevc_low_latency_mode"
+
+[[android_const]]
+name = "HEVC_LOW_LATENCY_AUTO"
+vis = "public"
+type = "int"
+value = 0
+
+[[android_const]]
+name = "HEVC_LOW_LATENCY_ON"
+vis = "public"
+type = "int"
+value = 1
+
+[[android_const]]
+name = "HEVC_LOW_LATENCY_OFF"
+vis = "public"
+type = "int"
+value = 2
+
+[[android_const]]
+name = "CODEC_PERFORMANCE_PREF_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_codec_performance"
+
+[[android_const]]
+name = "PHONE_PERFORMANCE_HINTS_PREF_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_phone_performance_hints"
+
+[[android_const]]
+name = "GPU_MAX_CLOCKS_PREF_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_gpu_max_clocks"
+
+[[android_const]]
+name = "DEFAULT_GPU_MAX_CLOCKS"
+vis = "package"
+type = "boolean"
+value = false
+
+[[android_const]]
+name = "DROP_LATE_FRAMES_PREF_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_drop_late_frames"
+
+[[android_const]]
+name = "FRACTIONAL_VSYNC_PREF_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_fractional_vsync"
+
+[[android_const]]
+name = "DEFAULT_FRACTIONAL_VSYNC"
+vis = "package"
+type = "boolean"
+value = false
+
+[[android_const]]
+name = "DISPLAY_QUEUE_RECOVERY_PREF_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_display_queue_recovery"
+
+[[android_const]]
+name = "TEXTURE_VIEW_PREF_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_texture_view"
+
+[[android_const]]
+name = "UNBATCHED_INPUT_PREF_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_unbatched_input"
+
+[[android_const]]
+name = "NETWORK_PRIORITY_PREF_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_network_priority"
+
+[[android_const]]
+name = "SUBMIT_HINT_PREF_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_submit_hint"
+
+[[android_const]]
+name = "COVERING_DECODER_SIZE_PREF_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_covering_decoder_size"
+
+[[android_const]]
+name = "PYROWAVE_PREACQUIRE_PREF_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_pyrowave_preacquire"
+
+[[android_const]]
+name = "CODEC_DIRECT_PREF_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_codec_direct"
+
+[[android_const]]
+name = "RECEIVE_DECODE_PRIORITY_PREF_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_receive_decode_priority"
+
+[[android_const]]
+name = "CLIENT_ROAMING_PREF_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_client_roaming"
+
+[[android_const]]
+name = "ROAMING_METERED_PREF_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_roaming_metered"
+
+[[android_const]]
+name = "RECEIVE_COALESCING_PREF_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_receive_coalescing"
+
+[[android_const]]
+name = "JUMBO_FRAMES_PREF_STRING"
+vis = "package"
+type = "String"
+value = "jumbo_frames"
+
+[[android_const]]
+name = "DECODE_QUEUE_FRAMES_PREF_STRING"
+vis = "package"
+type = "String"
+value = "list_decode_queue_frames"
+
+[[android_const]]
+name = "DEFAULT_DECODE_QUEUE_FRAMES"
+vis = "package"
+type = "int"
+value = 15
+
+[[android_const]]
+name = "INTERNET_PLAY_PREF_STRING"
+vis = "public"
+type = "String"
+value = "checkbox_internet_play"
+
+[[android_const]]
+name = "VIRTUAL_DISPLAY_PREF_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_virtual_display"
+
+[[android_const]]
+name = "VIRTUAL_DISPLAY_SCALE_PREF_STRING"
+vis = "package"
+type = "String"
+value = "seekbar_virtual_display_scale"
+
+[[android_const]]
+name = "VIRTUAL_DISPLAY_DPI_PREF_STRING"
+vis = "package"
+type = "String"
+value = "list_virtual_display_dpi"
+
+[[android_const]]
+name = "YUV444_PREF_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_yuv444"
+
+[[android_const]]
+name = "VRR_PREF_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_vrr"
+
+[[android_const]]
+name = "HOST_FRAME_TIMES_PREF_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_host_frame_times"
+
+[[android_const]]
+name = "REAL_VRR_PREF_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_real_vrr"
+
+[[android_const]]
+name = "CONTENT_RATE_FRAME_RATE_PREF_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_content_rate_frame_rate"
+
+[[android_const]]
+name = "ARR_FIXED_TIMING_PREF_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_arr_fixed_timing"
+
+[[android_const]]
+name = "UPSCALING_PREF_STRING"
+vis = "package"
+type = "String"
+value = "upscaling_mode"
+
+[[android_const]]
+name = "UPSCALING_SHARPNESS_PREF_STRING"
+vis = "package"
+type = "String"
+value = "upscaling_sharpness"
+
+[[android_const]]
+name = "RETIRED_GL_RENDER_PREF_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_gl_render"
+
+[[android_const]]
+name = "VULKAN_RENDER_PREF_STRING"
+vis = "package"
+type = "String"
+value = "checkbox_vulkan_render"
+
+[[android_const]]
+name = "DEBUG_HDR_HLG_ONLY_PREF_STRING"
+vis = "package"
+type = "String"
+value = "debug_hdr_hlg_only"
+
+[[android_const]]
+name = "DEFAULT_RESOLUTION"
+vis = "package"
+type = "String"
+value = "1280x720"
+
+[[android_const]]
+name = "DEFAULT_FPS"
+vis = "package"
+type = "String"
+value = "60"
+
+[[android_const]]
+name = "DEFAULT_STRETCH"
+vis = "package"
+type = "boolean"
+value = false
+
+[[android_const]]
+name = "DEFAULT_SOPS"
+vis = "package"
+type = "boolean"
+value = true
+
+[[android_const]]
+name = "DEFAULT_DISABLE_TOASTS"
+vis = "package"
+type = "boolean"
+value = false
+
+[[android_const]]
+name = "DEFAULT_HOST_AUDIO"
+vis = "package"
+type = "boolean"
+value = false
+
+[[android_const]]
+name = "DEFAULT_ENABLE_MIC"
+vis = "package"
+type = "boolean"
+value = false
+
+[[android_const]]
+name = "DEFAULT_DEADZONE"
+vis = "package"
+type = "int"
+value = 7
+
+[[android_const]]
+name = "DEFAULT_OPACITY"
+vis = "package"
+type = "int"
+value = 90
+
+[[android_const]]
+name = "DEFAULT_LANGUAGE"
+vis = "public"
+type = "String"
+value = "default"
+
+[[android_const]]
+name = "DEFAULT_MULTI_CONTROLLER"
+vis = "package"
+type = "boolean"
+value = true
+
+[[android_const]]
+name = "DEFAULT_USB_DRIVER"
+vis = "package"
+type = "boolean"
+value = true
+
+[[android_const]]
+name = "DEFAULT_VIDEO_FORMAT"
+vis = "package"
+type = "String"
+value = "auto"
+
+[[android_const]]
+name = "ONSCREEN_CONTROLLER_DEFAULT"
+vis = "package"
+type = "boolean"
+value = false
+
+[[android_const]]
+name = "ONLY_L3_R3_DEFAULT"
+vis = "package"
+type = "boolean"
+value = false
+
+[[android_const]]
+name = "ONSCREEN_OWN_PLAYER_DEFAULT"
+vis = "package"
+type = "boolean"
+value = false
+
+[[android_const]]
+name = "OSC_AUTO_HIDE_DEFAULT"
+vis = "package"
+type = "boolean"
+value = true
+
+[[android_const]]
+name = "SHOW_GUIDE_BUTTON_DEFAULT"
+vis = "package"
+type = "boolean"
+value = true
+
+[[android_const]]
+name = "SHOW_TOUCHPAD_BUTTON_DEFAULT"
+vis = "package"
+type = "boolean"
+value = false
+
+[[android_const]]
+name = "OSC_STEAM_CONTROLS_DEFAULT"
+vis = "package"
+type = "boolean"
+value = false
+
+[[android_const]]
+name = "DEFAULT_ENABLE_HDR"
+vis = "package"
+type = "boolean"
+value = false
+
+[[android_const]]
+name = "DEFAULT_ENABLE_SDR10"
+vis = "package"
+type = "boolean"
+value = false
+
+[[android_const]]
+name = "DEFAULT_ENABLE_PIP"
+vis = "package"
+type = "boolean"
+value = false
+
+[[android_const]]
+name = "DEFAULT_AUTO_RECONNECT"
+vis = "package"
+type = "boolean"
+value = true
+
+[[android_const]]
+name = "DEFAULT_ENABLE_PERF_OVERLAY"
+vis = "package"
+type = "boolean"
+value = false
+
+[[android_const]]
+name = "DEFAULT_BIND_ALL_USB"
+vis = "package"
+type = "boolean"
+value = false
+
+[[android_const]]
+name = "DEFAULT_MOUSE_EMULATION"
+vis = "package"
+type = "boolean"
+value = true
+
+[[android_const]]
+name = "DEFAULT_ANALOG_STICK_FOR_SCROLLING"
+vis = "package"
+type = "String"
+value = "right"
+
+[[android_const]]
+name = "DEFAULT_MOUSE_NAV_BUTTONS"
+vis = "package"
+type = "boolean"
+value = false
+
+[[android_const]]
+name = "DEFAULT_INPUT_ONLY_ANY_HOST"
+vis = "package"
+type = "boolean"
+value = false
+
+[[android_const]]
+name = "DEFAULT_UNLOCK_FPS"
+vis = "package"
+type = "boolean"
+value = false
+
+[[android_const]]
+name = "DEFAULT_VIBRATE_OSC"
+vis = "package"
+type = "boolean"
+value = true
+
+[[android_const]]
+name = "DEFAULT_VIBRATE_FALLBACK"
+vis = "package"
+type = "boolean"
+value = false
+
+[[android_const]]
+name = "DEFAULT_VIBRATE_FALLBACK_STRENGTH"
+vis = "package"
+type = "int"
+value = 100
+
+[[android_const]]
+name = "DEFAULT_FLIP_FACE_BUTTONS"
+vis = "package"
+type = "boolean"
+value = false
+
+[[android_const]]
+name = "DEFAULT_TOUCHSCREEN_TRACKPAD"
+vis = "package"
+type = "boolean"
+value = true
+
+[[android_const]]
+name = "DEFAULT_TRACKPAD_SPEED"
+vis = "package"
+type = "int"
+value = 100
+
+[[android_const]]
+name = "DEFAULT_MOUSE_SPEED"
+vis = "package"
+type = "int"
+value = 100
+
+[[android_const]]
+name = "DEFAULT_TRACKPAD_SENSITIVITY"
+vis = "package"
+type = "int"
+value = 100
+
+[[android_const]]
+name = "DEFAULT_TRACKPAD_SCROLL_SPEED"
+vis = "package"
+type = "int"
+value = 50
+
+[[android_const]]
+name = "DEFAULT_AUDIO_CONFIG"
+vis = "package"
+type = "String"
+value = "2"
+
+[[android_const]]
+name = "DEFAULT_LATENCY_TOAST"
+vis = "package"
+type = "boolean"
+value = false
+
+[[android_const]]
+name = "DEFAULT_FRAME_PACING"
+vis = "package"
+type = "String"
+value = "latency"
+
+[[android_const]]
+name = "DEFAULT_ABSOLUTE_MOUSE_MODE"
+vis = "package"
+type = "boolean"
+value = false
+
+[[android_const]]
+name = "DEFAULT_ENABLE_AUDIO_FX"
+vis = "package"
+type = "boolean"
+value = false
+
+[[android_const]]
+name = "DEFAULT_REDUCE_REFRESH_RATE"
+vis = "package"
+type = "boolean"
+value = false
+
+[[android_const]]
+name = "DEFAULT_FULL_RANGE"
+vis = "package"
+type = "boolean"
+value = false
+
+[[android_const]]
+name = "DEFAULT_GAMEPAD_TOUCHPAD_AS_MOUSE"
+vis = "package"
+type = "boolean"
+value = false
+
+[[android_const]]
+name = "DEFAULT_GAMEPAD_MOTION_SENSORS"
+vis = "package"
+type = "boolean"
+value = true
+
+[[android_const]]
+name = "DEFAULT_GAMEPAD_MOTION_FALLBACK"
+vis = "package"
+type = "boolean"
+value = false
+
+[[android_const]]
+name = "FRAME_PACING_MIN_LATENCY"
+vis = "public"
+type = "int"
+value = 0
+
+[[android_const]]
+name = "FRAME_PACING_BALANCED"
+vis = "public"
+type = "int"
+value = 1
+
+[[android_const]]
+name = "FRAME_PACING_CAP_FPS"
+vis = "public"
+type = "int"
+value = 2
+
+[[android_const]]
+name = "FRAME_PACING_MAX_SMOOTHNESS"
+vis = "public"
+type = "int"
+value = 3
+
+[[android_const]]
+name = "RES_360P"
+vis = "public"
+type = "String"
+value = "640x360"
+
+[[android_const]]
+name = "RES_480P"
+vis = "public"
+type = "String"
+value = "854x480"
+
+[[android_const]]
+name = "RES_720P"
+vis = "public"
+type = "String"
+value = "1280x720"
+
+[[android_const]]
+name = "RES_1080P"
+vis = "public"
+type = "String"
+value = "1920x1080"
+
+[[android_const]]
+name = "RES_1440P"
+vis = "public"
+type = "String"
+value = "2560x1440"
+
+[[android_const]]
+name = "RES_4K"
+vis = "public"
+type = "String"
+value = "3840x2160"
+
+[[android_const]]
+name = "RES_NATIVE"
+vis = "public"
+type = "String"
+value = "Native"
+
+[[android_const]]
+name = "PC_PROFILES_OVERRIDES_PREF_STRING"
+vis = "package"
+type = "String"
+value = "pc_profiles_overrides"
+
+[[android_const]]
+name = "AUTO_RECONNECT_DEFAULT_ON_PREF_STRING"
+vis = "package"
+type = "String"
+value = "auto_reconnect_default_on"
+
+[[android_const]]
+name = "RECEIVE_DECODE_PRIORITY_DEFAULT_ON_PREF_STRING"
+vis = "package"
+type = "String"
+value = "receive_decode_priority_default_on"
+
+[[android_const]]
+name = "CODEC_LOW_LATENCY_CORRUPTION_OFF_PREF_STRING"
+vis = "package"
+type = "String"
+value = "codec_low_latency_corruption_off"
+
+[[android_const]]
+name = "OVERLAY_MODE_PREF_STRING"
+vis = "package"
+type = "String"
+value = "performance_overlay_mode"
+
+[[android_const]]
+name = "OVERLAY_POSITION_PREF_STRING"
+vis = "package"
+type = "String"
+value = "performance_overlay_position"
+
+[[android_const]]
+name = "OVERLAY_COMPACT_DEFAULT_PREF_STRING"
+vis = "package"
+type = "String"
+value = "performance_overlay_compact_default"
+
+# ---------- Android settings rows (preferences.xml + stream_profiles) ----------
+
+[[android_setting]]
+key = "simple_smoothness"
+category = "category_simple_main"
+tier = "main"
+kind = "list"
+scope = "global"
+desktop_key = "simple_smoothness"
+advice = "Auto follows the screen and decoder: the newest picture at each refresh, with Variable refresh rate only if it was turned on in Display & image; Smoothest holds every frame for a steady cadence with a little more delay; Lowest delay never waits; Balanced sits between them with VRR. Changing it writes the frame pacing, V-Sync flags and latency switches together (SimpleProfile, nightjar-policy's simple_profile), so the sections below show the same values. Stored as `simple_smoothness` (auto, smoothest, balanced or lowest-delay)."
+
+[[android_setting]]
+key = "simple_picture"
+category = "category_simple_main"
+tier = "main"
+kind = "list"
+scope = "global"
+desktop_key = "simple_picture"
+advice = "Auto uses the bitrate for the resolution, frame rate and Automatic codec; Best spends 1.5 times that for a sharper picture; Save data uses 0.6 times and lets the bitrate and quality fall when the link struggles. Changing it writes the bitrate, the codec (Automatic), Lower bitrate and Automatic quality together (SimpleProfile). Stored as `simple_picture` (auto, best or save-data)."
+
+[[android_setting]]
+key = "simple_screen"
+category = "category_simple_main"
+tier = "main"
+kind = "action"
+scope = "global"
+advice = "This device's own resolution and refresh rate, which the simple layer always streams at. Lower the resolution under Video if the stream stutters; the row then shows Custom. Read-only."
+
+[[android_setting]]
+key = "simple_hdr"
+category = "category_simple_main"
+tier = "main"
+kind = "list"
+scope = "global"
+desktop_key = "simple_hdr"
+advice = "The row shows what the stream does: Auto while HDR is asked for, Off while the stream is SDR, and a fresh install reads Off because its HDR switch is off until Auto is chosen. Auto is the recommended choice and turns HDR on only where the screen, the decoder and the PC support it; Off always streams SDR. It writes the HDR switch under Video and reads it there, and a pick in the other Recommended rows keeps that switch as it is. Stored as `simple_hdr` (auto or off)."
+
+[[android_setting]]
+key = "checkbox_console_home"
+category = "category_simple_main"
+tier = "main"
+kind = "bool"
+xml_default = "true"
+scope = "global"
+desktop_key = "console_home"
+advice = "Opens straight into Home, the full-screen library of your games a controller or remote can navigate, instead of the list of PCs. On by default; needs a paired PC that shares its game library for Home to have something to show. Stored as `checkbox_console_home`, and turning it on sets `list_open_on_start` to pcs so a game countdown does not win (StartScreenChoice)."
+
+[[android_setting]]
+key = "simple_back_to_recommended"
+category = "category_simple_main"
+tier = "main"
+kind = "action"
+scope = "global"
+advice = "Sets the three choices above back to Auto, which writes the settings the device measured as best. Your other settings keep their values until then. Opens nothing; the values show in the sections below."
+
+[[android_setting]]
+key = "list_resolution"
+category = "category_video_main"
+tier = "main"
+kind = "list"
+xml_default = "1280x720"
+scope = "layer"
+desktop_key = "width"
+advice = "Choose Custom to enter a fixed width and height (64–16384 pixels each) for every stream without a resolution override. Named profiles, PC and game overrides retain their priority. Custom dimensions stay fixed when the screen changes. Raise for detail; lower for less network and decoding load. The picker also includes screen and standard sizes; larger fixed presets stay listed while chosen. Changing resolution preserves an explicitly chosen bitrate."
+
+[[android_setting]]
+key = "list_fps"
+category = "category_video_main"
+tier = "main"
+kind = "list"
+xml_default = "60"
+scope = "layer"
+desktop_key = "fps"
+advice = "Raise for smoother motion on a fast screen. Open the list and choose Show all frame rates to include rates the screen may not support (possible stutter; compare rendered FPS in the overlay), or Show supported frame rates only to go back. Stored as `checkbox_unlock_fps`. The screen's own refresh rate is added as Screen refresh rate. Changing resolution or FPS preserves an explicitly chosen bitrate."
+
+[[android_setting]]
+key = "automatic_bitrate"
+category = "category_video_main"
+tier = "main"
+kind = "bool"
+scope = "global"
+advice = "On until you move the bitrate slider: the bitrate is the default for the resolution, frame rate and codec, and follows them when they change. Turn it on again to go back to that default; turn it off to keep the bitrate shown when those change. Stored as `bitrate_user_set` (inverted) with `seekbar_bitrate_kbps`."
+
+[[android_setting]]
+key = "seekbar_bitrate_kbps"
+category = "category_video_main"
+tier = "main"
+kind = "int"
+scope = "layer"
+desktop_key = "bitrate_kbps"
+advice = "Raise for image quality on a stable link; lower for network loss. The slider is logarithmic; the buttons make fine adjustments."
+
+[[android_setting]]
+key = "lower_bitrate"
+category = "category_video_main"
+tier = "main"
+kind = "list"
+xml_default = "pc"
+scope = "global"
+desktop_key = "lower_bitrate"
+advice = "The PC decides is the default and is recommended: the PC lowers the bitrate when frames are lost that it cannot repair and raises it again afterwards, with nothing to set up on this device. Lower it sooner lets this device lower or raise the bitrate from its own frame loss and network delay readings with a host that offers bitrate changes (Rubylight); the PC's own lowering stands back while it runs. On a PC that takes no bitrate changes from the device, Lower it sooner runs this device's busy-network controller instead: it lowers the bitrate when the connection, decoder or device heat can't keep up and raises it again when things recover, never above Bitrate and never below a built-in floor (2 Mbps, or more for large streams); it needs a host that reports its stream bitrate, and a Sunshine-based PC with its own automatic bitrate runs that instead, following the network reports Nightjar sends every three seconds. Never: keep my bitrate sends the bitrate the stream started with (after a reconnect, the one the player chose in the stream) to a PC that accepts bitrate changes once the stream runs, so the PC stops lowering it for that stream and again after a reconnect, and no bitrate controller of this device runs, Automatic quality's included (it then changes only the resolution and frame rate); on a link that cannot carry that bitrate the picture freezes or breaks up. On a PC that does not accept bitrate changes from the device nothing is sent and the stream runs as The PC decides. A Recommended choice changes Lower bitrate only for Save data, which sets Lower it sooner, and for the next choice after it, which sets The PC decides again. While the performance overlay is hidden, Nightjar says once per stream when the PC lowered the bitrate for the network, and on a PC that accepts bitrate changes that the stream menu's Keep my bitrate stops it (not with Never, nor while the PC keeps the bitrate). Keep my bitrate is a switch in the stream menu's Change bitrate / frame rate dialog, only on a PC that accepts bitrate changes: on sends the bitrate last chosen in the stream (else the stream's own) once, stops this device's own lowering and stores Never; off stores The PC decides, which applies from the next stream since the PC cannot take the bitrate back. The choice is the default for every PC; the stream menu's Turn on or Turn off Lower bitrate when the network is busy saves Lower it sooner or The PC decides for one PC, and choosing anew in Settings makes every PC follow it again. Stored as `lower_bitrate` (`pc`, `sooner` or `keep`). Earlier versions stored three switches, which move here once: `keep_bitrate` on is Never; otherwise `adaptive_bitrate` (`checkbox_auto_bitrate` before) or `checkbox_rate_change_bitrate` on is Lower it sooner (When the network is busy, an earlier choice, is now Lower it sooner); otherwise The PC decides. A PC's own choice of the busy controller becomes its own Lower it sooner or The PC decides."
+
+[[android_setting]]
+key = "list_mobile_bitrate_kbps"
+category = "category_video_main"
+tier = "main"
+kind = "list"
+xml_default = "0"
+scope = "global"
+advice = "Choose a cap for streams that start on mobile data or on Wi-Fi that Android marks as metered, such as a phone's hotspot. It caps the bitrate from every layer, including profiles, PC and game values; Off uses the same bitrate on every network. Read once at stream start. See [named profiles](#named-profiles-and-game-settings)."
+
+[[android_setting]]
+key = "video_format"
+category = "category_video_main"
+tier = "main"
+kind = "list"
+xml_default = "auto"
+scope = "layer"
+desktop_key = "codec"
+advice = "Start with Automatic. Choose a specific codec to compare decoder performance; Prefer AV1 and Prefer HEVC fall back when the PC or device lacks them. PyroWave requires a host that supports it (Rubylight, or Vibepollo with PyroWave available) and Vulkan capabilities; on a PC whose host has none, that PC uses the setting for all PCs or Automatic instead."
+
+[[android_setting]]
+key = "checkbox_enable_hdr"
+category = "category_video_main"
+tier = "main"
+kind = "bool"
+xml_default = "false"
+scope = "layer"
+desktop_key = "hdr"
+advice = "Enable with an HDR screen, a compatible decoder and HDR configured on the host display. HDR10 works with any host that streams HDR; HDR10+, HLG and Dolby Vision are used where the screen, the decoder and the PC support them (Rubylight 3.0). Availability is device-filtered."
+
+[[android_setting]]
+key = "more_video"
+category = "category_more_video"
+tier = "main"
+kind = "action"
+scope = "global"
+advice = "Shows or hides the Video rows that are not main, such as automatic quality and 10-bit SDR. Settings search and links find them while it is closed."
+
+[[android_setting]]
+key = "sharp_color"
+category = "category_basic_settings"
+tier = "more"
+kind = "action"
+scope = "layer"
+desktop_key = "prefer_yuv444"
+picker = { array = "@array/sharp_color_names", default_index = 0 }
+advice = "Off by default. On streams full color detail (4:4:4) so colored text and thin lines stay crisp: native 4:4:4 where this device decodes it and the PC encodes it, else packed full chroma where both offer it (HEVC or AV1), else neither, and the app says once per PC why not. With PyroWave it asks for PyroWave 4:4:4 where the PC and this device offer it. HDR keeps priority: packed full chroma runs with HDR only where both sides have a 10-bit packed mode. Stored as `checkbox_yuv444` and `experimental_packed_444`, both written; either one on from an older version reads as Automatic. The decision is nightjar-core's, the same as desktop Nightjar's."
+
+[[android_setting]]
+key = "checkbox_enable_sdr_10bit"
+category = "category_basic_settings"
+tier = "more"
+kind = "bool"
+xml_default = "false"
+scope = "global"
+desktop_key = "sdr_10bit"
+advice = "Enable if you see banding in gradients and the screen has no HDR, or HDR is off. Streams SDR in 10-bit HEVC or AV1 and needs a Main10 decoder on this device and a PC that offers 10-bit; otherwise the stream is 8-bit and the app says so. The PC's display must be in SDR: with HDR on it, the stream is HDR. Not used with PyroWave. Takes effect on the next stream."
+
+[[android_setting]]
+key = "checkbox_frame_warp"
+category = "category_basic_settings"
+tier = "more"
+kind = "bool"
+xml_default = "false"
+scope = "global"
+desktop_key = "frame_warp"
+advice = "Off by default. Turn on to see a mouse or right-stick camera turn on the next refresh of this screen: each picture is shifted by the turn the PC has not drawn yet, and the game's HUD stays in place. Needs a host that offers Frame Warp (Rubylight); the host learns each game first, so the overlay reads learning until it locks. It draws through Vulkan (Android 10 and a GPU with Vulkan 1.1) or else OpenGL ES without upscaling, which adds a render pass; PyroWave streams draw it in their own renderer, with their upscaling and HDR. Off for HDR without Vulkan and for Full chroma, with a message. A Dolby Vision screen streams HDR10 with it on, since its Dolby Vision decoder cannot feed a drawn picture. The shift is a translation: right for a turn, approximate near the edges at wide fields of view, and not used for movement."
+
+[[android_setting]]
+key = "adaptive_quality_mode"
+category = "category_basic_settings"
+tier = "more"
+kind = "list"
+xml_default = "off"
+scope = "global"
+desktop_key = "adaptive_quality"
+advice = "Off by default. Motion preserves FPS first, Detail preserves resolution first, and Battery also reduces work on healthy links. Lowers resolution or frame rate when the network, slow decoding or heat keep the stream from running well; not available with PyroWave. The stream menu can override the mode per PC."
+
+[[android_setting]]
+key = "adaptive_quality_min_resolution"
+category = "category_basic_settings"
+tier = "more"
+kind = "list"
+xml_default = "720"
+scope = "global"
+desktop_key = "quality_min_short_edge"
+always_listed = "Automatic quality is off"
+advice = "Sets the smallest short edge for automatic quality, with the aspect ratio preserved. The selected starting resolution is the ceiling; a minimum above that ceiling is clamped down."
+
+[[android_setting]]
+key = "adaptive_quality_min_fps"
+category = "category_basic_settings"
+tier = "more"
+kind = "list"
+xml_default = "30"
+scope = "global"
+desktop_key = "quality_min_fps"
+always_listed = "Automatic quality is off"
+advice = "Sets the lowest FPS automatic quality may request, including Battery mode. Recovery increases one step after 30 healthy seconds; reductions are at least 15 seconds apart."
+
+[[android_setting]]
+key = "checkbox_thermal_protection"
+category = "category_basic_settings"
+tier = "more"
+kind = "bool"
+xml_default = "false"
+scope = "global"
+advice = "Turn on only if the device throttles or gets uncomfortably hot while streaming. When the device reports heat, Lower bitrate when the network is busy halves the bitrate in steps and automatic quality lowers the resolution, and PyroWave stops forcing the top clocks. Off by default, because most phones and TV sticks run hot in normal use."
+
+[[android_setting]]
+key = "video_scaling"
+category = "category_display_main"
+tier = "main"
+kind = "action"
+scope = "global"
+desktop_key = "video_scaling"
+advice = "How the stream fills a screen of another shape: Fit shows all of it with bars, Fill (crop) fills the screen and cuts off the edges that do not fit, Stretch fills it and distorts shapes, 1:1 pixels shows the stream at its own size, centred. The key is the older Stretch switch, still written (on only for Stretch) so older versions behave sensibly; the mode itself is stored as `video_scaling`. Also in the stream menu. See [video scaling](video-and-latency.md#video-scaling)."
+
+[[android_setting]]
+key = "stream_orientation"
+category = "category_display_main"
+tier = "main"
+kind = "list"
+xml_default = "auto"
+scope = "global"
+advice = "Automatic uses landscape on phones and any orientation on tablets, squarish screens, windows and external displays. Landscape and Portrait lock the screen; Rotate with device follows it within the system rotation lock. A host streaming from its virtual display starts the stream in the screen's shape, and with Rotate with device asks for the turned size while the stream runs where the host takes in-stream reconfigure. Other hosts keep the stream's size and Video size fits it into the turned screen. Hidden on TVs. See [orientation](video-and-latency.md#orientation)."
+
+[[android_setting]]
+key = "checkbox_vrr"
+category = "category_display_main"
+tier = "main"
+kind = "list"
+xml_default = "off"
+scope = "layer"
+desktop_key = "vrr"
+advice = "Off by default. On and Fastest enable Android's automatic ARR policy on a screen that has ARR (Android 16), or run the stream at the screen's highest refresh rate on any other screen (a lower seamless multiple of the game's rate where the highest would judder and the host sends frame times, `vrrContentVote`), where each frame still waits for the next refresh; both override pacing to Lowest latency and disable the lower refresh rate; hosts that support VRR are asked for it too. On (Real VRR) shows each frame at its host timestamp plus a steady delay, so the screen refreshes in step with the game rather than the network: the delay covers the frames that arrive together, a frame later than that is shown when it is ready, and the frames behind a late one keep the game's spacing. It adds that delay (about 1 to 4 ms in desktop Nightjar's measurements); choose Fastest, which shows each frame the moment it arrives, for the lowest latency. With On, hosts that announce clock sync (Rubylight) add the host-to-present latency to the performance overlay; PyroWave streams follow the choice too. Offered from Android 6; before it, it is hidden and reads as Off, here and in PC, game and profile settings, and the saved choice is kept. Stored as `checkbox_vrr` (On for On and Fastest) and `checkbox_real_vrr` (Real VRR: On for On, Off for Fastest, on by default; Off keeps it); a PC, game or profile value sets both. Desktop Nightjar's Variable refresh rate (`vrr` and `present_at_host_times`) is the same setting."
+
+[[android_setting]]
+key = "frame_pacing"
+category = "category_display_main"
+tier = "main"
+kind = "list"
+xml_default = "latency"
+scope = "layer"
+desktop_key = "frame_pacing"
+shown_while = { parent = "checkbox_vrr", on = false }
+advice = "Lowest latency by default; a main row of Display & image. Lowest latency for response; Balanced for cadence, with only the newest frame at each refresh, or Balanced, keep every frame, which shows each frame in turn and can add delay; Balanced with FPS limit to cap pacing; Smoothest video to retain frames at the cost of delay; PC's frame times for even motion on a fixed refresh when the network or decoder adds jitter: each MediaCodec frame is released at its host timestamp plus a delay learned from recent frames, on the screen's vsync grid, which adds that delay (usually a few milliseconds). Hosts that announce clock sync (Rubylight) add the host-to-present latency to the performance overlay; PyroWave streams are not affected. Stored as before in `frame_pacing` (its four pacings), `checkbox_drop_late_frames` and `checkbox_host_frame_times`. With a PC that takes phase-lock reports (Rubylight), frames are timed to the screen (the overlay's and problem report's “Timed to your screen”) except with Balanced on the vsync queue, an upscaler, Render through Vulkan, Frame Warp or an adaptive refresh screen; with other PCs Balanced at the screen's top rate waits on the vsync queue, which dropped 5.7% of frames at 120 fps on 120 Hz. With Render through Vulkan or Frame Warp the PC's frame times and keeping every frame are not used, nor the PC's frame times with PyroWave, and the row says so. Hidden while Variable refresh rate is on."
+
+[[android_setting]]
+key = "more_display"
+category = "category_more_display"
+tier = "main"
+kind = "action"
+scope = "global"
+advice = "Shows or hides the Display & image rows that are not main: refresh, image and PC display settings. Settings search and links find them while it is closed."
+
+[[android_setting]]
+key = "checkbox_fractional_vsync"
+category = "category_display_refresh"
+tier = "more"
+kind = "bool"
+xml_default = "false"
+scope = "global"
+desktop_key = "fractional_vsync"
+advice = "Off by default. On a display at 2 to 4 times the stream's frame rate (60 fps on 120 Hz), with V-Sync on and VRR off, shows every frame for the same number of refreshes. The desktop holds each picture until the refresh that opens its turn and gives its present to the swap chain just after it, with the phase lock aimed at that present lead; on Android each Lowest latency frame is stamped for its turn and the phase lock aims at the turn. Each picture waits for its turn, which adds delay; not measured yet. Turn it on if motion judders with V-Sync. Desktop Linux holds frames with Wayland's presentation feedback or KMS; on X11 and macOS, which don't report when a picture was shown, the row says it is not used, as it does with the PC's frame times. With VRR chosen the row says it is not used and a saved choice does nothing, on both apps, also where the screen turns out to refresh at a fixed rate and frames fall back to V-Sync. Balanced already shows a stream at a half to a quarter of the refresh at that cadence and FPS-capped and Smoothest pacing hold a frame that comes early for its turn without it, so the row says it is not used with those, as it does with the PC's frame times, VRR, a screen that sets its own refresh, Render through Vulkan and Frame Warp (both show a frame at the next refresh), and a refresh that is not 2 to 4 times the frame rate at the mode the stream switches the screen to (the highest whole multiple of the frame rate the screen has, else it keeps the highest refresh); with Reduce refresh rate Android picks the refresh during the stream, so the row says nothing of it. Two cases the row can't tell: on an external display, which gives Android no refresh timing, nothing is held, and with Upscaling frames are held but the phase lock is off. The desktop row sits under V-Sync and is hidden while V-Sync is off; it says it is not used at a display refresh that is not 2 to 4 times the frame rate, on Windows in Fullscreen with VRR off at the refresh of the mode Fullscreen switches to (the one closest to the stream's size and frame rate), and says nothing of the refresh under KMS, whose video planes pick their own mode. On the main settings page both apps judge the main frame rate and resolution; a PC, game or profile with its own frame rate is judged on its own page on desktop, and can differ from the main page's note on Android."
+
+[[android_setting]]
+key = "checkbox_reduce_refresh_rate"
+category = "category_display_refresh"
+tier = "more"
+kind = "list"
+xml_default = "off"
+scope = "global"
+shown_while = { parent = "checkbox_vrr", on = false }
+advice = "Off by default. Off, On or On, matched to the game, stored as before in `checkbox_reduce_refresh_rate` and `checkbox_content_rate_frame_rate`. On allows a lower screen refresh for power savings. Matched to the game: on a screen with several refresh modes, once the game's frame rate has held steady for two seconds, Android is told that rate and may move the screen to a mode that divides it evenly, for example 60 Hz for a 60 fps game in a 120 fps stream. Only seamless changes are requested (Android 11 or newer), at most one every two seconds. It needs a host that announces clock sync (Rubylight); with another host, a TextureView or PyroWave it works as On. Hidden while Variable refresh rate is on."
+
+[[android_setting]]
+key = "checkbox_arr_fixed_timing"
+category = "category_display_refresh"
+tier = "more"
+kind = "bool"
+xml_default = "false"
+scope = "global"
+shown_while = { parent = "checkbox_vrr", on = false }
+advice = "Off by default. Shown on an Android 16 screen with adaptive refresh (ARR) while Variable refresh rate is off. On: phase-lock reports, the PC's-frame-times vsync grid and the display queue take-back run as on a fixed refresh. An ARR panel presents at any multiple of its tearing-effect signal after its minimum frame interval (AOSP), so its refresh is a fixed grid at the top rate only where that signal runs at the top rate. Off until a measurement on an ARR phone shows it helps; Android only, as desktop has no ARR."
+
+[[android_setting]]
+key = "upscaling_mode"
+category = "category_upscaling"
+tier = "more"
+kind = "list"
+xml_default = "off"
+scope = "layer"
+desktop_key = "upscaling"
+advice = "Choose a stream resolution below the screen size for SDR upscaling. Smooth is bilinear; Sharp (FSR) and Sharp, Snapdragon (SGSR) add edge sharpening. PyroWave uses SGSR for both FSR and SGSR selections. HDR and 10-bit streams use direct output; the row says so."
+
+[[android_setting]]
+key = "upscaling_sharpness"
+category = "category_upscaling"
+tier = "more"
+kind = "int"
+xml_default = "50"
+scope = "layer"
+desktop_key = "upscale_sharpness"
+always_listed = "no upscaler that sharpens (FSR or SGSR) is chosen"
+advice = "Reduce for halos or ringing; raise for soft edges. Applies on the next stream. At 0%, FSR skips extra sharpening; SGSR still reconstructs edges."
+
+[[android_setting]]
+key = "video_alignment"
+category = "category_upscaling"
+tier = "more"
+kind = "list"
+xml_default = "center"
+scope = "global"
+desktop_key = "align_video_top"
+advice = "Top places a Fit or 1:1 picture at the top of the screen, leaving the space below for the soft keyboard or the lower half of a half-folded phone. No effect on Fill and Stretch, which cover the whole screen."
+
+[[android_setting]]
+key = "checkbox_full_range"
+category = "category_upscaling"
+tier = "more"
+kind = "bool"
+xml_default = "false"
+scope = "layer"
+desktop_key = "full_range"
+advice = "Use when the host and display both send full-range color, for full shadow and highlight detail."
+
+[[android_setting]]
+key = "host_display_location"
+category = "category_host_display"
+tier = "more"
+kind = "action"
+scope = "layer"
+desktop_key = "host_display"
+advice = "Where the PC streams from, for every PC; a PC's own choice wins. The PC's own setting keeps the PC's display settings; Virtual display asks for a virtual display matching the stream in the PC's own arrangement; the Extend choices place it beside the PC's monitors, Exclusive switches them off for the stream, and Physical display streams a monitor. The arrangements need a PC with display modes (Rubylight); other PCs follow only whether a virtual display is asked for. Stored as `host_display_location` and the switch `checkbox_virtual_display`, as before: The PC's own setting and Virtual display set the switch, the arrangements leave it, so Remote Monitor, which follows the switch alone, asks for what it did before. A pair saved by an older version shows its arrangement and streams as before until a choice is made. A PC's own page offers only The PC's own setting and Virtual display when the PC has no display modes."
+
+[[android_setting]]
+key = "seekbar_virtual_display_scale"
+category = "category_host_display"
+tier = "more"
+kind = "int"
+xml_default = "100"
+scope = "layer"
+desktop_key = "virtual_display_scale"
+advice = "Change the PC's render resolution relative to the stream. Desktop text size stays as set on the host. Shown while Display arrangement asks for a virtual display."
+
+[[android_setting]]
+key = "list_virtual_display_dpi"
+category = "category_host_display"
+tier = "more"
+kind = "list"
+xml_default = "0"
+scope = "layer"
+desktop_key = "virtual_display_dpi"
+advice = "Raise for larger text and interface on the virtual display, for example on a small screen; the resolution does not change. PC's own keeps the scale set on the PC. Rubylight PCs read it; other hosts ignore it."
+
+[[android_setting]]
+key = "touch_mode"
+category = "category_input_main"
+tier = "main"
+kind = "action"
+scope = "global"
+advice = "Use Trackpad for relative cursor movement, Trackpad (touchpad gestures) for the same with a physical touchpad’s gestures (tap-and-a-half drag, flick momentum), Direct mouse to point at a screen location, Multi-touch for host touch input, Local cursor for a pointer drawn on this device with no round trip, or Touch off to ignore fingers while playing with a controller (Back still opens the stream menu). Unsupported native touch falls back to Direct mouse. The picker's Help explains each mode. See [touch modes](controls.md#touch-modes)."
+
+[[android_setting]]
+key = "checkbox_absolute_mouse_mode"
+category = "category_input_main"
+tier = "main"
+kind = "action"
+scope = "global"
+desktop_key = "mouse_mode"
+picker = { array = "@array/mouse_mode_names", default_index = 0 }
+advice = "Captured by default, for game mouse look. Desktop pointer moves the PC's pointer like a desktop mouse, with acceleration. Available on Android 8+ except devices using the separate raw pointer path. Stored as the switch `checkbox_absolute_mouse_mode` (on: Desktop pointer)."
+
+[[android_setting]]
+key = "controllers"
+category = "category_input_main"
+tier = "main"
+kind = "action"
+scope = "global"
+desktop_key = "controllers"
+picker = { array = "@array/controllers_names", default_index = 2 }
+advice = "A player each by default: each controller is its own player and the PC sees controllers as they connect. One player makes every controller player 1 and keeps one controller present on the PC, for games that need one before any connects. Off sends no controller to the PC. Stored as `checkbox_send_controllers` and `checkbox_multi_controller`; an older store with the multiple controllers switch off reads as One player."
+
+[[android_setting]]
+key = "controller_button_mapping"
+category = "category_input_main"
+tier = "main"
+kind = "action"
+scope = "global"
+advice = "Open Controller buttons, press a digital button and choose its output or Nothing, and choose what the controller connects as (Automatic, Xbox without motion or touchpad, PlayStation or Nintendo). Mappings default to the original button and Connect as to Automatic; both are saved per controller model and apply next stream."
+
+[[android_setting]]
+key = "controller_test"
+category = "category_input_main"
+tier = "main"
+kind = "action"
+scope = "global"
+advice = "Open Controller test to see buttons, sticks, triggers and the D-pad live and to try rumble, lights, motion sensors and the touchpad where the controller has them. Works with a D-pad or controller alone; hold B or Back for one second to leave. Leaving stops rumble and restores the lights. See [controller test](controls.md#controller-test)."
+
+[[android_setting]]
+key = "checkbox_show_onscreen_controls"
+category = "category_input_main"
+tier = "main"
+kind = "bool"
+xml_default = "false"
+scope = "global"
+advice = "Enable a touchscreen gamepad. The group is hidden on devices without a touchscreen."
+
+[[android_setting]]
+key = "checkbox_keyboard_follows_text_fields"
+category = "category_input_main"
+tier = "main"
+kind = "bool"
+xml_default = "true"
+scope = "global"
+desktop_key = "keyboard_follows_text_fields"
+advice = "Opens the on-screen keyboard when a text field in the stream gets focus, with the field's type (numbers, no suggestions for passwords), and closes it when the field loses focus. Needs a host that sends text field notices; an attached hardware keyboard keeps typing instead."
+
+[[android_setting]]
+key = "checkbox_clipboard_sync"
+category = "category_input_main"
+tier = "main"
+kind = "bool"
+xml_default = "false"
+scope = "global"
+desktop_key = "clipboard_sync"
+advice = "Off by default. Turn on to share copied text both ways while streaming. Android lets the app read the clipboard only while the stream is in front, so copies made in other apps go when you return. Needs a host that offers clipboard sync and lets this device read and write its clipboard. It carries text only: copy a PC image from the stream menu, and send large copies with Send clipboard to host."
+
+[[android_setting]]
+key = "more_input"
+category = "category_more_input"
+tier = "main"
+kind = "action"
+scope = "global"
+advice = "Shows or hides the Controls rows that are not main, such as dead zones, mouse emulation, USB controllers, trackpad and keyboard settings. Settings search and links find them while it is closed."
+
+[[android_setting]]
+key = "checkbox_flip_face_buttons"
+category = "category_gamepad_settings"
+tier = "more"
+kind = "bool"
+xml_default = "false"
+scope = "global"
+desktop_key = "swap_face_buttons"
+advice = "Enable to swap A/B and X/Y on physical gamepads."
+
+[[android_setting]]
+key = "list_gamepad_quit_combo"
+category = "category_gamepad_settings"
+tier = "more"
+kind = "list"
+xml_default = "off"
+scope = "global"
+desktop_key = "gamepad_quit_combo"
+advice = "Off by default: Start+Select+LB+RB opens the stream menu, where Disconnect leaves. Choose a combination to leave the stream straight from the controller, for example on a TV; the stream ends once every button of it is let go, so none stays held on the PC. Pick one a game doesn't use. The stream menu's Controller mouse switch turns the controller mouse on or off whether or not holding Start does."
+
+[[android_setting]]
+key = "seekbar_deadzone"
+category = "category_gamepad_settings"
+tier = "more"
+kind = "int"
+xml_default = "7"
+scope = "global"
+desktop_key = "deadzone"
+advice = "Raise to suppress stick drift; lower for small movements. Games can add their own deadzone on top."
+
+[[android_setting]]
+key = "seekbar_trigger_deadzone"
+category = "category_gamepad_settings"
+tier = "more"
+kind = "int"
+xml_default = "2"
+scope = "global"
+desktop_key = "trigger_deadzone"
+advice = "Raise if a resting trigger presses by itself; lower so light presses register. 0% sends every press. Games can add their own deadzone on top."
+
+[[android_setting]]
+key = "checkbox_gamepad_motion_sensors"
+category = "category_gamepad_settings"
+tier = "more"
+kind = "bool"
+xml_default = "true"
+scope = "global"
+desktop_key = "controller_motion"
+advice = "Enable for controller gyro/accelerometer input on Android 12+. Fresh Android 12 (API 31) installations override this to Off because of an OS sensor bug."
+
+[[android_setting]]
+key = "checkbox_gamepad_motion_fallback"
+category = "category_gamepad_settings"
+tier = "more"
+kind = "bool"
+xml_default = "false"
+scope = "global"
+advice = "Enable to use this device's motion sensors when a controller lacks them. Player 1 also switches to them when the controller's gyroscope reports only zeros for a second. Hidden if the device has neither gyro nor accelerometer."
+
+[[android_setting]]
+key = "gyro_mapping_profiles"
+category = "category_gamepad_settings"
+tier = "more"
+kind = "action"
+scope = "global"
+advice = "Standard by default for every controller. Pick a connected controller to use Standard, the Flydigi Apex 4 and Vader 4 Pro preset (Switch mode) or a custom profile, which chooses the controller axis behind each motion axis, inverts any of them and scales left-right and up-down speed from 0.10× to 3.00×. Saved per controller (per model for controllers Nightjar drives over USB itself) and applied from the next stream. Change it only when motion aiming turns on the wrong axis or too fast or too slowly."
+
+[[android_setting]]
+key = "list_rumble_feel"
+category = "category_gamepad_settings"
+tier = "more"
+kind = "list"
+xml_default = "standard"
+scope = "global"
+desktop_key = "rumble_feel"
+advice = "Off stops every vibration the host asks for. Strong makes weak vibration strong enough for a small motor to show; Subtle caps strong vibration and softens weak. Either one changes the balance of weak and strong rumble the game chose, so leave it on Standard unless vibration is too faint or too harsh. Checked once at stream start."
+
+[[android_setting]]
+key = "checkbox_vibrate_fallback"
+category = "category_gamepad_settings"
+tier = "more"
+kind = "bool"
+xml_default = "false"
+scope = "global"
+advice = "Enable to feel host rumble on this device when the controller has no rumble motors."
+
+[[android_setting]]
+key = "seekbar_vibrate_fallback_strength"
+category = "category_gamepad_settings"
+tier = "more"
+kind = "int"
+xml_default = "100"
+scope = "global"
+shown_while = { parent = "checkbox_vibrate_fallback", on = true }
+shown_only = "while Vibrate device for rumble is on"
+advice = "Adjust device rumble strength; 100% is normal strength."
+
+[[android_setting]]
+key = "checkbox_mouse_emulation"
+category = "category_gamepad_settings"
+tier = "more"
+kind = "bool"
+xml_default = "true"
+scope = "global"
+desktop_key = "controller_mouse"
+advice = "Leave on to toggle controller mouse mode by holding Start."
+
+[[android_setting]]
+key = "analog_scrolling"
+category = "category_gamepad_settings"
+tier = "more"
+kind = "list"
+xml_default = "right"
+scope = "global"
+desktop_key = "analog_scrolling"
+shown_while = { parent = "checkbox_mouse_emulation", on = true }
+advice = "Choose which stick scrolls in controller mouse mode. The other moves the pointer; with None, both move it."
+
+[[android_setting]]
+key = "checkbox_mouse_emulation_fixed_step"
+category = "category_gamepad_settings"
+tier = "more"
+kind = "bool"
+xml_default = "false"
+scope = "global"
+desktop_key = "mouse_fixed_step"
+shown_while = { parent = "checkbox_mouse_emulation", on = true }
+advice = "Enable for precise pointing in controller mouse mode: hold X while moving the stick to move a fixed step; Y doubles the step from 1 to 128 pixels, then wraps to 1."
+
+[[android_setting]]
+key = "checkbox_gamepad_touchpad_as_mouse"
+category = "category_gamepad_settings"
+tier = "more"
+kind = "bool"
+xml_default = "false"
+scope = "global"
+desktop_key = "gamepad_touchpad_as_mouse"
+advice = "Enable to always move the host pointer with the controller touchpad instead of forwarding native touchpad input."
+
+[[android_setting]]
+key = "list_guide_menu_hold"
+category = "category_stream_menu"
+tier = "more"
+kind = "list"
+xml_default = "1000"
+scope = "global"
+desktop_key = "guide_hold_ms"
+advice = "1 s by default: holding a controller's Guide (Home/PS) that long opens the stream menu, also with Back button as Guide on. A shorter press still goes to the PC as Guide, and pressing another button while Guide is down sends Guide at once, so chords such as Guide+RB work as before. Turn it off if a game or the PC needs a long Guide press. Desktop has the same setting. Applies from the next stream."
+
+[[android_setting]]
+key = "back_button"
+category = "category_stream_menu"
+tier = "more"
+kind = "action"
+scope = "global"
+desktop_key = "back_opens_menu"
+picker = { array = "@array/back_button_names", default_index = 0 }
+advice = "Back by default. Stream menu: a handheld's dedicated physical Back key, such as on AYN Thor, opens the stream menu instead of being forwarded as a controller button; Select/Start, mouse right-click and Keyboard Back sends Windows key keep their behavior. Guide: Back on any controller sends Guide (Home/PS), as does a handheld's system button that acts as Back, such as the Retroid Pocket's: a built-in Back key and a Back the firmware injects; a controller whose Select is Back sends Guide instead, and only a pad that uses Back as Start keeps it. Android's Back gesture and the controller menu chord still open the stream menu. Matches desktop's Back button. Stored as the switches `checkbox_back_opens_menu` and `checkbox_back_as_guide`; with both on, Stream menu applies. Applies from the next stream."
+
+[[android_setting]]
+key = "checkbox_floating_menu_button"
+category = "category_stream_menu"
+tier = "more"
+kind = "bool"
+xml_default = "false"
+scope = "global"
+advice = "Off by default. Shows a round button over the stream that opens the stream menu with a tap; drag it to move it, and it keeps its place across sessions and rotations. **Show menu button** under the menu's More turns it on or off during a stream. Not shown on TVs. Android only: the desktop client opens the menu from the pointer and keys. See [the stream menu](controls.md#the-stream-menu)."
+
+[[android_setting]]
+key = "list_stream_menu_button_y"
+category = "category_stream_menu"
+tier = "more"
+kind = "list"
+xml_default = "default"
+scope = "global"
+advice = "Default runs Keyboard, as the tile's corner shows. Choose what the button runs while the stream menu's first page is open, or Off. A way out such as Disconnect also runs from the button and asks first, Disconnect too, so a stray press never ends the stream; it shows the button's letter."
+
+[[android_setting]]
+key = "list_stream_menu_button_x"
+category = "category_stream_menu"
+tier = "more"
+kind = "list"
+xml_default = "default"
+scope = "global"
+advice = "Default runs Mouse. See Y in the stream menu."
+
+[[android_setting]]
+key = "list_stream_menu_button_lb"
+category = "category_stream_menu"
+tier = "more"
+kind = "list"
+xml_default = "default"
+scope = "global"
+advice = "Default runs Shortcuts. See Y in the stream menu."
+
+[[android_setting]]
+key = "list_stream_menu_button_rb"
+category = "category_stream_menu"
+tier = "more"
+kind = "list"
+xml_default = "default"
+scope = "global"
+advice = "Default runs Overlay. See Y in the stream menu."
+
+[[android_setting]]
+key = "keyboard_shortcuts_editor"
+category = "category_stream_menu"
+tier = "more"
+kind = "action"
+scope = "global"
+advice = "Create, edit or delete up to 32 named keyboard chords; they show as tiles in the stream menu and on the extra keyboard toolbar. Import/export JSON files to transfer them; importing asks before replacing the saved list. See [custom keyboard shortcuts](controls.md#custom-keyboard-shortcuts)."
+
+[[android_setting]]
+key = "seekbar_mouse_speed"
+category = "category_input_settings"
+tier = "more"
+kind = "int"
+xml_default = "100"
+scope = "global"
+desktop_key = "mouse_speed"
+shown_only = "while a mouse or a touchpad is connected"
+advice = "Adjust physical relative mouse movement; 100% is normal speed."
+
+[[android_setting]]
+key = "checkbox_mouse_nav_buttons"
+category = "category_input_settings"
+tier = "more"
+kind = "bool"
+xml_default = "false"
+scope = "global"
+desktop_key = "mouse_nav_buttons"
+shown_only = "while a mouse is connected"
+advice = "Enable to send mouse Back/Forward buttons. Disable if it interferes with right-click."
+
+[[android_setting]]
+key = "seekbar_trackpad_speed"
+category = "category_input_settings"
+tier = "more"
+kind = "int"
+xml_default = "100"
+scope = "global"
+shown_only = "on a device with a touch screen (in every touch mode: an external display, the on-screen controller or the second screen can use it)"
+advice = "Adjust how far a swipe moves the pointer in the Trackpad touch modes and on the on-screen touchpad, and how far it turns the camera in that touchpad’s Camera mode; 100% is normal speed."
+
+[[android_setting]]
+key = "seekbar_local_cursor_speed"
+category = "category_input_settings"
+tier = "more"
+kind = "int"
+xml_default = "100"
+scope = "global"
+shown_only = "on a device with a touch screen"
+advice = "Adjust Local cursor movement; with Trackpad acceleration off, 100% moves the drawn pointer as far as your finger."
+
+[[android_setting]]
+key = "list_trackpad_acceleration_curve"
+category = "category_input_settings"
+tier = "more"
+kind = "list"
+xml_default = "medium"
+scope = "global"
+shown_only = "on a device with a touch screen"
+advice = "Off follows your finger one to one; Gentle, Medium and Strong speed up fast swipes more and more, so slow movement still aims precisely. Leave it on Medium unless you prefer the pointer to follow your finger one to one; Trackpad and Local cursor apply it from the next stream."
+
+[[android_setting]]
+key = "list_trackpad_momentum_glide"
+category = "category_input_settings"
+tier = "more"
+kind = "list"
+xml_default = "off"
+scope = "global"
+shown_only = "on a device with a touch screen"
+advice = "Off by default. Short, Medium and Long keep the pointer gliding after a quick flick, slowing down; a new touch, a mode change, the stream menu, picture-in-picture and disconnecting stop it at once. Trackpad and Local cursor."
+
+[[android_setting]]
+key = "list_trackpad_area"
+category = "category_input_settings"
+tier = "more"
+kind = "list"
+xml_default = "full"
+scope = "global"
+shown_only = "on a device with a touch screen"
+advice = "Limit where Trackpad and Local cursor gestures may start, for example to rest a thumb on one side; touches that start elsewhere are ignored."
+
+[[android_setting]]
+key = "list_three_finger_tap"
+category = "category_input_settings"
+tier = "more"
+kind = "list"
+xml_default = "keyboard"
+scope = "global"
+advice = "Choose System keyboard (default), PC keyboard, Keyboard & mouse, Middle click or Off. Works in Trackpad, Direct mouse and Local cursor modes."
+
+[[android_setting]]
+key = "list_four_finger_tap"
+category = "category_input_settings"
+tier = "more"
+kind = "list"
+xml_default = "none"
+scope = "global"
+advice = "Choose Keyboard & mouse, System keyboard, PC keyboard, Middle click or Off (default). Four fingers never also trigger the three-finger action."
+
+[[android_setting]]
+key = "checkbox_multi_touch_finger_taps"
+category = "category_input_settings"
+tier = "more"
+kind = "bool"
+xml_default = "false"
+scope = "global"
+shown_only = "on a device with a touch screen"
+advice = "Off by default. In Multi-touch, three- and four-finger taps normally reach the PC as touches. Turn on to use them for the finger-tap actions instead; a tap counts only when all fingers land together, and the touches the PC already had are cancelled when it starts."
+
+[[android_setting]]
+key = "checkbox_finger_tap_on_cancel"
+category = "category_input_settings"
+tier = "more"
+kind = "bool"
+xml_default = "false"
+scope = "global"
+shown_only = "on a device with a touch screen"
+advice = "Off by default. Three- and four-finger taps that the system cancels, as some Oppo and ColorOS phones do, still run their action when the fingers landed together and stayed still; on Android 13 and newer only cancels the system flags count, on Android 12 and older any cancel in that window does. Turn on only if three- or four-finger taps do nothing when your fingers are close together."
+
+[[android_setting]]
+key = "seekbar_trackpad_sensitivity_x"
+category = "category_input_settings"
+tier = "more"
+kind = "int"
+xml_default = "100"
+scope = "global"
+shown_only = "while a touchpad is connected"
+advice = "Adjust the horizontal speed of a physical touchpad, such as a keyboard cover's, on top of Mouse speed; 100% is normal speed. Use a negative value to flip the direction. Touchscreen modes use Trackpad speed."
+
+[[android_setting]]
+key = "seekbar_trackpad_sensitivity_y"
+category = "category_input_settings"
+tier = "more"
+kind = "int"
+xml_default = "100"
+scope = "global"
+shown_only = "while a touchpad is connected"
+advice = "Adjust the vertical speed of a physical touchpad, such as a keyboard cover's, on top of Mouse speed; 100% is normal speed. Use a negative value to flip the direction. Touchscreen modes use Trackpad speed."
+
+[[android_setting]]
+key = "seekbar_trackpad_scroll_speed"
+category = "category_input_settings"
+tier = "more"
+kind = "int"
+xml_default = "50"
+scope = "global"
+advice = "Adjust how far two fingers scroll on a physical touchpad or in the Trackpad (touchpad gestures) touch mode; 50% is the default. Lower it if scrolling is too sensitive."
+
+[[android_setting]]
+key = "checkbox_trackpad_swap_axis"
+category = "category_input_settings"
+tier = "more"
+kind = "bool"
+xml_default = "false"
+scope = "global"
+shown_only = "while a touchpad is connected"
+advice = "Enable if a physical touchpad moves the pointer sideways when you swipe up or down. Swaps X and Y before Trackpad Sensitivity applies. Touchscreen modes are not affected."
+
+[[android_setting]]
+key = "checkbox_native_touchpad"
+category = "category_input_settings"
+tier = "more"
+kind = "bool"
+xml_default = "false"
+scope = "global"
+desktop_key = "native_touchpad"
+shown_only = "while a touchpad is connected (always on the desktop, which can't tell)"
+advice = "Enable to send a physical touchpad's fingers, such as a keyboard cover's, to a PC that takes them, so the PC's own touchpad gestures (two-finger scroll, three- and four-finger swipes) work there. Needs a PC that takes touchpad fingers; otherwise the touchpad moves the mouse as before and the stream says so once. Off by default."
+
+[[android_setting]]
+key = "stream_hotkeys"
+category = "category_keyboard_shortcuts"
+tier = "more"
+kind = "action"
+scope = "global"
+advice = "Open to change, turn off or reset Nightjar's own key combinations in a stream (the same ones as desktop Nightjar): the stream menu (Ctrl+Alt+Shift+Tab), Disconnect, Release input, the performance overlay, the PC keyboard and the local cursor. Change records 2 to 4 keys, Ctrl, Alt or Shift and one other key; a combination that types, belongs to Windows or another hotkey has is refused. See [stream hotkeys](controls.md#stream-hotkeys)."
+
+[[android_setting]]
+key = "checkbox_capture_system_keys"
+category = "category_keyboard_shortcuts"
+tier = "more"
+kind = "action"
+scope = "global"
+desktop_key = "capture_system_keys"
+picker = { array = "@array/system_keys_names", default_index = 1 }
+advice = "Always by default. Esc, Alt+Tab, the Windows key and similar go to the PC while input is captured, and an external keyboard's Back key (the Esc key of many Android keyboards) sends Esc on Android 10 and newer; a built-in keyboard's Back stays Back. Android hands Alt+Tab and the Windows key to apps only on Android 16 QPR2 and newer (keyboard capture) and on many Samsung devices; elsewhere, and for Home, power and volume, Android keeps them. In full screen: while the stream is in split screen, a freeform window or picture-in-picture, the system keys and a keyboard's Back as Esc stay with Android, and in full screen they go to the PC again; keys held at the change are released. Keyboard Back sends Windows key and Back button's Stream menu take priority for keyboard Back. The stream menu's hotkey (Ctrl+Alt+Shift+Tab by default) and Android's Back gesture open the stream menu. Matches desktop's Send system keys. Stored as the switches `checkbox_capture_system_keys` and `checkbox_system_keys_fullscreen_only`. Applies from the next stream."
+
+[[android_setting]]
+key = "checkbox_back_as_meta"
+category = "category_keyboard_shortcuts"
+tier = "more"
+kind = "bool"
+xml_default = "false"
+scope = "global"
+shown_only = "while a physical keyboard is connected"
+advice = "Enable to send the Windows key from a physical keyboard's Back key. Android's Back gesture and TV remotes keep their local navigation; the controller menu chord remains available. See [keyboard options](controls.md#keyboard-options)."
+
+[[android_setting]]
+key = "checkbox_right_alt_as_meta"
+category = "category_keyboard_shortcuts"
+tier = "more"
+kind = "bool"
+xml_default = "false"
+scope = "global"
+desktop_key = "right_alt_as_meta"
+advice = "Enable on a Mac host so Right Alt acts as Command (the Windows key). Left Alt is unchanged; leave off if you type with AltGr."
+
+[[android_setting]]
+key = "list_pc_keyboard_layout"
+category = "category_keyboard_shortcuts"
+tier = "more"
+kind = "list"
+xml_default = "auto"
+scope = "global"
+advice = "Pick the legends of the on-screen PC keyboard. Automatic follows the system language (German or English). Keys send positions, so the PC's Windows layout decides the character: set both alike."
+
+[[android_setting]]
+key = "seekbar_pc_keyboard_size"
+category = "category_keyboard_shortcuts"
+tier = "more"
+kind = "int"
+xml_default = "50"
+scope = "global"
+advice = "How much of the screen height the PC keyboard may take, 30-70%. Smaller leaves more of the stream visible; larger gives bigger keys."
+
+[[android_setting]]
+key = "seekbar_pc_keyboard_opacity"
+category = "category_keyboard_shortcuts"
+tier = "more"
+kind = "int"
+xml_default = "90"
+scope = "global"
+advice = "How opaque the PC keyboard is, 30-100%. Lower shows more of the stream behind it."
+
+[[android_setting]]
+key = "list_osc_stick_mode"
+category = "category_onscreen_controls"
+tier = "more"
+kind = "list"
+xml_default = "floating"
+scope = "global"
+shown_while = { parent = "checkbox_show_onscreen_controls", on = true }
+advice = "Floating centers a stick where your thumb lands, so you need not hit it exactly; pick Fixed if you prefer to aim at the drawn stick."
+
+[[android_setting]]
+key = "seekbar_osc_stick_deadzone"
+category = "category_onscreen_controls"
+tier = "more"
+kind = "int"
+xml_default = "8"
+scope = "global"
+shown_while = { parent = "checkbox_show_onscreen_controls", on = true }
+advice = "Raise if a resting thumb drifts the camera or character; lower for finer aim. 8% suits most phones."
+
+[[android_setting]]
+key = "checkbox_vibrate_osc"
+category = "category_onscreen_controls"
+tier = "more"
+kind = "bool"
+xml_default = "true"
+scope = "global"
+shown_while = { parent = "checkbox_show_onscreen_controls", on = true }
+advice = "Vibrate when you press on-screen controls: the controller's buttons and sticks, the WASD stick (a light tick for W, A, S or D, a firmer click for a diagonal), the PC keyboard and the trackpads. Press feedback follows the phone's touch feedback setting. With on-screen controls on, a game's rumble also vibrates the phone when no physical controller takes it."
+
+[[android_setting]]
+key = "checkbox_osc_auto_hide"
+category = "category_onscreen_controls"
+tier = "more"
+kind = "bool"
+xml_default = "true"
+scope = "global"
+shown_while = { parent = "checkbox_show_onscreen_controls", on = true }
+advice = "Hides the on-screen controls while an external gamepad is connected and brings them back when it disconnects. Leave it on unless you use the touch controls and a controller at once."
+
+[[android_setting]]
+key = "checkbox_only_show_L3R3"
+category = "category_onscreen_controls"
+tier = "more"
+kind = "bool"
+xml_default = "false"
+scope = "global"
+advice = "Enable when another controller supplies everything except stick clicks."
+
+[[android_setting]]
+key = "checkbox_onscreen_own_player"
+category = "category_onscreen_controls"
+tier = "more"
+kind = "bool"
+xml_default = "false"
+scope = "global"
+shown_while = { parent = "checkbox_show_onscreen_controls", on = true }
+advice = "Enable to map the on-screen controls apart from physical controllers, for example with a Steam layout: they are controller 1 on the PC and physical controllers, built-in ones too, count from 2. Needs Controllers On, and has no effect with Only show L3 and R3. The gamepad controls of a game's own touch layout follow it only while Show on-screen controls is on; without it they keep sharing controller 1 with the first controller. Read once at stream start."
+
+[[android_setting]]
+key = "checkbox_show_guide_button"
+category = "category_onscreen_controls"
+tier = "more"
+kind = "bool"
+xml_default = "true"
+scope = "global"
+shown_while = { parent = "checkbox_show_onscreen_controls", on = true }
+advice = "Enable to expose the virtual Guide/Home button."
+
+[[android_setting]]
+key = "checkbox_show_touchpad_button"
+category = "category_onscreen_controls"
+tier = "more"
+kind = "bool"
+xml_default = "false"
+scope = "global"
+shown_while = { parent = "checkbox_show_onscreen_controls", on = true }
+advice = "Off by default. Adds a Touchpad button to the on-screen controller, below Home, that clicks the touchpad of a PlayStation controller on the PC. While it is on, player 1 (the on-screen controller, or a handheld's built-in controls) connects as a PlayStation controller, so the PC gets a DualSense or DualShock 4 with the host on Automatic."
+
+[[android_setting]]
+key = "checkbox_osc_steam_controls"
+category = "category_onscreen_controls"
+tier = "more"
+kind = "bool"
+xml_default = "false"
+scope = "global"
+shown_while = { parent = "checkbox_show_onscreen_controls", on = true }
+advice = "Enable when the PC turns these controls into a Steam Controller, as one whose controller type is the Steam Controller does, and your controller lacks its trackpads, back buttons or grip touch, for example to finish Steam Input's calibration. Some hosts also turn them into one on their own for games started through Steam. Adds both trackpads, L4, R4, L5, R5 and grip touch toggles to the on-screen controls; they join controller 1. On any other PC they do nothing, and the rest of the controller works as usual. Read once at stream start."
+
+[[android_setting]]
+key = "seekbar_osc_opacity"
+category = "category_onscreen_controls"
+tier = "more"
+kind = "int"
+xml_default = "90"
+scope = "global"
+shown_while = { parent = "checkbox_show_onscreen_controls", on = true }
+advice = "Lower to see more of the game beneath the controls."
+
+[[android_setting]]
+key = "reset_osc"
+category = "category_onscreen_controls"
+tier = "more"
+kind = "action"
+scope = "global"
+advice = "Confirm to restore virtual button sizes and positions, including layouts kept for one game. This layout is kept separately from a global settings reset."
+
+[[android_setting]]
+key = "checkbox_usb_driver"
+category = "category_usb_controllers"
+tier = "more"
+kind = "bool"
+xml_default = "true"
+scope = "global"
+advice = "Leave on for built-in Xbox USB support. Android requests USB access when needed."
+
+[[android_setting]]
+key = "checkbox_usb_bind_all"
+category = "category_usb_controllers"
+tier = "more"
+kind = "bool"
+xml_default = "false"
+scope = "global"
+shown_while = { parent = "checkbox_usb_driver", on = true }
+advice = "Enable to prefer the app's built-in Xbox USB driver even when Android already recognizes the controller."
+
+[[android_setting]]
+key = "checkbox_usb_dualsense"
+category = "category_usb_controllers"
+tier = "more"
+kind = "bool"
+xml_default = "false"
+scope = "global"
+advice = "Enable for direct USB DualSense/Edge input, feedback and adaptive triggers. Accept the explanation and Android USB permission during a stream; Bluetooth retains Android's input path."
+
+[[android_setting]]
+key = "checkbox_usb_dualsense_haptics"
+category = "category_usb_controllers"
+tier = "more"
+kind = "bool"
+xml_default = "false"
+scope = "global"
+desktop_key = "controller_audio"
+shown_while = { parent = "checkbox_usb_dualsense", on = true }
+advice = "Enable alongside the USB DualSense driver for native waveform feedback. Hosts that support it (Rubylight) also forward controller speaker, headset and microphone audio. Microphone streaming needs its separate setting and Android permission; the controller mute button follows the stream mute. Reconnect after changing this option. USB only."
+
+[[android_setting]]
+key = "checkbox_usb_switch_pro"
+category = "category_usb_controllers"
+tier = "more"
+kind = "bool"
+xml_default = "false"
+scope = "global"
+advice = "Enable to read a wired Nintendo Switch Pro Controller directly: calibrated sticks, Home and Capture, motion, rumble, player lights and battery. Accept Android's USB permission during a stream; Bluetooth and Joy-Con keep Android's input path. See [Switch Pro over USB](controls.md#switch-pro-over-usb)."
+
+[[android_setting]]
+key = "checkbox_usb_forwarding"
+category = "category_usb_controllers"
+tier = "more"
+kind = "bool"
+xml_default = "false"
+scope = "global"
+desktop_key = "usb_forwarding"
+advice = "Off by default. Adds USB devices to the stream menu, which hands a device plugged into this one (a drawing tablet, a security key) to the PC until you detach or unplug it or the stream ends. Needs a PC that offers USB forwarding (Rubylight 3.0); hubs and controllers the drivers above take are not listed."
+
+[[android_setting]]
+key = "list_audio_config"
+category = "category_audio_main"
+tier = "main"
+kind = "list"
+xml_default = "2"
+scope = "global"
+desktop_key = "audio"
+advice = "Choose 5.1, 7.1 or 7.1.4 for a matching audio output and host configuration; use stereo for headphones or two speakers. 7.1.4 needs Android 12L or newer, a 12-channel output and a Rubylight 3.0 PC; it is hidden for an output with fewer channels, and other PCs and outputs get 7.1."
+
+[[android_setting]]
+key = "checkbox_host_audio"
+category = "category_audio_main"
+tier = "main"
+kind = "bool"
+xml_default = "false"
+scope = "global"
+desktop_key = "play_audio_on_host"
+advice = "Enable to hear audio on the PC as well as Android."
+
+[[android_setting]]
+key = "checkbox_enable_mic"
+category = "category_audio_main"
+tier = "main"
+kind = "bool"
+xml_default = "false"
+scope = "global"
+desktop_key = "microphone"
+advice = "Enable to talk in games and chat apps on the PC. Asks for microphone access; if it is not allowed, the setting stays off. The PC hears it as its streaming microphone. Mute it from the stream menu; the overlay shows whether it is sending."
+
+[[android_setting]]
+key = "checkbox_mic_button"
+category = "category_audio_main"
+tier = "main"
+kind = "bool"
+xml_default = "true"
+scope = "global"
+shown_while = { parent = "checkbox_enable_mic", on = true }
+advice = "Leave on for a round button on the stream that mutes and unmutes with one tap; drag it anywhere and it stays there. Shown only while the PC takes the microphone. Turn off to mute from the stream menu only; the menu's Input section can show or hide it during a stream."
+
+[[android_setting]]
+key = "more_audio"
+category = "category_more_audio"
+tier = "main"
+kind = "action"
+scope = "global"
+advice = "Shows or hides the Audio rows that are not main: microphone processing, audio effects and passthrough. Settings search and links find them while it is closed."
+
+[[android_setting]]
+key = "list_mic_echo_cancel"
+category = "category_audio_settings"
+tier = "more"
+kind = "list"
+xml_default = "auto"
+scope = "global"
+desktop_key = "mic_echo_cancel"
+shown_while = { parent = "checkbox_enable_mic", on = true }
+advice = "Leave on Automatic: it cancels echo with the speaker and turns off with headphones or a Bluetooth headset, following a switch during the stream. Pick On if the PC hears its own game sound through a headset."
+
+[[android_setting]]
+key = "checkbox_mic_noise_suppression"
+category = "category_audio_settings"
+tier = "more"
+kind = "bool"
+xml_default = "true"
+scope = "global"
+desktop_key = "mic_noise_suppression"
+shown_while = { parent = "checkbox_enable_mic", on = true }
+advice = "Enable to filter fans and other steady noise out of the microphone."
+
+[[android_setting]]
+key = "checkbox_mic_auto_gain"
+category = "category_audio_settings"
+tier = "more"
+kind = "bool"
+xml_default = "false"
+scope = "global"
+desktop_key = "mic_auto_gain"
+shown_while = { parent = "checkbox_enable_mic", on = true }
+advice = "Enable when your voice swings between quiet and loud. Some devices level speech on their own."
+
+[[android_setting]]
+key = "seekbar_mic_gain"
+category = "category_audio_settings"
+tier = "more"
+kind = "int"
+xml_default = "100"
+scope = "global"
+desktop_key = "mic_gain"
+shown_while = { parent = "checkbox_enable_mic", on = true }
+advice = "Raise if the PC hears you too quietly, lower if it hears you too loudly. Applied before sending; loud peaks are rounded off rather than clipped. 100 % leaves the sound as it is."
+
+[[android_setting]]
+key = "checkbox_mute_audio"
+category = "category_audio_settings"
+tier = "more"
+kind = "bool"
+xml_default = "false"
+scope = "global"
+desktop_key = "mute_audio"
+advice = "Enable to stream without sound on this device, for example while the PC plays it (see Play audio on the PC too) or the device sits in a quiet place. Audio passthrough is not asked for. Applies to the next stream."
+
+[[android_setting]]
+key = "checkbox_enable_audiofx"
+category = "category_audio_settings"
+tier = "more"
+kind = "bool"
+xml_default = "false"
+scope = "global"
+advice = "Enable for Android equalizers or effects. Can add delay and changes the audio output path."
+
+[[android_setting]]
+key = "checkbox_audio_passthrough"
+category = "category_audio_settings"
+tier = "more"
+kind = "bool"
+xml_default = "false"
+scope = "global"
+desktop_key = "audio_passthrough"
+advice = "Enable for a receiver, soundbar or TV that decodes Dolby Digital or Dolby Digital Plus, or takes multichannel PCM as is. Asks a Rubylight PC for a format the audio output reports it plays, and keeps Opus otherwise. Dolby comes in 32 ms frames, so sound arrives later than Opus. Android 10 and later; hidden elsewhere."
+
+[[android_setting]]
+key = "checkbox_enable_perf_overlay"
+category = "category_streaming_main"
+tier = "main"
+kind = "action"
+scope = "global"
+desktop_key = "overlay"
+advice = "Choose Compact, Statistics or Debug while diagnosing frame rate, network loss or delay; Off hides the overlay. Compact is one line: rendered FPS, network round trip (RTT) and frame loss behind a green, amber or red dot. Statistics summarizes the stream with a status line of lasting facts. Debug shows detailed measured stages and is always available. Stored as `checkbox_enable_perf_overlay` (On for any choice but Off) and `performance_overlay_mode` (compact, statistics or debug; Off keeps the last mode). Can also be changed in the stream menu → Display → Overlay and diagnostics; Copy stats includes Debug details."
+
+[[android_setting]]
+key = "performance_overlay_position"
+category = "category_streaming_main"
+tier = "main"
+kind = "list"
+xml_default = "top_left"
+scope = "global"
+desktop_key = "overlay_position"
+shown_only = "while the performance overlay is on, or with Dual screen mode (the second screen's stream menu shows its overlay without saving it)"
+advice = "Choose the corner the performance overlay starts in. It moves to a free corner when on-screen controls would cover it, and always stays inside the camera cutout. Right-hand corners align the text to the right. Can also be changed in the stream menu → Display → Overlay and diagnostics → Position, which takes effect at once."
+
+[[android_setting]]
+key = "checkbox_auto_reconnect"
+category = "category_streaming_main"
+tier = "main"
+kind = "bool"
+xml_default = "true"
+scope = "global"
+desktop_key = "auto_reconnect"
+advice = "On by default. Resume the same running game after transport failures or returning from screen lock, up to five attempts within one minute. Back or leaving during a retry cancels it. Graceful termination, pairing, permissions and decoder failures stay manual; recovery never launches or replaces a game. Installs that stored the old default (off) were switched on once; turning it off again is kept."
+
+[[android_setting]]
+key = "network_tests"
+category = "category_streaming_main"
+tier = "main"
+kind = "action"
+scope = "global"
+advice = "Opens a saved PC's Connection test on that PC's settings; with several saved PCs it asks which one first. Hidden until a PC is saved. Desktop has a Connection test row too, which measures the download speed. Stores nothing."
+
+[[android_setting]]
+key = "more_streaming"
+category = "category_more_streaming"
+tier = "main"
+kind = "action"
+scope = "global"
+advice = "Shows or hides the Streaming rows that are not main, such as picture-in-picture, network grace and client roaming. Settings search and links find them while it is closed."
+
+[[android_setting]]
+key = "checkbox_client_roaming"
+category = "category_streaming_connection"
+tier = "more"
+kind = "action"
+scope = "global"
+desktop_key = "client_roaming"
+picker = { array = "@array/roaming_names", default_index = 1 }
+advice = "Except mobile data by default. When this device changes networks, the stream moves to the new address instead of waiting for the old one; Any network also lets it move onto mobile data or another metered network, which uses a lot of data. On a device without mobile data, Any network is offered once chosen only. Needs a PC that offers client roaming (Rubylight 3.0); other PCs keep the network grace period. Stored as the switches `checkbox_client_roaming` and `checkbox_roaming_metered`."
+
+[[android_setting]]
+key = "list_network_grace"
+category = "category_streaming_connection"
+tier = "more"
+kind = "list"
+xml_default = "0"
+scope = "global"
+desktop_key = "network_grace_ms"
+advice = "Off by default: the stream ends after 10 seconds without contact. 15, 20, 30 or 60 seconds keeps it open through a Wi-Fi roam, a short dropout or a VPN moving between Wi-Fi and mobile data; the picture freezes until the network returns. Longer waits only help if the host waits too, so raise its own client timeout. When the wait runs out the stream ends with a message saying so, and Recover interrupted streams, if on, then reconnects. See [network drops](video-and-latency.md#network-drops)."
+
+[[android_setting]]
+key = "checkbox_receive_coalescing"
+category = "category_streaming_connection"
+tier = "more"
+kind = "bool"
+xml_default = "true"
+scope = "global"
+desktop_key = "receive_coalescing"
+advice = "On by default. The network stack hands over several video packets in one read (UDP GRO), which saves work at high bitrates. Turn it off if the picture turns blocky or black at some bitrates, which a network adapter that merges packets wrongly can cause. Applies to the next stream."
+
+[[android_setting]]
+key = "jumbo_frames"
+category = "category_streaming_connection"
+tier = "more"
+kind = "bool"
+xml_default = "false"
+scope = "global"
+desktop_key = "jumbo_frames"
+advice = "Off by default, and shown only when a saved PC offers more than stock 1400-byte video packets. Sends video in fewer, larger packets when the PC and every link carry 9000-byte jumbo frames. Each stream starts a few seconds later while Nightjar tests the network, and uses normal packets if the test fails. Leave it off unless your wired network is set up for jumbo frames."
+
+[[android_setting]]
+key = "checkbox_internet_play"
+category = "category_streaming_connection"
+tier = "more"
+kind = "bool"
+xml_default = "true"
+scope = "global"
+desktop_key = "internet_play"
+advice = "On by default. Away from home, Nightjar reaches a PC that offers Play over the internet (Rubylight with the option on) without port forwarding: it tries the local network, then the PC's IPv6 address, then a forwarded port, and only then a direct internet path that both sides punch through their routers, found through a public peer-to-peer directory that holds only encrypted notes (see Privacy). Connect once on the PC's network so it can give this device its key. At home nothing changes: the local network answers first. The host list shows the path in use. Turn it off to never look up or punch a path."
+
+[[android_setting]]
+key = "checkbox_disable_warnings"
+category = "category_streaming_connection"
+tier = "more"
+kind = "bool"
+xml_default = "false"
+scope = "global"
+desktop_key = "hide_connection_warnings"
+advice = "Enable to hide stream connection warnings once your connection is tuned."
+
+[[android_setting]]
+key = "checkbox_dual_screen"
+category = "category_streaming"
+tier = "more"
+kind = "bool"
+xml_default = "false"
+scope = "global"
+desktop_key = "dual_screen"
+advice = "Enable on a device with a second screen to stream the same game to both: the second screen gets a stream of its own at its own resolution, while sound, controllers and microphone stay with the first and a touch mode change on either screen applies to both. The second stream is the same device as the first, so the PC pairs once. It needs a Rubylight host that supports it, which decides which of its screens each stream shows. Applies to the next stream."
+
+[[android_setting]]
+key = "list_resolution_screen2"
+category = "category_streaming"
+tier = "more"
+kind = "list"
+xml_default = "native"
+scope = "global"
+desktop_key = "second_screen_width"
+shown_while = { parent = "checkbox_dual_screen", on = true }
+shown_only = "while Dual screen mode is on"
+advice = "The resolution of the second screen's stream in Dual screen mode, apart from the first screen's: the second screen's own full size, or a standard size. Applies to the next stream."
+
+[[android_setting]]
+key = "checkbox_enable_pip"
+category = "category_streaming"
+tier = "more"
+kind = "bool"
+xml_default = "false"
+scope = "global"
+advice = "Enable to keep a small video window when leaving the app. Input and overlay are hidden there; requires device support."
+
+[[android_setting]]
+key = "checkbox_covering_decoder_size"
+category = "category_streaming"
+tier = "more"
+kind = "bool"
+xml_default = "false"
+scope = "global"
+shown_only = "on a device that folds, or with Orientation set to Rotate with device"
+advice = "Off by default, under Streaming's More rows, after Dual screen. Sizes the decoder up front for the largest picture a fold or turn can bring, to save the decoder restart and key frame on the first one. On foldables whose two screens are separate displays it changes nothing."
+
+[[android_setting]]
+key = "checkbox_input_only_any_host"
+category = "category_streaming"
+tier = "more"
+kind = "bool"
+xml_default = "false"
+scope = "global"
+desktop_key = "input_only_any_host"
+advice = "Enable to add Input-only to a game's menu on PCs whose host has no Input-only mode of its own (Sunshine, GameStream, Apollo with its input-only mode off). The PC still streams video and audio at 640x360, 30 FPS and 500 kbps, about 0.7 Mbit/s with overhead; Nightjar discards both. Hosts with their own mode keep using their Input-only tile. See [Input-only on any PC](controls.md#input-only-on-any-pc)."
+
+[[android_setting]]
+key = "theme"
+category = "category_app_main"
+tier = "main"
+kind = "action"
+scope = "global"
+desktop_key = "theme"
+advice = "Choose System to follow the system theme, Light for the day palette even when the system is dark, Dark for the dark grey theme on app screens, menus and dialogs even when the system uses a light theme (as most TVs do), or OLED black for pure black backgrounds. A TV keeps the night palette with System and with Light. Applies immediately and stays separate from stream profiles. Stored as `theme` (system, light, dark or oled_black); the two switches older versions used, `checkbox_always_dark` and `checkbox_oled_black`, move there on the first read. High contrast keeps the app black whatever is chosen here."
+
+[[android_setting]]
+key = "list_languages"
+category = "category_app_main"
+tier = "main"
+kind = "list"
+xml_default = "default"
+scope = "global"
+desktop_key = "language"
+advice = "Choose the interface language. Android 13+ uses the system per-app language setting."
+
+[[android_setting]]
+key = "list_open_on_start"
+category = "category_app_main"
+tier = "main"
+kind = "action"
+scope = "global"
+desktop_key = "open_on_start"
+picker = { array = "@array/start_screen_names", default_index = 0 }
+advice = "Home by default. Home opens the games to continue, your library across PCs and the PCs (it appears once a paired PC has supplied its app list); Show my PCs opens the list of PCs. Continue my last game and A chosen game count down 3 seconds into that game on a cold start from the launcher or at sign-in; A chosen game is offered once a game was chosen from its menu. Cancel, B, Back and Esc stop the countdown; an offline PC is woken. If the last automatic start failed or its stream died within 10 seconds, the next one is skipped and says so. A running game is never replaced without asking; a game playing on another device stops the start, and so does a network still away after a minute. Stored as `list_open_on_start` and `checkbox_console_home`, read as one choice (nightjar-policy's StartScreen)."
+
+[[android_setting]]
+key = "checkbox_quick_resume"
+category = "category_app_main"
+tier = "main"
+kind = "bool"
+xml_default = "false"
+scope = "global"
+desktop_key = "quick_resume"
+advice = "Enable to go straight back into the running game when you tap its PC, skipping the library. Use the PC's menu for the library while a game runs. Off keeps the tap opening the library."
+
+[[android_setting]]
+key = "pin_lock"
+category = "category_app_main"
+tier = "main"
+kind = "action"
+scope = "global"
+advice = "Off until a PIN is set. Asks for a PIN to open Nightjar or to start a stream. A forgotten PIN can only be reset by clearing Nightjar's app data in Android's settings, which also removes paired PCs."
+
+[[android_setting]]
+key = "help"
+category = "category_app_main"
+tier = "main"
+kind = "action"
+scope = "global"
+advice = "Open the bundled help: connecting a PC, pairing, controls and the stream menu, common fixes and problem reports. Works offline; each topic links to these documents for detail."
+
+[[android_setting]]
+key = "report_problem"
+category = "category_app_main"
+tier = "main"
+kind = "action"
+scope = "global"
+advice = "Preview the explanation and share a redacted event/crash report through Android's share sheet, or send it to a PC with file transfer (**Send to PC**)."
+
+[[android_setting]]
+key = "check_updates_now"
+category = "category_app_main"
+tier = "main"
+kind = "action"
+scope = "global"
+advice = "Look for a newer release now, even if the automatic check ran recently. A release you skipped is shown again. Hidden when the app was installed from Google Play."
+
+[[android_setting]]
+key = "more_app"
+category = "category_more_app"
+tier = "main"
+kind = "action"
+scope = "global"
+advice = "Shows or hides the App rows that are not main, such as small icons, automatic update checks, about, reset and accessibility. Settings search and links find them while it is closed."
+
+[[android_setting]]
+key = "checkbox_check_updates"
+category = "category_ui_settings"
+tier = "more"
+kind = "bool"
+xml_default = "true"
+scope = "global"
+desktop_key = "check_updates"
+advice = "Leave on to look for a newer release on GitHub when the PC list opens, at most every 12 hours; you choose whether to install it. Hidden when the app was installed from Google Play, which updates it."
+
+[[android_setting]]
+key = "checkbox_small_icon_mode"
+category = "category_ui_settings"
+tier = "more"
+kind = "bool"
+scope = "global"
+desktop_key = "home_card_size"
+advice = "Enable to fit more games in the library grid."
+
+[[android_setting]]
+key = "checkbox_show_debug_settings"
+category = "category_ui_settings"
+tier = "more"
+kind = "bool"
+xml_default = "false"
+scope = "global"
+desktop_key = "show_debug_settings"
+advice = "Off by default, under App's More rows. Turn on to list the Debug section: the switches for comparing settings or ruling out a cause, such as Error correction and the decoder options. Leave it off unless support asks for it or you want to compare. Debug is listed anyway while one of its settings is not at its default, a link or a search result opens it, and search finds its settings with the switch off. The desktop stores it as `show_debug_settings`."
+
+[[android_setting]]
+key = "about_app"
+category = "category_ui_settings"
+tier = "more"
+kind = "action"
+scope = "global"
+advice = "View the installed app version and open Source and licenses."
+
+[[android_setting]]
+key = "reset_all"
+category = "category_ui_settings"
+tier = "more"
+kind = "action"
+scope = "global"
+advice = "Confirm to reset global preferences. Keeps pairing, PC profiles, controller mappings, control layout and language."
+
+[[android_setting]]
+key = "list_ui_scale"
+category = "category_accessibility"
+tier = "more"
+kind = "list"
+xml_default = "100"
+scope = "global"
+desktop_key = "ui_zoom"
+advice = "Raise for large, readable menus on a TV or a small phone; lower to fit more on screen. Scales the whole app layout, not the stream, and the system font size still applies on top. Applies immediately and stays separate from stream profiles."
+
+[[android_setting]]
+key = "list_ui_mode"
+category = "category_accessibility"
+tier = "more"
+kind = "list"
+xml_default = "auto"
+scope = "global"
+advice = "Automatic follows the device. Choose TV on a handheld or phone that is connected to a TV (a Retroid Pocket docked over HDMI, for example) to get the TV layouts with focus, a remote or gamepad and larger rows; choose Handheld to get the touch layouts on a TV. The stream is not changed. Applies immediately and stays separate from stream profiles."
+
+[[android_setting]]
+key = "checkbox_high_contrast"
+category = "category_accessibility"
+tier = "more"
+kind = "bool"
+xml_default = "false"
+scope = "global"
+desktop_key = "high_contrast"
+advice = "Enable for a black background, body-coloured secondary text and outlines (7:1 against the background) and a 4 dp focus ring on every app screen. The stream is unchanged. Applies immediately and stays separate from stream profiles."
+
+[[android_setting]]
+key = "list_reduce_motion"
+category = "category_accessibility"
+tier = "more"
+kind = "list"
+xml_default = "system"
+scope = "global"
+desktop_key = "reduce_motion"
+advice = "Follow system reduces motion when Android's animation scale is 0 or animators are off. Reduce always swaps the focus zoom and sheet slide for a plain ring; Full always animates. Applies immediately and stays separate from stream profiles."
+
+[[android_setting]]
+key = "low_latency_decoding"
+category = "category_advanced_settings"
+tier = "main"
+kind = "bool"
+scope = "global"
+advice = "Leave on. Sets Android low-latency mode, Chipset low-latency mode and Phone performance hints together; turn off only to test a decoding problem. The individual switches are behind Customize; the row says when one is off."
+
+[[android_setting]]
+key = "low_latency_customize"
+category = "category_advanced_settings"
+tier = "main"
+kind = "action"
+scope = "global"
+advice = "Opens or closes the individual switches under Low-latency decoding: Android low-latency mode, Chipset low-latency mode, Phone performance hints, Decoder performance hints and HEVC low-latency flags. Settings search finds them while it is closed."
+
+[[android_setting]]
+key = "checkbox_codec_low_latency"
+category = "category_advanced_settings"
+tier = "more"
+kind = "bool"
+xml_default = "true"
+scope = "global"
+advice = "Leave on for supported Android 11+ decoders. Disable when comparing a decoder freeze or artifact."
+
+[[android_setting]]
+key = "checkbox_vendor_low_latency"
+category = "category_advanced_settings"
+tier = "more"
+kind = "bool"
+xml_default = "true"
+scope = "global"
+advice = "Leave on for supported chipset decoder keys. Disable to isolate vendor-specific instability."
+
+[[android_setting]]
+key = "checkbox_phone_performance_hints"
+category = "category_advanced_settings"
+tier = "more"
+kind = "bool"
+xml_default = "true"
+scope = "global"
+advice = "On by default. On Android 12 and later, reports the decoder thread's work time against the frame time, so Android can raise CPU performance when decoding falls behind. Turn it off only to compare decode times with and without it."
+
+[[android_setting]]
+key = "checkbox_codec_performance"
+category = "category_advanced_settings"
+tier = "more"
+kind = "bool"
+xml_default = "true"
+scope = "global"
+advice = "Leave on for decoder priority/rate hints. Disable to compare heat or battery use."
+
+[[android_setting]]
+key = "list_hevc_low_latency_mode"
+category = "category_advanced_settings"
+tier = "more"
+kind = "list"
+xml_default = "auto"
+scope = "global"
+advice = "Auto by default: every HEVC decoder gets the Android and vendor low-latency flags except Amlogic's, which stall the display with them. On gives them to Amlogic decoders too, with a warning in the log. Off omits them on any device and disables HEVC reference-frame invalidation; choose Off if HEVC video stutters or freezes. H.264, AV1 and decoder performance hints keep their own settings. Off is stored in the older switch's key `checkbox_disable_hevc_low_latency` as true, so older saved values and profiles keep their meaning; this key only tells Auto from On. Applies to the next stream and decoder benchmark; changing it invalidates previous benchmark results."
+
+[[android_setting]]
+key = "gpu_driver"
+category = "category_advanced_settings"
+tier = "main"
+kind = "action"
+scope = "global"
+advice = "Import and select a compatible Snapdragon Vulkan driver for PyroWave. Shown on arm64 Adreno devices only. The system driver remains the default; changes apply to the next stream."
+
+[[android_setting]]
+key = "checkbox_gpu_max_clocks"
+category = "category_advanced_settings"
+tier = "main"
+kind = "bool"
+xml_default = "false"
+scope = "global"
+advice = "Off by default. Optionally request higher Adreno GPU clocks during PyroWave streaming to reduce decode time; this can increase power use and heat. Thermal protection remains active. Installs that already stored a choice keep it. Shown on Adreno devices only."
+
+[[android_setting]]
+key = "checkbox_texture_view"
+category = "category_advanced_settings"
+tier = "main"
+kind = "bool"
+xml_default = "false"
+scope = "global"
+advice = "Try for black or flickering video or misplaced output. Adds composition work and is disabled for HDR, Less color banding and PyroWave."
+
+[[android_setting]]
+key = "checkbox_vulkan_render"
+category = "category_advanced_settings"
+tier = "main"
+kind = "bool"
+xml_default = "false"
+scope = "global"
+advice = "Presents H.264, HEVC and AV1 through Vulkan with its own frame pacing, for frame-generation overlays that hook Vulkan. It adds a render pass, so some latency, and needs Android 10 and a GPU with Vulkan 1.1. If it cannot be used (PyroWave, Android 9 or older, no Vulkan support, 4:4:4 video, or it fails to start) the stream uses direct output and a message says why. While it is on, client-side upscaling is off. If it stops working during a stream, the stream ends with a message that names it; turn this switch off to go back. Leave it off unless you need such an overlay."
+
+[[android_setting]]
+key = "more_advanced"
+category = "category_more_advanced"
+tier = "main"
+kind = "action"
+scope = "global"
+advice = "Shows or hides the Advanced rows that are not main: compatibility and More options. Settings search and links find them while it is closed."
+
+[[android_setting]]
+key = "checkbox_display_queue_recovery"
+category = "category_advanced_compatibility"
+tier = "more"
+kind = "bool"
+xml_default = "true"
+scope = "global"
+shown_while = { parent = "checkbox_vrr", on = false }
+advice = "On by default; in Advanced, Compatibility. With Lowest latency or Balanced pacing on a fixed refresh, where the device reports when frames are shown: when the screen keeps frames waiting a whole refresh longer than the stream's own level for 3 s, one frame is skipped and the wait is checked after; skips that change nothing turn it off for the stream. The log's `Display queue:` lines show each step. Turn it off to compare a stray skip against the added wait. Hidden with the other pacings, Frame pacing's PC's frame times (frames are scheduled then and nothing is skipped) and Variable refresh rate. Where it does nothing its line says why: an adaptive refresh screen without Fixed timing on adaptive screens, Render through Vulkan, Frame Warp or an upscaler. Android only: desktop has no compositor display queue."
+
+[[android_setting]]
+key = "checkbox_enable_sops"
+category = "category_advanced_compatibility"
+tier = "more"
+kind = "bool"
+xml_default = "true"
+scope = "global"
+desktop_key = "sops"
+advice = "Leave on. Tells the PC whether it may optimize a game's settings for this stream. Rubylight only passes the choice on to commands you run on the PC, as SUNSHINE_CLIENT_ENABLE_SOPS; other hosts may change the game's settings themselves."
+
+[[android_setting]]
+key = "checkbox_experimental_chipset_tuning"
+category = "category_advanced_compatibility"
+tier = "more"
+kind = "bool"
+xml_default = "false"
+scope = "global"
+shown_only = "unless the chip is known to be neither MediaTek nor Exynos (Qualcomm Snapdragon, NVIDIA Tegra)"
+advice = "Off by default. Sends `vdec-lowlatency` to MediaTek Dimensity (`c2.mtk`) decoders and, with decoder performance hints on, asks Samsung Exynos decoders for the operating rate they declare next to the realtime priority hint. Needs vendor low-latency options on and HEVC low-latency flags not disabled. Only the first configure try carries them, so a decoder that rejects them falls back to the normal options. If video stops or stutters, turn it off."
+
+[[android_setting]]
+key = "checkbox_tv_display_compatibility"
+category = "category_advanced_compatibility"
+tier = "more"
+kind = "bool"
+xml_default = "false"
+scope = "global"
+shown_only = "on a TV (Android TV)"
+advice = "Off by default. While a stream is shown, a 1 dp nearly black dot in the top-left corner of the video's window (left in right-to-left languages too) changes between two near-black colours every 100 ms, so the app's own layer stays part of what the TV composes. Meant for TVs whose firmware freezes, flashes or restarts while the video is the only thing on screen. Its display cost is not measured. Stops while paused, in picture-in-picture and when the stream ends; with the video on an external display the dot sits in that display's window. The stream reads a stored value on any device."
+
+[[android_setting]]
+key = "list_decode_queue_frames"
+category = "category_advanced_compatibility"
+tier = "more"
+kind = "list"
+xml_default = "15"
+scope = "global"
+desktop_key = "decode_queue_frames"
+advice = "15 frames by default, the bound it had before it was a setting; in Advanced, Compatibility. How many complete frames may wait for a decoder that falls behind before they are dropped and the PC is asked for a key frame. Fewer frames keep delay from building up on a slow decoder, at the cost of more frequent stutters while the key frame arrives. Both streaming engines use it, but only with a decoder that queues frames: most hardware decoders take each frame directly and have no queue, so the choice does nothing for them. Leave it at 15 unless the picture lags further and further behind on a slow device. Desktop Nightjar has the same setting. Applies to the next stream."
+
+[[android_setting]]
+key = "game_info_steamgriddb"
+category = "category_game_info"
+tier = "more"
+kind = "action"
+scope = "global"
+advice = "Optional; empty by default, and then Nightjar sends nothing. Shows SteamGridDB's cover for a game your PC has none for; your PC's own cover always wins. Your game names go to SteamGridDB. Stored in its own file, not in presets, profiles or backups."
+
+[[android_setting]]
+key = "game_info_igdb_client_id"
+category = "category_game_info"
+tier = "more"
+kind = "action"
+scope = "global"
+advice = "Optional; empty by default, and then Nightjar sends nothing. With the client secret, shows genres, themes and time to beat on a game's page and adds Genre and Length filters to All games. Your game names go to IGDB. Needs a Twitch developer app. Stored in its own file, not in presets, profiles or backups."
+
+[[android_setting]]
+key = "game_info_igdb_client_secret"
+category = "category_game_info"
+tier = "more"
+kind = "action"
+scope = "global"
+shown_only = "once the IGDB client ID is set"
+advice = "The client secret of the same Twitch developer app as the IGDB client ID; game facts need both. Stored in its own file, not in presets, profiles or backups."
+
+[[android_setting]]
+key = "list_fec_choice"
+category = "category_debug"
+tier = "main"
+kind = "list"
+xml_default = "host"
+scope = "global"
+desktop_key = "error_correction"
+advice = "PC's setting by default: the PC adds the recovery data its own settings call for. Automatic asks it to follow the losses this device reports; 10, 20, 30 or 50 % fixes the share. Rubylight PCs and Sunshine-based PCs that accept it take this choice; other PCs use their own setting either way."
+
+[[android_setting]]
+key = "checkbox_tell_host_wireless"
+category = "category_debug"
+tier = "main"
+kind = "bool"
+xml_default = "true"
+scope = "global"
+desktop_key = "tell_host_wireless"
+advice = "On by default. Tells a Rubylight PC when this device streams over Wi-Fi and how fast its wired port is, so it paces the stream for them from the start, and never sends faster than the port can take. Other PCs are not told. Stored as `checkbox_tell_host_wireless` and `checkbox_tell_host_link_speed`, written together."
+
+[[android_setting]]
+key = "checkbox_network_priority"
+category = "category_debug"
+tier = "main"
+kind = "bool"
+xml_default = "true"
+scope = "global"
+desktop_key = "network_priority"
+advice = "Enable to compare scheduling under load. Requests streaming thread priority on this device."
+
+[[android_setting]]
+key = "checkbox_unbatched_input"
+category = "category_debug"
+tier = "main"
+kind = "bool"
+xml_default = "true"
+scope = "global"
+desktop_key = "unbatched_input"
+advice = "Enable to bypass display-rate input batching. High-rate input can increase CPU and network load."
+
+[[android_setting]]
+key = "more_debug"
+category = "category_more_debug"
+tier = "main"
+kind = "action"
+scope = "global"
+advice = "Shows or hides the Debug rows that are not main: the PyroWave and decoder switches and Diagnostics. Settings search and links find them while it is closed."
+
+[[android_setting]]
+key = "checkbox_pyrowave_preacquire"
+category = "category_debug_pyrowave"
+tier = "more"
+kind = "bool"
+xml_default = "false"
+scope = "global"
+always_listed = "the video codec isn't PyroWave"
+advice = "Off by default, under Debug's More rows. PyroWave takes the next screen image before the frame arrives. It measured no faster on our devices; turn it on to compare."
+
+[[android_setting]]
+key = "checkbox_submit_hint"
+category = "category_debug_decoder"
+tier = "more"
+kind = "bool"
+xml_default = "false"
+scope = "global"
+advice = "Off by default, under Debug's More rows. Also reports the threads that hand frames to the decoder (the receive thread and the input worker) to Android's performance hints. On a Retroid Pocket 6 it made no measurable difference, idle or with its CPUs fully loaded; turn it on to compare."
+
+[[android_setting]]
+key = "checkbox_codec_direct"
+category = "category_debug_decoder"
+tier = "more"
+kind = "bool"
+xml_default = "@bool/default_codec_direct"
+scope = "global"
+advice = "On by default, under Debug's More rows. H.264, HEVC and AV1 frames go into the decoder's buffer in place, one copy fewer. Turn it off if video stops or shows errors on this device."
+
+[[android_setting]]
+key = "checkbox_receive_decode_priority"
+category = "category_debug_decoder"
+tier = "more"
+kind = "bool"
+xml_default = "true"
+scope = "global"
+advice = "On by default, under Debug's More rows. With Prioritize stream traffic on and frames going to the decoder directly, gives the receive thread the decoder's priority. Measured on the Retroid Pocket 6 with all CPUs loaded, the p95 receive-to-release averaged 3.38 ms On against 3.54 ms Off over four legs each (the legs overlapped), with the median unchanged and idle no different; turn it off to compare."
+
+[[android_setting]]
+key = "checkbox_link_probe"
+category = "category_debug_diagnostics"
+tier = "more"
+kind = "bool"
+xml_default = "false"
+scope = "global"
+desktop_key = "link_probe"
+advice = "Off by default. A new stream at the automatic bitrate first times a short download from a Rubylight PC that offers it and starts at no more than 80 % of the result (never below 2 Mbit/s). Resumes, a bitrate you set and PyroWave are not tested. Off because it started streams lower, with more loss and freezes, in our measurement."
+
+[[android_setting]]
+key = "checkbox_show_gyro_diagnostics"
+category = "category_debug_diagnostics"
+tier = "more"
+kind = "bool"
+xml_default = "false"
+scope = "global"
+advice = "Off by default. Shows the motion values each controller sends while streaming, after its gyroscope mapping, with buttons to record them to a CSV file and share it, list the connected controllers and try the Flydigi preset until the stream ends. Covers the top left of the picture. Turn it on only to check a controller's motion."
+
+[[android_setting]]
+key = "pace_calibration"
+category = "category_debug_diagnostics"
+tier = "more"
+kind = "action"
+scope = "global"
+advice = "Opens a saved PC's PyroWave frame pace on that PC's settings, where it is measured: the fastest pace at which the PC's PyroWave frames arrive whole. Shown while a paired PC can measure it or has one saved; with several it asks which one first. Stores nothing here."
+
+[[android_setting]]
+key = "checkbox_enable_post_stream_toast"
+category = "category_debug_diagnostics"
+tier = "more"
+kind = "bool"
+xml_default = "false"
+scope = "global"
+desktop_key = "post_stream_decode_time"
+advice = "Enable to see the average decode time after a session ends; it is not end-to-end latency."
+
+[[android_setting]]
+key = "latency_benchmark"
+category = "category_debug_diagnostics"
+tier = "more"
+kind = "action"
+scope = "global"
+advice = "Run a 10-second local frame-callback, timer and input-dispatch benchmark without a host. Use Measure input latency in the stream menu for end-to-end timing."
+
+[[android_setting]]
+key = "export_latency_csv"
+category = "category_debug_diagnostics"
+tier = "more"
+kind = "action"
+scope = "global"
+advice = "Choose a destination for the latest local frame-timing CSV. Each row holds the measured stage timings."
+
+[[android_setting]]
+key = "stream_profiles"
+category = "overview"
+tier = "main"
+kind = "action"
+scope = "global"
+advice = "Open to create, rename, duplicate or delete named profiles (sets of stream values such as Home 4K120 or Hotel), pick the profile in use, and optionally let the network pick one when a stream starts. A profile sets only the values chosen in it. See [named profiles](#named-profiles-and-game-settings)."
+
+# ---------- Desktop Settings struct fields (client/protocol/desktop-config) ----------
+
+[[desktop_setting]]
+key = "width"
+rust_type = "u32"
+default_expr = "0"
+scope = "layer"
+override_allowed = true
+android_key = "list_resolution"
+
+[[desktop_setting]]
+key = "height"
+rust_type = "u32"
+default_expr = "0"
+scope = "layer"
+override_allowed = true
+
+[[desktop_setting]]
+key = "fps"
+rust_type = "u32"
+default_expr = "0"
+scope = "layer"
+override_allowed = true
+android_key = "list_fps"
+
+[[desktop_setting]]
+key = "bitrate_kbps"
+rust_type = "u32"
+default_expr = "0"
+scope = "layer"
+override_allowed = true
+android_key = "seekbar_bitrate_kbps"
+
+[[desktop_setting]]
+key = "lower_bitrate"
+rust_type = "nightjar_policy::choices::LowerBitrate"
+default_expr = "nightjar_policy::choices::LowerBitrate::Off"
+scope = "layer"
+override_allowed = true
+android_key = "lower_bitrate"
+
+[[desktop_setting]]
+key = "retired_busy_bitrate"
+rust_type = "Option<bool>"
+default_expr = "None"
+scope = "retired"
+override_allowed = false
+
+[[desktop_setting]]
+key = "retired_lost_bitrate"
+rust_type = "Option<bool>"
+default_expr = "None"
+scope = "retired"
+override_allowed = false
+
+[[desktop_setting]]
+key = "retired_keep_bitrate"
+rust_type = "Option<bool>"
+default_expr = "None"
+scope = "retired"
+override_allowed = false
+
+[[desktop_setting]]
+key = "adaptive_quality"
+rust_type = "QualityMode"
+default_expr = "QualityMode::Off"
+scope = "layer"
+override_allowed = true
+android_key = "adaptive_quality_mode"
+
+[[desktop_setting]]
+key = "quality_min_short_edge"
+rust_type = "u32"
+default_expr = "720"
+scope = "layer"
+override_allowed = true
+android_key = "adaptive_quality_min_resolution"
+
+[[desktop_setting]]
+key = "quality_min_fps"
+rust_type = "u32"
+default_expr = "30"
+scope = "layer"
+override_allowed = true
+android_key = "adaptive_quality_min_fps"
+
+[[desktop_setting]]
+key = "codec"
+rust_type = "CodecPreference"
+default_expr = "CodecPreference::Auto"
+scope = "layer"
+override_allowed = true
+android_key = "video_format"
+
+[[desktop_setting]]
+key = "hdr"
+rust_type = "bool"
+default_expr = "false"
+scope = "layer"
+override_allowed = true
+android_key = "checkbox_enable_hdr"
+
+[[desktop_setting]]
+key = "hdr_desktop_brightness"
+rust_type = "bool"
+default_expr = "false"
+scope = "layer"
+override_allowed = true
+
+[[desktop_setting]]
+key = "experimental_packed_444"
+rust_type = "bool"
+default_expr = "false"
+scope = "layer"
+override_allowed = true
+
+[[desktop_setting]]
+key = "prefer_yuv444"
+rust_type = "bool"
+default_expr = "false"
+scope = "layer"
+override_allowed = true
+android_key = "sharp_color"
+
+[[desktop_setting]]
+key = "sdr_10bit"
+rust_type = "bool"
+default_expr = "false"
+scope = "layer"
+override_allowed = true
+android_key = "checkbox_enable_sdr_10bit"
+
+[[desktop_setting]]
+key = "audio"
+rust_type = "AudioChannels"
+default_expr = "AudioChannels::Stereo"
+scope = "layer"
+override_allowed = true
+android_key = "list_audio_config"
+
+[[desktop_setting]]
+key = "play_audio_on_host"
+rust_type = "bool"
+default_expr = "false"
+scope = "layer"
+override_allowed = true
+android_key = "checkbox_host_audio"
+
+[[desktop_setting]]
+key = "mute_audio"
+rust_type = "bool"
+default_expr = "false"
+scope = "layer"
+override_allowed = true
+android_key = "checkbox_mute_audio"
+
+[[desktop_setting]]
+key = "audio_passthrough"
+rust_type = "bool"
+default_expr = "false"
+scope = "layer"
+override_allowed = true
+android_key = "checkbox_audio_passthrough"
+
+[[desktop_setting]]
+key = "window_mode"
+rust_type = "WindowMode"
+default_expr = "WindowMode::Borderless"
+scope = "layer"
+override_allowed = true
+
+[[desktop_setting]]
+key = "video_scaling"
+rust_type = "VideoScaling"
+default_expr = "VideoScaling::Fit"
+scope = "layer"
+override_allowed = true
+android_key = "video_scaling"
+
+[[desktop_setting]]
+key = "align_video_top"
+rust_type = "bool"
+default_expr = "false"
+scope = "layer"
+override_allowed = true
+android_key = "video_alignment"
+
+[[desktop_setting]]
+key = "vrr"
+rust_type = "bool"
+default_expr = "true"
+scope = "layer"
+override_allowed = true
+android_key = "checkbox_vrr"
+
+[[desktop_setting]]
+key = "present_at_host_times"
+rust_type = "bool"
+default_expr = "true"
+scope = "layer"
+override_allowed = true
+
+[[desktop_setting]]
+key = "vrr_tear_free"
+rust_type = "bool"
+default_expr = "true"
+scope = "layer"
+override_allowed = true
+
+[[desktop_setting]]
+key = "vrr_wait"
+rust_type = "VrrWait"
+default_expr = "VrrWait::Automatic"
+scope = "layer"
+override_allowed = true
+
+[[desktop_setting]]
+key = "vsync"
+rust_type = "bool"
+default_expr = "true"
+scope = "layer"
+override_allowed = true
+
+[[desktop_setting]]
+key = "frame_pacing"
+rust_type = "FramePacing"
+default_expr = "FramePacing::Latency"
+scope = "layer"
+override_allowed = true
+android_key = "frame_pacing"
+
+[[desktop_setting]]
+key = "drop_late_frames"
+rust_type = "bool"
+default_expr = "true"
+scope = "layer"
+override_allowed = true
+
+[[desktop_setting]]
+key = "host_frame_times"
+rust_type = "bool"
+default_expr = "false"
+scope = "layer"
+override_allowed = true
+
+[[desktop_setting]]
+key = "fractional_vsync"
+rust_type = "bool"
+default_expr = "false"
+scope = "layer"
+override_allowed = true
+android_key = "checkbox_fractional_vsync"
+
+[[desktop_setting]]
+key = "overlay"
+rust_type = "bool"
+default_expr = "false"
+scope = "layer"
+override_allowed = true
+android_key = "checkbox_enable_perf_overlay"
+
+[[desktop_setting]]
+key = "overlay_mode"
+rust_type = "OverlayMode"
+default_expr = "OverlayMode::Compact"
+scope = "layer"
+override_allowed = true
+
+[[desktop_setting]]
+key = "overlay_position"
+rust_type = "OverlayCorner"
+default_expr = "OverlayCorner::TopLeft"
+scope = "layer"
+override_allowed = true
+android_key = "performance_overlay_position"
+
+[[desktop_setting]]
+key = "mouse_mode"
+rust_type = "MouseMode"
+default_expr = "MouseMode::Capture"
+scope = "layer"
+override_allowed = true
+android_key = "checkbox_absolute_mouse_mode"
+
+[[desktop_setting]]
+key = "mouse_speed"
+rust_type = "u32"
+default_expr = "100"
+scope = "layer"
+override_allowed = true
+android_key = "seekbar_mouse_speed"
+
+[[desktop_setting]]
+key = "mouse_nav_buttons"
+rust_type = "bool"
+default_expr = "true"
+scope = "layer"
+override_allowed = true
+android_key = "checkbox_mouse_nav_buttons"
+
+[[desktop_setting]]
+key = "native_touchpad"
+rust_type = "bool"
+default_expr = "false"
+scope = "layer"
+override_allowed = true
+android_key = "checkbox_native_touchpad"
+
+[[desktop_setting]]
+key = "right_alt_as_meta"
+rust_type = "bool"
+default_expr = "false"
+scope = "layer"
+override_allowed = true
+android_key = "checkbox_right_alt_as_meta"
+
+[[desktop_setting]]
+key = "capture_system_keys"
+rust_type = "bool"
+default_expr = "true"
+scope = "layer"
+override_allowed = true
+android_key = "checkbox_capture_system_keys"
+
+[[desktop_setting]]
+key = "system_keys_fullscreen_only"
+rust_type = "bool"
+default_expr = "false"
+scope = "layer"
+override_allowed = true
+
+[[desktop_setting]]
+key = "controllers"
+rust_type = "bool"
+default_expr = "true"
+scope = "layer"
+override_allowed = true
+android_key = "controllers"
+
+[[desktop_setting]]
+key = "multi_controller"
+rust_type = "bool"
+default_expr = "true"
+scope = "layer"
+override_allowed = true
+
+[[desktop_setting]]
+key = "swap_face_buttons"
+rust_type = "bool"
+default_expr = "false"
+scope = "layer"
+override_allowed = true
+android_key = "checkbox_flip_face_buttons"
+
+[[desktop_setting]]
+key = "controller_motion"
+rust_type = "bool"
+default_expr = "true"
+scope = "layer"
+override_allowed = true
+android_key = "checkbox_gamepad_motion_sensors"
+
+[[desktop_setting]]
+key = "controller_audio"
+rust_type = "bool"
+default_expr = "false"
+scope = "layer"
+override_allowed = true
+android_key = "checkbox_usb_dualsense_haptics"
+
+[[desktop_setting]]
+key = "back_opens_menu"
+rust_type = "bool"
+default_expr = "false"
+scope = "layer"
+override_allowed = true
+android_key = "back_button"
+
+[[desktop_setting]]
+key = "back_as_guide"
+rust_type = "bool"
+default_expr = "false"
+scope = "layer"
+override_allowed = true
+
+[[desktop_setting]]
+key = "guide_hold_ms"
+rust_type = "u32"
+default_expr = "1000"
+scope = "layer"
+override_allowed = true
+android_key = "list_guide_menu_hold"
+
+[[desktop_setting]]
+key = "gamepad_quit_combo"
+rust_type = "GamepadQuitCombo"
+default_expr = "GamepadQuitCombo::StartSelectLbRb"
+scope = "layer"
+override_allowed = true
+android_key = "list_gamepad_quit_combo"
+
+[[desktop_setting]]
+key = "stream_menu_buttons"
+rust_type = "nightjar_policy::stream_menu::Buttons"
+default_expr = "Default::default()"
+scope = "layer"
+override_allowed = true
+
+[[desktop_setting]]
+key = "controller_mouse"
+rust_type = "bool"
+default_expr = "true"
+scope = "layer"
+override_allowed = true
+android_key = "checkbox_mouse_emulation"
+
+[[desktop_setting]]
+key = "analog_scrolling"
+rust_type = "AnalogScrolling"
+default_expr = "AnalogScrolling::Right"
+scope = "layer"
+override_allowed = true
+android_key = "analog_scrolling"
+
+[[desktop_setting]]
+key = "mouse_fixed_step"
+rust_type = "bool"
+default_expr = "false"
+scope = "layer"
+override_allowed = true
+android_key = "checkbox_mouse_emulation_fixed_step"
+
+[[desktop_setting]]
+key = "gamepad_touchpad_as_mouse"
+rust_type = "bool"
+default_expr = "false"
+scope = "layer"
+override_allowed = true
+android_key = "checkbox_gamepad_touchpad_as_mouse"
+
+[[desktop_setting]]
+key = "deadzone"
+rust_type = "u32"
+default_expr = "0"
+scope = "layer"
+override_allowed = true
+android_key = "seekbar_deadzone"
+
+[[desktop_setting]]
+key = "trigger_deadzone"
+rust_type = "u32"
+default_expr = "0"
+scope = "layer"
+override_allowed = true
+android_key = "seekbar_trigger_deadzone"
+
+[[desktop_setting]]
+key = "disable_rumble"
+rust_type = "bool"
+default_expr = "false"
+scope = "layer"
+override_allowed = true
+
+[[desktop_setting]]
+key = "rumble_feel"
+rust_type = "nightjar_policy::rumble::RumbleFeel"
+default_expr = "nightjar_policy::rumble::RumbleFeel::Standard"
+scope = "layer"
+override_allowed = true
+android_key = "list_rumble_feel"
+
+[[desktop_setting]]
+key = "background_controllers"
+rust_type = "bool"
+default_expr = "false"
+scope = "layer"
+override_allowed = true
+
+[[desktop_setting]]
+key = "decoder"
+rust_type = "DecoderPreference"
+default_expr = "DecoderPreference::Auto"
+scope = "layer"
+override_allowed = true
+
+[[desktop_setting]]
+key = "early_decode"
+rust_type = "bool"
+default_expr = "false"
+scope = "layer"
+override_allowed = true
+
+[[desktop_setting]]
+key = "beam_race"
+rust_type = "bool"
+default_expr = "false"
+scope = "layer"
+override_allowed = true
+
+[[desktop_setting]]
+key = "beam_race_margin_ms"
+rust_type = "u32"
+default_expr = "0"
+scope = "layer"
+override_allowed = true
+
+[[desktop_setting]]
+key = "pyrowave_decoder"
+rust_type = "PyroWaveDecoder"
+default_expr = "PyroWaveDecoder::default()"
+scope = "layer"
+override_allowed = true
+
+[[desktop_setting]]
+key = "renderer"
+rust_type = "Renderer"
+default_expr = "Renderer::Auto"
+scope = "global"
+override_allowed = false
+
+[[desktop_setting]]
+key = "graphics_card"
+rust_type = "GraphicsCard"
+default_expr = "GraphicsCard::Automatic"
+scope = "global"
+override_allowed = false
+
+[[desktop_setting]]
+key = "display_output"
+rust_type = "DisplayOutput"
+default_expr = "DisplayOutput::Automatic"
+scope = "global"
+override_allowed = false
+
+[[desktop_setting]]
+key = "video_planes"
+rust_type = "bool"
+default_expr = "true"
+scope = "global"
+override_allowed = false
+
+[[desktop_setting]]
+key = "high_performance_gpu_power"
+rust_type = "bool"
+default_expr = "false"
+scope = "global"
+override_allowed = false
+
+[[desktop_setting]]
+key = "microphone"
+rust_type = "bool"
+default_expr = "false"
+scope = "layer"
+override_allowed = true
+android_key = "checkbox_enable_mic"
+
+[[desktop_setting]]
+key = "mic_echo_cancel"
+rust_type = "MicEcho"
+default_expr = "MicEcho::Auto"
+scope = "layer"
+override_allowed = true
+android_key = "list_mic_echo_cancel"
+
+[[desktop_setting]]
+key = "mic_gain"
+rust_type = "u32"
+default_expr = "100"
+scope = "layer"
+override_allowed = true
+android_key = "seekbar_mic_gain"
+
+[[desktop_setting]]
+key = "mic_noise_suppression"
+rust_type = "bool"
+default_expr = "true"
+scope = "layer"
+override_allowed = true
+android_key = "checkbox_mic_noise_suppression"
+
+[[desktop_setting]]
+key = "mic_auto_gain"
+rust_type = "bool"
+default_expr = "false"
+scope = "layer"
+override_allowed = true
+android_key = "checkbox_mic_auto_gain"
+
+[[desktop_setting]]
+key = "cursor_shapes"
+rust_type = "bool"
+default_expr = "true"
+scope = "layer"
+override_allowed = true
+
+[[desktop_setting]]
+key = "network_grace_ms"
+rust_type = "u32"
+default_expr = "3000"
+scope = "layer"
+override_allowed = true
+android_key = "list_network_grace"
+
+[[desktop_setting]]
+key = "hide_connection_warnings"
+rust_type = "bool"
+default_expr = "false"
+scope = "layer"
+override_allowed = true
+android_key = "checkbox_disable_warnings"
+
+[[desktop_setting]]
+key = "client_roaming"
+rust_type = "bool"
+default_expr = "true"
+scope = "layer"
+override_allowed = true
+android_key = "checkbox_client_roaming"
+
+[[desktop_setting]]
+key = "roaming_metered"
+rust_type = "bool"
+default_expr = "false"
+scope = "layer"
+override_allowed = true
+
+[[desktop_setting]]
+key = "receive_coalescing"
+rust_type = "bool"
+default_expr = "true"
+scope = "layer"
+override_allowed = true
+android_key = "checkbox_receive_coalescing"
+
+[[desktop_setting]]
+key = "jumbo_frames"
+rust_type = "bool"
+default_expr = "false"
+scope = "layer"
+override_allowed = true
+android_key = "jumbo_frames"
+
+[[desktop_setting]]
+key = "packet_size"
+rust_type = "u32"
+default_expr = "0"
+scope = "runtime"
+override_allowed = false
+
+[[desktop_setting]]
+key = "internet_play"
+rust_type = "bool"
+default_expr = "true"
+scope = "global"
+override_allowed = false
+android_key = "checkbox_internet_play"
+
+[[desktop_setting]]
+key = "usb_forwarding"
+rust_type = "bool"
+default_expr = "false"
+scope = "layer"
+override_allowed = true
+android_key = "checkbox_usb_forwarding"
+
+[[desktop_setting]]
+key = "usb_auto"
+rust_type = "Vec<String>"
+default_expr = "Vec::new()"
+scope = "ui_state"
+override_allowed = false
+
+[[desktop_setting]]
+key = "clipboard_sync"
+rust_type = "bool"
+default_expr = "false"
+scope = "layer"
+override_allowed = true
+android_key = "checkbox_clipboard_sync"
+
+[[desktop_setting]]
+key = "keyboard_follows_text_fields"
+rust_type = "bool"
+default_expr = "true"
+scope = "layer"
+override_allowed = true
+android_key = "checkbox_keyboard_follows_text_fields"
+
+[[desktop_setting]]
+key = "dual_screen"
+rust_type = "bool"
+default_expr = "false"
+scope = "layer"
+override_allowed = true
+android_key = "checkbox_dual_screen"
+
+[[desktop_setting]]
+key = "second_screen_width"
+rust_type = "u32"
+default_expr = "0"
+scope = "layer"
+override_allowed = true
+android_key = "list_resolution_screen2"
+
+[[desktop_setting]]
+key = "second_screen_height"
+rust_type = "u32"
+default_expr = "0"
+scope = "layer"
+override_allowed = true
+
+[[desktop_setting]]
+key = "tell_host_wireless"
+rust_type = "bool"
+default_expr = "true"
+scope = "layer"
+override_allowed = true
+android_key = "checkbox_tell_host_wireless"
+
+[[desktop_setting]]
+key = "tell_host_link_speed"
+rust_type = "bool"
+default_expr = "true"
+scope = "layer"
+override_allowed = true
+
+[[desktop_setting]]
+key = "unbatched_input"
+rust_type = "bool"
+default_expr = "true"
+scope = "layer"
+override_allowed = true
+android_key = "checkbox_unbatched_input"
+
+[[desktop_setting]]
+key = "network_priority"
+rust_type = "bool"
+default_expr = "true"
+scope = "layer"
+override_allowed = true
+android_key = "checkbox_network_priority"
+
+[[desktop_setting]]
+key = "software_slices"
+rust_type = "bool"
+default_expr = "false"
+scope = "layer"
+override_allowed = true
+
+[[desktop_setting]]
+key = "vulkan_video_first"
+rust_type = "bool"
+default_expr = "false"
+scope = "layer"
+override_allowed = true
+
+[[desktop_setting]]
+key = "vulkan_rfi"
+rust_type = "bool"
+default_expr = "false"
+scope = "layer"
+override_allowed = true
+
+[[desktop_setting]]
+key = "videotoolbox_rfi"
+rust_type = "bool"
+default_expr = "false"
+scope = "layer"
+override_allowed = true
+
+[[desktop_setting]]
+key = "pyrowave_async_compute"
+rust_type = "bool"
+default_expr = "false"
+scope = "layer"
+override_allowed = true
+
+[[desktop_setting]]
+key = "auto_reconnect"
+rust_type = "bool"
+default_expr = "true"
+scope = "layer"
+override_allowed = true
+android_key = "checkbox_auto_reconnect"
+
+[[desktop_setting]]
+key = "auto_reconnect_default_on"
+rust_type = "bool"
+default_expr = "true"
+scope = "migration"
+override_allowed = false
+
+[[desktop_setting]]
+key = "real_vrr_default_on"
+rust_type = "bool"
+default_expr = "true"
+scope = "migration"
+override_allowed = false
+
+[[desktop_setting]]
+key = "kept_settings_checked"
+rust_type = "bool"
+default_expr = "false"
+scope = "migration"
+override_allowed = false
+
+[[desktop_setting]]
+key = "virtual_display"
+rust_type = "bool"
+default_expr = "false"
+scope = "layer"
+override_allowed = true
+
+[[desktop_setting]]
+key = "virtual_display_scale"
+rust_type = "u32"
+default_expr = "100"
+scope = "layer"
+override_allowed = true
+android_key = "seekbar_virtual_display_scale"
+
+[[desktop_setting]]
+key = "virtual_display_dpi"
+rust_type = "u32"
+default_expr = "0"
+scope = "layer"
+override_allowed = true
+android_key = "list_virtual_display_dpi"
+
+[[desktop_setting]]
+key = "host_display"
+rust_type = "HostDisplay"
+default_expr = "HostDisplay::HostDefault"
+scope = "layer"
+override_allowed = true
+android_key = "host_display_location"
+
+[[desktop_setting]]
+key = "error_correction"
+rust_type = "ErrorCorrection"
+default_expr = "ErrorCorrection::Host"
+scope = "layer"
+override_allowed = true
+android_key = "list_fec_choice"
+
+[[desktop_setting]]
+key = "rtx_hdr"
+rust_type = "Option<bool>"
+default_expr = "None"
+scope = "pc_or_game"
+override_allowed = true
+
+[[desktop_setting]]
+key = "rtx_video"
+rust_type = "Option<bool>"
+default_expr = "None"
+scope = "pc_or_game"
+override_allowed = true
+
+[[desktop_setting]]
+key = "link_probe"
+rust_type = "bool"
+default_expr = "false"
+scope = "layer"
+override_allowed = true
+android_key = "checkbox_link_probe"
+
+[[desktop_setting]]
+key = "sops"
+rust_type = "bool"
+default_expr = "true"
+scope = "layer"
+override_allowed = true
+android_key = "checkbox_enable_sops"
+
+[[desktop_setting]]
+key = "decode_queue_frames"
+rust_type = "u32"
+default_expr = "15"
+scope = "layer"
+override_allowed = true
+android_key = "list_decode_queue_frames"
+
+[[desktop_setting]]
+key = "full_range"
+rust_type = "bool"
+default_expr = "false"
+scope = "layer"
+override_allowed = true
+android_key = "checkbox_full_range"
+
+[[desktop_setting]]
+key = "upscaling"
+rust_type = "Upscaling"
+default_expr = "Upscaling::Bilinear"
+scope = "layer"
+override_allowed = true
+android_key = "upscaling_mode"
+
+[[desktop_setting]]
+key = "upscale_sharpness"
+rust_type = "u32"
+default_expr = "50"
+scope = "layer"
+override_allowed = true
+android_key = "upscaling_sharpness"
+
+[[desktop_setting]]
+key = "frame_warp"
+rust_type = "bool"
+default_expr = "false"
+scope = "layer"
+override_allowed = true
+android_key = "checkbox_frame_warp"
+
+[[desktop_setting]]
+key = "open_on_start"
+rust_type = "OpenOnStart"
+default_expr = "OpenOnStart::Pcs"
+scope = "global"
+override_allowed = false
+android_key = "list_open_on_start"
+
+[[desktop_setting]]
+key = "console_home"
+rust_type = "bool"
+default_expr = "true"
+scope = "global"
+override_allowed = false
+android_key = "checkbox_console_home"
+
+[[desktop_setting]]
+key = "simple_smoothness"
+rust_type = "nightjar_policy::simple_profile::Smoothness"
+default_expr = "nightjar_policy::simple_profile::Smoothness::Auto"
+scope = "global"
+override_allowed = false
+android_key = "simple_smoothness"
+
+[[desktop_setting]]
+key = "simple_picture"
+rust_type = "nightjar_policy::simple_profile::Picture"
+default_expr = "nightjar_policy::simple_profile::Picture::Auto"
+scope = "global"
+override_allowed = false
+android_key = "simple_picture"
+
+[[desktop_setting]]
+key = "simple_hdr"
+rust_type = "nightjar_policy::simple_profile::Hdr"
+default_expr = "nightjar_policy::simple_profile::Hdr::Auto"
+scope = "global"
+override_allowed = false
+android_key = "simple_hdr"
+
+[[desktop_setting]]
+key = "quick_resume"
+rust_type = "bool"
+default_expr = "false"
+scope = "global"
+override_allowed = false
+android_key = "checkbox_quick_resume"
+
+[[desktop_setting]]
+key = "input_only_any_host"
+rust_type = "bool"
+default_expr = "false"
+scope = "global"
+override_allowed = false
+android_key = "checkbox_input_only_any_host"
+
+[[desktop_setting]]
+key = "home_layout"
+rust_type = "HomeLayout"
+default_expr = "HomeLayout::Rows"
+scope = "ui_state"
+override_allowed = false
+
+[[desktop_setting]]
+key = "home_group"
+rust_type = "HomeGroup"
+default_expr = "HomeGroup::Store"
+scope = "ui_state"
+override_allowed = false
+
+[[desktop_setting]]
+key = "home_card_size"
+rust_type = "CardSize"
+default_expr = "CardSize::Medium"
+scope = "global"
+override_allowed = false
+android_key = "checkbox_small_icon_mode"
+
+[[desktop_setting]]
+key = "home_sort"
+rust_type = "HomeSort"
+default_expr = "HomeSort::Title"
+scope = "ui_state"
+override_allowed = false
+
+[[desktop_setting]]
+key = "home_order"
+rust_type = "HomeOrder"
+default_expr = "HomeOrder::Ascending"
+scope = "ui_state"
+override_allowed = false
+
+[[desktop_setting]]
+key = "settings_more_open"
+rust_type = "bool"
+default_expr = "false"
+scope = "ui_state"
+override_allowed = false
+
+[[desktop_setting]]
+key = "setup_card_host"
+rust_type = "Option<u64>"
+default_expr = "None"
+scope = "ui_state"
+override_allowed = false
+
+[[desktop_setting]]
+key = "setup_card_seen"
+rust_type = "bool"
+default_expr = "false"
+scope = "ui_state"
+override_allowed = false
+
+[[desktop_setting]]
+key = "ui_zoom"
+rust_type = "u32"
+default_expr = "0"
+scope = "global"
+override_allowed = false
+android_key = "list_ui_scale"
+
+[[desktop_setting]]
+key = "ui_zoom_auto_migrated"
+rust_type = "bool"
+default_expr = "true"
+scope = "migration"
+override_allowed = false
+
+[[desktop_setting]]
+key = "high_contrast"
+rust_type = "bool"
+default_expr = "false"
+scope = "global"
+override_allowed = false
+android_key = "checkbox_high_contrast"
+
+[[desktop_setting]]
+key = "show_debug_settings"
+rust_type = "bool"
+default_expr = "false"
+scope = "global"
+override_allowed = false
+android_key = "checkbox_show_debug_settings"
+
+[[desktop_setting]]
+key = "theme"
+rust_type = "Theme"
+default_expr = "Theme::Dark"
+scope = "global"
+override_allowed = false
+android_key = "theme"
+
+[[desktop_setting]]
+key = "reduce_motion"
+rust_type = "ReduceMotion"
+default_expr = "ReduceMotion::System"
+scope = "global"
+override_allowed = false
+android_key = "list_reduce_motion"
+
+[[desktop_setting]]
+key = "language"
+rust_type = "Language"
+default_expr = "Language::System"
+scope = "global"
+override_allowed = false
+android_key = "list_languages"
+
+[[desktop_setting]]
+key = "check_updates"
+rust_type = "bool"
+default_expr = "true"
+scope = "global"
+override_allowed = false
+android_key = "checkbox_check_updates"
+
+[[desktop_setting]]
+key = "post_stream_decode_time"
+rust_type = "bool"
+default_expr = "false"
+scope = "global"
+override_allowed = false
+android_key = "checkbox_enable_post_stream_toast"

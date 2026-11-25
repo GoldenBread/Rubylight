@@ -185,6 +185,16 @@ class GeneratedDocs(unittest.TestCase):
         self.assertIn('rust/core/config/src/config/catalog_gen.rs', toml_targets)
         self.assertIn('rust/web/src/lib/schema/rules.gen.ts', toml_targets)
         self.assertIn('docs/configuration.md', toml_targets)
+        nj_targets = [d.path for d in generated_docs.affected(['client/protocol/policy/settings.toml'])]
+        self.assertEqual(
+            set(nj_targets),
+            {
+                'client/docs/settings.md',
+                'client/protocol/policy/src/settings_catalog_gen.rs',
+                'client/protocol/desktop-config/src/config/defaults_gen.rs',
+                'client/app/src/main/java/com/limelight/preferences/SettingsCatalogGen.java',
+            },
+        )
 
     def test_configuration_md_conflict_inside_markers_merges_cleanly(self):
         self.doc = 'docs/configuration.md'
@@ -198,21 +208,28 @@ class GeneratedDocs(unittest.TestCase):
         self.assertNotIn('<<<<<<<', merged)
 
     def test_whole_file_generated_module_conflict_merges_as_ours(self):
-        self.doc = 'rust/core/config/src/config/retired_gen.rs'
-        self.repo.write(self.doc, '//! Generated.\npub const X: &str = "base";\n')
-        self.repo.commit('add retired_gen.rs')
-        self.repo.git('checkout', '-q', '-b', 'a')
-        self.repo.write(self.doc, '//! Generated.\npub const X: &str = "ours";\n')
-        self.repo.commit('a')
-        self.repo.git('checkout', '-q', '-b', 'b', 'main')
-        self.repo.write(self.doc, '//! Generated.\npub const X: &str = "theirs";\n')
-        self.repo.commit('b')
-        self.repo.git('checkout', '-q', 'a')
-        out = self.repo.git('merge', '--no-edit', 'b', check=False)
-        self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
-        merged = self.repo.read(self.doc)
-        self.assertIn('"ours"', merged)
-        self.assertNotIn('<<<<<<<', merged)
+        for rel in (
+            'rust/core/config/src/config/retired_gen.rs',
+            'client/protocol/policy/src/settings_catalog_gen.rs',
+            'client/protocol/desktop-config/src/config/defaults_gen.rs',
+            'client/app/src/main/java/com/limelight/preferences/SettingsCatalogGen.java',
+        ):
+            with self.subTest(rel=rel):
+                self.repo.git('checkout', '-q', 'main')
+                self.repo.write(rel, '//! Generated.\nconst X = "base";\n')
+                self.repo.commit(f'add {rel}')
+                self.repo.git('checkout', '-q', '-B', 'a')
+                self.repo.write(rel, '//! Generated.\nconst X = "ours";\n')
+                self.repo.commit('a')
+                self.repo.git('checkout', '-q', '-B', 'b', 'main')
+                self.repo.write(rel, '//! Generated.\nconst X = "theirs";\n')
+                self.repo.commit('b')
+                self.repo.git('checkout', '-q', 'a')
+                out = self.repo.git('merge', '--no-edit', 'b', check=False)
+                self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
+                merged = self.repo.read(rel)
+                self.assertIn('"ours"', merged)
+                self.assertNotIn('<<<<<<<', merged)
 
 
 if __name__ == '__main__':

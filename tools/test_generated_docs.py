@@ -6,6 +6,10 @@ import generated_docs  # noqa: E402
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 HOST_DOCS = [d for d in generated_docs.DOCS if d.render is not None]
+NIGHTJAR_DOCS = [
+    d for d in generated_docs.DOCS
+    if generated_docs.NIGHTJAR_SETTINGS_TOML in d.inputs
+]
 
 
 class HostSettingsCodegen(unittest.TestCase):
@@ -86,6 +90,30 @@ class HostSettingsCodegen(unittest.TestCase):
         self.assertIn('console', parsed)
         self.assertIn('web', parsed)
         self.assertIn('docs', parsed)
+
+
+class NightjarSettingsCodegen(unittest.TestCase):
+    def test_nightjar_targets_are_registered_current_lf_headed_and_under_size_ceiling(self):
+        expected = {
+            'client/docs/settings.md',
+            'client/protocol/policy/src/settings_catalog_gen.rs',
+            'client/protocol/desktop-config/src/config/defaults_gen.rs',
+            'client/app/src/main/java/com/limelight/preferences/SettingsCatalogGen.java',
+        }
+        self.assertEqual({d.path for d in NIGHTJAR_DOCS}, expected)
+        stale = generated_docs.run_all(check=True, docs=NIGHTJAR_DOCS, root=ROOT)
+        self.assertEqual(stale, [], f'stale Nightjar generated targets: {stale}')
+        for doc in NIGHTJAR_DOCS:
+            raw = (ROOT / doc.path).read_bytes()
+            self.assertNotIn(b'\r\n', raw, f'{doc.path} has CRLF line endings')
+            text = raw.decode('utf-8')
+            if doc.path.endswith(('.rs', '.java')):
+                loc = text.count('\n') + (not text.endswith('\n') and bool(text))
+                self.assertLessEqual(loc, 800, f'{doc.path} exceeds 800 LOC ({loc})')
+            if doc.path.endswith('.rs'):
+                self.assertTrue(text.startswith('//! '), f'{doc.path} missing //! module header')
+            if doc.path.endswith('.java'):
+                self.assertIn('/**\n', text.split('public class', 1)[0], f'{doc.path} missing Javadoc header')
 
 
 if __name__ == '__main__':

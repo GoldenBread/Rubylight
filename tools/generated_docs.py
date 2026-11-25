@@ -22,6 +22,8 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 DRIVER = 'rubylight-generated'
 SETTINGS_TOML = 'rust/core/config/settings.toml'
 HOST_SETTINGS_INPUTS = (SETTINGS_TOML, 'tools/generated_docs.py')
+NIGHTJAR_SETTINGS_TOML = 'client/protocol/policy/settings.toml'
+NIGHTJAR_SETTINGS_INPUTS = (NIGHTJAR_SETTINGS_TOML, 'client/scripts/generate-settings.py')
 SETTINGS_MARKERS = ('<!-- BEGIN GENERATED SETTINGS -->', '<!-- END GENERATED SETTINGS -->')
 
 
@@ -1005,12 +1007,22 @@ def render_config_doc(cat, existing):
 
 
 DOCS = [
-    Doc('client/docs/settings.md', [sys.executable, 'scripts/generate-settings.py'], 'client',
+    Doc('client/docs/settings.md', [sys.executable, 'scripts/generate-settings.py', '--target', 'docs/settings.md'], 'client',
         SETTINGS_MARKERS,
-        ('client/scripts/generate-settings.py', 'client/app/src/main/res/', 'client/app/src/main/java/')),
+        (NIGHTJAR_SETTINGS_TOML, 'client/scripts/generate-settings.py', 'client/app/src/main/res/', 'client/app/src/main/java/')),
     Doc('client/docs/devices.md', ['node', 'scripts/device-docs.mjs'], 'client',
         ('<!-- device-results:start -->', '<!-- device-results:end -->'),
         ('client/scripts/device-docs.mjs', 'client/site/data/device-results.json')),
+    # Nightjar settings generated from client/protocol/policy/settings.toml (standalone client/scripts/generate-settings.py)
+    Doc('client/protocol/policy/src/settings_catalog_gen.rs',
+        [sys.executable, 'scripts/generate-settings.py', '--target', 'protocol/policy/src/settings_catalog_gen.rs'], 'client',
+        inputs=NIGHTJAR_SETTINGS_INPUTS),
+    Doc('client/protocol/desktop-config/src/config/defaults_gen.rs',
+        [sys.executable, 'scripts/generate-settings.py', '--target', 'protocol/desktop-config/src/config/defaults_gen.rs'], 'client',
+        inputs=NIGHTJAR_SETTINGS_INPUTS),
+    Doc('client/app/src/main/java/com/limelight/preferences/SettingsCatalogGen.java',
+        [sys.executable, 'scripts/generate-settings.py', '--target', 'app/src/main/java/com/limelight/preferences/SettingsCatalogGen.java'], 'client',
+        inputs=NIGHTJAR_SETTINGS_INPUTS),
     # Host settings generated from rust/core/config/settings.toml
     Doc('rust/core/config/src/config/catalog_gen.rs', inputs=HOST_SETTINGS_INPUTS, render=render_rust_catalog),
     Doc('rust/core/config/src/config/retired_gen.rs', inputs=HOST_SETTINGS_INPUTS, render=render_rust_retired),
@@ -1072,14 +1084,17 @@ def run_all(check, docs=None, root=ROOT):
                     path.parent.mkdir(parents=True, exist_ok=True)
                     path.write_bytes(rendered)
             continue
-        before = path.read_bytes()
+        before = path.read_bytes() if path.exists() else None
         try:
             regenerate(doc, root, catalog=catalog)
             if path.read_bytes() != before:
                 stale.append(doc.path)
         finally:
             if check:
-                path.write_bytes(before)
+                if before is not None:
+                    path.write_bytes(before)
+                elif path.exists():
+                    path.unlink()
     return stale
 
 

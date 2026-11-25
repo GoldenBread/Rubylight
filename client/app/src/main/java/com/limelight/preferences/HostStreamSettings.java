@@ -15,35 +15,20 @@ import android.preference.Preference;
 import android.preference.PreferenceCategory;
 import android.preference.PreferenceFragment;
 import android.preference.PreferenceScreen;
-import android.text.InputType;
-import android.util.DisplayMetrics;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
-import android.widget.CompoundButton;
-import android.widget.EditText;
-import android.widget.LinearLayout;
 import android.widget.ListView;
-import android.widget.Toast;
 import android.widget.TextView;
-import android.widget.ScrollView;
+import android.widget.Toast;
 
-import androidx.appcompat.app.AlertDialog;
-import com.limelight.ui.NightjarActivity;
 import androidx.activity.OnBackPressedCallback;
+import androidx.appcompat.app.AlertDialog;
+
 import com.google.android.material.appbar.MaterialToolbar;
-import com.limelight.ui.TopAppBar;
-import com.google.android.material.checkbox.MaterialCheckBox;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
-import com.limelight.ui.NavigationDialogBuilder;
-import com.google.android.material.textfield.TextInputEditText;
-import com.google.android.material.textfield.TextInputLayout;
-import com.limelight.LimeLog;
 import com.limelight.R;
-import com.limelight.RemoteSetupActivity;
 import com.limelight.binding.video.DisplayFrameRatePolicy;
-import com.limelight.binding.video.PyroWaveDecoderRenderer;
-import com.limelight.binding.video.UpscalingPolicy;
 import com.limelight.computers.ComputerManagerService;
 import com.limelight.computers.HostActions;
 import com.limelight.computers.HostCapabilityCache;
@@ -51,26 +36,16 @@ import com.limelight.computers.HostNames;
 import com.limelight.computers.IdentityManager;
 import com.limelight.nvstream.http.ComputerDetails;
 import com.limelight.nvstream.http.HostCapabilities;
-import com.limelight.nvstream.http.PairingManager;
 import com.limelight.nvstream.wol.WakeTargets;
-import com.limelight.ui.HostFeatureGate;
-import com.limelight.ui.StepSlider;
-import com.google.android.material.slider.Slider;
-import com.limelight.utils.FrontendExporter;
-import com.limelight.utils.FrontendLauncher;
-import com.limelight.utils.FrontendExportStore;
-import com.limelight.utils.FrontendSync;
-import com.limelight.utils.HelpLauncher;
-import com.limelight.utils.HostDetailsDialog;
+import com.limelight.ui.NavigationDialogBuilder;
+import com.limelight.ui.NightjarActivity;
+import com.limelight.ui.TopAppBar;
 import com.limelight.utils.PyroWaveBandwidthTest;
 import com.limelight.utils.PyroWavePaceCalibration;
-import com.limelight.utils.PyroWavePaceStore;
 import com.limelight.utils.ServerHelper;
 import com.limelight.utils.ShortcutHelper;
 import com.limelight.utils.UiHelper;
 
-import java.io.IOException;
-import java.util.List;
 import java.util.Objects;
 
 /**
@@ -89,8 +64,6 @@ public class HostStreamSettings extends NightjarActivity {
         return true;
     }
 
-    private static final int PICK_ROMS_REQUEST = 1;
-    private static final int PICK_ESDE_REQUEST = 2;
     static final String EXTRA_MODE = "mode";
     static final String EXTRA_PROFILE_ID = "profile_id";
     static final String EXTRA_APP_UUID = "app_uuid";
@@ -104,52 +77,37 @@ public class HostStreamSettings extends NightjarActivity {
     /** Whose values this screen edits. */
     enum Mode { PC, PROFILE, GAME }
 
-    private Mode mode = Mode.PC;
+    Mode mode = Mode.PC;
     private String profileId, appUuid, appName;
     private int appId;
-    // The layers below the one edited here, and where each of their values comes from.
-    private StreamLayers.Result below;
-    // The values below the ones edited here ("all PCs" on a PC), and the values edited on top of them.
-    private PreferenceConfiguration global;
-    private HostStreamProfile overrides;
-    private String hostUuid;
-    // What this PC last showed it can do; rows it can never use are left out.
-    private HostCapabilities caps = HostCapabilities.UNKNOWN;
-    // The PC as the computer manager last saw it; only its name and saved capabilities until it answers.
+    StreamLayers.Result below;
+    PreferenceConfiguration global;
+    HostStreamProfile overrides;
+    String hostUuid;
+    HostCapabilities caps = HostCapabilities.UNKNOWN;
     ComputerDetails computer;
     private boolean managerBound;
-    // The computer manager once bound; Rename, Unpair and Remove go through it.
     private ComputerManagerService.ComputerManagerBinder manager;
     private boolean foreground;
-    // The manager polls the PCs while this screen is in front, so the rows follow whether the PC answers.
     private boolean polling;
-    private final HostActions hostActions = new HostActions(this, new HostActions.Callbacks() {
+    final HostActions hostActions = new HostActions(this, new HostActions.Callbacks() {
         @Override public ComputerManagerService.ComputerManagerBinder binder() { return manager; }
         @Override public boolean isForeground() { return foreground; }
         @Override public void onPaired(ComputerDetails details) { }
-        @Override public void onRemoved(ComputerDetails details) {
-            // Nothing is left to set for a PC that is gone.
-            finish();
-        }
-        @Override public void onRenamed(ComputerDetails details) {
-            showName();
-        }
-        // The screen polls while it is in front, a wake or not.
+        @Override public void onRemoved(ComputerDetails details) { finish(); }
+        @Override public void onRenamed(ComputerDetails details) { showName(); }
         @Override public void onWakeSent(ComputerDetails details) { }
         @Override public void pausePolling() { }
         @Override public void resumePolling() { }
     });
     private PyroWaveBandwidthTest connectionTest;
     private PyroWavePaceCalibration paceCalibration;
-    private Uri exportRomsTree;
-    private boolean exporting;
-    private boolean exportRunning;
-    private FrontendLauncher exportLauncher = FrontendLauncher.ES_DE;
+    private final HostFrontendExporter frontendExporter = new HostFrontendExporter(this, this::refreshActions);
     private String savedProfile;
-    private String editorKey;
-    private AlertDialog editorDialog;
-    private Bundle restoredEditor;
-    private String restoredEditorKey;
+    String editorKey;
+    AlertDialog editorDialog;
+    Bundle restoredEditor;
+    String restoredEditorKey;
 
     private final ServiceConnection managerConnection = new ServiceConnection() {
         @Override
@@ -157,7 +115,6 @@ public class HostStreamSettings extends NightjarActivity {
             if (!(binder instanceof ComputerManagerService.ComputerManagerBinder)) return;
             ComputerManagerService.ComputerManagerBinder bound = (ComputerManagerService.ComputerManagerBinder) binder;
             manager = bound;
-            // A screen in front before the manager was bound found nothing to poll with; it polls now.
             if (foreground) startPolling();
             new Thread(() -> {
                 if (!bound.waitForReady()) return;
@@ -171,8 +128,7 @@ public class HostStreamSettings extends NightjarActivity {
         }
 
         @Override
-        public void onServiceDisconnected(ComponentName name) {
-        }
+        public void onServiceDisconnected(ComponentName name) { }
     };
 
     public static void show(Activity activity, String hostUuid, String hostName) {
@@ -236,7 +192,6 @@ public class HostStreamSettings extends NightjarActivity {
         PreferenceConfiguration.migratePcProfilesToOverrides(this);
         StreamLayers.Input input = PreferenceConfiguration.layerInput(this, PreferenceConfiguration.readPreferences(this),
                 hostUuid, appUuid, appId);
-        // A stream's mobile data limit is not a stored value; these rows show what is stored.
         input.mobileLimitKbps = 0;
         if (mode == Mode.PROFILE) {
             input.profiles = StreamProfiles.Snapshot.EMPTY;
@@ -253,20 +208,13 @@ public class HostStreamSettings extends NightjarActivity {
             try {
                 overrides = HostStreamProfile.deserialize(state.getString("draft"));
             } catch (IllegalArgumentException ignored) {
-                // Keep the saved values.
             }
             restoredEditorKey = state.getString("editor_key");
             restoredEditor = state.getBundle("editor_state");
-            exporting = state.getBoolean("exporting");
-            String launcher = state.getString("export_launcher");
-            if (launcher != null) exportLauncher = FrontendLauncher.valueOf(launcher);
-            String romsTree = state.getString("export_roms_tree");
-            exportRomsTree = romsTree != null ? Uri.parse(romsTree) : null;
+            frontendExporter.restoreState(state);
         }
         setContentView(R.layout.activity_host_stream_settings);
         com.limelight.ui.NightSkyView.behind(this);
-        // The PC is the page: its name is the title, the host software and version the subtitle.
-        // A profile or a game names the page the same way.
         String title = mode == Mode.PROFILE ? profiles.name(profileId) : mode == Mode.GAME ? appName : computer.displayName();
         setTitle(title);
         MaterialToolbar toolbar = TopAppBar.configure(this, R.id.host_profile_toolbar, title, R.menu.host_profile);
@@ -304,7 +252,6 @@ public class HostStreamSettings extends NightjarActivity {
         }
     }
 
-    /** The stored values edited here; unreadable ones are reported and start empty. */
     private HostStreamProfile loadOwn(StreamProfiles.Snapshot profiles) {
         String raw = mode == Mode.PROFILE ? profiles.rawValues(profileId) : mode == Mode.GAME ?
                 AppStreamSettings.raw(this, hostUuid, appUuid, appId) : HostStreamProfile.raw(this, hostUuid);
@@ -320,11 +267,7 @@ public class HostStreamSettings extends NightjarActivity {
         }
     }
 
-    /**
-     * Display arrangement's Virtual display value, saved with the arrangement when its dialog is confirmed:
-     * the page's other edits stay unsaved.
-     */
-    private void saveVirtualDisplay(Boolean value) {
+    void saveVirtualDisplay(Boolean value) {
         overrides.virtualDisplay = value;
         HostStreamProfile saved = HostStreamProfile.deserialize(savedProfile);
         saved.virtualDisplay = value;
@@ -340,20 +283,14 @@ public class HostStreamSettings extends NightjarActivity {
         }
     }
 
-    /** The main settings with the layers below this one on top: what a value not set here uses. */
     private PreferenceConfiguration baseConfig() {
         PreferenceConfiguration config = PreferenceConfiguration.readPreferences(this);
         applyWithScreen(below.values, config, below.values.pacing);
-        // A layer's bitrate is chosen, as when the stream starts (readPreferences with layers).
         config.automaticBitrate &= !below.bitrateLayered;
         return config;
     }
 
-    /**
-     * What the Quality preset sets: more than the PC's bitrate, or the main settings' when the PC has
-     * none. A network profile is left out, so the preset reads the same on every network.
-     */
-    private int qualityBitrate() {
+    int qualityBitrate() {
         PreferenceConfiguration main = PreferenceConfiguration.readPreferences(this);
         HostStreamProfile pc = null;
         String raw = HostStreamProfile.raw(this, hostUuid);
@@ -361,17 +298,14 @@ public class HostStreamSettings extends NightjarActivity {
             try {
                 pc = HostStreamProfile.deserialize(raw);
             } catch (IllegalArgumentException ignored) {
-                // An unreadable PC layer is reported where it is edited; the main settings serve as base.
             }
         }
         return GameProfilePreset.qualityBitrate(GameProfilePreset.baseBitrate(main.bitrate, pc));
     }
 
-    /** {@code pacing} is the pacing of the layers up to {@code values}, null when none sets it. */
     private void applyWithScreen(HostStreamProfile values, PreferenceConfiguration config, String pacing) {
         boolean followedScreen = config.resolutionFollowsScreen;
         values.applyTo(config);
-        // As when the stream starts: VRR set in a layer stays off where no screen has ARR.
         config.vrr &= DisplayFrameRatePolicy.vrrOffered(this);
         config.resolveHostFrameTimes();
         if (config.resolutionFollowsScreen && !followedScreen) {
@@ -381,8 +315,6 @@ public class HostStreamSettings extends NightjarActivity {
                 config.height = PreferenceConfiguration.getHeightFromResolutionString(nativeResolution);
             }
         }
-        // As when the stream starts: a bitrate nobody chose follows the size and frame rate, and
-        // a layer that turns VRR off gets its pacing back.
         if (config.automaticBitrate && values.bitrate == null) config.bitrate = config.automaticBitrateKbps();
         config.framePacing = PreferenceConfiguration.layeredFramePacing(this, config, pacing);
     }
@@ -420,7 +352,6 @@ public class HostStreamSettings extends NightjarActivity {
         }
     }
 
-    /** The PC as the computer manager knows it: its state, addresses and what its host reported last. */
     void showComputer(ComputerDetails details) {
         details.alias = HostNames.get(this, hostUuid);
         computer = details;
@@ -429,13 +360,9 @@ public class HostStreamSettings extends NightjarActivity {
             caps = details.caps;
             ((MaterialToolbar) findViewById(R.id.host_profile_toolbar)).setSubtitle(caps.familyLabel(this));
         }
-        SettingsFragment fragment = (SettingsFragment) getFragmentManager().findFragmentById(R.id.host_profile_settings);
-        if (fragment != null && fragment.activity != null) {
-            fragment.showActions();
-        }
+        refreshActions();
     }
 
-    /** The title is the name this device gives the PC: the alias while one is set, else the PC's own name. */
     private void showName() {
         if (mode == Mode.PROFILE) return;
         MaterialToolbar toolbar = findViewById(R.id.host_profile_toolbar);
@@ -447,7 +374,6 @@ public class HostStreamSettings extends NightjarActivity {
         }
     }
 
-    /** A poll's view of the PC. The rows are built again only when what they show changed, so the focused row stays. */
     void followComputer(ComputerDetails details) {
         if (sameRows(computer, details)) {
             details.alias = computer.alias;
@@ -464,7 +390,7 @@ public class HostStreamSettings extends NightjarActivity {
                 && shown.caps.equals(polled.caps);
     }
 
-    private boolean isOnline() {
+    boolean isOnline() {
         return isOnline(computer);
     }
 
@@ -472,34 +398,23 @@ public class HostStreamSettings extends NightjarActivity {
         return pc.state == ComputerDetails.State.ONLINE && pc.activeAddress != null;
     }
 
-    private void startConnectionTest() {
-        if (connectionTest != null) {
-            connectionTest.cancel();
-        }
+    void startConnectionTest() {
+        if (connectionTest != null) connectionTest.cancel();
         connectionTest = new PyroWaveBandwidthTest(this, computer, new IdentityManager(this).getUniqueId(), effective().bitrate);
         connectionTest.show();
     }
 
-    private void startPaceCalibration() {
-        if (paceCalibration != null) {
-            paceCalibration.cancel();
-        }
+    void startPaceCalibration() {
+        if (paceCalibration != null) paceCalibration.cancel();
         PreferenceConfiguration config = effective();
         paceCalibration = new PyroWavePaceCalibration(this, computer, new IdentityManager(this).getUniqueId(),
-                config.bitrate, config.fps, () -> {
-                    SettingsFragment fragment = (SettingsFragment) getFragmentManager().findFragmentById(R.id.host_profile_settings);
-                    if (fragment != null && fragment.activity != null) {
-                        fragment.showActions();
-                    }
-                });
+                config.bitrate, config.fps, this::refreshActions);
         paceCalibration.show();
     }
 
     void showHostAdministration() {
         okhttp3.HttpUrl url = ServerHelper.getHostSettingsUrl(computer);
-        if (url == null) {
-            return;
-        }
+        if (url == null) return;
         AlertDialog dialog = new NavigationDialogBuilder(this)
                 .setTitle(R.string.host_administration_menu)
                 .setMessage(getString(R.string.host_administration_help, url.toString()))
@@ -514,31 +429,20 @@ public class HostStreamSettings extends NightjarActivity {
         ((TextView) dialog.findViewById(android.R.id.message)).setTextIsSelectable(true);
     }
 
-    private void showWakeHelp() {
+    void showWakeHelp() {
         MaterialAlertDialogBuilder dialog = new NavigationDialogBuilder(this).setTitle(R.string.wol_help_title)
                 .setMessage(R.string.wol_help_text);
         if (computer.state != ComputerDetails.State.ONLINE && WakeTargets.hasMac(this, computer)) {
             dialog.setNegativeButton(android.R.string.cancel, null)
-                    .setPositiveButton(R.string.pcview_menu_send_wol, (prompt, which) -> wake());
+                    .setPositiveButton(R.string.pcview_menu_send_wol, (prompt, which) -> hostActions.wake(computer));
         } else {
             dialog.setPositiveButton(android.R.string.ok, null);
         }
         UiHelper.showDialog(this, dialog.create());
     }
 
-    private void wake() {
-        hostActions.wake(computer);
-    }
-
-    /**
-     * The list that opened this screen stops polling once it is behind it, so this screen polls while it is in front:
-     * the rows that need the PC follow whether it answers now, not what the manager knew when the screen opened, and
-     * the wait for a woken PC ends once it answers.
-     */
     private void startPolling() {
-        if (polling || manager == null) {
-            return;
-        }
+        if (polling || manager == null) return;
         polling = true;
         manager.startPolling(details -> {
             if (!hostUuid.equalsIgnoreCase(details.uuid)) return;
@@ -556,71 +460,20 @@ public class HostStreamSettings extends NightjarActivity {
         }
     }
 
-    private void pinShortcut() {
+    void pinShortcut() {
         if (!new ShortcutHelper(this).createPinnedPcShortcut(computer)) {
             Toast.makeText(this, R.string.unable_to_pin_shortcut, Toast.LENGTH_LONG).show();
         }
     }
 
-    private boolean canPinShortcuts() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
-            return false;
-        }
+    boolean canPinShortcuts() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return false;
         ShortcutManager shortcuts = getSystemService(ShortcutManager.class);
         return shortcuts != null && shortcuts.isRequestPinShortcutSupported();
     }
 
-    private void startFrontendExport() {
-        if (exportRunning) return;
-        FrontendLauncher[] launchers = FrontendLauncher.values();
-        String[] labels = new String[launchers.length];
-        for (int i = 0; i < labels.length; i++) labels[i] = launchers[i].label;
-        new NavigationDialogBuilder(this)
-                .setTitle(R.string.frontend_export_menu)
-                .setItems(labels, (dialog, which) -> {
-                    exportLauncher = launchers[which];
-                    showFrontendActions();
-                }).show();
-    }
-
-    private FrontendExportStore frontendStore() {
-        return new FrontendExportStore(this, computer.uuid, exportLauncher);
-    }
-
-    private void showFrontendActions() {
-        FrontendExportStore store = frontendStore();
-        if (store.romsTree() == null) {
-            chooseFrontendFolder();
-            return;
-        }
-        if (store.failed()) {
-            new NavigationDialogBuilder(this)
-                    .setTitle(exportLauncher.label)
-                    .setMessage(R.string.frontend_sync_failed_message)
-                    .setPositiveButton(R.string.frontend_export_pick, (dialog, which) -> chooseFrontendFolder())
-                    .setNeutralButton(R.string.frontend_sync_stop, (dialog, which) -> stopFrontendSync(store))
-                    .setNegativeButton(android.R.string.cancel, null).show();
-            return;
-        }
-        new NavigationDialogBuilder(this)
-                .setTitle(getString(R.string.frontend_sync_title, exportLauncher.label))
-                .setItems(new String[] {getString(R.string.frontend_export_update),
-                        getString(R.string.frontend_export_pick), getString(R.string.frontend_setup_title),
-                        getString(R.string.frontend_sync_stop)},
-                        (dialog, which) -> {
-                            if (which == 0) {
-                                exportRomsTree = store.romsTree();
-                                runFrontendExport(store.esdeTree());
-                            } else if (which == 1) chooseFrontendFolder();
-                            else if (which == 2) showFrontendSetup(null);
-                            else stopFrontendSync(store);
-                        }).show();
-    }
-
-    /** The files stay in the launcher; Nightjar just stops updating them. */
-    private void stopFrontendSync(FrontendExportStore store) {
-        store.forget();
-        refreshActions();
+    void startFrontendExport() {
+        frontendExporter.start();
     }
 
     private void refreshActions() {
@@ -630,147 +483,10 @@ public class HostStreamSettings extends NightjarActivity {
         }
     }
 
-    private void chooseFrontendFolder() {
-        if (new FrontendExporter(this, computer).loadApps().isEmpty()) {
-            Toast.makeText(this, R.string.frontend_export_no_apps, Toast.LENGTH_LONG).show();
-            return;
-        }
-        exporting = true;
-        exportRomsTree = null;
-        new NavigationDialogBuilder(this)
-                .setTitle(R.string.frontend_export_roms_title)
-                .setMessage(R.string.frontend_export_roms_message)
-                .setPositiveButton(R.string.frontend_export_pick, (dialog, which) -> pickFolder(PICK_ROMS_REQUEST))
-                .setNegativeButton(android.R.string.cancel, (dialog, which) -> exporting = false)
-                .setOnCancelListener(dialog -> exporting = false)
-                .show();
-    }
-
-    private void pickFolder(int request) {
-        try {
-            startActivityForResult(new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).addFlags(
-                    Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION |
-                            Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION), request);
-        } catch (ActivityNotFoundException e) {
-            exporting = false;
-            Toast.makeText(this, R.string.frontend_export_no_picker, Toast.LENGTH_LONG).show();
-        }
-    }
-
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
-        Uri picked = resultCode == RESULT_OK && data != null ? data.getData() : null;
-        if (!exporting) {
-            return;
-        }
-        if (requestCode != PICK_ROMS_REQUEST && requestCode != PICK_ESDE_REQUEST) return;
-        if (picked != null) {
-            try {
-                int access = Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION;
-                if ((data.getFlags() & access) == access) {
-                    getContentResolver().takePersistableUriPermission(picked, access);
-                }
-            } catch (SecurityException e) {
-                // Some providers only grant this visit. The export still works; a later update
-                // explains the lost access and lets the user pick the folder again.
-                LimeLog.info("Frontend folder has no persistent access");
-            }
-        }
-        if (requestCode == PICK_ROMS_REQUEST) {
-            if (picked == null) {
-                exporting = false;
-                return;
-            }
-            exportRomsTree = picked;
-            if (exportLauncher != FrontendLauncher.ES_DE) {
-                runFrontendExport(null);
-                return;
-            }
-            new NavigationDialogBuilder(this)
-                    .setTitle(R.string.frontend_export_esde_title)
-                    .setMessage(getString(R.string.frontend_export_esde_message, getString(R.string.app_name)))
-                    .setPositiveButton(R.string.frontend_export_pick, (dialog, which) -> pickFolder(PICK_ESDE_REQUEST))
-                    .setNegativeButton(R.string.frontend_export_skip, (dialog, which) -> runFrontendExport(null))
-                    .setOnCancelListener(dialog -> runFrontendExport(null))
-                    .show();
-        } else if (requestCode == PICK_ESDE_REQUEST && exportRomsTree != null) {
-            runFrontendExport(picked);
-        }
-    }
-
-    private void runFrontendExport(final Uri esdeTree) {
-        if (exportRunning) return;
-        final ComputerDetails target = computer;
-        final Uri romsTree = exportRomsTree;
-        final FrontendLauncher launcher = exportLauncher;
-        final FrontendExportStore store = frontendStore();
-        exporting = false;
-        exportRomsTree = null;
-        if (romsTree == null) {
-            return;
-        }
-        exportRunning = true;
-        Toast.makeText(this, R.string.frontend_export_working, Toast.LENGTH_SHORT).show();
-        new Thread(() -> {
-            String message;
-            boolean succeeded = false;
-            try {
-                FrontendExporter exporter = new FrontendExporter(HostStreamSettings.this, target);
-                exporter.downloadMissingCovers(new IdentityManager(HostStreamSettings.this).getUniqueId());
-                java.util.List<com.limelight.nvstream.http.NvApp> apps = exporter.loadApps();
-                if (apps.isEmpty()) message = getString(R.string.frontend_export_no_apps);
-                else {
-                    int count;
-                    boolean lasting = FrontendSync.hasAccess(HostStreamSettings.this, romsTree) &&
-                            (esdeTree == null || FrontendSync.hasAccess(HostStreamSettings.this, esdeTree));
-                    synchronized (FrontendSync.EXPORT_LOCK) {
-                        java.util.Map<String, String> covers = store.covers(esdeTree);
-                        count = exporter.export(apps, romsTree, esdeTree, covers);
-                        store.save(romsTree, esdeTree, FrontendSync.fingerprint(target.name, apps), covers);
-                        // A provider that granted only this visit: the export worked, syncing can't.
-                        if (!lasting) store.markFailed(romsTree, esdeTree);
-                    }
-                    succeeded = true;
-                    message = getResources().getQuantityString(R.plurals.frontend_export_done, count, count) +
-                            "\n" + getString(lasting ? R.string.frontend_sync_note : R.string.frontend_sync_unavailable,
-                            getString(R.string.app_name));
-                }
-            } catch (IOException | RuntimeException e) {
-                LimeLog.warning("Frontend export failed: " + e);
-                message = getString(R.string.frontend_export_failed);
-            }
-            final String result = message;
-            final boolean success = succeeded;
-            runOnUiThread(() -> {
-                exportRunning = false;
-                if (isFinishing() || isDestroyed()) return;
-                refreshActions();
-                exportLauncher = launcher;
-                if (success) showFrontendSetup(result);
-                else new NavigationDialogBuilder(this).setTitle(launcher.label).setMessage(result)
-                        .setPositiveButton(R.string.frontend_export_pick, (dialog, which) -> chooseFrontendFolder())
-                        .setNegativeButton(android.R.string.cancel, null).show();
-            });
-        }, "Frontend export").start();
-    }
-
-    private void showFrontendSetup(String result) {
-        String command = exportLauncher.command(getPackageName());
-        String message = (result == null ? "" : result + "\n\n") +
-                getString(exportLauncher.instructions, getString(R.string.app_name));
-        if (command != null) message += "\n\n" + command;
-        MaterialAlertDialogBuilder dialog = new NavigationDialogBuilder(this)
-                .setTitle(exportLauncher.label).setMessage(message)
-                .setPositiveButton(android.R.string.ok, null);
-        if (command != null) {
-            dialog.setNeutralButton(R.string.frontend_setup_copy, (ignored, which) -> {
-                android.content.ClipboardManager clipboard = (android.content.ClipboardManager)
-                        getSystemService(CLIPBOARD_SERVICE);
-                clipboard.setPrimaryClip(android.content.ClipData.newPlainText(exportLauncher.label, command));
-            });
-        }
-        dialog.show();
+        frontendExporter.onActivityResult(requestCode, resultCode, data);
     }
 
     private void leaveSettings() {
@@ -788,10 +504,9 @@ public class HostStreamSettings extends NightjarActivity {
                 .setNeutralButton(android.R.string.cancel, null).create());
     }
 
-    private void updateSaveState() {
+    void updateSaveState() {
         boolean changed = !savedProfile.equals(overrides.serialize());
         findViewById(R.id.host_profile_save).setEnabled(changed);
-        // Nothing to save, nothing at the foot: no grey bar under the groups, as in Settings. A change brings the moon.
         int foot = changed ? View.VISIBLE : View.GONE;
         findViewById(R.id.host_profile_save).setVisibility(foot);
         findViewById(R.id.host_profile_status).setVisibility(foot);
@@ -800,12 +515,9 @@ public class HostStreamSettings extends NightjarActivity {
                 R.string.settings_profile_unsaved_context : R.string.settings_profile_saved_context);
     }
 
-    /** What the next stream uses: the layers below with the values edited here on top. */
-    private PreferenceConfiguration effective() {
+    PreferenceConfiguration effective() {
         PreferenceConfiguration config = baseConfig();
         if (overrides.has(HostStreamProfile.Field.PACING)) {
-            // As when the stream starts (StreamLayers takes the field whole): what this pacing leaves unset
-            // follows the main settings, not the layers below.
             PreferenceConfiguration main = PreferenceConfiguration.readPreferences(this);
             config.gridHostFrameTimes = main.gridHostFrameTimes;
             config.dropLateFrames = main.dropLateFrames;
@@ -819,9 +531,7 @@ public class HostStreamSettings extends NightjarActivity {
     protected void onSaveInstanceState(Bundle state) {
         super.onSaveInstanceState(state);
         if (overrides != null) state.putString("draft", overrides.serialize());
-        state.putBoolean("exporting", exporting);
-        state.putString("export_launcher", exportLauncher.name());
-        if (exportRomsTree != null) state.putString("export_roms_tree", exportRomsTree.toString());
+        frontendExporter.saveState(state);
         if (editorDialog != null && editorDialog.isShowing()) {
             state.putString("editor_key", editorKey);
             state.putBundle("editor_state", editorDialog.onSaveInstanceState());
@@ -829,14 +539,9 @@ public class HostStreamSettings extends NightjarActivity {
     }
 
     public static class SettingsFragment extends PreferenceFragment {
-        private HostStreamSettings activity;
+        HostStreamSettings activity;
         private PreferenceCategory connection;
         private PreferenceCategory host;
-        /**
-         * Debug, shown as in Settings: while Show debug settings is on or a Debug setting is changed, or while this layer
-         * sets it (StreamSettings, SettingRules).
-         */
-        /** Debug was listed during this visit, so it stays listed until the screen closes. */
 
         @Override
         public void onActivityCreated(Bundle state) {
@@ -859,8 +564,6 @@ public class HostStreamSettings extends NightjarActivity {
             row(stream, "pacing", R.string.title_frame_pacing, this::showPacing);
             row(stream, "yuv444", R.string.title_sharp_color, () -> showSwitch("yuv444", R.string.title_sharp_color));
             row(stream, "full_range", R.string.title_full_range, () -> showSwitch("full_range", R.string.title_full_range));
-            // A PC's or game's own choice over its app setting, for the image enhancements its host offers
-            // (NvidiaEnhancements); other hosts and profiles never show them.
             if ((activity.mode == Mode.PC || activity.mode == Mode.GAME) && activity.caps.offersEnhancement(HostCapabilities.RTX_HDR)) {
                 row(stream, "rtx_hdr", R.string.title_rtx_hdr, () -> showEnhancement(HostStreamProfile.Field.RTX_HDR, R.string.title_rtx_hdr));
             }
@@ -877,22 +580,18 @@ public class HostStreamSettings extends NightjarActivity {
                                 updateSummaries();
                             }).setNegativeButton(android.R.string.cancel, null).create()));
 
-            // The picker for hosts with display modes, a virtual display switch for hosts with one;
-            // neither for hosts that can never use them.
-            // A profile serves every PC, so it leaves host displays alone; a game has no display mode of its own.
-            boolean displayModes = pc && gate(HostCapabilities.Feature.HOST_DISPLAY_MODES).isVisible();
-            boolean virtualDisplay = activity.mode != Mode.PROFILE && gate(HostCapabilities.Feature.VIRTUAL_DISPLAY).isVisible();
-            // Sent with or without the virtual display switch: the host makes one of its own by default.
-            boolean displayScale = activity.mode != Mode.PROFILE && gate(HostCapabilities.Feature.DISPLAY_SCALE).isVisible();
+            boolean displayModes = pc && HostStreamProfileSummary.gate(activity, HostCapabilities.Feature.HOST_DISPLAY_MODES).isVisible();
+            boolean virtualDisplay = activity.mode != Mode.PROFILE
+                    && HostStreamProfileSummary.gate(activity, HostCapabilities.Feature.VIRTUAL_DISPLAY).isVisible();
+            boolean displayScale = activity.mode != Mode.PROFILE
+                    && HostStreamProfileSummary.gate(activity, HostCapabilities.Feature.DISPLAY_SCALE).isVisible();
             if (displayModes || virtualDisplay || displayScale) {
                 PreferenceCategory display = category(screen, R.string.pc_settings_display);
                 if (displayModes) {
-                    // Saved separately, so the display choice also applies when profile edits are discarded.
                     row(display, "host_display", R.string.host_display_menu, this::showDisplay);
                 }
                 if (virtualDisplay) {
-                    // A usable Display arrangement holds the switch as its Virtual display choice.
-                    if (!(displayModes && gate(HostCapabilities.Feature.HOST_DISPLAY_MODES).isEnabled())) {
+                    if (!(displayModes && HostStreamProfileSummary.gate(activity, HostCapabilities.Feature.HOST_DISPLAY_MODES).isEnabled())) {
                         row(display, "virtual", R.string.title_virtual_display, () -> showSwitch("virtual", R.string.title_virtual_display));
                     }
                     row(display, "scale", R.string.title_virtual_display_scale, () -> showNumber("scale", R.string.host_profile_scale));
@@ -912,10 +611,8 @@ public class HostStreamSettings extends NightjarActivity {
             footer.setSelectable(false);
             screen.addPreference(footer);
             updateSummaries();
-            // With a remote or a controller, the first row takes focus, not the help button in the bar above it.
             View root = getView();
             View list = root == null ? null : root.findViewById(android.R.id.list);
-            // Opened for its network tests, the list starts at them; once, not again after a rotation.
             String focus = state == null ? activity.getIntent().getStringExtra(EXTRA_FOCUS_KEY) : null;
             if (list != null) list.post(() -> {
                 int position = focus != null && list instanceof ListView ?
@@ -933,7 +630,7 @@ public class HostStreamSettings extends NightjarActivity {
             return category;
         }
 
-        private Preference row(PreferenceCategory category, String key, int title, Runnable onClick) {
+        Preference row(PreferenceCategory category, String key, int title, Runnable onClick) {
             Preference preference = new Preference(activity);
             preference.setKey(key);
             preference.setTitle(title);
@@ -947,491 +644,15 @@ public class HostStreamSettings extends NightjarActivity {
             return preference;
         }
 
-        /**
-         * The connection and host rows, which depend on whether the PC answers. They act at once;
-         * Save only concerns the stream values.
-         */
         void showActions() {
-            if (connection == null) return;
-            HostStreamSettings screen = activity;
-            ComputerDetails pc = screen.computer;
-            boolean online = screen.isOnline();
-            boolean unpaired = pc.pairState == PairingManager.PairState.NOT_PAIRED;
-            String needsOnline = getString(R.string.pc_settings_needs_online);
-
-            connection.removeAll();
-            Preference test = row(connection, "connection_test", R.string.connection_test_title, screen::startConnectionTest);
-            test.setSummary(getString(pc.caps.mayHave(HostCapabilities.Feature.PYROWAVE_BANDWIDTH_PROBE) ?
-                    R.string.pc_settings_test_speed : R.string.pc_settings_test_delay) + (online ? "" : "\n" + needsOnline));
-            test.setEnabled(online);
-            PyroWavePaceStore.Calibration pace = PyroWavePaceStore.get(screen, pc.uuid);
-            if (pc.supportsPyroWavePaceCalibration() || pace != null) {
-                Preference calibrate = row(connection, "pace_calibration", R.string.pace_calibration_title,
-                        screen::startPaceCalibration);
-                calibrate.setSummary((pace != null ? getString(R.string.pace_calibration_saved, pace.paceMbps) :
-                        getString(R.string.pace_calibration_summary)) + (online ? "" : "\n" + needsOnline));
-                calibrate.setEnabled(online);
-            }
-            row(connection, "remote_setup", R.string.remote_setup_title, () -> startActivity(
-                    new Intent(screen, RemoteSetupActivity.class).putExtra(RemoteSetupActivity.EXTRA_PC_UUID, screen.hostUuid)))
-                    .setSummary(R.string.pc_settings_remote_summary);
-            row(connection, "wake", R.string.pc_settings_wake, screen::showWakeHelp).setSummary(WakeTargets.hasMac(screen, pc) ?
-                    R.string.pc_settings_wake_ready : R.string.pc_settings_wake_unknown);
-            List<String> wakeMacs = new WakeTargets(screen).manual(pc.uuid);
-            row(connection, "wake_macs", R.string.pc_settings_wake_macs, this::showWakeMacs).setSummary(wakeMacs.isEmpty() ?
-                    getString(R.string.pc_settings_wake_macs_none) : android.text.TextUtils.join(", ", wakeMacs));
-
-            host.removeAll();
-            HostFeatureGate webUi = gate(HostCapabilities.Feature.WEB_UI);
-            if (webUi.isVisible()) {
-                Preference web = row(host, "web_ui", R.string.host_administration_menu, screen::showHostAdministration);
-                okhttp3.HttpUrl url = ServerHelper.getHostSettingsUrl(pc);
-                web.setSummary(url != null ? url.toString() : needsOnline);
-                web.setEnabled(url != null);
-                applyGate(web, HostCapabilities.Feature.WEB_UI);
-            }
-            row(host, "details", R.string.pcview_menu_details, () -> HostDetailsDialog.show(screen, screen.computer))
-                    .setSummary(R.string.pc_settings_details_summary);
-            if (!unpaired) {
-                row(host, "frontend_export", R.string.frontend_export_menu, screen::startFrontendExport)
-                        .setSummary(exportSummary(pc));
-                if (screen.canPinShortcuts()) {
-                    row(host, "shortcut", R.string.pc_settings_shortcut, screen::pinShortcut)
-                            .setSummary(R.string.pc_settings_shortcut_summary);
-                }
-            }
-            if (pc.caps.family() == HostCapabilities.Family.GAMESTREAM) {
-                row(host, "gamestream_eol", R.string.pcview_menu_eol, () -> HelpLauncher.launchGameStreamEolFaq(screen));
-            }
-            // The same three actions as the PC's options on the list and on Home.
-            row(host, "rename", R.string.host_menu_rename, () -> screen.hostActions.rename(screen.computer));
-            if (online && pc.pairState == PairingManager.PairState.PAIRED) {
-                row(host, "unpair", R.string.pcview_menu_unpair_pc, () -> screen.hostActions.confirmUnpair(screen.computer));
-            }
-            row(host, "remove", R.string.pcview_menu_delete_pc, () -> screen.hostActions.confirmRemove(screen.computer));
+            HostStreamProfileSummary.showActions(this, activity, connection, host);
         }
 
-        /** Which launchers are kept in sync, and first any whose folder was lost. */
-        private String exportSummary(ComputerDetails pc) {
-            java.util.List<String> synced = new java.util.ArrayList<>();
-            java.util.List<String> failed = new java.util.ArrayList<>();
-            for (FrontendLauncher launcher : FrontendExportStore.exported(activity, pc.uuid)) {
-                boolean lost = new FrontendExportStore(activity, pc.uuid, launcher).failed();
-                (lost ? failed : synced).add(launcher.label);
-            }
-            if (!failed.isEmpty()) {
-                return getString(R.string.frontend_sync_failed_summary, android.text.TextUtils.join(", ", failed));
-            }
-            if (!synced.isEmpty()) {
-                return getString(R.string.frontend_sync_summary, android.text.TextUtils.join(", ", synced));
-            }
-            return getString(R.string.pc_settings_export_summary);
+        void updateSummaries() {
+            HostStreamProfileSummary.updateSummaries(this, activity);
         }
 
-        private String onOff(boolean value) {
-            return getString(value ? R.string.host_profile_on : R.string.host_profile_off);
-        }
-
-        /** On or Off; Sharper colored text reads Automatic or Off, as in Settings. */
-        private String switchText(String key, boolean value) {
-            if ("yuv444".equals(key)) {
-                return getResources().getStringArray(R.array.sharp_color_names)[value ? 1 : 0];
-            }
-            return onOff(value);
-        }
-
-        /** The value, marked with where it comes from when it is not set here. */
-        private String summary(HostStreamProfile.Field field, boolean own, String value) {
-            if (own) return value;
-            StreamLayers.Source source = activity.below.source(field);
-            if (activity.mode == Mode.PC && source == StreamLayers.Source.MAIN) {
-                return getString(R.string.host_profile_follows, value);
-            }
-            return getString(R.string.layers_value_from, value, StreamLayersText.source(activity, activity.below, source));
-        }
-
-        /** The "not set here" choice, with the value it then has. */
-        private String sameAs(String value) {
-            return getString(activity.mode == Mode.PC ? R.string.host_profile_same_as_all_value :
-                    R.string.layers_not_set_value, value);
-        }
-
-        private static HostStreamProfile.Field switchField(String key) {
-            switch (key) {
-                case "hdr": return HostStreamProfile.Field.HDR;
-                case "virtual": return HostStreamProfile.Field.VIRTUAL_DISPLAY;
-                case "yuv444": return HostStreamProfile.Field.YUV444;
-                default: return HostStreamProfile.Field.FULL_RANGE;
-            }
-        }
-
-        /** The Frame pacing choice a stream with these values runs (FramePacingChoice), the PC's frame times included. */
-        private String pacingText(PreferenceConfiguration config) {
-            String[] names = getResources().getStringArray(R.array.frame_pacing_choice_names);
-            return names[Math.max(0, FramePacingChoice.index(FramePacingChoice.of(config)))];
-        }
-
-        private String resolutionText(PreferenceConfiguration config) {
-            return config.resolutionFollowsScreen ? getString(R.string.host_profile_native) :
-                    config.width + " × " + config.height;
-        }
-
-        private String refreshText(PreferenceConfiguration config) {
-            return HostStreamProfile.formatRefreshRate(config.launchRefreshRateX100 == 0 ?
-                    config.fps * 100 : config.launchRefreshRateX100) + " " + getString(R.string.fps_suffix_fps);
-        }
-
-        private String displayScaleText(int percent) {
-            return percent == 0 ? getString(R.string.virtual_display_dpi_pc_own) : percent + "%";
-        }
-
-        private String upscalingText(PreferenceConfiguration config) {
-            String upscaling = getResources().getStringArray(R.array.upscaling_names)[config.upscalingMode.ordinal()];
-            if (config.upscalingMode != UpscalingPolicy.Mode.OFF) {
-                if (config.enableHdr) upscaling += "\n" + getString(R.string.upscaling_hdr);
-                else if (config.videoFormat == PreferenceConfiguration.FormatOption.FORCE_PYROWAVE) {
-                    upscaling += "\n" + getString(R.string.upscaling_pyrowave);
-                }
-            }
-            return upscaling;
-        }
-
-        private boolean switchValue(PreferenceConfiguration config, String key) {
-            switch (key) {
-                case "hdr": return config.enableHdr;
-                case "virtual": return config.virtualDisplay;
-                case "yuv444": return config.enableYuv444;
-                default: return config.fullRange;
-            }
-        }
-
-        private Boolean switchOverride(String key) {
-            HostStreamProfile own = activity.overrides;
-            switch (key) {
-                case "hdr": return own.hdr;
-                case "virtual": return own.virtualDisplay;
-                case "yuv444": return own.yuv444;
-                default: return own.fullRange;
-            }
-        }
-
-        private void setSwitchOverride(String key, Boolean value) {
-            HostStreamProfile own = activity.overrides;
-            switch (key) {
-                case "hdr": own.hdr = value; break;
-                case "virtual": own.virtualDisplay = value; break;
-                case "yuv444": own.yuv444 = value; break;
-                default: own.fullRange = value; break;
-            }
-        }
-
-        private void updateSummaries() {
-            PreferenceConfiguration config = activity.effective();
-            HostStreamProfile own = activity.overrides;
-            // The value alone, as in Settings: the picker shows the sizes.
-            findPreference("resolution").setSummary(summary(HostStreamProfile.Field.RESOLUTION, own.nativeResolution != null, resolutionText(config)));
-            findPreference("refresh").setSummary(summary(HostStreamProfile.Field.REFRESH, own.refreshRateX100 != null, refreshText(config)));
-            String bitrate = summary(HostStreamProfile.Field.BITRATE, own.bitrate != null,
-                    HostStreamProfile.formatBitrateMbps(config.bitrate) + " Mbps");
-            // The same warning as the main settings, for the codec, size and bitrate this layer streams.
-            String warning = PreferenceConfiguration.pyroWaveBelowMinimumWarning(activity, config);
-            findPreference("bitrate").setSummary(warning == null ? bitrate : bitrate + "\n" + warning);
-            String[] codecs = getResources().getStringArray(R.array.host_profile_codecs);
-            String codec = summary(HostStreamProfile.Field.CODEC, own.codec != null, codecs[config.videoFormat.ordinal()]);
-            if (config.videoFormat == PreferenceConfiguration.FormatOption.FORCE_PYROWAVE &&
-                    !activity.caps.mayHave(HostCapabilities.Feature.PYROWAVE)) {
-                codec += "\n" + getString(R.string.host_pyrowave_unavailable,
-                        codecs[PreferenceConfiguration.codecWithoutPyroWave(activity.global.videoFormat).ordinal()]);
-            }
-            findPreference("codec").setSummary(codec);
-            findPreference("upscaling").setSummary(summary(HostStreamProfile.Field.UPSCALING, own.upscalingMode != null, upscalingText(config)));
-            findPreference("sharpness").setSummary(summary(HostStreamProfile.Field.SHARPNESS, own.upscalingSharpness != null,
-                    getString(R.string.upscaling_sharpness_value, config.upscalingSharpness)));
-            findPreference("sharpness").setEnabled(config.upscalingMode == UpscalingPolicy.Mode.FSR1 ||
-                    config.upscalingMode == UpscalingPolicy.Mode.SGSR1);
-            for (String key : new String[] {"hdr", "yuv444", "full_range"}) {
-                findPreference(key).setSummary(summary(switchField(key), switchOverride(key) != null, switchText(key, switchValue(config, key))));
-            }
-            findPreference("vrr").setSummary(summary(HostStreamProfile.Field.VRR, own.vrr != null, vrrText(config)));
-            String pacing = summary(HostStreamProfile.Field.PACING, own.has(HostStreamProfile.Field.PACING), pacingText(config));
-            findPreference("pacing").setSummary(config.vrr ? pacing + "\n" + getString(R.string.layers_pacing_vrr) : pacing);
-            Preference vrr = findPreference("vrr");
-            vrr.setEnabled(true);
-            vrr.setSummary(vrr.getSummary() + "\n" + getString(R.string.summary_vrr));
-            Preference virtual = findPreference("virtual");
-            Preference scale = findPreference("scale");
-            Preference dpi = findPreference("dpi");
-            if (virtual != null) {
-                virtual.setSummary(summary(HostStreamProfile.Field.VIRTUAL_DISPLAY, switchOverride("virtual") != null, onOff(switchValue(config, "virtual"))));
-            }
-            if (scale != null) {
-                scale.setSummary(summary(HostStreamProfile.Field.RENDER_SCALE, own.renderScale != null, config.virtualDisplayScale + "%") +
-                        "\n" + getString(R.string.summary_virtual_display_scale));
-            }
-            if (dpi != null) {
-                dpi.setSummary(summary(HostStreamProfile.Field.DISPLAY_SCALE, own.displayScale != null,
-                        displayScaleText(config.virtualDisplayDpi)) + "\n" + getString(R.string.summary_virtual_display_dpi));
-            }
-            Preference rtxHdr = findPreference("rtx_hdr");
-            if (rtxHdr != null) {
-                String value = activity.mode == Mode.GAME
-                        ? summary(HostStreamProfile.Field.RTX_HDR, own.rtxHdr != null, enhancementText(config.rtxHdr))
-                        : enhancementText(own.rtxHdr);
-                rtxHdr.setSummary(value + "\n" + getString(R.string.summary_rtx_hdr));
-            }
-            Preference rtxVideo = findPreference("rtx_video");
-            if (rtxVideo != null) {
-                String value = activity.mode == Mode.GAME
-                        ? summary(HostStreamProfile.Field.RTX_VIDEO, own.rtxVideo != null, enhancementText(config.rtxVideo))
-                        : enhancementText(own.rtxVideo);
-                rtxVideo.setSummary(value + "\n" + getString(R.string.summary_rtx_video));
-            }
-            Preference preset = findPreference("preset");
-            if (preset != null) {
-                GameProfilePreset current = GameProfilePreset.of(own, activity.qualityBitrate());
-                preset.setSummary(getString(current.title) + "\n" + getString(current.summary));
-            }
-            findPreference("reset").setEnabled(!own.isEmpty());
-            boolean pc = activity.mode == Mode.PC;
-            findPreference("reset").setSummary(own.isEmpty() ?
-                    getString(pc ? R.string.host_profile_status_global : R.string.layers_status_empty) :
-                    getString(pc ? R.string.host_profile_status_custom : R.string.layers_status_custom));
-            Preference display = findPreference("host_display");
-            // Only a host with display modes receives the choice; elsewhere the switch decides.
-            HostDisplayChoice displayChoice = pc && activity.caps.mayHave(HostCapabilities.Feature.HOST_DISPLAY_MODES) ?
-                    HostDisplayChoice.load(activity, activity.hostUuid) : HostDisplayChoice.HOST_DEFAULT;
-            if (virtual != null) {
-                virtual.setEnabled(displayChoice == HostDisplayChoice.HOST_DEFAULT);
-                if (displayChoice != HostDisplayChoice.HOST_DEFAULT) {
-                    virtual.setSummary(getString(R.string.host_display_controls_virtual, getString(displayChoice.label)));
-                }
-                applyGate(virtual, HostCapabilities.Feature.VIRTUAL_DISPLAY);
-            }
-            if (scale != null) {
-                applyGate(scale, HostCapabilities.Feature.VIRTUAL_DISPLAY);
-            }
-            if (dpi != null) {
-                applyGate(dpi, HostCapabilities.Feature.DISPLAY_SCALE);
-            }
-            if (display != null) {
-                String name = DisplayArrangementChoice.names(activity, true)[
-                        DisplayArrangementChoice.choice(displayChoice, switchValue(config, "virtual"), true)].toString();
-                display.setSummary((ownDisplay() ? name : sameAs(name)) + "\n" +
-                        getString(R.string.settings_profile_display_immediate));
-                applyGate(display, HostCapabilities.Feature.HOST_DISPLAY_MODES);
-            }
-            activity.updateSaveState();
-        }
-
-        private HostFeatureGate gate(HostCapabilities.Feature feature) {
-            return HostFeatureGate.of(activity.caps, feature);
-        }
-
-        /** Disables a row the host can't use yet and adds why, or notes that it applies if supported. */
-        private void applyGate(Preference row, HostCapabilities.Feature feature) {
-            HostFeatureGate gate = gate(feature);
-            if (!gate.isEnabled()) {
-                row.setEnabled(false);
-            }
-            row.setSummary(gate.withNote(activity, row.getSummary()));
-        }
-
-        private void showSwitch(String key, int title) {
-            boolean allPcs = switchValue(activity.global, key);
-            Boolean own = switchOverride(key);
-            CharSequence[] items = {
-                    sameAs(switchText(key, allPcs)),
-                    switchText(key, true),
-                    switchText(key, false)};
-            int checked = own == null ? 0 : own ? 1 : 2;
-            new NavigationDialogBuilder(activity).setTitle(title)
-                    .setSingleChoiceItems(items, checked, (dialog, which) -> {
-                        setSwitchOverride(key, which == 0 ? null : which == 1);
-                        updateSummaries();
-                        dialog.dismiss();
-                    }).setNegativeButton(android.R.string.cancel, null).show();
-        }
-
-        /** Off, On or Fastest as {@code config} streams it; Off where no screen has ARR. */
-        private String vrrText(PreferenceConfiguration config) {
-            return getResources().getStringArray(R.array.vrr_choice_names)[
-                    VrrChoice.of(config.vrr && DisplayFrameRatePolicy.vrrOffered(activity), config.realVrr)];
-        }
-
-        /**
-         * Variable refresh rate: the layers below, Off, On or Fastest. On and Fastest set VRR and Real VRR together,
-         * Off sets VRR off (VrrChoice). A layer that sets VRR on without Real VRR, as saved before, shows the Real VRR
-         * it streams with.
-         */
-        private void showVrr() {
-            HostStreamProfile own = activity.overrides;
-            String[] names = getResources().getStringArray(R.array.vrr_choice_names);
-            CharSequence[] items = {sameAs(vrrText(activity.global)), names[VrrChoice.OFF], names[VrrChoice.ON], names[VrrChoice.FASTEST]};
-            int checked = own.vrr == null ? 0 : 1 + VrrChoice.of(own.vrr,
-                    own.realVrr != null ? own.realVrr : activity.effective().realVrr);
-            new NavigationDialogBuilder(activity).setTitle(R.string.title_vrr)
-                    .setSingleChoiceItems(items, checked, (dialog, which) -> {
-                        VrrChoice.save(own, which == 0 ? null : which - 1);
-                        updateSummaries();
-                        dialog.dismiss();
-                    }).setNegativeButton(android.R.string.cancel, null).show();
-        }
-
-        /** Competitive, Smoothness and Quality each set only the values they name; Custom changes nothing. */
-        private void showPreset() {
-            GameProfilePreset[] presets = GameProfilePreset.values();
-            int quality = activity.qualityBitrate();
-            CharSequence[] items = new CharSequence[presets.length];
-            for (int i = 0; i < presets.length; i++) {
-                items[i] = getString(presets[i].title) + "\n" + getString(presets[i].summary);
-            }
-            new NavigationDialogBuilder(activity).setTitle(R.string.game_preset_title)
-                    .setSingleChoiceItems(items, GameProfilePreset.of(activity.overrides, quality).ordinal(),
-                            (dialog, which) -> {
-                                presets[which].apply(activity.overrides, quality);
-                                updateSummaries();
-                                dialog.dismiss();
-                            }).setNegativeButton(android.R.string.cancel, null).show();
-        }
-
-        /**
-         * Frame pacing for these values: the main settings', or one of its choices, which puts the pacing, the PC's
-         * frame times and Balanced's newest-frame choice on the layer together (FramePacingChoice). A layer saved
-         * before holds only the pacing and takes the other two from the main settings, as the stream does.
-         */
-        private void showPacing() {
-            String[] names = getResources().getStringArray(R.array.frame_pacing_choice_names);
-            CharSequence[] items = new CharSequence[names.length + 1];
-            items[0] = sameAs(pacingText(activity.global));
-            System.arraycopy(names, 0, items, 1, names.length);
-            HostStreamProfile own = activity.overrides;
-            PreferenceConfiguration main = own.pacing == null ? null : PreferenceConfiguration.readPreferences(activity);
-            int checked = own.pacing == null ? 0 : 1 + Math.max(0, FramePacingChoice.index(FramePacingChoice.of(own.pacing,
-                    own.dropLateFrames != null ? own.dropLateFrames : main.dropLateFrames,
-                    own.hostFrameTimes != null ? own.hostFrameTimes : main.gridHostFrameTimes)));
-            new NavigationDialogBuilder(activity).setTitle(R.string.title_frame_pacing)
-                    .setSingleChoiceItems(items, checked, (dialog, which) -> {
-                        FramePacingChoice.save(activity.overrides, which == 0 ? null : FramePacingChoice.VALUES[which - 1]);
-                        updateSummaries();
-                        dialog.dismiss();
-                    }).setNegativeButton(android.R.string.cancel, null).show();
-        }
-
-        /** An image enhancement's choice: the PC's app setting, on or off. */
-        private String enhancementText(Boolean choice) {
-            return choice == null ? getString(R.string.fec_choice_host) : onOff(choice);
-        }
-
-        private void showEnhancement(HostStreamProfile.Field field, int title) {
-            Boolean own = field == HostStreamProfile.Field.RTX_HDR ? activity.overrides.rtxHdr : activity.overrides.rtxVideo;
-            Boolean below = field == HostStreamProfile.Field.RTX_HDR ? activity.global.rtxHdr : activity.global.rtxVideo;
-            CharSequence first = activity.mode == Mode.GAME ? sameAs(enhancementText(below)) : enhancementText(null);
-            CharSequence[] items = {first, onOff(true), onOff(false)};
-            int checked = own == null ? 0 : own ? 1 : 2;
-            new NavigationDialogBuilder(activity).setTitle(title)
-                    .setSingleChoiceItems(items, checked, (dialog, which) -> {
-                        Boolean chosen = which == 0 ? null : which == 1;
-                        if (field == HostStreamProfile.Field.RTX_HDR) activity.overrides.rtxHdr = chosen;
-                        else activity.overrides.rtxVideo = chosen;
-                        updateSummaries();
-                        dialog.dismiss();
-                    }).setNegativeButton(android.R.string.cancel, null).show();
-        }
-
-        private void showDisplayScale() {
-            int[] values = PreferenceConfiguration.VIRTUAL_DISPLAY_DPI_VALUES;
-            CharSequence[] items = new CharSequence[values.length + 1];
-            items[0] = sameAs(displayScaleText(activity.global.virtualDisplayDpi));
-            int checked = 0;
-            for (int i = 0; i < values.length; i++) {
-                items[i + 1] = displayScaleText(values[i]);
-                if (activity.overrides.displayScale != null && activity.overrides.displayScale == values[i]) checked = i + 1;
-            }
-            new NavigationDialogBuilder(activity).setTitle(R.string.title_virtual_display_dpi)
-                    .setSingleChoiceItems(items, checked, (dialog, which) -> {
-                        activity.overrides.displayScale = which == 0 ? null : values[which - 1];
-                        updateSummaries();
-                        dialog.dismiss();
-                    }).setNegativeButton(android.R.string.cancel, null).show();
-        }
-
-        private void showCodec() {
-            String[] codecs = getResources().getStringArray(R.array.host_profile_codecs);
-            // PyroWave is the last codec; a host that can never stream it doesn't offer it.
-            int offered = gate(HostCapabilities.Feature.PYROWAVE).isVisible() ? codecs.length :
-                    PreferenceConfiguration.FormatOption.FORCE_PYROWAVE.ordinal();
-            CharSequence[] items = new CharSequence[offered + 1];
-            items[0] = sameAs(codecs[activity.global.videoFormat.ordinal()]);
-            System.arraycopy(codecs, 0, items, 1, offered);
-            // Like the list for all PCs: PyroWave says why when this device can never run it.
-            int noPyroWave = PyroWaveDecoderRenderer.neverAvailableReason();
-            int pyroWave = PreferenceConfiguration.FormatOption.FORCE_PYROWAVE.ordinal() + 1;
-            if (noPyroWave != 0 && pyroWave < items.length) {
-                items[pyroWave] = items[pyroWave] + " · " + getString(noPyroWave);
-            }
-            PreferenceConfiguration.FormatOption own = activity.overrides.codec;
-            int checked = own == null ? 0 : own.ordinal() < offered ? own.ordinal() + 1 : -1;
-            new NavigationDialogBuilder(activity).setTitle(R.string.title_video_format)
-                    .setSingleChoiceItems(items, checked, (dialog, which) -> {
-                        activity.overrides.codec = which == 0 ? null :
-                                PreferenceConfiguration.FormatOption.values()[which - 1];
-                        updateSummaries();
-                        dialog.dismiss();
-                    }).setNegativeButton(android.R.string.cancel, null).show();
-        }
-
-        private void showUpscaling() {
-            String[] modes = getResources().getStringArray(R.array.upscaling_names);
-            CharSequence[] items = new CharSequence[modes.length + 1];
-            items[0] = sameAs(modes[activity.global.upscalingMode.ordinal()]);
-            System.arraycopy(modes, 0, items, 1, modes.length);
-            UpscalingPolicy.Mode own = activity.overrides.upscalingMode;
-            AlertDialog picker = new NavigationDialogBuilder(activity).setTitle(R.string.title_upscaling)
-                    .setSingleChoiceItems(items, own == null ? 0 : own.ordinal() + 1, (dialog, which) -> {
-                        activity.overrides.upscalingMode = which == 0 ? null : UpscalingPolicy.Mode.values()[which - 1];
-                        updateSummaries();
-                        dialog.dismiss();
-                    }).setNeutralButton(R.string.help, null)
-                    .setNegativeButton(android.R.string.cancel, null).create();
-            UiHelper.showDialog(activity, picker);
-            picker.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener(view ->
-                    UiHelper.showDialog(activity, new NavigationDialogBuilder(activity).setTitle(R.string.title_upscaling)
-                            .setMessage(R.string.summary_upscaling).setPositiveButton(android.R.string.ok, null).create()));
-        }
-
-        private LinearLayout form() {
-            LinearLayout form = new LinearLayout(activity);
-            form.setOrientation(LinearLayout.VERTICAL);
-            int padding = Math.round(24 * getResources().getDisplayMetrics().density);
-            form.setPadding(padding, padding / 3, padding, 0);
-            return form;
-        }
-
-        private ScrollView scrollable(LinearLayout form) {
-            ScrollView scroll = new ScrollView(activity);
-            scroll.setFillViewport(true);
-            scroll.setClipToPadding(false);
-            scroll.addView(form);
-            return scroll;
-        }
-
-        /** Whether this PC has a display choice of its own: its arrangement or its virtual display switch. */
-        private boolean ownDisplay() {
-            return HostDisplayChoice.hasOwn(activity, activity.hostUuid) || switchOverride("virtual") != null;
-        }
-
-        private void showDisplay() {
-            PreferenceConfiguration config = activity.effective();
-            CharSequence allPcs = DisplayArrangementChoice.names(activity, true)[DisplayArrangementChoice.choice(
-                    HostDisplayChoice.loadMain(activity), switchValue(activity.global, "virtual"), true)];
-            AlertDialog picker = HostDisplaySettings.create(activity, activity.hostUuid, activity.computer.displayName(),
-                    sameAs(allPcs.toString()), ownDisplay(), switchValue(config, "virtual"), activity::saveVirtualDisplay,
-                    this::updateSummaries);
-            showEditor("display", picker);
-            HostDisplaySettings.bindHelp(activity, picker);
-        }
-
-        private void showEditor(String key, AlertDialog dialog) {
+        void showEditor(String key, AlertDialog dialog) {
             activity.editorKey = key;
             activity.editorDialog = dialog;
             UiHelper.showDialog(activity, dialog);
@@ -1459,254 +680,19 @@ public class HostStreamSettings extends NightjarActivity {
             }
         }
 
-        /** The "Same as all PCs" box on top of a value dialog; checked, it disables {@code fields}. */
-        private MaterialCheckBox sameAsAll(LinearLayout form, String allPcsValue, boolean checked, View... fields) {
-            MaterialCheckBox box = new MaterialCheckBox(activity);
-            box.setId(R.id.host_profile_follow_all);
-            box.setText(sameAs(allPcsValue));
-            box.setChecked(checked);
-            form.addView(box);
-            CompoundButton.OnCheckedChangeListener listener = (button, isChecked) -> {
-                for (View field : fields) field.setEnabled(!isChecked);
-            };
-            box.setOnCheckedChangeListener(listener);
-            return box;
-        }
-
-        private static void enable(boolean enabled, View... views) {
-            for (View view : views) view.setEnabled(enabled);
-        }
-
-        private EditText field(LinearLayout form, int title, String value, boolean decimal) {
-            TextInputLayout container = new TextInputLayout(activity);
-            container.setHint(title);
-            EditText field = new TextInputEditText(container.getContext());
-            field.setId(form.findViewById(R.id.host_profile_field_primary) == null ?
-                    R.id.host_profile_field_primary : R.id.host_profile_field_secondary);
-            field.setContentDescription(getString(title));
-            field.setInputType(InputType.TYPE_CLASS_NUMBER | (decimal ? InputType.TYPE_NUMBER_FLAG_DECIMAL : 0));
-            field.setSingleLine(true);
-            field.setSelectAllOnFocus(true);
-            field.setMinHeight(Math.round(56 * getResources().getDisplayMetrics().density));
-            field.setText(value);
-            container.addView(field);
-            form.addView(container);
-            return field;
-        }
-
-        // Inline under the field (a TextInputLayout error), so it stays visible and screen readers announce it.
-        private void showError(EditText field, String error) {
-            View parent = (View) field.getParent();
-            while (!(parent instanceof TextInputLayout)) parent = (View) parent.getParent();
-            ((TextInputLayout) parent).setError(error);
-        }
-
-        private void showSharpness() {
-            PreferenceConfiguration config = activity.effective();
-            LinearLayout form = form();
-            TextView value = new TextView(activity);
-            Slider slider = new Slider(activity);
-            slider.setId(R.id.host_profile_sharpness);
-            MaterialCheckBox allPcs = sameAsAll(form, getString(R.string.upscaling_sharpness_value,
-                    activity.global.upscalingSharpness), activity.overrides.upscalingSharpness == null, slider);
-            value.setText(getString(R.string.upscaling_sharpness_value, config.upscalingSharpness));
-            value.setTextAppearance(activity, R.style.TextAppearance_Nightjar_ScreenTitle);
-            form.addView(value);
-            slider.setContentDescription(getString(R.string.title_upscaling_sharpness));
-            slider.setValueFrom(0);
-            slider.setValueTo(100);
-            slider.setStepSize(1);
-            slider.setValue(config.upscalingSharpness);
-            StepSlider.showValue(slider, strength -> getString(R.string.upscaling_sharpness_value, strength));
-            slider.setEnabled(!allPcs.isChecked());
-            slider.addOnChangeListener((view, strength, fromUser) ->
-                    value.setText(getString(R.string.upscaling_sharpness_value, Math.round(strength))));
-            form.addView(slider);
-            showEditor("sharpness", new NavigationDialogBuilder(activity).setTitle(R.string.title_upscaling_sharpness).setView(scrollable(form))
-                    .setPositiveButton(android.R.string.ok, (dialog, which) -> {
-                        activity.overrides.upscalingSharpness = allPcs.isChecked() ? null : Math.round(slider.getValue());
-                        updateSummaries();
-                    }).setNegativeButton(android.R.string.cancel, null).create());
-        }
-
-        private void showResolution() {
-            PreferenceConfiguration config = activity.effective();
-            HostStreamProfile own = activity.overrides;
-            LinearLayout form = form();
-            MaterialCheckBox nativeChoice = new MaterialCheckBox(activity);
-            nativeChoice.setId(R.id.host_profile_follow_screen);
-            nativeChoice.setText(R.string.host_profile_native);
-            nativeChoice.setChecked(config.resolutionFollowsScreen);
-            EditText[] size = new EditText[2];
-            MaterialCheckBox allPcs = sameAsAll(form, resolutionText(activity.global), own.nativeResolution == null,
-                    nativeChoice);
-            form.addView(nativeChoice);
-            size[0] = field(form, R.string.host_profile_width, Integer.toString(config.width), false);
-            size[1] = field(form, R.string.host_profile_height, Integer.toString(config.height), false);
-            Runnable refresh = () -> {
-                nativeChoice.setEnabled(!allPcs.isChecked());
-                enable(!allPcs.isChecked() && !nativeChoice.isChecked(), size);
-            };
-            allPcs.setOnCheckedChangeListener((button, checked) -> refresh.run());
-            nativeChoice.setOnCheckedChangeListener((button, checked) -> refresh.run());
-            refresh.run();
-            AlertDialog dialog = new NavigationDialogBuilder(activity).setTitle(R.string.title_resolution_list)
-                    .setView(scrollable(form)).setPositiveButton(android.R.string.ok, null)
-                    .setNegativeButton(android.R.string.cancel, null)
-                    .setNeutralButton(R.string.host_profile_match_screen, null).create();
-            dialog.setOnShowListener(ignored -> {
-                dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener(v -> {
-                    allPcs.setChecked(false);
-                    nativeChoice.setChecked(false);
-                    // The panel's own full size, as a follow-screen stream gets it. Since Android 12 the
-                    // activity's real metrics can be its window's bounds, which leave out a camera
-                    // cutout the app is kept clear of, or a split screen's other half; such a size
-                    // then streamed with a strip beside the camera.
-                    String panel = PreferenceConfiguration.nativeResolution(activity);
-                    if (panel == null) {
-                        DisplayMetrics metrics = new DisplayMetrics();
-                        activity.getWindowManager().getDefaultDisplay().getRealMetrics(metrics);
-                        panel = Math.max(metrics.widthPixels, metrics.heightPixels) + "x" +
-                                Math.min(metrics.widthPixels, metrics.heightPixels);
-                    }
-                    size[0].setText(Integer.toString(PreferenceConfiguration.getWidthFromResolutionString(panel)));
-                    size[1].setText(Integer.toString(PreferenceConfiguration.getHeightFromResolutionString(panel)));
-                });
-                dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
-                    if (allPcs.isChecked() || nativeChoice.isChecked()) {
-                        own.nativeResolution = allPcs.isChecked() ? null : Boolean.TRUE;
-                        own.width = own.height = null;
-                        updateSummaries();
-                        dialog.dismiss();
-                        return;
-                    }
-                    Integer w = readNumber(size[0], 64, 16384);
-                    Integer h = readNumber(size[1], 64, 16384);
-                    if (w != null && h != null) {
-                        own.nativeResolution = false;
-                        own.width = w;
-                        own.height = h;
-                        updateSummaries();
-                        dialog.dismiss();
-                    }
-                });
-            });
-            showEditor("resolution", dialog);
-        }
-
-        private void showNumber(String key, int title) {
-            PreferenceConfiguration config = activity.effective();
-            PreferenceConfiguration global = activity.global;
-            HostStreamProfile own = activity.overrides;
-            LinearLayout form = form();
-            String value, allPcsValue;
-            boolean followsAll;
-            if (key.equals("refresh")) {
-                value = HostStreamProfile.formatRefreshRate(config.launchRefreshRateX100 == 0 ?
-                        config.fps * 100 : config.launchRefreshRateX100);
-                allPcsValue = refreshText(global);
-                followsAll = own.refreshRateX100 == null;
-            } else if (key.equals("bitrate")) {
-                value = HostStreamProfile.formatBitrateMbps(config.bitrate);
-                allPcsValue = HostStreamProfile.formatBitrateMbps(global.bitrate) + " Mbps";
-                followsAll = own.bitrate == null;
-            } else {
-                value = Integer.toString(config.virtualDisplayScale);
-                allPcsValue = global.virtualDisplayScale + "%";
-                followsAll = own.renderScale == null;
-            }
-            EditText[] field = new EditText[1];
-            MaterialCheckBox allPcs = sameAsAll(form, allPcsValue, followsAll);
-            field[0] = field(form, title, value, !key.equals("scale"));
-            allPcs.setOnCheckedChangeListener((button, checked) -> field[0].setEnabled(!checked));
-            field[0].setEnabled(!followsAll);
-            MaterialAlertDialogBuilder builder = new NavigationDialogBuilder(activity).setTitle(title).setView(scrollable(form))
-                    .setPositiveButton(android.R.string.ok, null).setNegativeButton(android.R.string.cancel, null);
-            if (key.equals("refresh")) builder.setNeutralButton(R.string.host_profile_match_screen, null);
-            AlertDialog dialog = builder.create();
-            dialog.setOnShowListener(ignored -> {
-                if (key.equals("refresh")) {
-                    dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener(v -> {
-                        allPcs.setChecked(false);
-                        field[0].setText(HostStreamProfile.formatRefreshRate(Math.round(100 *
-                                com.limelight.binding.video.DisplayFrameRatePolicy.maxRefreshRate(
-                                        activity.getWindowManager().getDefaultDisplay()))));
-                    });
-                }
-                dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
-                    showError(field[0], null);
-                    boolean clear = allPcs.isChecked();
-                    try {
-                        if (key.equals("refresh")) {
-                            own.refreshRateX100 = clear ? null : HostStreamProfile.parseRefreshRate(field[0].getText().toString());
-                        } else if (key.equals("bitrate")) {
-                            own.bitrate = clear ? null : HostStreamProfile.parseBitrateMbps(field[0].getText().toString());
-                        } else if (clear) {
-                            own.renderScale = null;
-                        } else {
-                            Integer scale = readNumber(field[0], 50, 200);
-                            if (scale == null) return;
-                            own.renderScale = scale;
-                        }
-                        updateSummaries();
-                        dialog.dismiss();
-                    } catch (IllegalArgumentException e) {
-                        showError(field[0], getString(key.equals("refresh") ? R.string.host_profile_invalid_refresh : R.string.host_profile_invalid_bitrate));
-                    }
-                });
-            });
-            showEditor(key, dialog);
-        }
-
-        /** The PC's own wake addresses: MACs of adapters that wake it besides the one it was paired over. */
-        private void showWakeMacs() {
-            WakeTargets targets = new WakeTargets(activity);
-            String uuid = activity.computer.uuid;
-            LinearLayout form = form();
-            TextView help = new TextView(activity);
-            help.setText(R.string.pc_settings_wake_macs_help);
-            // Set as a dialog message: a bare TextView takes only the app's face, black at the
-            // platform's smallest size on the night glass (nightjar#7's update dialog)
-            help.setTextAppearance(activity, R.style.TextAppearance_Nightjar_Body);
-            help.setTextColor(com.google.android.material.color.MaterialColors.getColor(help,
-                    com.google.android.material.R.attr.colorOnSurfaceVariant));
-            form.addView(help);
-            TextInputLayout container = new TextInputLayout(activity);
-            container.setHint(R.string.pc_settings_wake_macs);
-            EditText field = new TextInputEditText(container.getContext());
-            field.setId(R.id.host_profile_field_primary);
-            field.setContentDescription(getString(R.string.pc_settings_wake_macs));
-            field.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
-                    | InputType.TYPE_TEXT_FLAG_MULTI_LINE);
-            field.setMinHeight(Math.round(56 * getResources().getDisplayMetrics().density));
-            field.setText(android.text.TextUtils.join("\n", targets.manual(uuid)));
-            container.addView(field);
-            form.addView(container);
-            AlertDialog dialog = new NavigationDialogBuilder(activity).setTitle(R.string.pc_settings_wake_macs)
-                    .setView(scrollable(form)).setPositiveButton(android.R.string.ok, null)
-                    .setNegativeButton(android.R.string.cancel, null).create();
-            dialog.setOnShowListener(ignored -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
-                List<String> macs = WakeTargets.parseMacs(field.getText().toString());
-                if (macs == null) {
-                    showError(field, getString(R.string.pc_settings_wake_macs_invalid));
-                    return;
-                }
-                targets.storeManual(uuid, macs);
-                showActions();
-                dialog.dismiss();
-            }));
-            showEditor("wake_macs", dialog);
-        }
-
-        private Integer readNumber(EditText field, int min, int max) {
-            showError(field, null);
-            try {
-                return HostStreamProfile.requireRange(Integer.parseInt(field.getText().toString().trim()), min, max);
-            } catch (IllegalArgumentException e) {
-                showError(field, getString(R.string.host_profile_invalid_number, min, max));
-                return null;
-            }
-        }
+        private void showSwitch(String key, int title) { HostStreamSettingDialogs.showSwitch(this, activity, key, title); }
+        private void showVrr() { HostStreamSettingDialogs.showVrr(this, activity); }
+        private void showPreset() { HostStreamSettingDialogs.showPreset(this, activity); }
+        private void showPacing() { HostStreamSettingDialogs.showPacing(this, activity); }
+        private void showEnhancement(HostStreamProfile.Field field, int title) { HostStreamSettingDialogs.showEnhancement(this, activity, field, title); }
+        private void showDisplayScale() { HostStreamSettingDialogs.showDisplayScale(this, activity); }
+        private void showCodec() { HostStreamSettingDialogs.showCodec(this, activity); }
+        private void showUpscaling() { HostStreamSettingDialogs.showUpscaling(this, activity); }
+        private void showDisplay() { HostStreamSettingDialogs.showDisplay(this, activity); }
+        private void showSharpness() { HostStreamSettingDialogs.showSharpness(this, activity); }
+        private void showResolution() { HostStreamSettingDialogs.showResolution(this, activity); }
+        private void showNumber(String key, int title) { HostStreamSettingDialogs.showNumber(this, activity, key, title); }
+        void showWakeMacs() { HostStreamSettingDialogs.showWakeMacs(this, activity); }
 
         @Override
         public View onCreateView(LayoutInflater inflater, ViewGroup container, Bundle state) {

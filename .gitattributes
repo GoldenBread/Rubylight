@@ -5,8 +5,9 @@
 client/protocol/native-api/tests/fixtures/** text eol=lf
 # The timing-report tests edit these byte by byte and check they stay LF.
 rust/release/fixtures/timing/** text eol=lf
-# Host settings catalog, locales, and skills are LF-checked on Windows runners.
+# Host and Nightjar settings catalogs, locales, and skills are LF-checked on Windows runners.
 rust/core/config/settings.toml text eol=lf
+client/protocol/policy/settings.toml text eol=lf
 rust/assets/locale/*.json text eol=lf
 client/app/src/main/res/values*/*.xml text eol=lf
 .agents/skills/**/*.md text eol=lf
@@ -28,6 +29,9 @@ client/protocol/desktop-config/src/strings/tests.rs !merge
 # it; regenerate it afterwards with `python tools/generated_docs.py`.
 client/docs/settings.md text eol=lf merge=rubylight-generated
 client/docs/devices.md text eol=lf merge=rubylight-generated
+client/protocol/policy/src/*_gen.rs text eol=lf merge=rubylight-generated
+client/protocol/desktop-config/src/config/*_gen.rs text eol=lf merge=rubylight-generated
+client/app/src/main/java/com/limelight/preferences/*Gen.java text eol=lf merge=rubylight-generated
 docs/configuration.md text eol=lf merge=rubylight-generated
 rust/core/config/src/config/*_gen.rs text eol=lf merge=rubylight-generated
 rust/web/src/lib/schema/*.gen.ts text eol=lf merge=rubylight-generated
