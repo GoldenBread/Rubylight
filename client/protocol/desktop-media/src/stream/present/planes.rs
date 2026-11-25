@@ -336,6 +336,7 @@ impl VideoTexture {
             if evicted {
                 pass.clear_sampled_states();
             }
+            let sampled_hit = matches!(sampled, Ok(Some(_)));
             let drawn = match sampled {
                 Ok(Some(textures)) => pass.draw_sampled_textures(renderer, texture, textures, &parameters),
                 Ok(None) => planes.copy(renderer, frame.raw.as_ptr()).and_then(|()| {
@@ -344,7 +345,7 @@ impl VideoTexture {
                 }),
                 Err(error) => Err(error),
             };
-            let invalidated = evicted || had_sampled || matches!(sampled, Ok(Some(_)));
+            let invalidated = evicted || had_sampled || sampled_hit;
             if drawn.is_err() && invalidated {
                 pass.use_copy();
             }
