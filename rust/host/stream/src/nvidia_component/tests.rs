@@ -613,3 +613,30 @@ fn component_files_named(runtime: &[Pinned]) -> Vec<String> {
     names.sort();
     names
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn download_aborts_with_stream_started_and_cleans_part_file_when_stream_begins() {
+    let f = crate::state::test_support::Fixture::new();
+    let h = &f.host;
+    let payload = vec![0xABu8; 64 * 1024];
+    let server = serve(release_assets(&payload), BTreeMap::new()).await;
+    use_server(h, &server);
+
+    // Mark a stream active so `crate::updater::streaming(h)` is true during download chunks.
+    let session = f.session(f.client(0), butterpollo_session::session::Role::Stream);
+    h.sessions
+        .lock()
+        .unwrap()
+        .active
+        .insert(session.launch.id.clone(), session.clone());
+
+    let err = fetch(h).await.unwrap_err();
+    assert!(err.is::<StreamStarted>(), "{err:#}");
+    let root = root(h);
+    assert!(
+        names(&root).is_empty(),
+        "staging and partial download files must be cleaned up: {:?}",
+        names(&root)
+    );
+    let _ = h.sessions.lock().unwrap().active.remove(&session.launch.id);
+}

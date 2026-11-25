@@ -43,7 +43,17 @@ impl UsbForwarding {
         let vhci = self.vhci();
         let busid = opened.device.busid.clone();
         let (mut driver, tcp_port, port) = match open(vhci.clone(), &mut tunnel, &opened).await {
-            Ok(opened) => opened,
+            Ok(OpenOutcome::Opened {
+                driver,
+                tcp_port,
+                port,
+            }) => (driver, tcp_port, port),
+            Ok(OpenOutcome::Stopped { tcp_port, port }) => {
+                if let Err(error) = unplug_blocking(vhci, port, tcp_port, busid).await {
+                    tracing::debug!(port = ?port, error = format!("{error:#}"), "USB detach after stop while opening");
+                }
+                return self.finish(&opened, Vec::new());
+            }
             Err(failed) => {
                 tracing::warn!(client = %opened.client, device = %opened.device.name, error = format!("{:#}", failed.error), reason = ?failed.reason, "USB attach failed");
                 let notice = vec![status(opened.request_id, UsbState::Failed, failed.reason)];
@@ -127,11 +137,23 @@ struct OpenFailed {
 /// Imports the device into the driver: the driver's import request goes to the client and its
 /// answer back, while the driver attaches. Returns the driver's connection, the loopback port
 /// and the hub port.
+enum OpenOutcome {
+    Opened {
+        driver: TcpStream,
+        tcp_port: u16,
+        port: u32,
+    },
+    Stopped {
+        tcp_port: u16,
+        port: Option<u32>,
+    },
+}
+
 async fn open<T>(
     vhci: Arc<dyn Vhci>,
     tunnel: &mut T,
     opened: &Opened,
-) -> Result<(TcpStream, u16, u32), OpenFailed>
+) -> Result<OpenOutcome, OpenFailed>
 where
     T: AsyncRead + AsyncWrite + Unpin + Send,
 {
@@ -163,8 +185,13 @@ where
             import(vhci, listener, relay, tunnel, &opened.device)
         ));
         let (mut imported, mut attached) = (None, None);
+        let mut stopped = false;
         while imported.is_none() || attached.is_none() {
             tokio::select! {
+                () = opened.stop.notified() => {
+                    stopped = true;
+                    break;
+                }
                 result = &mut import, if imported.is_none() => imported = Some(result.unwrap_or_else(|_| {
                     Err((UsbReason::Driver, anyhow!("the driver did not import the device within {OPEN_TIMEOUT:?}")))
                 })),
@@ -177,6 +204,10 @@ where
                 }
             }
         }
+        if stopped {
+            let port = attached.and_then(Result::ok);
+            return Ok(OpenOutcome::Stopped { tcp_port, port });
+        }
         (imported.unwrap(), attached.unwrap())
     };
     // The caller unplugs whatever the driver may hold once the attach started.
@@ -187,7 +218,11 @@ where
         port,
     };
     match (imported, attached) {
-        (Ok(driver), Ok(port)) => Ok((driver, tcp_port, port)),
+        (Ok(driver), Ok(port)) => Ok(OpenOutcome::Opened {
+            driver,
+            tcp_port,
+            port,
+        }),
         (Err((reason, error)), Ok(port)) => Err(failed(reason, error, Some(port))),
         (Ok(driver), Err(error)) => {
             // Without its connection the driver lets go of a device it plugged in anyway.

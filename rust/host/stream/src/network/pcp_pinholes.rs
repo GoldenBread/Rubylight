@@ -310,15 +310,27 @@ pub(super) async fn renew_pinholes(
         });
         return;
     }
-    if held.pinholes.is_empty() {
-        let gateways = ipv6_gateways();
-        for (local, index) in portmap::ipv6_locals(bind) {
-            for gateway in &gateways {
-                if let Ok(mapper) =
-                    portmap::PortMapper::ipv6(*gateway, local, index, nonce_secret).await
-                {
-                    held.pinholes.push(mapper);
-                }
+    let gateways = ipv6_gateways();
+    let locals = portmap::ipv6_locals(bind);
+    held.pinholes.retain(|mapper| {
+        locals.iter().any(|&(local, index)| {
+            gateways
+                .iter()
+                .any(|&gateway| mapper.serves_ipv6(gateway, local, index))
+        })
+    });
+    for (local, index) in locals {
+        for &gateway in &gateways {
+            if held
+                .pinholes
+                .iter()
+                .any(|mapper| mapper.serves_ipv6(gateway, local, index))
+            {
+                continue;
+            }
+            if let Ok(mapper) = portmap::PortMapper::ipv6(gateway, local, index, nonce_secret).await
+            {
+                held.pinholes.push(mapper);
             }
         }
     }

@@ -405,11 +405,12 @@ fn launch_back_half(
             let config = crate::stream::effective_config(h, &launch)?;
             let on_pc = crate::stream::plays_on_pc(&config, launch.host_audio);
             let instances = crate::stream::instance_routes(h, &config, on_pc);
+            let size = launch_size(args, &config)?;
             let seat = h.nucleus.admit(crate::nucleus::Admission {
                 launch: &id,
                 client: &launch.client,
                 game,
-                size: launch_size(args, &config)?,
+                size,
                 config: &config,
                 warnings: launch.warnings.clone(),
                 release_parked: &|| release_parked_pads(h),

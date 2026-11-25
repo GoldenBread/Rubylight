@@ -195,7 +195,11 @@ pub(super) async fn discover(options: SearchOptions) -> Result<Gateway<Bounded>>
         let client = client()?;
         let mut response = [0; 4096];
         for _ in 0..16 {
-            let (count, peer) = socket.recv_from(&mut response).await?;
+            let (count, peer) = match socket.recv_from(&mut response).await {
+                Ok(received) => received,
+                Err(error) if error.kind() == std::io::ErrorKind::ConnectionReset => continue,
+                Err(error) => return Err(error.into()),
+            };
             let location = std::str::from_utf8(&response[..count]).ok().and_then(|text| {
                 text.lines().find_map(|line| {
                     let (name, value) = line.split_once(':')?;

@@ -60,7 +60,18 @@ fn bind_address(port: u16, lan: bool) -> SocketAddr {
 
 /// Starts the server when `port` is set (`Config::dsu_server_port`). A port
 /// that cannot be opened is a console warning; the stream works without it.
+static RUNTIME_WARNING: Mutex<Option<String>> = Mutex::new(None);
+
+pub(crate) fn runtime_warning() -> Option<String> {
+    RUNTIME_WARNING.lock().unwrap().clone()
+}
+
+fn set_runtime_warning(message: Option<String>) {
+    *RUNTIME_WARNING.lock().unwrap() = message;
+}
+
 pub fn start(port: Option<u16>, lan: bool, warnings: &Warnings) {
+    set_runtime_warning(None);
     let Some(port) = port else { return };
     let address = bind_address(port, lan);
     let socket = match UdpSocket::bind(address) {
@@ -161,61 +172,94 @@ pub fn forget(session: &str) {
 impl Server {
     /// Answers requests and records subscriptions.
     fn receive(&self, socket: &UdpSocket) {
+        self.receive_with_warnings(socket, None);
+    }
+
+    fn receive_with_warnings(&self, socket: &UdpSocket, warnings: Option<&Warnings>) {
         let mut buffer = [0u8; 1024];
-        loop {
-            let (len, from) = match socket.recv_from(&mut buffer) {
-                Ok(received) => received,
-                Err(error)
-                    if matches!(
-                        error.kind(),
-                        ErrorKind::WouldBlock | ErrorKind::TimedOut | ErrorKind::Interrupted
-                    ) =>
+        let mut oversized_warn = crate::network::Throttle::new();
+        while self.receive_one(socket, &mut buffer, warnings, &mut oversized_warn) {}
+    }
+
+    fn receive_one(
+        &self,
+        socket: &UdpSocket,
+        buffer: &mut [u8],
+        warnings: Option<&Warnings>,
+        oversized_warn: &mut crate::network::Throttle,
+    ) -> bool {
+        let (len, from) = match socket.recv_from(buffer) {
+            Ok(received) => received,
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    ErrorKind::WouldBlock | ErrorKind::TimedOut | ErrorKind::Interrupted
+                ) =>
+            {
+                self.clients.lock().unwrap().prune(Instant::now());
+                return true;
+            }
+            // Windows reports an ICMP reset or oversized UDP datagram (`WSAEMSGSIZE`, 10040)
+            // on receive; keep serving other requests instead of tearing down the DSU server.
+            Err(error) if butterpollo_win_io::net::datagram_lost(&error) => {
+                if error.raw_os_error() == Some(10040)
+                    && let Some(skipped) = oversized_warn.allow()
                 {
-                    self.clients.lock().unwrap().prune(Instant::now());
-                    continue;
+                    tracing::warn!(
+                        %error,
+                        skipped,
+                        "DSU motion server dropped an oversized datagram"
+                    );
                 }
-                // Windows reports a client that went away as a reset on the
-                // next receive (ICMP port unreachable); the socket still works.
-                Err(error) if error.kind() == ErrorKind::ConnectionReset => continue,
-                Err(error) => {
-                    tracing::warn!(%error, "DSU motion server stopped receiving");
-                    return;
+                return true;
+            }
+            Err(error) => {
+                tracing::warn!(%error, "DSU motion server stopped receiving");
+                let message = format!(
+                    "Emulators can't read controller motion: the DSU server stopped ({error})."
+                );
+                if let Some(warnings) = warnings {
+                    warnings.set(WARNING, message);
+                } else {
+                    set_runtime_warning(Some(message));
                 }
-            };
-            let Some((_, request)) = dsu::parse(&buffer[..len]) else {
-                continue;
-            };
-            match request {
-                Request::Version => self.reply(&dsu::version_reply(self.id), from),
-                Request::Ports { count, slots } => {
-                    let replies: Vec<_> = {
-                        let state = self.state.lock().unwrap();
-                        slots[..usize::from(count)]
-                            .iter()
-                            .map(|&slot| dsu::port_info(self.id, slot, state.slots.pad(slot)))
-                            .collect()
-                    };
-                    for reply in replies {
-                        self.reply(&reply, from);
-                    }
-                }
-                Request::PadData { flags, slot, mac } => {
-                    // The clients have their own lock: registering never
-                    // delays [`observe`] on the control thread.
-                    self.clients
-                        .lock()
-                        .unwrap()
-                        .register(from, flags, slot, mac, Instant::now());
-                    // A new subscriber gets the current state now, not at the
-                    // controller's next change.
-                    let mut state = self.state.lock().unwrap();
-                    for slot in 0..SLOTS {
-                        state.dirty[slot] |= state.slots.pad(slot as u8).is_some();
-                    }
-                    self.wake.notify_one();
+                return false;
+            }
+        };
+        let Some((_, request)) = dsu::parse(&buffer[..len]) else {
+            return true;
+        };
+        match request {
+            Request::Version => self.reply(&dsu::version_reply(self.id), from),
+            Request::Ports { count, slots } => {
+                let replies: Vec<_> = {
+                    let state = self.state.lock().unwrap();
+                    slots[..usize::from(count)]
+                        .iter()
+                        .map(|&slot| dsu::port_info(self.id, slot, state.slots.pad(slot)))
+                        .collect()
+                };
+                for reply in replies {
+                    self.reply(&reply, from);
                 }
             }
+            Request::PadData { flags, slot, mac } => {
+                // The clients have their own lock: registering never
+                // delays [`observe`] on the control thread.
+                self.clients
+                    .lock()
+                    .unwrap()
+                    .register(from, flags, slot, mac, Instant::now());
+                // A new subscriber gets the current state now, not at the
+                // controller's next change.
+                let mut state = self.state.lock().unwrap();
+                for slot in 0..SLOTS {
+                    state.dirty[slot] |= state.slots.pad(slot as u8).is_some();
+                }
+                self.wake.notify_one();
+            }
         }
+        true
     }
 
     /// Sends the slots that changed to the clients that want them. The
@@ -382,5 +426,81 @@ mod tests {
         assert_eq!(packets.len(), 1);
         assert_eq!(packets[0].0[21], 0);
         assert_eq!(packets[0].0[31], 0);
+    }
+
+    #[test]
+    fn oversized_datagram_is_classified_as_datagram_lost_and_keeps_serving() {
+        let server_sock = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let addr = server_sock.local_addr().unwrap();
+        let client_sock = UdpSocket::bind("127.0.0.1:0").unwrap();
+        client_sock
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        server_sock
+            .set_read_timeout(Some(Duration::from_millis(200)))
+            .unwrap();
+
+        let server = Arc::new(Server {
+            socket: server_sock.try_clone().unwrap(),
+            id: 99,
+            started: Instant::now(),
+            state: Mutex::default(),
+            clients: Mutex::default(),
+            wake: std::sync::Condvar::new(),
+        });
+        let warnings = Warnings::default();
+        let mut buf = [0u8; 1024];
+        let mut throttle = crate::network::Throttle::new();
+
+        // 1. Send an oversized UDP payload (> 1024-byte recv buffer) to trigger WSAEMSGSIZE (10040) on Windows.
+        let oversized = vec![0u8; 2048];
+        client_sock.send_to(&oversized, addr).unwrap();
+        assert!(
+            server.receive_one(&server_sock, &mut buf, Some(&warnings), &mut throttle),
+            "oversized datagram must not stop DSU server"
+        );
+        assert!(warnings.snapshot().is_empty());
+
+        // 2. Immediately send a valid DSU version request (`DSUC`); the server must still be alive and answer (`DSUS`).
+        let mut req = [0u8; 20];
+        req[0..4].copy_from_slice(b"DSUC");
+        req[4..6].copy_from_slice(&1001u16.to_le_bytes());
+        req[6..8].copy_from_slice(&4u16.to_le_bytes());
+        req[16..20].copy_from_slice(&dsu::MSG_VERSION.to_le_bytes());
+        let crc = crc32(&req);
+        req[8..12].copy_from_slice(&crc.to_le_bytes());
+        client_sock.send_to(&req, addr).unwrap();
+        assert!(server.receive_one(&server_sock, &mut buf, Some(&warnings), &mut throttle));
+
+        let mut reply = [0u8; 64];
+        let (len, _) = client_sock.recv_from(&mut reply).unwrap();
+        assert!(len >= 20, "expected DSU version reply, got {len} bytes");
+        assert_eq!(&reply[0..4], b"DSUS");
+
+        // 3. Fatal receive error (`WSAEINVAL` on an unbound socket) must stop the loop and record the console warning.
+        let raw = socket2::Socket::new(
+            socket2::Domain::IPV4,
+            socket2::Type::DGRAM,
+            Some(socket2::Protocol::UDP),
+        )
+        .unwrap();
+        let unbound: UdpSocket = raw.into();
+        let fatal_warnings = Warnings::default();
+        assert!(!server.receive_one(&unbound, &mut buf, Some(&fatal_warnings), &mut throttle));
+        let snap = fatal_warnings.snapshot();
+        assert_eq!(snap.len(), 1);
+        assert_eq!(snap[0].code, WARNING);
+    }
+
+    fn crc32(bytes: &[u8]) -> u32 {
+        let mut crc = 0xffff_ffffu32;
+        for &byte in bytes {
+            crc ^= u32::from(byte);
+            for _ in 0..8 {
+                let mask = (crc & 1).wrapping_neg();
+                crc = (crc >> 1) ^ (0xedb8_8320 & mask);
+            }
+        }
+        !crc
     }
 }

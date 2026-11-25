@@ -331,3 +331,28 @@ fn the_profile_is_added_from_the_default_and_removed_again() {
     assert!(!restored.contains("Vibeshine") && restored.contains("Elden Ring"));
     assert_eq!(without_profile(&restored).unwrap(), None);
 }
+
+#[cfg(windows)]
+#[test]
+fn settings_read_and_write_refuse_reparse_point_components() {
+    let dir = std::env::temp_dir().join(format!("lossless-reparse-{}", uuid::Uuid::new_v4()));
+    let real = dir.join("real");
+    let link = dir.join("Lossless Scaling");
+    std::fs::create_dir_all(&real).unwrap();
+    let target_file = real.join("settings.xml");
+    std::fs::write(&target_file, SETTINGS).unwrap();
+
+    let made = std::process::Command::new("cmd")
+        .args(["/C", "mklink", "/J"])
+        .args([&link, &real].map(|p| p.to_string_lossy().replace('/', "\\")))
+        .output()
+        .unwrap();
+    assert!(made.status.success(), "{made:?}");
+
+    let junctioned = link.join("settings.xml");
+    assert!(read_settings(&junctioned).is_err());
+    assert!(write_settings(&junctioned, b"overwritten").is_err());
+    assert_eq!(std::fs::read_to_string(&target_file).unwrap(), SETTINGS);
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

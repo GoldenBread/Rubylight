@@ -108,7 +108,7 @@ pub struct ImageTurn<'a> {
     _turn: tokio::sync::SemaphorePermit<'a>,
     _device: ImageDevice<'a>,
 }
-struct ImageDevice<'a>(&'a ImageTurns, String);
+pub struct ImageDevice<'a>(&'a ImageTurns, String);
 impl Drop for ImageDevice<'_> {
     fn drop(&mut self) {
         self.0.devices.lock().unwrap().remove(&self.1);
@@ -126,23 +126,31 @@ impl ImageTurns {
             turn: tokio::sync::Semaphore::const_new(1),
         }
     }
-    /// The turn of `device`, after any other image request has ended, or
-    /// `None` while one of its own is waiting or running.
-    pub async fn take(&self, device: &str) -> Option<ImageTurn<'_>> {
-        if !self.devices.lock().unwrap().insert(device.to_owned()) {
-            return None;
-        }
-        // Released if the request is dropped while it waits.
-        let device = ImageDevice(self, device.to_owned());
+    /// Claims `device`'s per-device slot before any slow upload starts.
+    pub fn reserve(&self, device: &str) -> Option<ImageDevice<'_>> {
+        self.devices
+            .lock()
+            .unwrap()
+            .insert(device.to_owned())
+            .then(|| ImageDevice(self, device.to_owned()))
+    }
+    /// Acquires the global conversion turn once upload bytes are ready.
+    pub async fn convert<'a>(&'a self, device: ImageDevice<'a>) -> ImageTurn<'a> {
         let turn = self
             .turn
             .acquire()
             .await
             .expect("the image turn is never closed");
-        Some(ImageTurn {
+        ImageTurn {
             _turn: turn,
             _device: device,
-        })
+        }
+    }
+    /// The turn of `device`, after any other image request has ended, or
+    /// `None` while one of its own is waiting or running.
+    pub async fn take(&self, device: &str) -> Option<ImageTurn<'_>> {
+        let device = self.reserve(device)?;
+        Some(self.convert(device).await)
     }
 }
 pub fn clipboard_client(
@@ -260,13 +268,16 @@ pub async fn clipboard_write(
     if kind == ClipboardType::Png && !is_png_content_type(request.headers()) {
         return StatusCode::UNSUPPORTED_MEDIA_TYPE.into_response();
     }
-    // An image's turn comes before its body is read.
-    let turn = match kind {
-        ClipboardType::Png => match IMAGE_TURNS.take(&device).await {
-            Some(turn) => Some(turn),
+    // Claim the device's slot before reading the upload body so one client
+    // cannot queue parallel image uploads; hold the global conversion turn only
+    // once the upload finishes so slow clients never stall other devices.
+    let device_slot = if kind == ClipboardType::Png {
+        match IMAGE_TURNS.reserve(&device) {
+            Some(slot) => Some(slot),
             None => return StatusCode::TOO_MANY_REQUESTS.into_response(),
-        },
-        ClipboardType::Text => None,
+        }
+    } else {
+        None
     };
     let body = match body_within(request.into_body(), limit).await {
         Ok(body) => body,
@@ -279,6 +290,10 @@ pub async fn clipboard_write(
             }
             return status.into_response();
         }
+    };
+    let turn = match device_slot {
+        Some(slot) => Some(IMAGE_TURNS.convert(slot).await),
+        None => None,
     };
     if kind == ClipboardType::Png {
         let write = move || {

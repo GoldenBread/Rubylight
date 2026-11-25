@@ -397,11 +397,10 @@ impl Session {
         };
         close_lossless(&applied.program, applied.session);
         let settings = applied.settings;
-        let restored = std::fs::read_to_string(&settings)
-            .map_err(anyhow::Error::from)
+        let restored = read_settings(&settings)
             .and_then(|text| without_profile(&text))
             .and_then(|text| match text {
-                Some(text) => butterpollo_session::state::atomic_write(&settings, text.as_bytes()),
+                Some(text) => write_settings(&settings, text.as_bytes()),
                 None => Ok(()),
             });
         match restored {
@@ -554,6 +553,51 @@ fn run(
         current = Some(game);
     }
 }
+/// Verifies that no existing component in `path` is a reparse point (junction or
+/// symlink) before the host (often running elevated) reads or writes it.
+fn refuse_reparse_points(path: &Path) -> Result<()> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0400;
+
+        let mut current = std::path::PathBuf::new();
+        for component in path.components() {
+            current.push(component);
+            if matches!(
+                component,
+                std::path::Component::Prefix(_) | std::path::Component::RootDir
+            ) {
+                continue;
+            }
+            match std::fs::symlink_metadata(&current) {
+                Ok(meta) => {
+                    anyhow::ensure!(
+                        meta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT == 0,
+                        "refusing reparse point in {}",
+                        current.display()
+                    );
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(error) => {
+                    return Err(error).with_context(|| format!("checking {}", current.display()));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn read_settings(path: &Path) -> Result<String> {
+    refuse_reparse_points(path)?;
+    std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))
+}
+
+fn write_settings(path: &Path, contents: &[u8]) -> Result<()> {
+    refuse_reparse_points(path)?;
+    butterpollo_session::state::atomic_write(path, contents)
+}
+
 fn apply_game(
     options: &Options,
     program: &Path,
@@ -568,8 +612,7 @@ fn apply_game(
     if stop.load(Ordering::Acquire) {
         return Ok(());
     }
-    let text = std::fs::read_to_string(settings)
-        .with_context(|| format!("reading {}", settings.display()))?;
+    let text = read_settings(settings)?;
     let updated = with_profile(
         &text,
         &options.profile,
@@ -580,7 +623,7 @@ fn apply_game(
             std::slice::from_ref(&game.process.name),
         ),
     )?;
-    butterpollo_session::state::atomic_write(settings, updated.as_bytes())?;
+    write_settings(settings, updated.as_bytes())?;
     *applied.lock().unwrap() = Some(Applied {
         settings: settings.to_owned(),
         program: program.to_owned(),

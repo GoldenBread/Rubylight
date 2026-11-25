@@ -17,20 +17,48 @@ use tokio::{
 /// connecting to send it, and as long again to take the response.
 const HANDSHAKE_DEADLINE: Duration = Duration::from_secs(10);
 
+#[derive(Debug)]
+struct UnauthorizedPeer;
+impl std::fmt::Display for UnauthorizedPeer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("no authorized RTSP launch")
+    }
+}
+impl std::error::Error for UnauthorizedPeer {}
+
+const MAX_CONNECTIONS: usize = 64;
+
 pub async fn serve(address: SocketAddr, h: Shared, media: Arc<crate::stream::Media>) -> Result<()> {
     let listener = crate::network::tcp(address)?;
     let configurations = Arc::new(Mutex::new(HashMap::new()));
     let microphones = Arc::new(Mutex::new(HashSet::new()));
+    let connections = Arc::new(tokio::sync::Semaphore::new(MAX_CONNECTIONS));
+    let refused_warn = Arc::new(Mutex::new(crate::network::Throttle::new()));
+    let unauthorized_warn = Arc::new(Mutex::new(crate::network::Throttle::new()));
     tracing::debug!(%address,"RTSP listener ready");
     loop {
         let (socket, peer) = crate::network::accept(&listener).await;
+        let Ok(permit) = connections.clone().try_acquire_owned() else {
+            if let Some(skipped) = refused_warn.lock().unwrap().allow() {
+                tracing::warn!(%peer, skipped, "RTSP connection rejected: connection cap reached");
+            }
+            continue;
+        };
         let accepted = tokio::time::Instant::now();
         let h = h.clone();
         let media = media.clone();
         let configs = configurations.clone();
         let mics = microphones.clone();
+        let unauthorized_warn = unauthorized_warn.clone();
         tokio::spawn(async move {
+            let _permit = permit;
             if let Err(e) = connection(socket, peer, accepted, h, media, configs, mics).await {
+                if e.downcast_ref::<UnauthorizedPeer>().is_some() {
+                    if let Some(skipped) = unauthorized_warn.lock().unwrap().allow() {
+                        tracing::warn!(%peer, skipped, error = %format!("{e:#}"), "RTSP request rejected");
+                    }
+                    return;
+                }
                 // A client closing a connection early is routine; anything else
                 // prevents a stream from starting and must be visible.
                 let closed = e.downcast_ref::<std::io::Error>().is_some_and(|e| {
@@ -114,7 +142,7 @@ async fn connection(
     };
     drop(expired);
     if launches.is_empty() {
-        bail!("no authorized RTSP launch");
+        return Err(UnauthorizedPeer.into());
     }
     #[cfg(any(test, feature = "test-support"))]
     if let Some(fixture) = &h.reconnect_fixture {
@@ -555,14 +583,19 @@ async fn connection(
         tracing::info!(method = %req.method, ok = result.is_ok(), ms = began.elapsed().as_millis() as u64, "RTSP request timing");
         if let Err(error) = result {
             tracing::warn!(client = %launch.client.name, method = %req.method, error = %format!("{error:#}"), "RTSP request rejected");
-            h.record_launch_failure(&launch.client.uuid, &format!("{error:#}"));
+            let unoffered_mic = req.method == "SETUP" && req.target.contains("=mic");
+            let duplicate_play =
+                req.method == "PLAY" && h.sessions.lock().unwrap().active.contains_key(&launch.id);
+            if !unoffered_mic && !duplicate_play {
+                h.record_launch_failure(&launch.client.uuid, &format!("{error:#}"));
+            }
             (code, reason) = if host_fault {
                 (500, "Internal Server Error")
             } else {
                 (400, "Bad Request")
             };
             headers.clear();
-            body = format!("{error:#}").into_bytes();
+            body = reason.as_bytes().to_vec();
         }
         if code != 200 {
             tracing::warn!(
@@ -696,88 +729,4 @@ pub(crate) fn note_pyrowave_minimum(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use butterpollo_session::session::Warnings;
-
-    #[test]
-    fn a_codec_refusal_clears_when_a_retry_asks_for_an_available_codec() {
-        let warnings = Warnings::default();
-        note_codec_refusal(&warnings, Some("AV1 encoding is not available.".into()));
-        let shown = warnings.snapshot();
-        assert_eq!(shown.len(), 1);
-        assert_eq!(shown[0].code, "codec_unavailable");
-        assert_eq!(shown[0].message, "AV1 encoding is not available.");
-        note_codec_refusal(&warnings, None);
-        assert!(warnings.snapshot().is_empty());
-        // Clearing with nothing shown is harmless.
-        note_codec_refusal(&warnings, None);
-        assert!(warnings.snapshot().is_empty());
-    }
-
-    fn pyrowave_stream(bitrate_kbps: u32, configured_kbps: u32) -> Negotiated {
-        Negotiated {
-            codec: 3,
-            width: 3840,
-            height: 2160,
-            fps: 120,
-            rate_millihz: 120_000,
-            bitrate_kbps,
-            configured_bitrate_kbps: configured_kbps,
-            ..Negotiated::default()
-        }
-    }
-
-    #[test]
-    fn a_pyrowave_stream_below_the_test_scene_level_is_warned_about_not_refused() {
-        let warnings = Warnings::default();
-        note_pyrowave_minimum(&warnings, &pyrowave_stream(799_000, 800_000));
-        let shown = warnings.snapshot();
-        assert_eq!(shown.len(), 1);
-        assert_eq!(shown[0].code, "pyrowave_minimum");
-        assert!(
-            shown[0].message.contains("1493 Mbps"),
-            "{}",
-            shown[0].message
-        );
-        assert!(
-            shown[0].message.contains("799 Mbps"),
-            "{}",
-            shown[0].message
-        );
-        // At the floor the client asked for, the picture's few Mbps to sound and control do not
-        // count as below it: the game runs, with no warning.
-        note_pyrowave_minimum(&warnings, &pyrowave_stream(1_489_420, 1_492_992));
-        assert!(warnings.snapshot().is_empty());
-        // Another codec clears a warning left by an earlier negotiation.
-        note_pyrowave_minimum(&warnings, &pyrowave_stream(799_000, 800_000));
-        let mut hevc = pyrowave_stream(799_000, 800_000);
-        hevc.codec = 1;
-        note_pyrowave_minimum(&warnings, &hevc);
-        assert!(warnings.snapshot().is_empty());
-    }
-
-    #[test]
-    fn the_floor_uses_the_whole_frame_rate_not_the_fractional_one() {
-        // 59.94 fps must be judged at 60 fps, as the client's minimum is; a stream between the two
-        // floors is warned about.
-        let mut stream = Negotiated {
-            codec: 3,
-            width: 1920,
-            height: 1080,
-            fps: 60,
-            rate_millihz: 59_940,
-            bitrate_kbps: 186_500,
-            configured_bitrate_kbps: 186_500,
-            ..Negotiated::default()
-        };
-        let warnings = Warnings::default();
-        note_pyrowave_minimum(&warnings, &stream);
-        assert_eq!(warnings.snapshot().len(), 1);
-        // The 60 fps floor itself passes.
-        stream.bitrate_kbps = 186_624;
-        stream.configured_bitrate_kbps = 186_624;
-        note_pyrowave_minimum(&warnings, &stream);
-        assert!(warnings.snapshot().is_empty());
-    }
-}
+mod tests;

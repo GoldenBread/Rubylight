@@ -158,7 +158,9 @@ pub(super) async fn serverinfo(
     serverinfo_response(
         &h,
         &connection,
+        &headers,
         &config,
+        Some(offered_config),
         client.as_ref(),
         windows_11,
         mac,
@@ -185,7 +187,9 @@ fn note_client_agent(h: &Shared, uuid: &str, headers: &axum::http::HeaderMap) {
 pub fn serverinfo_response(
     h: &Shared,
     connection: &Connection,
+    headers: &axum::http::HeaderMap,
     config: &butterpollo_config::config::Config,
+    offered_config: Option<&butterpollo_config::config::Config>,
     client: Option<&Client>,
     windows_11: bool,
     mac: String,
@@ -215,7 +219,7 @@ pub fn serverinfo_response(
     let game = remote_game(h);
     // GameStream's public state is scoped to the requesting client. Local
     // maintenance needs the actual session counts, including queued launches.
-    let local = crate::network::from_this_pc(connection.peer);
+    let local = crate::network::browser_on_this_pc(connection.peer, connection.local, headers);
     let (session_count, pending_count) = if local {
         let mut sessions = h.sessions.lock().unwrap();
         let expired = sessions.expire();
@@ -353,7 +357,7 @@ pub fn serverinfo_response(
         ),
         (
             "RustHostProfile",
-            if crate::network::from_this_pc(connection.peer) {
+            if crate::network::browser_on_this_pc(connection.peer, connection.local, headers) {
                 butterpollo_session::migration::profile_id(&h.directory)
             } else {
                 String::new()
@@ -455,8 +459,15 @@ pub fn serverinfo_response(
                 .to_string(),
         ));
     }
-    let device_config = client.and_then(|client| crate::stream::device_config(h, client).ok());
-    let offered_config = device_config.as_ref().unwrap_or(config);
+    let owned_device_config;
+    let offered_config = match offered_config {
+        Some(offered) => offered,
+        None => {
+            owned_device_config =
+                client.and_then(|client| crate::stream::device_config(h, client).ok());
+            owned_device_config.as_ref().unwrap_or(config)
+        }
+    };
     fields.extend(crate::extensions::offered(h, offered_config).serverinfo_fields());
     fields.extend(commands.into_iter().map(|name| ("ServerCommand", name)));
     xml(200, &fields, None)
@@ -467,7 +478,11 @@ mod tests {
     use super::*;
     use axum::body::to_bytes;
 
-    async fn serverinfo_xml(h: &Shared, client: Option<&Client>) -> String {
+    async fn serverinfo_xml_with_headers(
+        h: &Shared,
+        headers: &axum::http::HeaderMap,
+        client: Option<&Client>,
+    ) -> String {
         let connection = Connection {
             local: "127.0.0.1:47984".parse().unwrap(),
             peer: "127.0.0.1:50000".parse().unwrap(),
@@ -479,7 +494,9 @@ mod tests {
         let response = serverinfo_response(
             h,
             &connection,
+            headers,
             &config,
+            None,
             client,
             true,
             "00:00:00:00:00:00".into(),
@@ -488,6 +505,12 @@ mod tests {
         );
         let bytes = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
         String::from_utf8(bytes.to_vec()).unwrap()
+    }
+
+    async fn serverinfo_xml(h: &Shared, client: Option<&Client>) -> String {
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert(axum::http::header::HOST, "127.0.0.1:47984".parse().unwrap());
+        serverinfo_xml_with_headers(h, &headers, client).await
     }
 
     #[tokio::test]
@@ -534,6 +557,26 @@ mod tests {
         assert!(
             !muted_body.contains(&tag),
             "device audio_passthrough=false must omit {tag}: {muted_body}"
+        );
+    }
+
+    #[tokio::test]
+    async fn serverinfo_denies_local_trust_when_forwarded_or_foreign_origin_present() {
+        let f = crate::state::test_support::Fixture::new();
+        let mut clean = axum::http::HeaderMap::new();
+        clean.insert(axum::http::header::HOST, "127.0.0.1:47984".parse().unwrap());
+        let direct_body = serverinfo_xml_with_headers(&f.host, &clean, None).await;
+        assert!(
+            direct_body.contains("<RustHostApplicationActive>0</RustHostApplicationActive>"),
+            "direct loopback must show local fields: {direct_body}"
+        );
+
+        let mut proxied = clean;
+        proxied.insert("x-forwarded-for", "203.0.113.7".parse().unwrap());
+        let proxied_body = serverinfo_xml_with_headers(&f.host, &proxied, None).await;
+        assert!(
+            !proxied_body.contains("<RustHostApplicationActive>0</RustHostApplicationActive>"),
+            "forwarded request on loopback must not count as local: {proxied_body}"
         );
     }
 }
