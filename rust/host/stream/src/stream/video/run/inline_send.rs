@@ -368,7 +368,8 @@ mod tests {
     fn partial_batch_send_records_only_packets_that_reached_the_socket() {
         let f = Fixture::new();
         let session = f.session(f.client(u32::MAX), Role::Stream);
-        let mut pacer = butterpollo_media_policy::network_pacing::Pacer::new(Instant::now());
+        let now = Instant::now();
+        let mut pacer = butterpollo_media_policy::network_pacing::Pacer::new(now);
         // Construct 4 synthetic RTP-like packets with sequence numbers 1..=4.
         let packets: Vec<Vec<u8>> = (1u16..=4)
             .map(|seq| {
@@ -378,7 +379,6 @@ mod tests {
                 p
             })
             .collect();
-        let now = Instant::now();
         // Simulate a partial batch where only 2 of 4 packets left the socket.
         record_inline_sent(
             &session,

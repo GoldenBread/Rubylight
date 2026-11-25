@@ -588,15 +588,15 @@ fn client_hooks_use_the_saved_environment_on_disconnect() {
 fn output_redirection_preserves_shell_opening_for_uris_and_shortcuts() {
     assert_eq!(
         redirected_command("steam://rungameid/570", "NUL"),
-        r#"(start "" "steam://rungameid/570") 1>>"NUL" 2>&1"#
+        r#"(start "" /wait "steam://rungameid/570") 1>>"NUL" 2>&1"#
     );
     assert_eq!(
         redirected_command("ms-settings:display", r"C:\logs\out.txt"),
-        r#"(start "" "ms-settings:display") 1>>"C:\logs\out.txt" 2>&1"#
+        r#"(start "" /wait "ms-settings:display") 1>>"C:\logs\out.txt" 2>&1"#
     );
     assert_eq!(
         redirected_command(r#""C:\Games\My Game.lnk""#, "NUL"),
-        r#"(start "" "C:\Games\My Game.lnk") 1>>"NUL" 2>&1"#
+        r#"(start "" /wait "C:\Games\My Game.lnk") 1>>"NUL" 2>&1"#
     );
     assert_eq!(
         redirected_command(r#""C:\Games\game.exe" --windowed"#, "NUL"),
@@ -621,4 +621,6 @@ fn game_pids_includes_foreign_tracked_processes_for_audio_restore() {
     running.foreign.insert(current, started);
     assert!(running.has_game_process());
     assert!(running.game_pids().unwrap().contains(&current));
+    // Clear before drop so `RunningApp::drop` does not terminate this test process.
+    running.foreign.clear();
 }

@@ -224,13 +224,13 @@ fn non_terminating_switch_enforces_owner_webrtc_exclusivity_and_preserves_nucleu
     // Active WebRTC stream owned by `owner` blocks another device's non-terminating switch.
     let mut webrtc_launch = f.launch(owner_client.clone(), Role::Stream);
     webrtc_launch.transport = Transport::WebRtc;
-    let webrtc_stream = f
-        .host
+    let webrtc_stream = crate::state::Session::new(webrtc_launch, Default::default());
+    f.host
         .sessions
         .lock()
         .unwrap()
-        .start(webrtc_launch, Default::default())
-        .unwrap();
+        .active
+        .insert(webrtc_stream.launch.id.clone(), webrtc_stream.clone());
     assert_eq!(
         stop_streams_for(&f.host, "other", false),
         StopStreams::Refused
@@ -245,13 +245,13 @@ fn non_terminating_switch_enforces_owner_webrtc_exclusivity_and_preserves_nucleu
         session: 1,
         slot: 0,
     });
-    let coop_stream = f
-        .host
+    let coop_stream = crate::state::Session::new(coop_launch, Default::default());
+    f.host
         .sessions
         .lock()
         .unwrap()
-        .start(coop_launch, Default::default())
-        .unwrap();
+        .active
+        .insert(coop_stream.launch.id.clone(), coop_stream.clone());
     let host = f.host.clone();
     let id = webrtc_stream.launch.id.clone();
     let worker = std::thread::spawn({
