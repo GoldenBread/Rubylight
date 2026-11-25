@@ -1,0 +1,3 @@
+• Shared Rust core across Android and desktop for discovery, pairing, host management, game library, file transfers, PIN lock, updates, session recovery, video pacing, and controller policies.
+• Non-blocking cancellation for stalled host status polls and reduced Android controller mouse-packet lock contention.
+• Unified settings catalog and modular client codebase preserving existing settings, pairings, and streaming behaviour.
