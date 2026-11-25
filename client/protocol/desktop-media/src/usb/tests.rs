@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use nightjar_core::usb::wire;
+use rusb::TransferType;
 use rusb::constants::{LIBUSB_ERROR_NO_DEVICE, LIBUSB_ERROR_PIPE, LIBUSB_ERROR_TIMEOUT, LIBUSB_SUCCESS};
 
 use super::libusb::*;

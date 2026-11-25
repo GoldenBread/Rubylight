@@ -161,6 +161,7 @@ impl CachedImport {
     ///
     /// # Safety
     /// `descriptor`'s descriptors are open.
+    #[allow(clippy::too_many_arguments)]
     unsafe fn new(
         vulkan: &Arc<ImportDevice>,
         descriptor: &Descriptor,

@@ -247,14 +247,8 @@ pub unsafe fn present_after_egl_swap(
             // SAFETY: plain timer sleep on the render thread.
             unsafe { SDL_DelayNS(sleep_ns) };
         }
-        let Some(next) = phase::egl_sync_sample(renderer, refresh_hz) else {
-            return None;
-        };
-        last = next;
-        let Some(busy) = phase::egl_swap_check(last.surface, last.sbc) else {
-            return None;
-        };
-        in_flight = busy;
+        last = phase::egl_sync_sample(renderer, refresh_hz)?;
+        in_flight = phase::egl_swap_check(last.surface, last.sbc)?;
     }
     // SAFETY: caller guarantees `renderer` is the live renderer of this thread.
     let ok = unsafe { SDL_RenderPresent(renderer) };
