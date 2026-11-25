@@ -88,7 +88,11 @@ impl PrecisionTouchpad {
                         x: scale(contact.x, self.extent.0),
                         y: scale(contact.y, self.extent.1),
                     };
-                    match slot.or_else(|| self.slots.iter().position(Option::is_none)) {
+                    match slot.or_else(|| {
+                        (0..MAX_CONTACTS).find(|&s| {
+                            self.slots[s].is_none() && !self.lifted.iter().any(|&(l, _, _)| l == s)
+                        })
+                    }) {
                         Some(slot) => self.slots[slot] = Some(finger),
                         // A sixth finger has no slot.
                         None => continue,
@@ -264,5 +268,8 @@ impl Device for PrecisionTouchpad {
     }
     fn interrupt_ready(&self, endpoint: u8) -> bool {
         endpoint == ENDPOINT && !self.queue.is_empty()
+    }
+    fn interrupt_queued(&self, endpoint: u8) -> bool {
+        self.interrupt_ready(endpoint)
     }
 }

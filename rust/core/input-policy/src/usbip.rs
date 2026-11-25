@@ -115,6 +115,13 @@ pub trait Device: Send + 'static {
     fn interrupt_ready(&self, _endpoint: u8) -> bool {
         true
     }
+    /// Whether an IN endpoint still has additional queued reports buffered behind the one
+    /// just sent, so subsequent waiting URBs should drain immediately without sleeping for
+    /// `period`. Periodic endpoints leave this `false` so ping-pong URBs stay paced at
+    /// `period` instead of spinning.
+    fn interrupt_queued(&self, _endpoint: u8) -> bool {
+        false
+    }
     fn output(&mut self, _endpoint: u8, _data: &[u8]) -> bool {
         false
     }

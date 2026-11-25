@@ -34,6 +34,8 @@ const TAP_TIME: Duration = Duration::from_millis(250);
 const TAP_SLOP: f32 = 12.0;
 /// Wheel units (120 a notch) per stream pixel two fingers move, at 100 %.
 const SCROLL_PER_PIXEL: f32 = 2.0;
+/// Cap tracked contacts so unbounded unique `DOWN` IDs cannot grow `fingers` without limit.
+const MAX_FINGERS: usize = 16;
 
 /// A device's touch profile, from its effective configuration.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -100,7 +102,7 @@ impl TouchProfile {
         let size = [size.0.max(1) as f32, size.1.max(1) as f32];
         let mouse = settings.mode == TouchMode::Mouse;
         match event {
-            DOWN if self.fingers.iter().all(|f| f.id != id) => {
+            DOWN if self.fingers.len() < MAX_FINGERS && self.fingers.iter().all(|f| f.id != id) => {
                 if self.fingers.is_empty() {
                     self.began = Some(now);
                     self.most = 0;

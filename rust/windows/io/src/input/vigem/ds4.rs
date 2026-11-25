@@ -150,31 +150,32 @@ impl Ds4Report {
         }
         self.0[33] = self.0[33].wrapping_add(1);
     }
-    /// Moonlight battery state and percentage, in the DS4's battery fields
+    /// Moonlight battery state (`1=NOT_PRESENT`, `2=DISCHARGING`, `3=CHARGING`,
+    /// `4=NOT_CHARGING`, `5=FULL`) and percentage, in the DS4's battery fields
     /// (hid-playstation.c).
     pub(super) fn battery(&mut self, state: u8, percent: u8) {
         match state {
-            2 | 3 => {
-                if state == 3 {
-                    self.0[29] |= 0x10;
-                } else {
+            2..=4 => {
+                if state == 2 {
                     self.0[29] &= !0x10;
+                } else {
+                    self.0[29] |= 0x10;
                 }
                 if self.0[29] & 15 > 10 {
                     self.0[29] = (self.0[29] & !15) | 5;
                 }
             }
-            4 => {
+            5 => {
                 self.0[29] = 0x1b;
                 self.0[11] = 255;
             }
-            1 | 5 => self.0[29] = 0x1f,
+            1 => self.0[29] = 0x1f,
             _ => {}
         }
         if percent != 255 {
             let percent = percent.min(100);
             self.0[11] = (u16::from(percent) * 255 / 100) as u8;
-            if self.0[29] & 0x10 != 0 && self.0[29] & 15 <= 10 {
+            if self.0[29] & 15 <= 10 {
                 self.0[29] = (self.0[29] & !15) | ((percent + 5) / 10);
             }
         }

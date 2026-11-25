@@ -5,6 +5,10 @@ use super::*;
 mod batching_held;
 mod display_layout;
 
+/// Serializes tests that exercise process-global `HELD` entries for mouse button 1
+/// (`(false, 1)` and `(false, 1 | VIRTUAL_BUTTON_FLAG)`).
+pub(super) static BUTTON1_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[test]
 fn input_starts_before_the_stream_display_exists_and_ignores_absolute_input() {
     // Keyboard and controller input, including a controller's one-time
@@ -182,6 +186,7 @@ fn a_trackpad_touch_profile_sends_touches_as_mouse_input() {
 }
 #[test]
 fn relative_mouse_releases_a_deferred_absolute_click_before_moving() {
+    let _button1 = BUTTON1_LOCK.lock().unwrap();
     for batched in [false, true] {
         let mut injector = recording();
         injector.lookup = None;

@@ -96,6 +96,42 @@ fn only_the_driver_refusing_its_handle_is_a_lost_driver() {
         error.downcast_ref::<windows::core::Error>().unwrap().code(),
         E_HANDLE
     );
+    // #138: create_controller (0x801) returning ERROR_NO_MORE_ITEMS (0x80070103) also marks
+    // the handle lost so the thread closes it and reopens cleanly without hammering all slots.
+    let no_more_plug = plug_error(ERROR_NO_MORE_ITEMS.into());
+    assert!(driver_lost(&no_more_plug), "{no_more_plug:#}");
+    assert_eq!(
+        no_more_plug
+            .downcast_ref::<windows::core::Error>()
+            .unwrap()
+            .code(),
+        ERROR_NO_MORE_ITEMS.to_hresult()
+    );
+    assert!(driver_lost(&plug_error(E_HANDLE.into())));
+    assert!(!driver_lost(&plug_error(ERROR_DEVICE_REMOVED.into())));
+}
+
+#[test]
+fn vhf_battery_state_translates_moonlight_not_charging_and_full_codes() {
+    use rubylight_vgamepad_proto::protocol::BatteryState;
+    for (moonlight, expected) in [
+        (0u8, BatteryState::Unknown),
+        (1, BatteryState::NotPresent),
+        (2, BatteryState::Discharging),
+        (3, BatteryState::Charging),
+        (4, BatteryState::NotCharging),
+        (5, BatteryState::Full),
+        (6, BatteryState::Unknown),
+    ] {
+        let translated = vhf_battery_state(moonlight);
+        assert_eq!(
+            BatteryState::from_raw(translated),
+            expected,
+            "moonlight state {moonlight} -> {translated}"
+        );
+    }
+    assert_eq!(vhf_battery_state(4), 5);
+    assert_eq!(vhf_battery_state(5), 4);
 }
 
 #[test]

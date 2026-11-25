@@ -443,13 +443,14 @@ pub(super) fn report<D: Device>(shared: &Shared<D>) {
                 None => link.held.push(transfer),
             }
         }
-        // Drain back-to-back queued HID reports onto subsequent waiting URBs immediately
-        // instead of sleeping for `shared.period` between reports.
+        // Drain back-to-back queued HID/bulk reports onto subsequent waiting URBs immediately
+        // instead of sleeping for `shared.period` between reports. Periodic endpoints return
+        // `interrupt_queued() == false` so ping-pong URBs stay paced at `shared.period`.
         let more_ready = sent
             && link
                 .pending
                 .iter()
-                .any(|t| device.interrupt_ready(t.endpoint));
+                .any(|t| device.interrupt_queued(t.endpoint));
         drop(device);
         if sent {
             link.changed = more_ready;

@@ -162,7 +162,7 @@ pub struct Injector {
     /// left-button release held back meanwhile.
     absolute: bool,
     left_release: Option<std::time::Instant>,
-    left_release_virtual: std::cell::Cell<bool>,
+    left_release_virtual: bool,
     forced_route: std::cell::Cell<Option<MouseRoute>>,
     pending: Pending,
     /// SendInput, or a stand-in in tests.
@@ -294,7 +294,7 @@ impl Injector {
             display_warned: None,
             absolute: false,
             left_release: None,
-            left_release_virtual: std::cell::Cell::new(false),
+            left_release_virtual: false,
             forced_route: std::cell::Cell::new(None),
             pending: Pending::default(),
             inject,
@@ -325,8 +325,11 @@ impl Injector {
             tracing::info!(layout = ?self.layout, "keys follow a keyboard layout");
         }
     }
+    /// Compatibility wrapper for callers that still invoke this before [`Self::due`].
+    /// [`Self::due`] now releases both virtual and injected deferred left-button releases
+    /// under a single timestamp.
     pub fn flush_virtual_left_release(&mut self) -> Result<()> {
-        if self.left_release_virtual.get()
+        if self.left_release_virtual
             && self
                 .left_release
                 .is_some_and(|due| std::time::Instant::now() >= due)
@@ -344,7 +347,6 @@ impl Injector {
                 first.get_or_insert(error);
             }
         };
-        keep(self.flush_virtual_left_release());
         keep(self.due());
         let now = std::time::Instant::now();
         // A game can change its display's resolution or position mid-stream,
@@ -409,7 +411,7 @@ impl Injector {
         if self.left_release.take().is_none() {
             return Ok(());
         }
-        let was_virtual = self.left_release_virtual.replace(false);
+        let was_virtual = std::mem::take(&mut self.left_release_virtual);
         self.release_button_on_route(1, was_virtual, teardown)
     }
     /// The controllers' thread, started here when the injector has none yet: making an

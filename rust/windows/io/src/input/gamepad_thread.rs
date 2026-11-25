@@ -40,19 +40,22 @@ use worker::run;
 /// How often feedback is polled and the back button emulated while a pad is
 /// plugged in, as the control loop and the C++ host's feedback thread did.
 const POLL: Duration = Duration::from_millis(8);
-/// How long to wait before opening a driver that failed to open again:
-/// opening enumerates devices.
-const RETRY: Duration = Duration::from_secs(10);
-/// How long after the driver refused the pads' handle it is opened again
-/// (#138). From the LOST_LIMIT'th refusal without pads that worked for
-/// LOST_SPAN in between, it waits RETRY and the console warns; from the
-/// STOP_LIMIT'th, it is opened again only at input, SLOW_RETRY RETRYs (a
-/// minute) apart, until the next stream or launch begins. Only refusals
-/// count: a driver that won't open is tried every RETRY, as ever.
+/// Graduated retry backoff for driver handle refusals and failed opens (#138):
+/// 2 s -> 5 s -> 15 s -> 60 s instead of jumping straight to a 60 s lockout.
+/// From the LOST_LIMIT'th refusal without pads that worked for LOST_SPAN in
+/// between, the console warns; from the STOP_LIMIT'th, it opens only at input
+/// (at most once per 60 s) until a controller freshly arrives or the next
+/// stream or launch begins.
+const BACKOFF: [Duration; 4] = [
+    Duration::from_secs(2),
+    Duration::from_secs(5),
+    Duration::from_secs(15),
+    Duration::from_secs(60),
+];
+/// Fast poll interval while bounded PnP recovery is actively restarting the driver.
 const REOPEN: Duration = Duration::from_secs(1);
 const LOST_LIMIT: usize = 3;
-const STOP_LIMIT: usize = 5;
-const SLOW_RETRY: u32 = 6;
+const STOP_LIMIT: usize = 4;
 const LOST_SPAN: Duration = Duration::from_secs(60);
 /// The warning for a driver that keeps refusing the pads' handle.
 const DRIVER_LOST: &str = "input_gamepad_driver";
@@ -306,7 +309,7 @@ impl GamepadThread {
         let polling = Polling {
             every: POLL,
             fast: policy.feedback_fast_poll,
-            retry: RETRY,
+            backoff: BACKOFF,
             reopen: REOPEN,
         };
         let mut thread = Self::spawn_polled(
@@ -330,7 +333,7 @@ impl GamepadThread {
             Polling {
                 every: POLL,
                 fast: false,
-                retry: RETRY,
+                backoff: BACKOFF,
                 reopen: REOPEN,
             },
         )

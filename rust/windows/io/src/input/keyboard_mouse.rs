@@ -201,11 +201,10 @@ impl Injector {
     pub fn due(&mut self) -> Result<()> {
         let now = std::time::Instant::now();
         let mut first = None;
-        if self.left_release.is_some_and(|due| now >= due) {
-            self.left_release = None;
-            if let Err(error) = self.held(false, 1, false, true, Self::button(1, false)) {
-                first.get_or_insert(error);
-            }
+        if self.left_release.is_some_and(|due| now >= due)
+            && let Err(error) = self.release_deferred_left(false)
+        {
+            first.get_or_insert(error);
         }
         if let Some((key, flags, modifiers, due)) = self.repeat
             && now >= due

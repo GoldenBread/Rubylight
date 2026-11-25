@@ -103,6 +103,31 @@ pub(super) fn driver_error(error: windows::core::Error) -> anyhow::Error {
     }
 }
 
+/// A VHF create-controller (`0x801`) answer: both `E_HANDLE` (`0x80070006`) and
+/// `ERROR_NO_MORE_ITEMS` (`0x80070103`, stale child/slot after AFK disconnect)
+/// mark the handle lost so the thread closes it and reopens cleanly (#138).
+pub(super) fn plug_error(error: windows::core::Error) -> anyhow::Error {
+    if error.code() == E_HANDLE || error.code() == ERROR_NO_MORE_ITEMS.to_hresult() {
+        anyhow::Error::new(error).context(DriverLost)
+    } else {
+        error.into()
+    }
+}
+
+/// Translates Moonlight's `LI_BATTERY_STATE_*` (`4=NOT_CHARGING`, `5=FULL`)
+/// to [`rubylight_vgamepad_proto::protocol::BatteryState`] (`4=Full`, `5=NotCharging`).
+pub(super) fn vhf_battery_state(state: u8) -> u8 {
+    use rubylight_vgamepad_proto::protocol::BatteryState;
+    (match state {
+        1 => BatteryState::NotPresent,
+        2 => BatteryState::Discharging,
+        3 => BatteryState::Charging,
+        4 => BatteryState::NotCharging,
+        5 => BatteryState::Full,
+        _ => BatteryState::Unknown,
+    }) as u8
+}
+
 pub(super) enum Backend {
     /// The VHF gamepad driver, which the installer brings: Xbox One, Xbox
     /// Series, DualShock 4, DualSense, Switch Pro and Steam Controller pads in
@@ -152,7 +177,7 @@ impl Backend {
         let handle = match open_interface(VHF_INTERFACE) {
             Ok(handle) => handle,
             Err(error) => {
-                if matches!(recovery::inspect(), recovery::DevnodeState::Failed(_)) {
+                if recovery::should_request_for_open_error(&error, recovery::inspect()) {
                     let _ = recovery::request();
                 }
                 return Err(error);
@@ -231,7 +256,7 @@ impl Backend {
         let mut b = request(16, Some(slot));
         b.extend_from_slice(&profile.to_le_bytes());
         b.extend_from_slice(&0u16.to_le_bytes());
-        self.call(0x801, &b, 0)?;
+        self.ioctl(0x801, &b, 0).map_err(plug_error)?;
         Ok(())
     }
     pub(super) fn unplug(&mut self, slot: u32) -> Result<()> {
@@ -307,7 +332,7 @@ impl Backend {
             return client.battery(slot, state, percent);
         }
         let mut b = request(16, Some(slot));
-        b.extend_from_slice(&[percent, state, 0, 0]);
+        b.extend_from_slice(&[percent, vhf_battery_state(state), 0, 0]);
         self.call(0x807, &b, 0)?;
         Ok(())
     }

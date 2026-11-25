@@ -17,6 +17,7 @@ const COOLDOWN: Duration = Duration::from_secs(60);
 const PROBE_INTERVAL: Duration = Duration::from_secs(5);
 const SETTLE_WINDOW: Duration = Duration::from_secs(5);
 const MAX_ATTEMPTS: u8 = 3;
+const MAX_PROBES: u8 = 3;
 const HARDWARE_ID: &str = rubylight_vgamepad_proto::protocol::ROOT_HARDWARE_ID;
 /// `hidvhf.inf`'s `vhfservice.NT.Services` installs `vhf` as the function
 /// driver, with `WUDFRd` as the upper filter for `rubylight_vgamepad.dll`.
@@ -47,23 +48,44 @@ pub(crate) enum RecoveryState {
 struct Budget {
     attempts: u8,
     last_attempt: Option<Instant>,
+    probes: u8,
+    last_probe: Option<Instant>,
     restart_required: bool,
 }
 impl Budget {
     fn available(&self, now: Instant) -> bool {
+        let probe_ok = self.probes < MAX_PROBES
+            || self
+                .last_probe
+                .is_none_or(|last| now.duration_since(last) >= COOLDOWN);
         !self.restart_required
             && self.attempts < MAX_ATTEMPTS
             && self
                 .last_attempt
                 .is_none_or(|last| now.duration_since(last) >= COOLDOWN)
+            && probe_ok
     }
     fn attempted(&mut self, now: Instant, restart_required: bool) {
         self.attempts += 1;
         self.last_attempt = Some(now);
+        self.probes = 0;
+        self.last_probe = None;
         self.restart_required |= restart_required;
+    }
+    fn probed(&mut self, now: Instant) {
+        if self
+            .last_probe
+            .is_some_and(|last| now.duration_since(last) >= COOLDOWN)
+        {
+            self.probes = 0;
+        }
+        self.probes = self.probes.saturating_add(1);
+        self.last_probe = Some(now);
     }
     fn healthy(&mut self, now: Instant) {
         self.restart_required = false;
+        self.probes = 0;
+        self.last_probe = None;
         // A brief reopening followed by failure must not grant an endless restart loop.
         if self
             .last_attempt
@@ -103,6 +125,8 @@ impl Recovery {
                     self.budget.attempted(now, outcome.restart_required);
                 } else if outcome.restart_required {
                     self.budget.restart_required = true;
+                } else {
+                    self.budget.probed(now);
                 }
                 match outcome.result {
                     Ok(()) if outcome.attempted => {
@@ -147,12 +171,31 @@ static RECOVERY: Mutex<Recovery> = Mutex::new(Recovery {
     budget: Budget {
         attempts: 0,
         last_attempt: None,
+        probes: 0,
+        last_probe: None,
         restart_required: false,
     },
     probe_after: None,
     settle_until: None,
     worker: None,
 });
+
+/// Whether `error` carries Win32 `ERROR_NO_MORE_ITEMS` (`0x80070103`).
+pub(crate) fn is_no_more_items(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| {
+        cause
+            .downcast_ref::<windows::core::Error>()
+            .is_some_and(|error| error.code() == ERROR_NO_MORE_ITEMS.to_hresult())
+    })
+}
+
+/// Triggers bounded PnP recovery for a stopped `Failed` devnode, or a bounded
+/// probe on `0x80070103` (`ERROR_NO_MORE_ITEMS`) while the devnode is `Unknown`
+/// (transitional non-started state after AFK DualSense + HidHide teardown, #138).
+pub(crate) fn should_request_for_open_error(error: &anyhow::Error, devnode: DevnodeState) -> bool {
+    matches!(devnode, DevnodeState::Failed(_))
+        || (is_no_more_items(error) && devnode == DevnodeState::Unknown)
+}
 
 /// Records a healthy open of the VHF gamepad driver. Zero PnP work.
 pub(crate) fn healthy() {
@@ -687,5 +730,62 @@ mod tests {
         let missing = diagnosis(&err, None, DevnodeState::Missing, RecoveryState::Idle);
         assert!(missing.contains("0x80070103"), "{missing}");
         assert!(missing.contains("Rubylight setup"), "{missing}");
+    }
+
+    #[test]
+    fn open_error_0x80070103_triggers_bounded_probe_only_for_failed_or_unknown_devnode() {
+        let no_more = anyhow::Error::new(windows::core::Error::from_hresult(
+            ERROR_NO_MORE_ITEMS.to_hresult(),
+        ))
+        .context("open_interface failed");
+        let other = anyhow::anyhow!("unrelated error");
+        assert!(is_no_more_items(&no_more) && !is_no_more_items(&other));
+        assert!(should_request_for_open_error(
+            &no_more,
+            DevnodeState::Failed(43)
+        ));
+        assert!(should_request_for_open_error(
+            &no_more,
+            DevnodeState::Unknown
+        ));
+        assert!(!should_request_for_open_error(
+            &other,
+            DevnodeState::Unknown
+        ));
+        assert!(should_request_for_open_error(
+            &other,
+            DevnodeState::Failed(43)
+        ));
+        for state in [
+            DevnodeState::Started,
+            DevnodeState::Missing,
+            DevnodeState::Disabled(22),
+            DevnodeState::RestartRequired,
+            DevnodeState::OtherProblem(31),
+        ] {
+            assert!(!should_request_for_open_error(&no_more, state), "{state:?}");
+        }
+    }
+
+    #[test]
+    fn non_attempt_probes_respect_bounded_cap_cooldown_and_healthy_reset() {
+        let mut budget = Budget::default();
+        let start = Instant::now();
+        for n in 0..MAX_PROBES {
+            let now = start + Duration::from_secs(u64::from(n) * 5);
+            assert!(budget.available(now), "probe {n} allowed");
+            budget.probed(now);
+        }
+        assert!(!budget.available(start + Duration::from_secs(30)));
+        let after = start + Duration::from_secs(10) + COOLDOWN;
+        assert!(budget.available(after));
+        budget.probed(after);
+        assert_eq!(budget.probes, 1);
+        for _ in 0..MAX_PROBES {
+            budget.probed(after + Duration::from_secs(1));
+        }
+        assert!(!budget.available(after + Duration::from_secs(2)));
+        budget.healthy(after + Duration::from_secs(2));
+        assert!(budget.available(after + Duration::from_secs(2)));
     }
 }

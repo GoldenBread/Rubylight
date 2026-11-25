@@ -528,3 +528,84 @@ fn the_mouse_reports_over_usbip_as_soon_as_it_moves() {
     client.read_exact(&mut data).unwrap();
     assert_eq!(relative(&data), (0, -5, 7, 0, 0));
 }
+
+#[test]
+fn same_frame_lift_and_new_down_never_reuses_lifted_slot_or_drops_fifth_contact() {
+    let (mut pad, epoch) = active(100, 50);
+    let t = |ms: u64| epoch + Duration::from_millis(ms);
+
+    // UP followed by DOWN in the same frame must not reuse the lifted slot's Contact ID.
+    pad.apply(&[contact(1, 10, 0.1, 0.1)], 0, t(1));
+    pad.interrupt(ENDPOINT);
+    pad.apply(
+        &[contact(2, 10, 0.1, 0.1), contact(1, 20, 0.8, 0.8)],
+        0,
+        t(2),
+    );
+    let report = pad.interrupt(ENDPOINT).unwrap();
+    assert_eq!(count(&report), 2);
+    let first = finger(&report, 0);
+    let second = finger(&report, 1);
+    assert_eq!((first.0, first.1, first.2), (true, false, 0));
+    assert_eq!((second.0, second.1, second.2), (true, true, 1));
+    assert_ne!(first.2, second.2, "contact IDs in one frame must be unique");
+
+    // CANCEL followed by DOWN in the same frame also avoids the lifted slot.
+    pad.apply(
+        &[contact(4, 20, 0.8, 0.8), contact(1, 30, 0.2, 0.2)],
+        0,
+        t(3),
+    );
+    let report = pad.interrupt(ENDPOINT).unwrap();
+    assert_eq!(count(&report), 2);
+    let cancelled = finger(&report, 0);
+    let fresh = finger(&report, 1);
+    assert_eq!((cancelled.0, cancelled.1, cancelled.2), (false, false, 1));
+    assert_eq!((fresh.0, fresh.1, fresh.2), (true, true, 0));
+    assert_ne!(cancelled.2, fresh.2);
+
+    // With all 5 slots active, lifting slot 0 and adding a new DOWN in the same frame must
+    // report all 5 existing contacts (1 lifted + 4 down) with unique Contact IDs and never
+    // drop the 5th contact.
+    let (mut pad, _epoch) = active(100, 50);
+    let initial: Vec<_> = (0..5)
+        .map(|n| contact(1, n, 0.1 * (n as f32 + 1.0), 0.5))
+        .collect();
+    pad.apply(&initial, 0, t(10));
+    pad.interrupt(ENDPOINT);
+    pad.apply(
+        &[contact(2, 0, 0.1, 0.5), contact(1, 99, 0.9, 0.9)],
+        0,
+        t(11),
+    );
+    let report = pad.interrupt(ENDPOINT).unwrap();
+    assert_eq!(count(&report), 5);
+    let ids: Vec<u8> = (0..5).map(|i| finger(&report, i).2).collect();
+    let unique: std::collections::BTreeSet<u8> = ids.iter().copied().collect();
+    assert_eq!(unique.len(), 5, "duplicate contact IDs in frame: {ids:?}");
+    assert_eq!(ids, vec![0, 1, 2, 3, 4]);
+    assert!(!finger(&report, 0).1, "slot 0 lifts");
+    assert!(
+        (1..5).all(|i| finger(&report, i).1),
+        "remaining four active contacts stay down, including slot 4"
+    );
+
+    // Queue-backed HID endpoints report `interrupt_queued` while reports remain queued.
+    let mut mouse = HidMouse::new("1");
+    assert!(!mouse.interrupt_queued(ENDPOINT));
+    mouse.button(button::LEFT, true);
+    mouse.button(button::LEFT, false);
+    assert!(mouse.interrupt_queued(ENDPOINT));
+    assert!(!mouse.interrupt_queued(2));
+    assert!(mouse.interrupt(ENDPOINT).is_some());
+    assert!(mouse.interrupt_queued(ENDPOINT));
+    assert!(mouse.interrupt(ENDPOINT).is_some());
+    assert!(!mouse.interrupt_queued(ENDPOINT));
+
+    assert!(!pad.interrupt_queued(ENDPOINT));
+    pad.apply(&[contact(1, 99, 0.9, 0.9)], 0, t(12));
+    assert!(pad.interrupt_queued(ENDPOINT));
+    assert!(!pad.interrupt_queued(2));
+    assert!(pad.interrupt(ENDPOINT).is_some());
+    assert!(!pad.interrupt_queued(ENDPOINT));
+}

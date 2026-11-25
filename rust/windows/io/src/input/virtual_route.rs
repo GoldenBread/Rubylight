@@ -80,15 +80,11 @@ impl Injector {
             && !self.pending.inputs.is_empty()
             && std::ptr::eq(inputs.as_ptr(), self.pending.inputs.as_ptr())
             && self.pending.routes.len() == inputs.len();
-        let due_virtual =
-            forced.is_none() && !from_pending && self.left_release_virtual.replace(false);
         let route_of = |i: usize| -> MouseRoute {
             if let Some(route) = forced {
                 route
             } else if from_pending {
                 self.pending.routes[i]
-            } else if due_virtual {
-                MouseRoute::Virtual
             } else {
                 MouseRoute::Auto
             }
@@ -97,9 +93,7 @@ impl Injector {
             Some(MouseRoute::Virtual) => true,
             Some(MouseRoute::Injection) => false,
             Some(MouseRoute::Auto) | None => {
-                routed
-                    || due_virtual
-                    || (from_pending && self.pending.routes.contains(&MouseRoute::Virtual))
+                routed || (from_pending && self.pending.routes.contains(&MouseRoute::Virtual))
             }
         };
         if !any_virtual {

@@ -152,8 +152,9 @@ pub(super) struct Polling {
     /// `gamepad_feedback_fast_poll`: every FAST_POLL for FAST_SPAN after a
     /// driver had feedback.
     pub(super) fast: bool,
-    /// RETRY and REOPEN.
-    pub(super) retry: Duration,
+    /// Graduated retry backoff steps (`2s -> 5s -> 15s -> 60s` in production).
+    pub(super) backoff: [Duration; 4],
+    /// Fast poll interval while bounded PnP recovery is actively restarting the driver.
     pub(super) reopen: Duration,
 }
 impl Polling {
@@ -164,6 +165,12 @@ impl Polling {
         } else {
             self.every
         }
+    }
+    pub(super) fn backoff_for(&self, step: usize) -> Duration {
+        self.backoff[step.min(self.backoff.len() - 1)]
+    }
+    pub(super) fn slow_retry(&self) -> Duration {
+        self.backoff[self.backoff.len() - 1]
     }
 }
 

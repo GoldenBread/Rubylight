@@ -8,6 +8,7 @@ use super::*;
 #[derive(Default)]
 pub(super) struct Losses {
     pub(super) count: usize,
+    pub(super) open_failures: usize,
     pub(super) opened: Option<Instant>,
     pub(super) warned: bool,
     pub(super) recovering: bool,
@@ -26,26 +27,39 @@ impl Losses {
     }
 
     /// Records a refusal at `now`. Returns how long to wait before opening
-    /// the driver again: `poll.reopen`, from the LOST_LIMIT'th `poll.retry`,
-    /// and from the STOP_LIMIT'th SLOW_RETRY times that, at input only.
+    /// the driver again along the graduated backoff cadence (`2s -> 5s -> 15s -> 60s`).
     pub(super) fn record(&mut self, now: Instant, poll: &Polling) -> Duration {
         if self.worked(now) {
             self.count = 0;
         }
         self.opened = None;
+        self.open_failures = 0;
         self.count += 1;
         self.warned |= self.count >= LOST_LIMIT;
-        if self.count >= STOP_LIMIT {
-            poll.retry * SLOW_RETRY
-        } else if self.count >= LOST_LIMIT {
-            poll.retry
-        } else {
-            poll.reopen
+        poll.backoff_for(self.count - 1)
+    }
+
+    /// Records a failed driver open. Polls fast at `poll.reopen` while PnP recovery
+    /// is active; otherwise advances the graduated `2s -> 5s -> 15s -> 60s` backoff.
+    pub(super) fn record_open_failure(&mut self, poll: &Polling) -> Duration {
+        if self.recovering {
+            return poll.reopen;
         }
+        let wait = poll.backoff_for(self.open_failures);
+        self.open_failures = self.open_failures.saturating_add(1);
+        wait
+    }
+
+    /// Resets retry/backoff state on a fresh controller arrival (e.g. AFK reconnect),
+    /// preserving carried pad memory. Returns whether the driver-lost warning was up.
+    pub(super) fn reset_on_arrival(&mut self) -> bool {
+        self.count = 0;
+        self.open_failures = 0;
+        std::mem::take(&mut self.warned)
     }
 
     /// Whether the driver is opened again only at input, and seldom, until
-    /// the next stream.
+    /// a controller arrives again or the next stream starts.
     pub(super) fn stopped(&self) -> bool {
         self.count >= STOP_LIMIT
     }
@@ -64,19 +78,19 @@ impl Losses {
 
 /// The console warning for a driver that keeps refusing the pads' handle,
 /// with how many more times it is opened again.
-pub(super) fn lost_warning(present: bool, left: usize, retry: Duration) -> String {
+pub(super) fn lost_warning(present: bool, left: usize, retry: Duration, slow: Duration) -> String {
     let gone = if present {
         ""
     } else {
         ", and its device is gone"
     };
-    let slow = (retry * SLOW_RETRY).as_secs();
+    let slow = slow.as_secs();
     let next = match left {
         0 => format!(
-            "Rubylight now opens it again only when a controller is used, at most once every {slow} seconds, until the next stream or game launch starts; controllers may not work meanwhile, while keyboard and mouse remain available"
+            "Rubylight now opens it again only when a controller is used, at most once every {slow} seconds, until a controller reconnects or the next stream or game launch starts; controllers may not work meanwhile, while keyboard and mouse remain available"
         ),
         left => format!(
-            "Rubylight opens it again up to {left} more time{}, at least {} seconds apart, then only when a controller is used, at most once every {slow} seconds, until the next stream or game launch starts; meanwhile controllers may not respond, while keyboard and mouse remain available",
+            "Rubylight opens it again up to {left} more time{}, at least {} seconds apart, then only when a controller is used, at most once every {slow} seconds, until a controller reconnects or the next stream or game launch starts; meanwhile controllers may not respond, while keyboard and mouse remain available",
             if left == 1 { "" } else { "s" },
             retry.as_secs()
         ),
@@ -101,7 +115,12 @@ pub(super) fn count_refusal(
     if losses.warned {
         shared.warnings.lock().unwrap().set(
             DRIVER_LOST,
-            lost_warning(present, STOP_LIMIT.saturating_sub(losses.count), poll.retry),
+            lost_warning(
+                present,
+                STOP_LIMIT.saturating_sub(losses.count),
+                wait,
+                poll.slow_retry(),
+            ),
         );
     }
     wait
@@ -131,9 +150,9 @@ pub(super) fn forget_lost<P: Pads>(
         device = if present { "present" } else { "gone" },
         refusals = losses.count,
         reopen_in = ?wait,
-        "the virtual gamepad driver refused the host's handle (0x80070006): its controllers are closed and the driver will be opened again{}",
+        "the virtual gamepad driver refused the host's handle (0x80070006/0x80070103): its controllers are closed and the driver will be opened again{}",
         if losses.stopped() {
-            " at input only, until the next stream or game launch starts"
+            " at input only, until a controller reconnects or the next stream or game launch starts"
         } else {
             ""
         }
@@ -154,6 +173,7 @@ pub(super) fn open_driver<P: Pads>(
         Ok(mut opened) => {
             shared.warnings.lock().unwrap().clear("input_gamepad");
             losses.recovering = false;
+            losses.open_failures = 0;
             losses.opened(now);
             if let Some(memory) = losses.memory.take() {
                 opened.remember(memory);
@@ -166,13 +186,8 @@ pub(super) fn open_driver<P: Pads>(
                 "input_gamepad",
                 super::super::gamepad_backend::unavailable(&error),
             );
-            *retry = Some(
-                now + if losses.recovering {
-                    poll.reopen
-                } else {
-                    poll.retry
-                },
-            );
+            let wait = losses.record_open_failure(poll);
+            *retry = Some(now + wait);
             None
         }
     }

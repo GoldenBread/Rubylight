@@ -303,14 +303,33 @@ fn ds4_battery_scaling_and_unknown_values_match_vibepollo() {
     }
     report.battery(0, 255);
     assert_eq!((report.0[11], report.0[29]), (255, 0x1a));
-    report.battery(4, 255);
+    // Moonlight state 5 = FULL -> cable connected + full (0x1b).
+    report.battery(5, 255);
     assert_eq!((report.0[11], report.0[29]), (255, 0x1b));
-    report.battery(2, 50);
-    assert_eq!((report.0[11], report.0[29]), (127, 5));
-    for state in [1, 5] {
-        report.battery(state, 25);
-        assert_eq!((report.0[11], report.0[29]), (63, 0x1f));
+    report.battery(5, 100);
+    assert_eq!((report.0[11], report.0[29]), (255, 0x1b));
+    // Moonlight state 4 = NOT_CHARGING -> cable connected (0x10) with level nibble 0..=10.
+    report.battery(4, 80);
+    assert_eq!((report.0[11], report.0[29]), (204, 0x18));
+    // Moonlight state 2 = DISCHARGING (wireless) clears 0x10 AND updates level nibble 0..=10.
+    for (percent, scaled, level) in [
+        (0, 0, 0x00),
+        (20, 51, 0x02),
+        (50, 127, 0x05),
+        (80, 204, 0x08),
+        (100, 255, 0x0a),
+    ] {
+        report.battery(2, percent);
+        assert_eq!(
+            (report.0[11], report.0[29]),
+            (scaled, level),
+            "discharging {percent}%"
+        );
     }
+    // Moonlight state 1 = NOT_PRESENT -> 0x1f.
+    report.battery(1, 25);
+    assert_eq!((report.0[11], report.0[29]), (63, 0x1f));
+    // Returning to charging with unknown percent recovers a sane 0..=10 nibble (5).
     report.battery(3, 255);
     assert_eq!(report.0[29], 0x15);
 }

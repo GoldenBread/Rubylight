@@ -95,7 +95,7 @@ fn fresh_session_retries_automatically_while_pnp_recovery_is_in_progress() {
     let poll = Polling {
         every: Duration::from_millis(5),
         fast: false,
-        retry: Duration::from_secs(60),
+        backoff: BACKOFF,
         reopen: Duration::from_millis(15),
     };
     let thread = GamepadThread::spawn_polled(
@@ -120,7 +120,7 @@ fn fresh_session_retries_automatically_while_pnp_recovery_is_in_progress() {
     .unwrap();
 
     // Only one Arrival is sent; with recovery active the thread must retry at
-    // `poll.reopen` instead of sleeping forever or waiting `poll.retry` (60 s).
+    // `poll.reopen` instead of sleeping forever or waiting `poll.backoff`.
     thread.send(Event::Arrival {
         id: 0,
         kind: 2,
@@ -151,7 +151,7 @@ fn fresh_session_stops_fast_polling_once_recovery_is_no_longer_active() {
     let poll = Polling {
         every: Duration::from_millis(5),
         fast: false,
-        retry: Duration::from_secs(60),
+        backoff: BACKOFF,
         reopen: Duration::from_millis(10),
     };
     let thread = GamepadThread::spawn_polled(
@@ -195,7 +195,7 @@ fn forget_lost_drops_refused_handle_before_requesting_pnp_recovery() {
     let poll = Polling {
         every: Duration::from_millis(5),
         fast: false,
-        retry: Duration::from_secs(10),
+        backoff: BACKOFF,
         reopen: Duration::from_secs(1),
     };
     let opens = Arc::new(AtomicUsize::new(0));
@@ -234,4 +234,96 @@ fn forget_lost_drops_refused_handle_before_requesting_pnp_recovery() {
         vec!["drop", "recover"],
         "the refused handle must close before PnP recovery starts"
     );
+}
+
+struct NoMoreItemsOnCreatePads {
+    opened: usize,
+    lost: bool,
+    log: Arc<Mutex<Vec<String>>>,
+}
+impl Pads for NoMoreItemsOnCreatePads {
+    fn apply(&mut self, event: &Event) -> Result<()> {
+        if let Event::Arrival { id, .. } = event {
+            if self.opened == 1 {
+                let err = super::super::gamepad_backend::plug_error(
+                    windows::Win32::Foundation::ERROR_NO_MORE_ITEMS.into(),
+                );
+                self.lost = super::super::gamepad_backend::driver_lost(&err);
+                return Err(err);
+            }
+            self.log
+                .lock()
+                .unwrap()
+                .push(format!("{} arrival {id}", self.opened));
+        }
+        Ok(())
+    }
+    fn refresh(&mut self) -> Result<()> {
+        Ok(())
+    }
+    fn feedback(&mut self) -> Vec<(u16, u16, Vec<u8>)> {
+        Vec::new()
+    }
+    fn motion_supported(&self, _id: u16) -> bool {
+        false
+    }
+    fn plugged(&self) -> bool {
+        !self.lost && self.opened > 1
+    }
+    fn release_all(&mut self) -> Result<()> {
+        Ok(())
+    }
+    fn lost(&self) -> bool {
+        self.lost
+    }
+}
+
+#[test]
+fn create_controller_0x80070103_reopens_handle_and_recovers_controller() {
+    let _guard = RECOVERY_TEST_LOCK.lock().unwrap();
+    let opens = Arc::new(AtomicUsize::new(0));
+    let log = Arc::new(Mutex::new(Vec::new()));
+    let warnings = Arc::new(butterpollo_session::session::Warnings::default());
+    let poll = Polling {
+        every: Duration::from_millis(5),
+        fast: false,
+        backoff: [
+            Duration::from_millis(25),
+            Duration::from_millis(50),
+            Duration::from_millis(100),
+            Duration::from_millis(200),
+        ],
+        reopen: Duration::from_millis(10),
+    };
+    let thread = GamepadThread::spawn_polled(
+        {
+            let opens = opens.clone();
+            let log = log.clone();
+            move || {
+                let opened = opens.fetch_add(1, Ordering::SeqCst) + 1;
+                Ok(NoMoreItemsOnCreatePads {
+                    opened,
+                    lost: false,
+                    log: log.clone(),
+                })
+            }
+        },
+        warnings.clone(),
+        poll,
+    )
+    .unwrap();
+
+    thread.send(Event::Arrival {
+        id: 0,
+        kind: 2,
+        capabilities: 0xfb,
+        buttons: 0,
+    });
+    assert!(
+        thread.wait_ready(1, Duration::from_secs(2)),
+        "0x80070103 on create_controller must close handle, reopen, and replay arrival"
+    );
+    assert_eq!(opens.load(Ordering::SeqCst), 2);
+    assert_eq!(*log.lock().unwrap(), vec!["2 arrival 0".to_owned()]);
+    assert!(warnings.snapshot().is_empty());
 }

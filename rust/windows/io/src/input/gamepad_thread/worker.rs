@@ -155,6 +155,9 @@ pub(super) fn run<P: Pads>(
                 queue = wait(shared, queue, &handles, Some(poll_at - now));
             }
         };
+        let fresh_arrival = events
+            .iter()
+            .any(|event| matches!(event, Event::Arrival { .. }));
         if release && let Some(pads) = &mut pads {
             let released = pads.release_all();
             // The old iteration may already have drained audio when release
@@ -180,7 +183,7 @@ pub(super) fn run<P: Pads>(
             // A new stream or launch: pads the driver refused, even those
             // opened only seldom, open at its first input, and refusals
             // count anew.
-            if pads.is_none() && losses.count > 0 {
+            if pads.is_none() && (losses.count > 0 || losses.open_failures > 0) {
                 retry = None;
             }
             // What the refused pads kept still goes to the next ones.
@@ -189,6 +192,16 @@ pub(super) fn run<P: Pads>(
                 shared.warnings.lock().unwrap().clear(DRIVER_LOST);
             }
             losses.memory = memory;
+        }
+        if fresh_arrival && (losses.count > 0 || losses.open_failures > 0 || retry.is_some()) {
+            // A controller freshly reconnected (e.g. after AFK/idle disconnect):
+            // reset retry/backoff immediately instead of sitting in 60 s SLOW_RETRY (#138).
+            if pads.is_none() {
+                retry = None;
+            }
+            if losses.reset_on_arrival() {
+                shared.warnings.lock().unwrap().clear(DRIVER_LOST);
+            }
         }
         if reopen_at(pads.is_some(), retry, &setup, &losses).is_some_and(|at| Instant::now() >= at)
             && let Some(opened) = open_driver(shared, &mut open, &mut losses, &mut retry, &poll)
@@ -208,7 +221,7 @@ pub(super) fn run<P: Pads>(
                 break;
             }
             if pads.is_none() {
-                // Stopped, the driver waits SLOW_RETRY RETRYs for input.
+                // Stopped, the driver waits `poll.slow_retry()` for input.
                 if retry.is_some_and(|at| Instant::now() < at) {
                     keep_setup(&mut setup, &event);
                     continue;
@@ -222,8 +235,13 @@ pub(super) fn run<P: Pads>(
                 if !setup.is_empty() {
                     // The controllers arrive again first, on pads opened after
                     // the driver refused the last ones' handle or after it
-                    // could not be opened.
-                    events.push_front(event);
+                    // could not be opened. Merge a fresh Arrival in place so the
+                    // same controller is not applied twice.
+                    if matches!(event, Event::Arrival { .. }) {
+                        keep_setup(&mut setup, &event);
+                    } else {
+                        events.push_front(event);
+                    }
                     for kept in std::mem::take(&mut setup).into_iter().rev() {
                         events.push_front(kept);
                     }

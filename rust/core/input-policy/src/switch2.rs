@@ -585,6 +585,9 @@ impl Device for Switch2Pro {
     fn interrupt(&mut self, endpoint: u8) -> Option<Vec<u8>> {
         self.transfer_in(endpoint, BULK_PACKET)
     }
+    fn interrupt_queued(&self, endpoint: u8) -> bool {
+        endpoint == BULK_ENDPOINT && !self.bulk.is_empty()
+    }
     fn transfer_in(&mut self, endpoint: u8, length: usize) -> Option<Vec<u8>> {
         match endpoint {
             // The real controller reports nothing until a driver starts it.

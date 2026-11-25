@@ -509,6 +509,9 @@ impl Device for Queued {
     fn interrupt_ready(&self, _endpoint: u8) -> bool {
         !self.0.is_empty()
     }
+    fn interrupt_queued(&self, _endpoint: u8) -> bool {
+        !self.0.is_empty()
+    }
 }
 
 #[test]
@@ -547,4 +550,122 @@ fn queued_reports_drain_onto_waiting_transfers_without_waiting_a_period() {
     assert_eq!(reply(&mut client), (RET_SUBMIT, 1, 0, vec![1]));
     assert_eq!(reply(&mut client), (RET_SUBMIT, 2, 0, vec![2]));
     assert_eq!(reply(&mut client), (RET_SUBMIT, 3, 0, vec![3]));
+}
+
+struct Periodic(u8);
+impl Device for Periodic {
+    fn describe(&self) -> UsbDevice {
+        UsbDevice {
+            speed: 2,
+            vendor: 0x1209,
+            product: 2,
+            release: 1,
+            interfaces: vec![(3, 0, 0)],
+        }
+    }
+    fn control(&mut self, _setup: &Setup, _data: &[u8]) -> Option<Vec<u8>> {
+        Some(vec![])
+    }
+    fn interrupt(&mut self, _endpoint: u8) -> Option<Vec<u8>> {
+        self.0 = self.0.wrapping_add(1);
+        Some(vec![self.0])
+    }
+}
+
+#[test]
+fn periodic_device_with_multiple_queued_urbs_respects_period_instead_of_spinning() {
+    let period = Duration::from_millis(120);
+    let export = Export::listen(Periodic(0), period).unwrap();
+    let mut client = TcpStream::connect((Ipv4Addr::LOCALHOST, export.port())).unwrap();
+    let mut request = op_reply(OP_REQ_IMPORT, 0);
+    let mut busid = [0u8; 32];
+    busid[..3].copy_from_slice(b"1-1");
+    request.extend_from_slice(&busid);
+    client.write_all(&request).unwrap();
+    let mut imported = [0u8; 8 + 312];
+    client.read_exact(&mut imported).unwrap();
+    assert_eq!(&imported[..8], &op_reply(0x0003, 0)[..]);
+    client
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+
+    // Queue 3 ping-pong interrupt IN URBs at once. Because `Periodic` inherits
+    // `interrupt_ready() == true` and `interrupt_queued() == false`, the server must not
+    // mark `link.changed = true` and spin-flood them back-to-back.
+    submit(&mut client, 1, 1, true, 8, [0; 8], &[]);
+    submit(&mut client, 2, 1, true, 8, [0; 8], &[]);
+    submit(&mut client, 3, 1, true, 8, [0; 8], &[]);
+
+    assert_eq!(reply(&mut client), (RET_SUBMIT, 1, 0, vec![1]));
+    let after_first = Instant::now();
+    assert!(
+        !export.shared.link.lock().unwrap().changed,
+        "periodic endpoint must clear `changed` rather than setting `more_ready`"
+    );
+    assert_eq!(reply(&mut client), (RET_SUBMIT, 2, 0, vec![2]));
+    let gap_1_2 = after_first.elapsed();
+    let after_second = Instant::now();
+    assert_eq!(reply(&mut client), (RET_SUBMIT, 3, 0, vec![3]));
+    let gap_2_3 = after_second.elapsed();
+    assert!(
+        gap_1_2 >= Duration::from_millis(80),
+        "second URB drained without waiting period ({gap_1_2:?})"
+    );
+    assert!(
+        gap_2_3 >= Duration::from_millis(80),
+        "third URB drained without waiting period ({gap_2_3:?})"
+    );
+}
+
+#[test]
+fn switch2_bulk_queue_drains_immediately_while_hid_endpoint_stays_periodic() {
+    use crate::switch2::Switch2Pro;
+    let period = Duration::from_secs(10);
+    let export = Export::listen(Switch2Pro::new("TEST"), period).unwrap();
+    let mut client = TcpStream::connect((Ipv4Addr::LOCALHOST, export.port())).unwrap();
+    let mut request = op_reply(OP_REQ_IMPORT, 0);
+    let mut busid = [0u8; 32];
+    busid[..3].copy_from_slice(b"1-1");
+    request.extend_from_slice(&busid);
+    client.write_all(&request).unwrap();
+    let mut imported = [0u8; 8 + 312];
+    client.read_exact(&mut imported).unwrap();
+    assert_eq!(&imported[..8], &op_reply(0x0003, 0)[..]);
+    client
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+
+    // Queue two bulk IN URBs, then send two commands whose replies queue on bulk EP 2.
+    // Both bulk replies must drain immediately despite the 10 s report period.
+    submit(&mut client, 1, 2, true, 64, [0; 8], &[]);
+    submit(&mut client, 2, 2, true, 64, [0; 8], &[]);
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while export.shared.link.lock().unwrap().held.len() < 2 {
+        assert!(Instant::now() < deadline, "bulk reads were not held");
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    let select = [
+        0x03, 0x91, 0x00, 0x0a, 0x00, 0x04, 0x00, 0x00, 0x05, 0, 0, 0,
+    ];
+    export.with_changed(|pad| {
+        assert!(pad.output(2, &select));
+        assert!(pad.output(2, &select));
+        assert!(pad.interrupt_queued(2));
+        assert!(!pad.interrupt_queued(1));
+    });
+    let start = Instant::now();
+    let (_, seq1, status1, data1) = reply(&mut client);
+    let (_, seq2, status2, data2) = reply(&mut client);
+    assert!(
+        start.elapsed() < Duration::from_secs(2),
+        "queued bulk replies waited for report period"
+    );
+    assert_eq!(
+        (seq1, status1, &data1[..4]),
+        (1, 0, &[0x03, 0x01, 0x00, 0x0a][..])
+    );
+    assert_eq!(
+        (seq2, status2, &data2[..4]),
+        (2, 0, &[0x03, 0x01, 0x00, 0x0a][..])
+    );
 }

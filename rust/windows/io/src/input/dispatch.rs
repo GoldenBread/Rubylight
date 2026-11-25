@@ -176,8 +176,7 @@ impl Injector {
                 if *button == 1 && self.absolute && !self.policy.left_release_delay.is_zero() {
                     if !*down && self.buttons.contains(button) {
                         self.buttons.remove(button);
-                        self.left_release_virtual
-                            .set(self.virtual_buttons.remove(button));
+                        self.left_release_virtual = self.virtual_buttons.remove(button);
                         self.left_release =
                             Some(std::time::Instant::now() + self.policy.left_release_delay);
                         return Ok(None);
@@ -185,7 +184,7 @@ impl Injector {
                     if *down && self.left_release.take().is_some() {
                         // Still down in Windows: its release never went out.
                         self.buttons.insert(*button);
-                        if self.left_release_virtual.replace(false) {
+                        if std::mem::take(&mut self.left_release_virtual) {
                             self.virtual_buttons.insert(*button);
                         }
                         return Ok(None);

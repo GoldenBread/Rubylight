@@ -214,3 +214,36 @@ fn hovers_unknown_fingers_and_bad_positions_give_nothing() {
     assert!(feed.at(0, DOWN, 1, 0.5, 0.5).is_empty());
     assert_eq!(feed.at(100, UP, 1, 0.5, 0.5), click(LEFT));
 }
+
+#[test]
+fn excessive_unique_downs_are_capped_and_tracked_fingers_still_lift() {
+    let mut feed = Feed::new(settings(TouchMode::Mouse, 100, true));
+    assert_eq!(
+        feed.at(0, DOWN, 0, 0.25, 0.25),
+        [abs(8192, 8192), button(LEFT, true)]
+    );
+    assert_eq!(feed.at(5, DOWN, 1, 0.5, 0.5), [button(LEFT, false)]);
+    for id in 2..32u32 {
+        assert!(feed.at(10 + u64::from(id), DOWN, id, 0.5, 0.5).is_empty());
+    }
+    assert_eq!(feed.profile.fingers.len(), MAX_FINGERS);
+    // Unaccepted IDs beyond the cap are ignored on MOVE/UP while tracked IDs still work.
+    assert!(feed.at(100, MOVE, 20, 0.8, 0.8).is_empty());
+    assert!(feed.at(105, UP, 20, 0.8, 0.8).is_empty());
+    assert_eq!(feed.profile.fingers.len(), MAX_FINGERS);
+    for id in 0..MAX_FINGERS as u32 {
+        let out = feed.at(120 + u64::from(id), UP, id, 0.5, 0.5);
+        if id + 1 == MAX_FINGERS as u32 {
+            assert_eq!(out, click(RIGHT), "final lift completes multi-finger tap");
+        } else {
+            assert!(out.is_empty());
+        }
+    }
+    assert!(feed.profile.fingers.is_empty());
+    // After lifting, a fresh gesture works normally again.
+    assert_eq!(
+        feed.at(400, DOWN, 99, 0.5, 0.5),
+        [abs(16384, 16384), button(LEFT, true)]
+    );
+    assert_eq!(feed.at(450, UP, 99, 0.5, 0.5), [button(LEFT, false)]);
+}

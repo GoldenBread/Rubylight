@@ -329,7 +329,7 @@ fn fast_polling_follows_feedback_only_when_switched_on() {
     let off = Polling {
         every: POLL,
         fast: false,
-        retry: RETRY,
+        backoff: BACKOFF,
         reopen: REOPEN,
     };
     let on = Polling { fast: true, ..off };
@@ -495,7 +495,7 @@ fn a_drivers_feedback_event_is_forwarded_without_waiting_for_the_poll() {
         Polling {
             every: Duration::from_secs(3600),
             fast: false,
-            retry: RETRY,
+            backoff: BACKOFF,
             reopen: REOPEN,
         },
     )

@@ -333,6 +333,7 @@ fn presses_windows_refuses_are_not_held_and_refused_releases_are_forgotten() {
 
 #[test]
 fn mixed_mode_and_virtual_mouse_button_ownership_stay_isolated() {
+    let _button1 = BUTTON1_LOCK.lock().unwrap();
     let mut send_input_client = recording();
     let mut virtual_client = recording();
     // Simulate a button held via the virtual mouse route alongside a SendInput client
@@ -360,6 +361,108 @@ fn mixed_mode_and_virtual_mouse_button_ownership_stay_isolated() {
 
     // Releasing SendInput's button sends the SendInput UP.
     send_input_client.apply(&click(1, false)).unwrap();
+    assert_eq!(calls(), [described(&[Injector::button(1, false)])]);
+    assert!(!HELD.lock().unwrap().contains_key(&(false, 1)));
+}
+
+#[test]
+fn due_flushes_deferred_virtual_and_injected_left_releases_on_their_own_routes() {
+    let _button1 = BUTTON1_LOCK.lock().unwrap();
+    // WebRTC path: deferred virtual-mouse left release flushed ONLY via `due()` must
+    // clear `(false, 1 | VIRTUAL_BUTTON_FLAG)` without calling `flush_virtual_left_release()`,
+    // must not emit SendInput UP, and must allow subsequent virtual left-clicks.
+    let mut injector = recording();
+    injector.absolute = true;
+    injector.policy.left_release_delay = Duration::from_millis(50);
+    injector.buttons.insert(1);
+    injector.virtual_buttons.insert(1);
+    HELD.lock()
+        .unwrap()
+        .insert((false, 1 | VIRTUAL_BUTTON_FLAG), 1);
+
+    // Defer left-up in absolute mode.
+    injector.apply(&click(1, false)).unwrap();
+    assert!(injector.left_release.is_some());
+    assert!(injector.left_release_virtual);
+    assert!(calls().is_empty());
+    assert_eq!(
+        HELD.lock().unwrap().get(&(false, 1 | VIRTUAL_BUTTON_FLAG)),
+        Some(&1)
+    );
+
+    // A key repeat firing before `left_release` expires must not clobber `left_release_virtual`.
+    injector.apply(&key(0x52, true)).unwrap();
+    calls();
+    injector.repeat.as_mut().unwrap().3 = Instant::now();
+    injector.due().unwrap();
+    assert_eq!(calls(), [described(&[injector.key_scan(0x52, true, 0)])]);
+    assert!(injector.left_release.is_some());
+    assert!(injector.left_release_virtual);
+    injector.apply(&key(0x52, false)).unwrap();
+    calls();
+
+    // Expire the deferred release and call ONLY `due()` (as WebRTC does).
+    *injector.left_release.as_mut().unwrap() = Instant::now();
+    injector.due().unwrap();
+    assert!(injector.left_release.is_none());
+    assert!(!injector.left_release_virtual);
+    assert!(
+        calls().is_empty(),
+        "virtual deferred release must not fall through to SendInput"
+    );
+    assert!(
+        !HELD
+            .lock()
+            .unwrap()
+            .contains_key(&(false, 1 | VIRTUAL_BUTTON_FLAG)),
+        "deferred virtual button must not leak in global HELD"
+    );
+
+    // Subsequent virtual-mouse left press is no longer suppressed by a leaked HELD entry.
+    let mut emitted = Vec::new();
+    Injector::update_held(
+        &mut HELD.lock().unwrap(),
+        (false, 1 | VIRTUAL_BUTTON_FLAG),
+        true,
+        false,
+        Injector::button(1, true),
+        |inputs| {
+            emitted.extend_from_slice(inputs);
+            Ok(())
+        },
+    )
+    .unwrap();
+    assert_eq!(emitted.len(), 1);
+    Injector::update_held(
+        &mut HELD.lock().unwrap(),
+        (false, 1 | VIRTUAL_BUTTON_FLAG),
+        false,
+        true,
+        Injector::button(1, false),
+        |_| Ok(()),
+    )
+    .unwrap();
+    assert!(
+        !HELD
+            .lock()
+            .unwrap()
+            .contains_key(&(false, 1 | VIRTUAL_BUTTON_FLAG))
+    );
+
+    // Non-virtual (SendInput) deferred left release flushed via `due()` still releases `(false, 1)`.
+    let mut injected = recording();
+    injected.absolute = true;
+    injected.policy.left_release_delay = Duration::from_millis(50);
+    injected.apply(&click(1, true)).unwrap();
+    assert_eq!(calls(), [described(&[Injector::button(1, true)])]);
+    injected.apply(&click(1, false)).unwrap();
+    assert!(injected.left_release.is_some());
+    assert!(!injected.left_release_virtual);
+    assert_eq!(HELD.lock().unwrap().get(&(false, 1)), Some(&1));
+
+    *injected.left_release.as_mut().unwrap() = Instant::now();
+    injected.due().unwrap();
+    assert!(injected.left_release.is_none());
     assert_eq!(calls(), [described(&[Injector::button(1, false)])]);
     assert!(!HELD.lock().unwrap().contains_key(&(false, 1)));
 }

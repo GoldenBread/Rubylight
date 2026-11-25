@@ -328,6 +328,9 @@ impl Device for HidMouse {
     fn interrupt_ready(&self, endpoint: u8) -> bool {
         endpoint == ENDPOINT && !self.queue.is_empty()
     }
+    fn interrupt_queued(&self, endpoint: u8) -> bool {
+        self.interrupt_ready(endpoint)
+    }
 }
 
 enum Standard {

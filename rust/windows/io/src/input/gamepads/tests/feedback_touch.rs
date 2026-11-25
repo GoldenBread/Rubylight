@@ -365,6 +365,31 @@ fn the_steam_controllers_contacts_are_its_two_pads() {
     assert_eq!(pointers, BTreeMap::from([((2, 10), 1)]));
 }
 
+/// Nightjar #150: Steam Controller touch requests preserve zero and low pressure
+/// without imposing any artificial floor or clamp.
+#[test]
+fn steam_controller_touch_preserves_low_and_zero_pressure() {
+    use butterpollo_input_policy::input_policy::VHF_STEAM_CONTROLLER as STEAM;
+    for (pressure, expected) in [(0.0f32, 0u16), (0.25, 16383), (1.0, 65535)] {
+        let pointers = BTreeMap::new();
+        let event = Event::ControllerTouch {
+            id: 0,
+            touchpad: 0,
+            event: 1,
+            pointer: 1,
+            x: 0.5,
+            y: 0.5,
+            pressure,
+        };
+        let update = gamepad_touch_request(&pointers, STEAM, 4, &event, true).unwrap();
+        assert_eq!(
+            u16::from_le_bytes([update.packet[18], update.packet[19]]),
+            expected,
+            "pressure={pressure}"
+        );
+    }
+}
+
 #[test]
 fn steam_controller_feedback_is_never_coalesced_or_deduplicated() {
     let click = (6u16, [vec![4, 0, 0, 0, 0x82, 0, 2, 0], vec![0; 8]].concat());
