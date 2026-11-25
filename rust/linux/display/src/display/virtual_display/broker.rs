@@ -16,6 +16,8 @@ use std::time::{Duration, Instant};
 
 /// Where the broker listens.
 pub const SOCKET: &str = "/run/vibeshine/vkms-control.sock";
+/// Rubylight's broker (rust/linux/vdisplay-broker), which decides itself who may use it.
+pub const RUBYLIGHT_SOCKET: &str = "/run/rubylight/vdisplay.sock";
 /// A request, from connecting to the reply, may take this long. It stays above the broker's own
 /// five-second runtime limit, so a timed-out change cannot outlive the wait.
 const DEADLINE: Duration = Duration::from_secs(8);
@@ -26,6 +28,9 @@ const MAX_REPLY: usize = 128;
 pub enum Trust {
     /// The socket is root-owned without "other" bits and the peer's uid is 0.
     Root,
+    /// The socket may be open to everyone (the broker authorizes each caller), so its folder
+    /// must be root's and writable by nobody else; the peer's uid is 0.
+    RootFolder,
     /// Nothing is checked: a fake server in a test.
     #[cfg(test)]
     Unchecked,
@@ -36,6 +41,19 @@ pub enum Trust {
 pub struct Broker {
     pub socket: PathBuf,
     pub trust: Trust,
+}
+
+impl Broker {
+    /// The broker of a pool.
+    pub fn of(kind: super::pool::Kind) -> Self {
+        match kind {
+            super::pool::Kind::Rubylight => Self {
+                socket: PathBuf::from(RUBYLIGHT_SOCKET),
+                trust: Trust::RootFolder,
+            },
+            super::pool::Kind::Vibepollo => Self::default(),
+        }
+    }
 }
 
 impl Default for Broker {
@@ -134,8 +152,11 @@ impl Broker {
     /// Send one line and return the broker's one-line reply without its newline.
     fn transact(&self, line: &str) -> Result<String> {
         let deadline = Instant::now() + DEADLINE;
-        if self.trust == Trust::Root {
-            check_socket(&self.socket)?;
+        match self.trust {
+            Trust::Root => check_socket(&self.socket)?,
+            Trust::RootFolder => check_folder(&self.socket)?,
+            #[cfg(test)]
+            Trust::Unchecked => {}
         }
         let mut stream = UnixStream::connect(&self.socket).with_context(|| {
             format!(
@@ -143,7 +164,7 @@ impl Broker {
                 self.socket.display()
             )
         })?;
-        if self.trust == Trust::Root {
+        if matches!(self.trust, Trust::Root | Trust::RootFolder) {
             let uid = peer_uid(&stream)?;
             if uid != 0 {
                 bail!("the broker socket is served by uid {uid}, not root");
@@ -218,6 +239,28 @@ pub(super) fn check_socket(path: &Path) -> Result<()> {
     if !meta.file_type().is_socket() || meta.uid() != 0 || meta.mode() & 0o007 != 0 {
         bail!(
             "{} is not a root-owned socket without access for other users",
+            path.display()
+        );
+    }
+    Ok(())
+}
+
+/// A socket anyone may open: it must be a socket in a root-owned folder nobody else can write,
+/// so no one can put another in its place.
+pub(super) fn check_folder(path: &Path) -> Result<()> {
+    let meta = std::fs::symlink_metadata(path)
+        .with_context(|| format!("the broker socket {} is missing", path.display()))?;
+    let folder = path.parent().context("the broker socket has no folder")?;
+    let dir = std::fs::symlink_metadata(folder)
+        .with_context(|| format!("the broker folder {} is missing", folder.display()))?;
+    if !meta.file_type().is_socket()
+        || meta.uid() != 0
+        || !dir.is_dir()
+        || dir.uid() != 0
+        || dir.mode() & 0o022 != 0
+    {
+        bail!(
+            "{} is not a root-owned socket in a folder only root can change",
             path.display()
         );
     }

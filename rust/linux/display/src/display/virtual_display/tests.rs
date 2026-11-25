@@ -1,9 +1,10 @@
 //! Tests of the private display's life and of availability, against a fake broker, a fake
-//! KScreen and a temporary sysfs tree. Nothing here touches a real display, socket or sysfs,
-//! except the ignored live test at the end, which changes this PC's monitors.
+//! KScreen and a temporary sysfs tree. Nothing here touches a real display, socket or sysfs;
+//! the ignored live tests that do are in `live_tests.rs`.
 use super::broker::fake::{Fake, connector, serve, temp_dir};
 use super::broker::{Broker, Trust};
 use super::kscreen::{Layout, Mode, Output, Pos, Size};
+use super::pool::Kind;
 use super::private::{Desktop, Manager, PrivateRequest, read_saved};
 use super::*;
 use std::sync::Mutex;
@@ -17,6 +18,8 @@ struct Sim {
     applies: Vec<Vec<String>>,
     fail_apply: bool,
     refuse_mode: bool,
+    /// What KWin did here on meeting a new set of monitors: every connected one on, moved.
+    reshuffle_on_connect: bool,
 }
 
 type Shared = Arc<Mutex<Sim>>;
@@ -48,6 +51,7 @@ impl Desktop for FakeDesktop {
         if sim.fail_apply {
             anyhow::bail!("Invalid config.");
         }
+        let mut refused = false;
         for arg in args {
             let rest = arg.strip_prefix("output.").unwrap();
             for output in &mut sim.layout.outputs {
@@ -69,6 +73,26 @@ impl Desktop for FakeDesktop {
                         };
                     }
                     Some(("priority", p)) => output.priority = p.parse().unwrap(),
+                    Some(("addCustomMode", m)) => {
+                        let v: Vec<f64> =
+                            m.split('.').take(3).map(|n| n.parse().unwrap()).collect();
+                        let id = format!("{}", 200 + output.modes.len());
+                        output.modes.push(Mode {
+                            id,
+                            name: String::new(),
+                            refresh_rate: v[2] / 1000.0,
+                            size: Size {
+                                width: v[0] as i32,
+                                height: v[1] as i32,
+                            },
+                        });
+                    }
+                    Some(("removeCustomMode", _)) => {
+                        match output.modes.iter().position(|m| m.id.starts_with('2')) {
+                            Some(at) => drop(output.modes.remove(at)),
+                            None => refused = true,
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -77,6 +101,9 @@ impl Desktop for FakeDesktop {
             if let Some(mode) = output.modes.iter().find(|m| m.id == output.current_mode_id) {
                 output.size = mode.size;
             }
+        }
+        if refused {
+            anyhow::bail!("applying config failed!");
         }
         Ok(())
     }
@@ -99,6 +126,10 @@ impl Drop for Rig {
 use std::path::PathBuf;
 
 fn rig(pool: usize) -> Rig {
+    rig_on(pool, Kind::Vibepollo)
+}
+
+fn rig_on(pool: usize, kind: Kind) -> Rig {
     let sim: Shared = Arc::default();
     {
         let mut s = sim.lock().unwrap();
@@ -117,7 +148,7 @@ fn rig(pool: usize) -> Rig {
         connector(
             &base,
             &format!("card1-Virtual-{n}"),
-            "devices/faux/vibeshine",
+            &format!("devices/faux/{}", kind.device()),
             "disconnected",
         );
     }
@@ -129,6 +160,17 @@ fn rig(pool: usize) -> Rig {
         let reply = match parts[0] {
             "connect" | "disconnect" => {
                 let on = parts[0] == "connect";
+                if on && sim.reshuffle_on_connect {
+                    for o in sim
+                        .layout
+                        .outputs
+                        .iter_mut()
+                        .filter(|o| o.name.contains('-') && !o.name.starts_with("Virtual"))
+                    {
+                        o.enabled = true;
+                        o.pos.x += 1920;
+                    }
+                }
                 if let Some(o) = sim.layout.outputs.iter_mut().find(|o| o.name == parts[1]) {
                     o.connected = on;
                     if !on {
@@ -179,8 +221,8 @@ fn rig(pool: usize) -> Rig {
         format!("{reply}\n").into_bytes()
     });
     let state = base.join("state/rubylight/private-display.json");
-    let manager = Manager::new(
-        broker,
+    let manager = Manager::with_brokers(
+        vec![(kind, broker)],
         base.join("drm"),
         Box::new(FakeDesktop(sim.clone())),
         Some(state.clone()),
@@ -490,194 +532,66 @@ fn availability_needs_a_pool_and_a_socket_this_user_may_use() {
     std::fs::remove_dir_all(&base).unwrap();
 }
 
-/// What KScreen shows of the enabled outputs, for comparing a layout before and after; modes
-/// by name, as KScreen renumbers them.
-fn shown(layout: &Layout) -> Vec<String> {
-    let mut shown: Vec<String> = layout
-        .outputs
-        .iter()
-        .filter(|o| o.enabled)
-        .map(|o| {
-            let rank = o.modes.iter().position(|m| m.id == o.current_mode_id);
-            let mode = rank.map(|rank| &o.modes[rank]);
-            format!(
-                "{} mode #{} {} ({} Hz) at {},{} scale {} priority {}",
-                o.name,
-                rank.unwrap_or(usize::MAX),
-                mode.map_or("?", |m| m.name.as_str()),
-                mode.map_or(0.0, |m| m.refresh_rate),
-                o.pos.x,
-                o.pos.y,
-                o.scale,
-                o.priority
-            )
-        })
-        .collect();
-    shown.sort();
-    shown
-}
-
-/// On this PC, with Vibepollo's pool and broker: a 1280x720 display at 60 Hz in the layout
-/// `RUBYLIGHT_LIVE_LAYOUT` names (default exclusive), held `RUBYLIGHT_LIVE_HOLD` seconds
-/// (default 5), then dropped; the monitors must be back as they were. It changes the
-/// desktop: run it only on a PC whose user agreed.
+/// Rubylight's pool lists no custom modes: the host adds the mode through KWin, never asks the
+/// broker for it, and takes the mode away with the display.
 #[test]
-#[ignore = "changes this PC's monitors"]
-fn live_a_private_display_comes_and_goes() {
-    let layout = std::env::var("RUBYLIGHT_LIVE_LAYOUT").unwrap_or_else(|_| "exclusive".into());
-    let hold: u64 = std::env::var("RUBYLIGHT_LIVE_HOLD")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(5);
-    eprintln!("status {}", virtual_display_status());
-    assert!(virtual_display_available(), "{}", virtual_display_status());
-    let before = kscreen::query().unwrap();
-    let started = std::time::Instant::now();
-    let display = VirtualDisplay::create_with(&PrivateRequest {
-        stable_id: "rubylight-live-test".into(),
-        width: 1280,
-        height: 720,
-        refresh_millihz: 60_000,
-        arrangement: Arrangement::parse(&layout).unwrap(),
-        scale_percent: None,
-    })
-    .unwrap();
-    eprintln!("{} up in {:?}", display.name, started.elapsed());
-    let during = kscreen::query().unwrap();
-    eprintln!("during {:#?}", shown(&during));
-    let output = during.output(&display.name).expect("the output is listed");
-    assert!(output.enabled);
-    assert_eq!(
-        joinable_mode("rubylight-live-test"),
-        Some((1280, 720, 60_000))
-    );
-    std::thread::sleep(Duration::from_secs(hold));
-    let name = display.name.clone();
-    let started = std::time::Instant::now();
+fn rubylight_s_pool_gets_its_mode_from_kwin() {
+    let rig = rig_on(1, Kind::Rubylight);
+    let display = rig
+        .manager
+        .create(&request("phone", Arrangement::Extended))
+        .unwrap();
+    {
+        let sim = rig.sim.lock().unwrap();
+        assert!(sim.broker_log.iter().all(|l| !l.starts_with("mode")));
+        assert!(
+            sim.applies
+                .iter()
+                .flatten()
+                .any(|a| a == "output.Virtual-1.addCustomMode.1280.720.60000.full")
+        );
+        let v = sim.layout.output("Virtual-1").unwrap();
+        assert!(v.enabled && v.current_mode_id.starts_with('2'));
+    }
     drop(display);
-    eprintln!("dropped in {:?}", started.elapsed());
-    // KScreen takes a moment to list the outputs again.
-    let mut after = kscreen::query().unwrap();
-    for _ in 0..30 {
-        if shown(&after) == shown(&before) {
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(100));
-        after = kscreen::query().unwrap();
-    }
-    eprintln!("after {:#?}", shown(&after));
-    assert_eq!(shown(&after), shown(&before));
-    assert!(after.output(&name).is_none_or(|o| !o.enabled));
-}
-
-fn live_request(stable_id: &str, width: u32, arrangement: Arrangement) -> PrivateRequest {
-    PrivateRequest {
-        stable_id: stable_id.into(),
-        width,
-        height: 720,
-        refresh_millihz: 60_000,
-        arrangement,
-        scale_percent: None,
-    }
-}
-
-/// On this PC: two private displays at once. The second asks for exclusive but joins the first
-/// beside it; dropping the first leaves the second, and dropping the second brings the
-/// monitors back. It changes the desktop: run it only on a PC whose user agreed.
-#[test]
-#[ignore = "changes this PC's monitors"]
-fn live_two_private_displays_at_once() {
-    assert!(virtual_display_available(), "{}", virtual_display_status());
-    let before = kscreen::query().unwrap();
-    let first = VirtualDisplay::create_with(&live_request(
-        "rubylight-live-one",
-        1280,
-        Arrangement::Extended,
-    ))
-    .unwrap();
-    let second = VirtualDisplay::create_with(&live_request(
-        "rubylight-live-two",
-        1024,
-        Arrangement::Exclusive,
-    ))
-    .unwrap();
-    assert_ne!(first.name, second.name);
-    let both = kscreen::query().unwrap();
-    eprintln!("both {:#?}", shown(&both));
-    for name in [&first.name, &second.name] {
-        assert!(both.output(name).is_some_and(|o| o.enabled), "{name} is on");
-    }
-    // The physical monitor stays: the second display joined instead of taking the desktop.
-    assert!(both.output("DP-1").is_some_and(|o| o.enabled));
-    std::thread::sleep(Duration::from_secs(3));
-    let (first_name, second_name) = (first.name.clone(), second.name.clone());
-    drop(first);
-    let one = kscreen::query().unwrap();
-    eprintln!("one {:#?}", shown(&one));
-    assert!(one.output(&first_name).is_none_or(|o| !o.enabled));
-    assert!(one.output(&second_name).is_some_and(|o| o.enabled));
-    assert_eq!(joinable_mode("rubylight-live-one"), None);
-    std::thread::sleep(Duration::from_secs(2));
-    drop(second);
-    let mut after = kscreen::query().unwrap();
-    for _ in 0..30 {
-        if shown(&after) == shown(&before) {
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(100));
-        after = kscreen::query().unwrap();
-    }
-    eprintln!("after {:#?}", shown(&after));
-    assert_eq!(shown(&after), shown(&before));
-}
-
-/// On this PC, half of a crash: an exclusive private display, held until the process is
-/// killed (`kill -9`), so nothing restores the monitors. [`live_recovery_after_a_crash`] is
-/// the other half. It changes the desktop: run it only on a PC whose user agreed.
-#[test]
-#[ignore = "changes this PC's monitors and waits to be killed"]
-fn live_hold_until_killed() {
-    assert!(virtual_display_available(), "{}", virtual_display_status());
-    let display = VirtualDisplay::create_with(&live_request(
-        "rubylight-live-crash",
-        1280,
-        Arrangement::Exclusive,
-    ))
-    .unwrap();
-    eprintln!("HOLDING {}", display.name);
-    std::thread::sleep(Duration::from_secs(120));
-    // Not reached when killed; a run that is not killed restores as usual.
-    drop(display);
-}
-
-/// On this PC, after [`live_hold_until_killed`] was killed: the host's start-up recovery
-/// brings the monitors back, gives the connector back and clears the state file.
-#[test]
-#[ignore = "changes this PC's monitors"]
-fn live_recovery_after_a_crash() {
-    let file = private::state_path().expect("a state folder");
-    assert!(file.exists(), "a killed hold leaves {}", file.display());
-    let pending = kscreen::query().unwrap();
-    eprintln!("left by the crash {:#?}", shown(&pending));
-    recover_after_restart().unwrap();
-    let mut after = kscreen::query().unwrap();
-    for _ in 0..30 {
-        if after.output("DP-1").is_some_and(|o| o.enabled) {
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(100));
-        after = kscreen::query().unwrap();
-    }
-    eprintln!("recovered {:#?}", shown(&after));
-    assert!(after.output("DP-1").is_some_and(|o| o.enabled));
+    let sim = rig.sim.lock().unwrap();
+    assert!(sim.broker_log.last().unwrap().starts_with("disconnect"));
     assert!(
-        after
-            .outputs
+        sim.applies
             .iter()
-            .all(|o| !broker::managed_name(&o.name) || !o.enabled)
+            .flatten()
+            .any(|a| a == "output.Virtual-1.removeCustomMode.0")
     );
-    assert!(!file.exists(), "the state file is cleared");
-    for connector in pool::scan(Path::new(pool::DRM_ROOT)) {
-        assert_eq!(connector.status, "disconnected", "{}", connector.name);
+}
+
+/// KWin turned HDMI-A-1 on and moved DP-1 when the connector was plugged in: the saved layout
+/// is the one from before the plug, the first display's apply puts them back, and so does the
+/// end.
+#[test]
+fn a_layout_kwin_changes_on_plug_is_put_back() {
+    let rig = rig(1);
+    let before = rig.sim.lock().unwrap().layout.clone();
+    rig.sim.lock().unwrap().reshuffle_on_connect = true;
+    let display = rig
+        .manager
+        .create(&request("phone", Arrangement::Extended))
+        .unwrap();
+    {
+        let sim = rig.sim.lock().unwrap();
+        let hdmi = sim.layout.output("HDMI-A-1").unwrap();
+        assert!(!hdmi.enabled, "HDMI-A-1 stays off as it was");
+        assert_eq!(sim.layout.output("DP-1").unwrap().pos.x, 0);
+        assert_eq!(sim.layout.output("Virtual-1").unwrap().pos.x, 1920);
+    }
+    drop(display);
+    let sim = rig.sim.lock().unwrap();
+    for name in ["DP-1", "HDMI-A-1"] {
+        let (now, then) = (
+            sim.layout.output(name).unwrap(),
+            before.output(name).unwrap(),
+        );
+        assert_eq!(now.enabled, then.enabled, "{name}");
+        // An output that is off has no place on the desktop to put back.
+        assert!(!then.enabled || now.pos.x == then.pos.x, "{name}");
     }
 }

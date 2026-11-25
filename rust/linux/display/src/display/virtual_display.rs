@@ -1,21 +1,25 @@
 //! Virtual displays as the host sees them on Linux: whether they can be served, the status
 //! the console shows, and the private displays the host makes.
 //!
-//! A private display is a connector of Vibepollo's `vibeshine_drm` kernel module, connected
-//! through its root broker and arranged with `kscreen-doctor`; the submodules do each part.
-//! Without the module or the broker, every availability check answers no and the status says
-//! why.
+//! A private display is a connector of a pool, connected through the pool's root broker and
+//! arranged with `kscreen-doctor`; the submodules do each part. The pools are Rubylight's own
+//! (stock VKMS, made by the `rubylight-vdisplay` service) and Vibepollo's `vibeshine_drm`
+//! module. Without a pool or its broker, every availability check answers no and the status
+//! says why.
 //!
 //! Ported from Vibepollo (Nonary/Vibepollo, GPL-3.0), src/platform/linux/private_display*.cpp,
 //! and libvirtualdisplay (Nonary/libvirtualdisplay, MIT, Copyright (c) 2026 Chase Payne),
 //! src/driver/linux_control_client.cpp.
 use anyhow::Result;
 use butterpollo_media_policy::display_policy::Arrangement;
+#[cfg(test)]
 use std::path::Path;
 use std::sync::Arc;
 
 mod broker;
 mod kscreen;
+#[cfg(test)]
+mod live_tests;
 mod pool;
 mod private;
 #[cfg(test)]
@@ -28,19 +32,35 @@ pub fn windows_build() -> Option<u32> {
     None
 }
 
-/// Whether the module's pool and the broker can serve a private display now, or why not.
+/// Whether Vibepollo's pool and `broker` can serve a private display now, or why not.
+#[cfg(test)]
 fn availability(drm_root: &Path, broker: &broker::Broker) -> Result<(), String> {
     if pool::scan(drm_root).is_empty() {
         return Err("Vibepollo's virtual display module is not loaded".into());
     }
-    if broker.trust == broker::Trust::Root {
-        broker::check_socket(&broker.socket).map_err(|e| format!("{e:#}"))?;
-    } else if !broker.socket.exists() {
-        return Err(format!(
-            "the broker socket {} is missing",
-            broker.socket.display()
-        ));
+    broker_usable(pool::Kind::Vibepollo, broker)
+}
+
+/// Whether this process may use the broker of a `kind` pool, or why not.
+fn broker_usable(kind: pool::Kind, broker: &broker::Broker) -> Result<(), String> {
+    let missing = || {
+        match kind {
+        pool::Kind::Rubylight => {
+            "Rubylight's virtual display service is not running (systemctl enable --now rubylight-vdisplay-pool.service)".to_string()
+        }
+        pool::Kind::Vibepollo => format!("the broker socket {} is missing", broker.socket.display()),
     }
+    };
+    if !broker.socket.exists() {
+        return Err(missing());
+    }
+    let checked = match broker.trust {
+        broker::Trust::Root => broker::check_socket(&broker.socket),
+        broker::Trust::RootFolder => broker::check_folder(&broker.socket),
+        #[cfg(test)]
+        broker::Trust::Unchecked => Ok(()),
+    };
+    checked.map_err(|e| format!("{e:#}"))?;
     let path = std::ffi::CString::new(std::os::unix::ffi::OsStrExt::as_bytes(
         broker.socket.as_os_str(),
     ))
@@ -48,18 +68,19 @@ fn availability(drm_root: &Path, broker: &broker::Broker) -> Result<(), String> 
     // SAFETY: `path` is a NUL-terminated string that lives through the call.
     if unsafe { libc::access(path.as_ptr(), libc::R_OK | libc::W_OK) } != 0 {
         let error = std::io::Error::last_os_error();
-        return Err(if error.raw_os_error() == Some(libc::EACCES) {
-            "this user is not in the vibeshine-vkms group".into()
-        } else {
-            format!("the broker socket cannot be used: {error}")
-        });
+        return Err(
+            if error.raw_os_error() == Some(libc::EACCES) && kind == pool::Kind::Vibepollo {
+                "this user is not in the vibeshine-vkms group".into()
+            } else {
+                format!("the broker socket cannot be used: {error}")
+            },
+        );
     }
     Ok(())
 }
 
 fn system_availability() -> Result<(), String> {
-    let manager = private::system();
-    availability(&manager.drm_root, &manager.broker)
+    private::system().availability()
 }
 
 /// Whether this system can serve virtual displays at all: the module is loaded and this user
