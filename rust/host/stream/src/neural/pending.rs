@@ -73,8 +73,8 @@ pub fn clear_pending(h: &Shared, exe: &Path) {
 }
 
 /// Add removals to the record (once each). If an existing entry for the same
-/// executable had no UUID, fill it from the incoming removal so concurrent
-/// installs serialize on the app's job slot.
+/// executable has no UUID or belongs to a non-running app, claim it for the
+/// incoming UUID so concurrent installs serialize on the live app's job slot.
 pub fn record_pending(h: &Shared, removals: &[Pending]) -> Result<()> {
     update_settings(h, |value| {
         let mut list = pending_in(value)?;
@@ -82,7 +82,9 @@ pub fn record_pending(h: &Shared, removals: &[Pending]) -> Result<()> {
         for removal in removals {
             if let Some(uuid) = &removal.uuid
                 && let Some(entry) = list.iter_mut().find(|old| old.exe == removal.exe)
-                && entry.uuid.is_none()
+                && entry.uuid.as_deref().is_none_or(|old| {
+                    old != uuid.as_str() && !super::running(&h.neural.lock(), old)
+                })
             {
                 entry.uuid = Some(uuid.clone());
             }
@@ -188,9 +190,14 @@ fn try_pending_inner(h: &Shared, also: &[Pending], before_take: impl Fn()) {
             slot.restore();
             continue;
         }
-        let still_pending = pending(h).iter().any(|entry| entry.exe == removal.exe)
-            || also.iter().any(|entry| entry.exe == removal.exe);
-        if !still_pending {
+        let live = pending(h)
+            .into_iter()
+            .find(|entry| entry.exe == removal.exe);
+        let still_owned = live
+            .as_ref()
+            .is_some_and(|entry| entry.uuid == removal.uuid)
+            || (live.is_none() && also.iter().any(|entry| entry.exe == removal.exe));
+        if !still_owned {
             slot.restore();
             continue;
         }
@@ -482,5 +489,102 @@ mod tests {
             placed_exe(&crate::neural::app(h, "game").unwrap()),
             Some(exe)
         );
+    }
+
+    /// T1-2 regression (Case A & Case B): if a legacy `uuid: None` entry is
+    /// upgraded to `Some("game")` OR a deleted app's `uuid: Some("old")` entry
+    /// is superseded by `Some("new")` during an in-flight install (before
+    /// `set_key`), a `try_pending` pass carrying the stale UUID snapshot must
+    /// neither bypass the live owner's job slot nor delete the placed files.
+    #[test]
+    fn try_pending_skips_entries_whose_uuid_was_upgraded_or_superseded_mid_install() {
+        // Case A: legacy `uuid: None` upgraded to `Some("game")` during an in-flight install.
+        {
+            let f = Fixture::new();
+            let h = &f.host;
+            let temp = Temp::new("race-uuid-upgrade");
+            let (exe, _) = setup_installed_game(temp.path());
+            let folder = exe.parent().unwrap();
+
+            record_pending(
+                h,
+                &[Pending {
+                    name: "Game".into(),
+                    exe: exe.clone(),
+                    uuid: None,
+                }],
+            )
+            .unwrap();
+
+            try_pending_inner(h, &[], || {
+                start_job(h, "game", "install", "place").unwrap();
+                record_pending(
+                    h,
+                    &[Pending {
+                        name: "Game".into(),
+                        exe: exe.clone(),
+                        uuid: Some("game".into()),
+                    }],
+                )
+                .unwrap();
+            });
+
+            assert!(
+                folder.join(MANIFEST).is_file(),
+                "Case A: manifest was deleted during in-flight install"
+            );
+            assert!(
+                folder.join("dxgi.dll").is_file(),
+                "Case A: proxy DLL was deleted during in-flight install"
+            );
+            assert_eq!(pending(h)[0].uuid.as_deref(), Some("game"));
+        }
+
+        // Case B: deleted app's `uuid: Some("old")` superseded by re-added `Some("new")`
+        // during an in-flight install (before `set_key`).
+        {
+            let f = Fixture::new();
+            let h = &f.host;
+            let temp = Temp::new("race-uuid-supersede");
+            let (exe, _) = setup_installed_game(temp.path());
+            let folder = exe.parent().unwrap();
+
+            record_pending(
+                h,
+                &[Pending {
+                    name: "Game".into(),
+                    exe: exe.clone(),
+                    uuid: Some("old".into()),
+                }],
+            )
+            .unwrap();
+
+            try_pending_inner(h, &[], || {
+                start_job(h, "new", "install", "place").unwrap();
+                record_pending(
+                    h,
+                    &[Pending {
+                        name: "Game".into(),
+                        exe: exe.clone(),
+                        uuid: Some("new".into()),
+                    }],
+                )
+                .unwrap();
+            });
+
+            assert!(
+                folder.join(MANIFEST).is_file(),
+                "Case B: manifest was deleted during in-flight re-added game install"
+            );
+            assert!(
+                folder.join("dxgi.dll").is_file(),
+                "Case B: proxy DLL was deleted during in-flight re-added game install"
+            );
+            assert_eq!(pending(h)[0].uuid.as_deref(), Some("new"));
+            assert!(
+                !h.neural.lock().jobs.contains_key("old"),
+                "Case B: stale `old` slot must be cleanly restored"
+            );
+        }
     }
 }

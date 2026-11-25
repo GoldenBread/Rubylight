@@ -454,17 +454,25 @@ pub struct Removing {
 }
 impl Removing {
     pub(super) fn take(h: &Shared, uuid: Option<&str>) -> Result<Self, Refusal> {
-        let previous = if let Some(uuid) = uuid {
+        let previous = {
             let mut state = h.neural.lock();
-            if running(&state, uuid) {
-                return Err(Refusal::Busy);
+            match uuid {
+                Some(uuid) => {
+                    if running(&state, uuid) {
+                        return Err(Refusal::Busy);
+                    }
+                    let previous = state.jobs.get(uuid).cloned();
+                    forget_game_check(&mut state, uuid);
+                    state.jobs.insert(uuid.into(), Job::new("remove", "remove"));
+                    previous
+                }
+                None => {
+                    if state.jobs.values().any(Job::is_running) {
+                        return Err(Refusal::Busy);
+                    }
+                    None
+                }
             }
-            let previous = state.jobs.get(uuid).cloned();
-            forget_game_check(&mut state, uuid);
-            state.jobs.insert(uuid.into(), Job::new("remove", "remove"));
-            previous
-        } else {
-            None
         };
         Ok(Self {
             h: h.clone(),
