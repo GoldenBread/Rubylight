@@ -591,7 +591,7 @@ fn control_seq_memory_preserves_sequence_and_replay_window_across_restarts() {
     let key_b = [0x22; 16];
 
     {
-        let state = memory.for_launch(key_a);
+        let state = memory.for_launch("launch-a", key_a);
         let mut guard = state.lock().unwrap();
         assert_eq!(guard.sequence, 0);
         guard.sequence = 2;
@@ -600,9 +600,9 @@ fn control_seq_memory_preserves_sequence_and_replay_window_across_restarts() {
         assert!(!guard.received.accept(2));
     }
 
-    // Re-acquiring for the same launch key keeps both sequence and replay window.
+    // Re-acquiring for the same launch id and key keeps both sequence and replay window.
     {
-        let restarted = memory.for_launch(key_a);
+        let restarted = memory.for_launch("launch-a", key_a);
         let mut guard = restarted.lock().unwrap();
         assert_eq!(guard.sequence, 2);
         assert!(!guard.received.accept(0));
@@ -610,9 +610,18 @@ fn control_seq_memory_preserves_sequence_and_replay_window_across_restarts() {
         assert!(guard.received.accept(1));
     }
 
-    // Ended launch keys are pruned on retain_launches.
-    let _b = memory.for_launch(key_b);
-    memory.retain_launches([&key_a]);
-    let reset_b = memory.for_launch(key_b);
+    // A new launch starting with the same key starts cleanly rather than inheriting replay state.
+    {
+        let second_launch = memory.for_launch("launch-a-2", key_a);
+        let mut guard = second_launch.lock().unwrap();
+        assert_eq!(guard.sequence, 0);
+        assert!(guard.received.accept(0));
+    }
+
+    // Ended launches are pruned on retain_launches.
+    let b = memory.for_launch("launch-b", key_b);
+    b.lock().unwrap().sequence = 5;
+    memory.retain_launches([("launch-a", &key_a)]);
+    let reset_b = memory.for_launch("launch-b", key_b);
     assert_eq!(reset_b.lock().unwrap().sequence, 0);
 }

@@ -398,8 +398,8 @@ pub struct Media {
     /// Roaming seqs of the launches, kept across control worker restarts so no launch key
     /// repeats a nonce.
     roam_seqs: butterpollo_session::roaming::SeqMemory,
-    /// Control-stream AES-GCM send sequence & receive replay window per launch key,
-    /// kept across control worker restarts so no launch key repeats a nonce or resets replay state.
+    /// Control-stream AES-GCM send sequence & receive replay window per launch id and key,
+    /// kept across control worker restarts so no launch repeats a nonce or resets replay state.
     pub(crate) control_seqs: ControlSeqMemory,
 }
 
@@ -409,27 +409,34 @@ pub(crate) struct ControlSeqState {
     pub(crate) received: butterpollo_media_policy::packet::ReplayWindow,
 }
 
-type ControlSeqMap = HashMap<[u8; 16], Arc<Mutex<ControlSeqState>>>;
+type ControlSeqMap = HashMap<(String, [u8; 16]), Arc<Mutex<ControlSeqState>>>;
 
-/// Control encryption sequences and replay windows per launch key, kept across control worker
-/// restarts so a live launch never repeats an AES-GCM nonce or clears its replay window.
+/// Control encryption sequences and replay windows per `(launch.id, launch.key)`, kept across
+/// control worker restarts so a live launch never repeats an AES-GCM nonce or clears its replay
+/// window while distinct launches starting with an identical key begin cleanly.
 #[derive(Clone, Default)]
 pub(crate) struct ControlSeqMemory(Arc<Mutex<ControlSeqMap>>);
 
 impl ControlSeqMemory {
-    pub(crate) fn for_launch(&self, key: [u8; 16]) -> Arc<Mutex<ControlSeqState>> {
+    pub(crate) fn for_launch(&self, id: &str, key: [u8; 16]) -> Arc<Mutex<ControlSeqState>> {
         Arc::clone(
             self.0
                 .lock()
                 .unwrap()
-                .entry(key)
+                .entry((id.to_owned(), key))
                 .or_insert_with(|| Arc::new(Mutex::new(ControlSeqState::default()))),
         )
     }
 
-    pub(crate) fn retain_launches<'a>(&self, rikeys: impl IntoIterator<Item = &'a [u8; 16]>) {
-        let keys: Vec<[u8; 16]> = rikeys.into_iter().copied().collect();
-        self.0.lock().unwrap().retain(|key, _| keys.contains(key));
+    pub(crate) fn retain_launches<'a>(
+        &self,
+        live: impl IntoIterator<Item = (&'a str, &'a [u8; 16])>,
+    ) {
+        let keys: Vec<(&str, [u8; 16])> = live.into_iter().map(|(id, key)| (id, *key)).collect();
+        self.0
+            .lock()
+            .unwrap()
+            .retain(|(id, key), _| keys.iter().any(|(k_id, k_key)| k_id == id && k_key == key));
     }
 
     pub(crate) fn is_empty(&self) -> bool {

@@ -221,17 +221,29 @@ impl Media {
                     .roaming
                     .retain_peers(&socket, |peer| live.contains(&peer));
             }
-            if peers_went && (!self.roam_seqs.is_empty() || !self.control_seqs.is_empty()) {
-                // An ended launch's key never returns.
+            let sweep_due = unattended_sweep.due(Instant::now(), peers_came || peers_went);
+            if (peers_went || sweep_due)
+                && (!self.roam_seqs.is_empty() || !self.control_seqs.is_empty())
+            {
+                // An ended launch never returns; sweep both on peer exit and periodically after
+                // video teardown finishes so stopping launches do not stay pinned.
                 let sessions = h.sessions.lock().unwrap();
-                let keys: Vec<[u8; 16]> = sessions
+                let roam_keys: Vec<[u8; 16]> = sessions
                     .active
                     .values()
                     .map(|s| s.launch.key)
                     .chain(sessions.pending.values().map(|l| l.key))
                     .collect();
-                self.roam_seqs.retain_launches(keys.iter());
-                self.control_seqs.retain_launches(keys.iter());
+                self.roam_seqs.retain_launches(roam_keys.iter());
+                let control_live: Vec<(String, [u8; 16])> = sessions
+                    .active
+                    .values()
+                    .filter(|s| !s.stopping())
+                    .map(|s| (s.launch.id.clone(), s.launch.key))
+                    .chain(sessions.pending.values().map(|l| (l.id.clone(), l.key)))
+                    .collect();
+                self.control_seqs
+                    .retain_launches(control_live.iter().map(|(id, key)| (id.as_str(), key)));
             }
             menus.retain(|id| {
                 peers
@@ -242,7 +254,7 @@ impl Media {
             // this worker lost when it restarted, would otherwise hold the
             // encoder, capture and display forever (Sunshine times it out).
             // Its timeout is seconds long: input passes leave it to the timer.
-            if unattended_sweep.due(Instant::now(), peers_came || peers_went) {
+            if sweep_due {
                 active_sessions.extend(h.sessions.lock().unwrap().active.values().cloned());
                 unattended.retain(|id, _| active_sessions.iter().any(|s| &s.launch.id == id));
                 end_unattended_sessions(

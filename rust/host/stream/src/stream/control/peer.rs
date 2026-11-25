@@ -101,7 +101,7 @@ impl ControlPeer {
             pads_wait: PadsWait::default(),
             coop: None,
             coop_tried: false,
-            seq_state: control_seqs.for_launch(launch.key),
+            seq_state: control_seqs.for_launch(&launch.id, launch.key),
             ciphers: Default::default(),
             hdr_metadata: None,
             hdr_seen: 0,
