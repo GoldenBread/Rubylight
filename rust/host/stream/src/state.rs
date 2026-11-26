@@ -198,6 +198,8 @@ pub struct Host {
     pub session: Mutex<crate::session_control::Control>,
     /// The game Quick Suspend paused, if any (`quick_suspend`).
     pub quick_suspend: crate::quick_suspend::Tracker,
+    /// The launch with a curtain, if any (`launch_curtain`).
+    pub curtain: crate::launch_curtain::Tracker,
     /// Ended streams for the console's Sessions page, saved in the profile directory.
     pub session_history: crate::session_history::History,
     pub confirmations: Mutex<butterpollo_session::remote::Confirmations>,

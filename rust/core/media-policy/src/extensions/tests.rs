@@ -24,6 +24,8 @@ const ALL_ON: Offered = Offered {
     transport_feedback: true,
     quick_suspend: true,
     stream_dvr: true,
+    launch_curtain: true,
+    launch_curtain_stream: true,
     nvidia_enhancements: crate::nvidia_enhance::ALL,
     max_video_packet: video_packet::MAX_VIDEO_PACKET,
     hdr_dynamic_control: true,
@@ -69,6 +71,7 @@ fn everything_offered_gives_the_exact_fields_and_lines() {
             ("ControllerIdentityVersion", "1"),
             ("QuickSuspendVersion", "1"),
             ("StreamDvrVersion", "1"),
+            ("LaunchCurtainVersion", "1"),
             ("NvidiaEnhancements", "3"),
             ("HdrDynamicControl", "1"),
             ("AwayWakeRelayVersion", "1"),
@@ -85,13 +88,13 @@ fn everything_offered_gives_the_exact_fields_and_lines() {
              a=fmtp:97 surround-params=12,12,0,0,1,2,3,4,5,6,7,8,9,10,11\r\n\
              a=x-ss-general.penBarrelRoll:1\r\n\
              a=x-rl-control:0x5508,0x5539,0x553a,0x553b,0x553c,0x553d,0x553e,0x5540,0x5543,\
-             0x5544,0x5545,0x5546,0x5547,0x5549,0x554a,0x554b\r\n"
+             0x5544,0x5545,0x5546,0x5547,0x5548,0x5549,0x554a,0x554b\r\n"
     );
     assert_eq!(
         ALL_ON.control_ids(),
         [
             0x5508, 0x5539, 0x553A, 0x553B, 0x553C, 0x553D, 0x553E, 0x5540, 0x5543, 0x5544, 0x5545,
-            0x5546, 0x5547, 0x5549, 0x554A, 0x554B
+            0x5546, 0x5547, 0x5548, 0x5549, 0x554A, 0x554B
         ]
     );
 }
@@ -125,6 +128,24 @@ fn rate_changes_are_a_describe_id_only() {
         .serverinfo_fields(),
         defaults.serverinfo_fields()
     );
+}
+
+#[test]
+fn launch_curtain_is_a_serverinfo_element_and_a_describe_id_per_launch() {
+    let host = Offered {
+        launch_curtain: true,
+        ..Offered::NONE
+    };
+    assert_eq!(
+        host.serverinfo_fields(),
+        [("LaunchCurtainVersion", "1".to_string())]
+    );
+    assert_eq!(host.describe_lines(), "");
+    let stream = Offered {
+        launch_curtain_stream: true,
+        ..host
+    };
+    assert_eq!(stream.describe_lines(), "a=x-rl-control:0x5548\r\n");
 }
 
 #[test]

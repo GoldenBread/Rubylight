@@ -15,6 +15,7 @@ pub mod game_settings;
 pub mod host_warnings;
 pub mod internet_play;
 pub mod invites;
+pub mod launch_curtain;
 pub mod launch_focus;
 pub mod launcher_watch;
 pub mod library;

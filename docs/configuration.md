@@ -703,6 +703,12 @@ Only the app's verified game processes and what they started are paused, childre
 
 Before the first process stops, the host writes `quick-suspend.json` to the profile and starts a watchdog beside itself, outside the service's job: if the host crashes or is ended, the watchdog resumes the game, and the next host start resumes whatever is left (after a reboot nothing is). The watchdog logs to `logs/quick-suspend-watch.log`.
 
+## Launch curtain
+
+**Settings → Games → Launch curtain** (`launch_curtain`, default off) lets Nightjar keep the game's cover over the stream while a game starts, instead of the Windows desktop, store windows and splash screens. Only a launch that asks for it (`rlLaunchCurtain=1`) gets one; Moonlight, other clients, guests and co-op players see the stream as before. The stream runs underneath the curtain the whole time: the curtain adds no delay to it.
+
+While a curtain is up the host looks at the PC four times a second, instead of every 2 seconds, and lifts the curtain once the game's window has been in front for two looks. It brings a minimised game, or one behind its store's window, to the front as before (issue #131), just sooner. A launcher that wants a sign in or an update (Steam, Epic Games, the EA app, Ubisoft Connect, the Xbox app, Battle.net, GOG Galaxy, the Riot Client) and Windows' administrator prompt turn the curtain into a card with **Show PC screen**; the host never clicks or types into them. The curtain always lifts: when the launched app closes, when the device shows the PC's screen, and 45 seconds after the launch whatever the PC shows, with a line saying the game is still starting. A launch that starts no game window (the desktop, a launcher's own window, a Playnite or background launch) and a resume have no curtain.
+
 ## When a Playnite game closes
 
 The stream of a Playnite game ends once Playnite reports the game closed and no program in the game's folder has run for **Wait after a game closes** (`playnite_exit_wait_secs`, default `15` seconds, under **All settings → Games › Playnite**). The wait keeps the stream open while a launcher hands over to its game or a game restarts itself; until it is over, the stream shows the desktop. Lower it to leave sooner, or set `0` to end the stream at the first check after the game closed; raise it if a stream ends while a game is still starting. It applies to the next game started.

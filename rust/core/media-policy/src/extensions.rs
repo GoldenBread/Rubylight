@@ -12,8 +12,8 @@ use std::collections::BTreeMap;
 use anyhow::{Result, bail};
 use rubylight_protocol::{
     audio_ext, clipboard_sync, controller_identity, cursor_shape, fec_report, frame_warp,
-    frame_warp_v2, hdr, keyboard_layout, pen, pipeline_rates, quick_suspend, rate_change,
-    stream_dvr, text_input, transport_feedback, usb, video_packet,
+    frame_warp_v2, hdr, keyboard_layout, launch_curtain, pen, pipeline_rates, quick_suspend,
+    rate_change, stream_dvr, text_input, transport_feedback, usb, video_packet,
 };
 
 pub use rubylight_protocol::fec_report::FecChoice;
@@ -121,6 +121,13 @@ pub struct Offered {
     /// `StreamDvrVersion` and stream DVR requests (0x554A): instant replay and clips. A host
     /// with Stream DVR always offers it; whether it is turned on travels in its answers.
     pub stream_dvr: bool,
+    /// `LaunchCurtainVersion`, while `launch_curtain` is on: the host follows a game's start
+    /// for a client that keeps a curtain over the stream. A serverinfo element only; the
+    /// state (0x5548) is [`Offered::launch_curtain_stream`].
+    pub launch_curtain: bool,
+    /// The launch curtain's state (0x5548), in the DESCRIBE of a stream whose launch asked
+    /// with `rlLaunchCurtain=1`.
+    pub launch_curtain_stream: bool,
     /// `NvidiaEnhancements`: the NVIDIA image enhancements the GPU and
     /// driver offer with the NVIDIA component (`nvidia_enhance` bits), which a
     /// launch may ask for with `rlRtxHdr` and `rlRtxVideo`. 0 without it.
@@ -162,6 +169,8 @@ impl Offered {
         transport_feedback: false,
         quick_suspend: false,
         stream_dvr: false,
+        launch_curtain: false,
+        launch_curtain_stream: false,
         nvidia_enhancements: 0,
         max_video_packet: 0,
         hdr_dynamic_control: false,
@@ -244,6 +253,12 @@ impl Offered {
             fields.push((
                 stream_dvr::SERVERINFO_FIELD,
                 stream_dvr::SERVERINFO_VERSION.to_string(),
+            ));
+        }
+        if self.launch_curtain {
+            fields.push((
+                launch_curtain::SERVERINFO_FIELD,
+                launch_curtain::SERVERINFO_VERSION.to_string(),
             ));
         }
         let nvidia = self.nvidia_enhancements & crate::nvidia_enhance::ALL;
@@ -332,6 +347,10 @@ impl Offered {
             (
                 self.transport_feedback,
                 transport_feedback::TRANSPORT_FEEDBACK_MESSAGE_TYPE,
+            ),
+            (
+                self.launch_curtain_stream,
+                launch_curtain::LAUNCH_CURTAIN_STATE_MESSAGE_TYPE,
             ),
             (self.stream_dvr, stream_dvr::DVR_STATE_MESSAGE_TYPE),
             (

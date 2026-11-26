@@ -76,6 +76,14 @@ impl SessionNotes {
             inner.bump += 1;
         }
     }
+    /// The launcher notice shown for `device`'s launched game, for its launch curtain.
+    pub fn launcher_notice(&self, device: &str) -> Option<LauncherNotice> {
+        locked(&self.inner)
+            .launcher
+            .as_ref()
+            .filter(|(owner, _)| owner == device)
+            .map(|(_, notice)| notice.clone())
+    }
     /// No launched game is being waited for: forget the launcher and its notice.
     pub fn end_launch(&self) {
         let mut inner = locked(&self.inner);

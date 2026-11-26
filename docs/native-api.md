@@ -88,6 +88,8 @@ All paths start with `/api/native/v1`. "Owner" means the caller owns the current
 | POST | `/session/couch-menu` `{"open": true}` | View or Launch, a live stream of the caller's own | `{"open"}`: whether the menu is open now (feature `session.couch_menu`). 409 `no_session`, 503 `temporarily_unavailable` with the reason the stream can't show it |
 | GET | `/session/suspend` | View or Launch | QuickSuspendStatus (feature `session.quick_suspend`, see [Quick Suspend](#quick-suspend-sessionquick_suspend)) |
 | POST | `/session/suspend`, `/session/resume` `{}` | Launch or **host control**; the session's owner unless host control | QuickSuspendStatus; a refusal is `state` `refused` with `reason` and `message`. 403 `permission_required` |
+| GET | `/session/curtain` | View or Launch | LaunchCurtainSnapshot (feature `session.launch_curtain`, see [Launch curtain](#launch-curtain-sessionlaunch_curtain)) |
+| POST | `/session/curtain/dismiss` `{}` | Launch; the device that launched the game | LaunchCurtainSnapshot; 409 `not_session_owner` for another device, 409 `no_session` without a curtain |
 | GET | `/launch`, `/resume` (existing) | Launch / View | Play and Resume, unchanged |
 | GET | `/radeon` | View or Launch | Radeon |
 | POST | `/radeon/settings` | View + **host control**, owner of a `streaming` or `suspended` session | Radeon |
@@ -675,6 +677,25 @@ The host pauses the app's verified game processes and every process they started
   "suspended_since_unix_ms": 1763772200000, "suspended_by": "Living room TV" }
 ```
 
+## Launch curtain (`session.launch_curtain`)
+
+Listed while the host's `launch_curtain` is on (off by default). A launch that sent `rlLaunchCurtain=1` has a curtain while its game starts, and `GET /session/curtain` reads it for a device with View or Launch; `POST /session/curtain/dismiss` lifts it for the device that launched the game, with Launch (body `{}` or empty; an unknown field is `invalid_request`). The same state reaches that device's stream as the control message `0x5548`.
+
+- `revision`: grows with every change. `active`: whether a curtain is up.
+- `phase`: `preparing`, `starting_app`, `waiting_window`, `focusing_window`, `attention_needed`, `ready`, `dismissed`, `timed_out` or `failed` (`ready` without a launch that asked); an unknown phase means the curtain is down.
+- `dismissible`: the caller launched the game and the curtain is up. `elapsed_ms`: since the launch, never progress.
+- `prompt`, while `attention_needed`: `launcher` (`steam`, `epic`, `ea`, `ubisoft`, `xbox`, `battlenet`, `gog`, `riot`, `windows`), `kind` (`update`, `sign_in`, `prompt`, `uac`), `window_title` (empty for any other device) and `since_unix_ms`.
+- `reason`: why it timed out or failed, in plain English; null otherwise.
+
+```json
+{ "revision": 12, "active": true, "phase": "attention_needed", "dismissible": true,
+  "elapsed_ms": 8420,
+  "prompt": { "launcher": "steam", "kind": "sign_in",
+    "window_title": "Steam Guard - Computer Authorization Required",
+    "since_unix_ms": 1795221890123 },
+  "reason": null }
+```
+
 ## Approve a device (`pairing.approve`)
 
 A device with **Approve new devices** or Host control approves a new one from the couch: it reads the waiting devices and types the PIN the new device shows. The Moonlight key comes from the PIN, so the host needs it and one click cannot do; the protocol and `PROTOCOL_VERSION` stay as they are.
@@ -857,6 +878,7 @@ Modules (serde shapes as in the examples above, all `snake_case`; the source is 
 | `pairing` | `PairingRequests`, `PairingRequest`, `PairingApprove`, `PairingDeny`, `PairingApproved` |
 | `doctor` | `DoctorSnapshot`, `EncoderFacts`, `HostStages`, `HostStage`, `StageTimes`, `PipelineRates`, `ActiveTrial`, `EligibleRemedy`, `RemedyId`, `DoctorApplyRequest`, `DoctorAction` |
 | `quick_suspend` | `QuickSuspendStatus`, `SuspendState`, `QuickSuspendRequest` |
+| `curtain` | `LaunchCurtainSnapshot`, `CurtainPhase`, `CurtainPrompt`, `CurtainDismissRequest` |
 | `usb` | `TUNNEL_PATH`, `UPGRADE`, `TOKEN_HEADER`, `TOKEN_BYTES`, `TOKEN_TTL_SECS` |
 | `error` | `ErrorBody`, `ApiError`, `ErrorCode` with `ErrorCode::status()`, the table in [Errors](#errors) |
 

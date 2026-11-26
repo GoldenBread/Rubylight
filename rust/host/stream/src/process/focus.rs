@@ -152,6 +152,19 @@ impl RunningApp {
             None => self.launch_progress().is_some(),
         }
     }
+    /// Whether a launch curtain waits for this app's game window: it starts a program that is
+    /// not a launcher's own window, in front of the PC (not a background game), and not through
+    /// Playnite, which brings its game's window up itself.
+    pub fn curtain_waits(&self) -> bool {
+        !self.background && self.launches && !self.launcher_only && self.playnite.is_none()
+    }
+    /// The game's processes and whether the game is up, for a launch curtain's look; none once
+    /// no curtain waits for this app.
+    pub fn curtain_snapshot(&self) -> Option<(FocusSnapshot, bool)> {
+        let (game_up, _) = self.launch_progress()?;
+        self.curtain_waits()
+            .then(|| (self.make_focus_snapshot(), game_up))
+    }
     /// As [`Self::bring_back`], applied only if this app still has `generation`,
     /// returning the pid to bring back and the app's name.
     pub fn bring_back_for(
@@ -357,6 +370,22 @@ fn found_window(
         LaunchWindow::BehindClient
     } else {
         LaunchWindow::BehindOther
+    }
+}
+/// Where the game's window is for a launch curtain, from the same look [`RunningApp::bring_back`]
+/// takes: `windows` the game's (`pid`, minimised), `foreground` the process in front.
+pub fn curtain_window(
+    windows: &[(u32, bool)],
+    foreground: Option<u32>,
+    store_client: impl Fn(u32) -> bool,
+) -> butterpollo_session::launch_curtain::GameWindow {
+    use butterpollo_session::launch_curtain::GameWindow;
+    match found_window(windows.iter().copied(), foreground, store_client) {
+        LaunchWindow::Missing => GameWindow::Missing,
+        LaunchWindow::Front => GameWindow::Front,
+        LaunchWindow::Minimized => GameWindow::Minimized,
+        LaunchWindow::BehindClient => GameWindow::BehindClient,
+        LaunchWindow::BehindOther => GameWindow::BehindOther,
     }
 }
 /// The game's window first seen, and the brings-back since (issue #131).

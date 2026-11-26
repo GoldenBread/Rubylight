@@ -554,14 +554,17 @@ pub async fn maintain(
         }
         hotkey.poll(&h);
         if Instant::now() >= launcher_at && !resting {
-            launcher_at = Instant::now() + crate::launcher_watch::EVERY;
+            launcher_at = crate::launch_curtain::next_look(&h, crate::launcher_watch::EVERY);
             let h = h.clone();
             spawn_exclusive(&launcher_reading, move || crate::launcher_watch::watch(&h));
         }
         if Instant::now() >= focus_at && !resting {
-            focus_at = Instant::now() + crate::launch_focus::EVERY;
+            focus_at = crate::launch_curtain::next_look(&h, crate::launch_focus::EVERY);
             let h = h.clone();
-            spawn_exclusive(&focus_reading, move || crate::launch_focus::watch(&h));
+            spawn_exclusive(&focus_reading, move || {
+                crate::launch_focus::watch(&h);
+                crate::launch_curtain::tick(&h);
+            });
         }
         if Instant::now() >= wake_at {
             wake_at = Instant::now() + butterpollo_session::wake::idle::TICK;

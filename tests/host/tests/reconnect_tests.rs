@@ -25,6 +25,8 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 mod clipboard_sync_tests;
 #[path = "reconnect_tests/control_fuzz_tests.rs"]
 mod control_fuzz_tests;
+#[path = "reconnect_tests/curtain_tests.rs"]
+mod curtain_tests;
 #[path = "reconnect_tests/extension_tests.rs"]
 mod extension_tests;
 #[path = "reconnect_tests/frame_warp_tests.rs"]

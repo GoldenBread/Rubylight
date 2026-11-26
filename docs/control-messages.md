@@ -223,6 +223,7 @@ The second line appears only when the host offers something, and stock clients i
 | `0x554A` | Stream DVR | `stream_dvr::Message` (`Request`, `HostState`, `ClipResult`) | both | always (whether the replay buffer runs is in `HostState`) | `StreamDvrVersion` |
 | `0x5547` | Transport feedback | `transport_feedback::TransportFeedback` | client to host | while `bitrate_adaptation` is `delay` (not the default) | none |
 | `0x554B` | Quick Suspend | `quick_suspend::ClientRequest`, `quick_suspend::HostState` | both | while `quick_suspend` is `manual` (not the default) | `QuickSuspendVersion` |
+| `0x5548` | Launch curtain | `launch_curtain::CurtainState` | host to client | on a stream whose launch sent `rlLaunchCurtain=1`, while `launch_curtain` is on (not the default) | `LaunchCurtainVersion` |
 
 `0x5508` (clipboard sync, above) goes on the same second line. `0x5542` is reserved. `0x5506`-`0x5510` belong to other clients and hosts: Rubylight takes `0x5508` with Moonlight V+'s frame unchanged and defines nothing else there. Nightjar sends `0x5510` (FEC summary, Moonlight V+'s format) only to a host whose `DESCRIBE` has `x-ss-video[0].fecControlVersion`, which Rubylight does not send.
 
@@ -357,6 +358,27 @@ A client request adds `op` at byte 8: `1` query the state, `2` suspend, `3` resu
 
 The host answers each request on a worker of its own, never on the control loop, and after a device's first request also tells it each change another device or the console made. Only the device that owns the session, or one with Host control, may suspend or resume; the stream stays connected and shows the game's last frame. The next stream of the game, the session's end, the game's stop, the grace period running out and the host's shutdown resume it first. A host crash leaves the journal `quick-suspend.json` in the profile, which a watchdog beside the host, or the next host start, resumes.
 
+### 0x5548 launch curtain (17 bytes and three texts)
+
+Where the start of a game on the PC is, so a client can keep its own screen over the stream until the game's window is in front ([configuration](configuration.md#launch-curtain)). A host lists `LaunchCurtainVersion` `1` while `launch_curtain` is on; a launch or resume that sends `rlLaunchCurtain=1` gets `0x5548` in its `DESCRIBE` (not a guest's, a co-op player's or a background stream's), and the host sends the state reliable and encrypted when the stream's control peer first polls, on every change, and unchanged every 2 s while the curtain is up. Little-endian:
+
+| Bytes | Field | Meaning |
+| --- | --- | --- |
+| 0 | `version` | `1`; 0 is refused, a newer one is read as far as this layout goes |
+| 1 | `phase` | `0` preparing, `1` starting the app, `2` waiting for its window, `3` focusing it, `4` attention needed, `5` ready, `6` dismissed, `7` timed out, `8` failed; an unknown phase reads as `5` |
+| 2 | `flags` | `0x01` no game window to wait for (desktop, a launcher's own window, a resume), `0x02` the game's window was seen, `0x04` Windows shows its secure desktop, `0x08` the player may lift the curtain |
+| 3 | `prompt_kind` | `0` none, `1` update, `2` sign in, `3` another prompt, `4` Windows' administrator prompt; an unknown kind reads as `3` |
+| 4-7 | `sequence u32` | grows with every frame of a launch; a client keeps the newest |
+| 8-11 | `elapsed_ms u32` | since the launch; never shown as progress |
+| 12 | `launcher_len u8` | at most 32 |
+| 13-14 | `title_len u16` | at most 256 |
+| 15-16 | `reason_len u16` | at most 256 |
+| 17- | texts | the launcher id (`steam`, `epic`, `ea`, `ubisoft`, `xbox`, `battlenet`, `gog`, `riot`, `windows`), the prompt window's title and the reason, UTF-8 |
+
+Phases `5` to `8` lift the curtain for good. The host looks at the PC every 250 ms while the curtain is up, off the stream's threads: the game's window in front for two looks in a row is `5`; a launcher prompt that `launcher_watch` holds for two looks, or Windows' secure desktop at once, is `4`; the launched app ending is `8`; 45 s after the launch it is `7` whatever the PC shows. `POST /api/native/v1/session/curtain/dismiss` makes it `6`. A launch with no game window to wait for, a resume and a stream whose launch has no curtain get `5` with `0x01` at once. The host only reads the PC: it never clicks or types into a launcher or a prompt.
+
+A client lifts the curtain on any of those phases, and by itself when the state stops coming for 10 s once pictures arrive; the stream runs underneath the curtain the whole time.
+
 ### 0x5547 transport feedback (20 bytes and the entries)
 
 Per-packet arrival times of the video stream, for the host's congestion control ([configuration](configuration.md#adapt-to-network-congestion)). The client sends them only to a host that lists `0x5547` in `a=x-rl-control`, unreliable and unsequenced, about every 50 ms while video arrives, and drops a report rather than queue it behind a backlog.
@@ -432,6 +454,8 @@ Each is absent until the host offers it.
 | serverinfo | `RustHostInternetPlayVersion` | paired only: `1` while `internet_play` is on (else `0`): the host serves `GET /internet-play/v1` on the paired port and answers hole punches ([Play over the internet](internet-play.md)) |
 | serverinfo | `ExternalIP` | paired only: the router's public IPv4 address, while `upnp` or `internet_play` is on and the host knows it (Moonlight's remote address) |
 | serverinfo | `QuickSuspendVersion` | `1` while `quick_suspend` is `manual`: the host takes `0x554B` and serves `/api/native/v1/session/suspend` and `/session/resume` (feature `session.quick_suspend`) |
+| serverinfo | `LaunchCurtainVersion` | `1` while `launch_curtain` is on: a launch may ask with `rlLaunchCurtain=1` for `0x5548`, and the host serves `/api/native/v1/session/curtain` (feature `session.launch_curtain`) |
+| launch | `rlLaunchCurtain` | `1`: this launch's stream gets `0x5548` in its `DESCRIBE` and the curtain's state |
 | serverinfo | `FrameWarpProtocol` | `2` while `frame_warp` is on: the host takes the 12-byte `0x5543` and sends `0x5544` to `0x5546` and `0x5549`. Hosts before 7.0 listed `FrameWarpVersion` `1` instead, which a current host no longer sends |
 | serverinfo | `StreamDvrVersion` | `1`: the host keeps instant-replay clips and takes `0x554A` (listed in `a=x-rl-control`); the native API lists `stream.dvr`. Whether the replay buffer runs is in `0x554A`'s host state and `GET /api/native/v1/dvr` |
 | every HTTPS request | `rlSecondScreen` | `1` marks a request of a paired device's second screen (Nightjar's Dual screen mode). On `/launch` and `/resume` it starts or resumes that screen's stream, which the host keeps beside the device's first stream as a device of its own under the same pairing, and lays the two displays out as the user left them. The second screen always has a display of its own: a virtual display beside the first screen's, also when it resumes the game the first screen plays (it never joins the game's display), or, when the device's streams show physical displays, the PC's other monitor (the same one only when there is no other). The second screen's process sends it on every other request too (`/bitrate`, `/api/abr/capabilities`, `/api/network-path`, `/api/hardware-metrics`, `/actions/clipboard`, the native API), so each reaches its own stream; without it a request is the device's first screen's. Permissions, the enabled switch and the device's settings are the device's for both screens, except the resolution and scale kept from a stream, which each screen keeps for itself; a second screen takes no Nucleus Co-op seat. Unpairing or turning the device off ends both and releases what both held. Any other value is the device itself |

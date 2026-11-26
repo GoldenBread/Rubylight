@@ -14,7 +14,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-/// How often the game's window is looked at.
+/// How often the game's window is looked at; every `launch_curtain::EVERY` while a curtain is up.
 pub const EVERY: Duration = Duration::from_secs(2);
 
 /// One look, from the housekeeping loop.
@@ -78,7 +78,7 @@ fn look(
 
 /// The game's unowned, uncloaked top-level windows now on the desktop (`pid`, minimised), and
 /// the active non-shell process in front.
-fn game_windows(pids: &BTreeSet<u32>) -> (Vec<(u32, bool)>, Option<u32>) {
+pub(crate) fn game_windows(pids: &BTreeSet<u32>) -> (Vec<(u32, bool)>, Option<u32>) {
     let windows = butterpollo_win_io::window_list::visible()
         .into_iter()
         .filter(|window| {
@@ -94,7 +94,7 @@ fn game_windows(pids: &BTreeSet<u32>) -> (Vec<(u32, bool)>, Option<u32>) {
 
 /// Whether a process's program is a store client's or launcher's (Steam, Epic, EA, Ubisoft,
 /// Xbox): its window in front of the game's is what the game is brought back over.
-fn is_store_client(pid: u32) -> bool {
+pub(crate) fn is_store_client(pid: u32) -> bool {
     butterpollo_win_io::process::image_path(pid).is_some_and(|path| {
         let name = path.rsplit(['/', '\\']).next().unwrap_or(&path);
         store_client(name) || butterpollo_session::launcher_prompt::launcher_of(name).is_some()

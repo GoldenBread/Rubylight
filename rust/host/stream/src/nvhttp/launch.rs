@@ -545,6 +545,7 @@ fn launch_back_half(
     if launch.nucleus.is_none() {
         retain_launch_app(h, &launch, prepared_app);
     }
+    crate::launch_curtain::begin_for(h, &launch, resume);
     if let Some(vsync) = vsync {
         vsync.keep();
     }

@@ -503,6 +503,7 @@ impl Host {
             file_transfers: Default::default(),
             usb: Default::default(),
             quick_suspend: Default::default(),
+            curtain: Default::default(),
             dvr: Default::default(),
             session: Mutex::new(session),
             session_history,

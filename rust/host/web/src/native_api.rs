@@ -9,6 +9,7 @@
 //! next request.
 mod audio;
 pub mod coop;
+mod curtain;
 mod doctor;
 pub mod dvr;
 pub mod files;
@@ -138,6 +139,14 @@ pub fn router() -> Router<Shared> {
         .route(
             &path("/session/resume"),
             post(quick_suspend::resume).fallback(unknown),
+        )
+        .route(
+            &path("/session/curtain"),
+            get(curtain::read).fallback(unknown),
+        )
+        .route(
+            &path("/session/curtain/dismiss"),
+            post(curtain::dismiss).fallback(unknown),
         )
         .route(&path("/radeon"), get(radeon::read).fallback(unknown))
         .route(

@@ -84,6 +84,8 @@ pub struct Client {
     pub rate_answers: Notices,
     /// Clipboard sync frames (0x5508) the host sent.
     pub clipboard: Notices,
+    /// Launch curtain states (0x5548) the host sent.
+    pub curtain: Notices,
     /// Frame Warp messages (0x5544 to 0x5546) the host sent, with their types.
     pub frame_warp: FrameWarpMessages,
     /// Plain control messages for the worker to send, reliable.
@@ -120,6 +122,7 @@ impl Client {
         let text_notices = Notices::default();
         let rate_answers = Notices::default();
         let clipboard = Notices::default();
+        let curtain = Notices::default();
         let frame_warp = FrameWarpMessages::default();
         let outbox = Arc::new(Mutex::new(Vec::<Vec<u8>>::new()));
         let control_move = Arc::<Mutex<Option<UdpSocket>>>::default();
@@ -159,6 +162,7 @@ impl Client {
         let worker_text_notices = text_notices.clone();
         let worker_rate_answers = rate_answers.clone();
         let worker_clipboard = clipboard.clone();
+        let worker_curtain = curtain.clone();
         let worker_frame_warp = frame_warp.clone();
         let worker_rounds = rounds.clone();
         let worker_keyframe_heartbeat = keyframe_heartbeat.clone();
@@ -200,6 +204,14 @@ impl Client {
                         }
                         if kind == butterpollo_media_policy::rate_change::RATE_CHANGE_MESSAGE_TYPE {
                             worker_rate_answers
+                                .lock()
+                                .unwrap()
+                                .push((Instant::now(), payload.clone()));
+                        }
+                        if kind
+                            == rubylight_protocol::launch_curtain::LAUNCH_CURTAIN_STATE_MESSAGE_TYPE
+                        {
+                            worker_curtain
                                 .lock()
                                 .unwrap()
                                 .push((Instant::now(), payload.clone()));
@@ -298,6 +310,7 @@ impl Client {
             text_notices,
             rate_answers,
             clipboard,
+            curtain,
             frame_warp,
             outbox,
             control_move,

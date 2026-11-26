@@ -49,6 +49,7 @@ pub fn stream_offered(h: &Shared, config: &Config, dolby: u8, launch: &Launch) -
         max_video_packet: max_video_packet(launch.peer),
         rate_change: rate_change(&launch.options),
         clipboard_sync: clipboard_sync(config, launch),
+        launch_curtain_stream: launch_curtain_stream(config, launch),
         ..offer(h, config, dolby)
     }
 }
@@ -94,6 +95,19 @@ fn clipboard_sync(config: &Config, launch: &Launch) -> bool {
         && crate::stream::clipboard_sync::allowed(config, &launch.client).any()
 }
 
+/// The launch curtain's state (0x5548): for a launch that asked with `rlLaunchCurtain=1`, while
+/// `launch_curtain` is on, on the stream of the device that starts the game (a guest's or a
+/// co-op player's joins a game already up, and a background stream shows no PC screen).
+pub fn launch_curtain_stream(config: &Config, launch: &Launch) -> bool {
+    use rubylight_protocol::launch_curtain::{LAUNCH_PARAMETER, requested};
+    config.launch_curtain()
+        && requested(launch.options.get(LAUNCH_PARAMETER).map(String::as_str))
+        && launch.role == butterpollo_session::session::Role::Stream
+        && launch.guest().is_none()
+        && launch.nucleus.is_none()
+        && launch.background != Some(true)
+}
+
 fn offer(h: &Shared, config: &Config, dolby: u8) -> Offered {
     Offered {
         hdr_formats: hdr_formats(h, config),
@@ -120,6 +134,8 @@ fn offer(h: &Shared, config: &Config, dolby: u8) -> Offered {
         clipboard_sync: false,
         transport_feedback: transport_feedback(config),
         quick_suspend: quick_suspend(config),
+        launch_curtain: config.launch_curtain(),
+        launch_curtain_stream: false,
         // Every host with Stream DVR offers it; `dvr_enabled` travels in its answers, so
         // turning it on needs no reconnect.
         stream_dvr: true,
@@ -267,6 +283,10 @@ pub fn native_features(h: &Shared, config: &Config) -> Vec<&'static str> {
         folders_features(h, config),
         quick_suspend(config)
             .then_some(vec![feature::QUICK_SUSPEND])
+            .unwrap_or_default(),
+        config
+            .launch_curtain()
+            .then_some(vec![feature::LAUNCH_CURTAIN])
             .unwrap_or_default(),
         // Stream DVR's routes answer with its state whether or not it is on.
         vec![rubylight_native_api::feature::STREAM_DVR],

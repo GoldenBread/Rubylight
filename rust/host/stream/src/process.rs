@@ -29,7 +29,7 @@ use focus::{
     ExitAction, exit_action, focus_candidates, foreign_game, started_from_desktop, watches_program,
 };
 use focus::{Focus, game_trees, only_opens_launchers};
-pub use focus::{FocusSnapshot, ForegroundCheck, ForegroundVerdict, ProcessScan};
+pub use focus::{FocusSnapshot, ForegroundCheck, ForegroundVerdict, ProcessScan, curtain_window};
 
 #[cfg(test)]
 use launch::launch_with_environment;

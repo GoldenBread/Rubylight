@@ -7,6 +7,7 @@ mod event_loop;
 mod extensions;
 mod haptics;
 mod input;
+mod launch_curtain;
 mod peer;
 mod ps_speaker;
 mod qos;

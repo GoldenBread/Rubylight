@@ -67,6 +67,8 @@ pub(in crate::stream) struct ControlPeer {
     pub(super) clipboard_sync: clipboard_sync::PeerSync,
     /// Quick Suspend (0x554B), from the device's first request.
     pub(super) quick_suspend: super::quick_suspend::PeerSuspend,
+    /// The launch curtain's state (0x5548), for a stream whose launch asked.
+    pub(super) launch_curtain: super::launch_curtain::PeerCurtain,
     /// The session's settings for control packets that read them.
     pub(super) config: PeerConfig,
     /// The display scale a client-drawn cursor's shapes are sized for, read off this thread.
@@ -134,6 +136,7 @@ impl ControlPeer {
             focus_watch: None,
             clipboard_sync: Default::default(),
             quick_suspend: Default::default(),
+            launch_curtain: Default::default(),
             config: Default::default(),
             cursor_scale: Default::default(),
             pre_active_packets: std::collections::VecDeque::new(),
