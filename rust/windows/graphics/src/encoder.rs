@@ -153,6 +153,9 @@ impl Encoder {
         warnings.clear("hdr_dynamic_metadata");
         warnings.clear("encoder_vpe");
         require_encoding_gpu(&image.gpu)?;
+        let mut config = config.clone();
+        config.sdr_tone_map = tuning.hdr_sdr_tone_map();
+        let config = &config;
         let mut created = if config.codec == 3 {
             if config.hdr {
                 // The colour conversion (`gpu_color::constants`) encodes this curve.

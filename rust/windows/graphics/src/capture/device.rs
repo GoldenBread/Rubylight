@@ -34,6 +34,11 @@ pub struct Device {
     color: Option<std::sync::Arc<output::Color>>,
 }
 impl Device {
+    /// Forget the display's colour, so a test picture counts as an HDR desktop's.
+    #[cfg(test)]
+    pub(crate) fn forget_color(&mut self) {
+        self.color = None;
+    }
     /// The D3D11 device's identity, to tell a recreated device from this one.
     pub fn key(&self) -> usize {
         self.device.as_raw() as usize

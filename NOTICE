@@ -63,6 +63,13 @@ hdr_luminance_analysis_cs.hlsl from the same commit. The HLG encoding curve, hlg
 rust/windows/abi/src/shaders/color.hlsl, follows scRGBTo2100HLG, DisplayLinearToHLGScene
 and LinearToHLG in that commit's src_assets/windows/assets/shaders/directx/include/common.hlsl.
 
+HDR desktops streamed as SDR are converted with ITU-R BT.2446-1 Method B: method_b and
+limit_sdr_gamut in rust/windows/abi/src/shaders/color.hlsl, their CPU reference in
+rust/windows/graphics/src/color.rs and its test points are ported from MethodBScRgbToSdr
+and LimitSdrGamut (src_assets/windows/assets/shaders/directx/include/convert_linear_base.hlsl)
+and tests/unit/platform/windows/test_hdr_encoding.cpp in Foundation Sunshine commit 9d761ba
+(pull request 1387).
+
 The NVIDIA encoder's frame budget guard and its per-preset encode-time calibration
 (src/nvenc/frame_budget.cpp), its VBR rate control and bounds, the fixed split-encode
 strip counts and the slice-mode rule that keeps split encoding available, the codec

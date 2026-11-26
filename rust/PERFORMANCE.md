@@ -6,6 +6,7 @@ This is the dated measurement record. For a guided comparison, start with the [p
 
 | Find a result | Recorded evidence |
 | --- | --- |
+| HDR desktop streamed as SDR with BT.2446 Method B: GPU cost of the conversion with `hdr_sdr_tone_map` on and off, grey and saturated 4K, 1:1 and 1080p, 8 and 10-bit, compute and graphics paths, and the cheaper gamut step's error | [November 26, HDR desktop to SDR stream](#november-26-hdr-desktop-to-sdr-stream-bt2446-method-b-conversion-cost) |
 | AMF output collected on a thread of its own, now the default: how often the blocking output query held a finished picture, the encode tail, end to end and CPU, AV1 and HEVC beside a 60 fps and an uncapped GPU load, 6.1.0's release package with the thread off and on | [November 20, AMF output on a thread of its own](#november-20-amf-output-on-a-thread-of-its-own-by-default) |
 | The window in front counts as moving only after half a second: a strip behind a window repainting in bursts (the real one and a fixture), the October case of a 240 Hz window beside a VRR game, a hitching game beside it, and a window in front repainting for over half a second, 6.1.0's host against the fix | [November 20, the window in front counts as moving after half a second](#november-20-the-window-in-front-counts-as-moving-after-half-a-second) |
 | A picture that is not the foreground window, behind a window that repaints: the 50 ms holds that failed the check's keyframe-request case on 6.1.0 and 6.0.1, in the host's claim trace, with the strip behind and in front, and in a Retroid run (the check's strip now runs in front; the host's rule is unchanged) | [November 20, a picture behind a window that repaints](#november-20-a-picture-behind-a-window-that-repaints-is-held-50-ms-at-a-time) |
@@ -84,6 +85,69 @@ This is the dated measurement record. For a guided comparison, start with the [p
 | PyroWave encode overlap, send buffer, Nightjar receive path | [November 10, PyroWave at 1.4 Gbps](#november-10-pyrowave-at-14-gbps-to-a-780m-laptop) |
 | Temporal upscaler for Nightjar (SGSR 2 adaptation), not landed | [November 16, temporal upscaler](#november-16-a-temporal-upscaler-for-nightjar-measured-offline-not-landed) |
 | A capped path and a busy PC | [November 17, a capped path holds its learned rate](#november-17-a-capped-path-holds-its-learned-rate-and-a-busy-pc-is-not-the-network) |
+
+## November 26: HDR desktop to SDR stream (BT.2446 Method B), conversion cost
+
+What `hdr_sdr_tone_map` adds to the colour conversion. `gpu_color::tests::sdr_tone_map_timing::gpu_sdr_tone_map_timing`,
+release build, RX 7900 XT, driver 32.0.32029.2010, branch `feat/hdr-sdr-method-b`, its one commit on top of `5d1220a627`
+with the gamut step below. A synthetic 3840x2160 FP16 source at an SDR white of 480 nits: three
+grey bars (scRGB 0.5, 2.5, 6.0), or three saturated bars (pure sRGB red, green, blue at 6.0, where pixels take the
+gamut step). 4:2:0 to SDR NV12 (8-bit) or P010 (10-bit), 1:1 and halved to 1080p. Each figure is the median of 128
+GPU timestamp pairs, back to back after 32 warm-up conversions, averaged over two runs per arm in the order on, off,
+off, on. Off is the setting off (divide by SDR white and clip), the default; on is the setting on.
+
+The first build bisected the gamut intersection 12 times, as Foundation Sunshine does, and added 0.84 to 0.89 ms to
+a saturated 4K frame on both compute paths. It now bisects 5 times and takes the cube's face on the chord between the
+last colours inside and outside:
+
+| Content | Output | Depth | Path | Off ms | On ms | Added ms | Added with 12 steps |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| grey | 3840x2160 | 8-bit | D3D12 compute | 0.201 | 0.254 | +0.053 | +0.051 |
+| grey | 3840x2160 | 8-bit | D3D11 compute | 0.179 | 0.237 | +0.058 | +0.058 |
+| grey | 3840x2160 | 8-bit | D3D11 pixel | 0.318 | 0.431 | +0.113 | +0.115 |
+| grey | 3840x2160 | 10-bit | D3D12 compute | 0.205 | 0.252 | +0.047 | +0.050 |
+| grey | 3840x2160 | 10-bit | D3D11 compute | 0.185 | 0.236 | +0.051 | +0.049 |
+| grey | 3840x2160 | 10-bit | D3D11 pixel | 0.306 | 0.407 | +0.101 | +0.105 |
+| grey | 1920x1080 | 8-bit | D3D12 compute | 0.187 | 0.199 | +0.012 | +0.015 |
+| grey | 1920x1080 | 8-bit | D3D11 compute | 0.148 | 0.172 | +0.024 | +0.023 |
+| grey | 1920x1080 | 8-bit | D3D11 pixel | 0.300 | 0.285 | -0.015 | -0.021 |
+| grey | 1920x1080 | 10-bit | D3D12 compute | 0.197 | 0.200 | +0.003 | +0.013 |
+| grey | 1920x1080 | 10-bit | D3D11 compute | 0.154 | 0.176 | +0.022 | +0.020 |
+| grey | 1920x1080 | 10-bit | D3D11 pixel | 0.301 | 0.287 | -0.014 | -0.019 |
+| saturated | 3840x2160 | 8-bit | D3D12 compute | 0.194 | 0.680 | +0.486 | +0.885 |
+| saturated | 3840x2160 | 8-bit | D3D11 compute | 0.176 | 0.654 | +0.478 | +0.870 |
+| saturated | 3840x2160 | 8-bit | D3D11 pixel | 0.310 | 1.206 | +0.896 | +1.648 |
+| saturated | 3840x2160 | 10-bit | D3D12 compute | 0.206 | 0.659 | +0.453 | +0.843 |
+| saturated | 3840x2160 | 10-bit | D3D11 compute | 0.185 | 0.653 | +0.468 | +0.860 |
+| saturated | 3840x2160 | 10-bit | D3D11 pixel | 0.310 | 1.208 | +0.898 | +1.642 |
+| saturated | 1920x1080 | 8-bit | D3D12 compute | 0.188 | 0.272 | +0.084 | +0.182 |
+| saturated | 1920x1080 | 8-bit | D3D11 compute | 0.150 | 0.248 | +0.098 | +0.186 |
+| saturated | 1920x1080 | 8-bit | D3D11 pixel | 0.298 | 0.454 | +0.156 | +0.348 |
+| saturated | 1920x1080 | 10-bit | D3D12 compute | 0.192 | 0.279 | +0.087 | +0.177 |
+| saturated | 1920x1080 | 10-bit | D3D11 compute | 0.155 | 0.253 | +0.098 | +0.185 |
+| saturated | 1920x1080 | 10-bit | D3D11 pixel | 0.305 | 0.458 | +0.153 | +0.348 |
+
+So the setting costs about 0.05 ms on a grey 4K frame and 0.45 to 0.49 ms on a fully saturated one on the compute
+paths (about 0.9 ms on the D3D11 pixel passes), above the 0.1 ms aimed for: with each bisection step costing about
+0.065 ms there, no root finder of this shape gets a saturated 4K frame under it. Real pictures lie between the two,
+by their share of colours outside the stream's gamut. At 1080p output a saturated frame adds under 0.1 ms on compute.
+
+Error of the gamut step, in 10-bit codes of the largest channel against a 40-step bisection (NumPy model, 70,000 to
+141,000 out-of-gamut samples per set: SDR desktop colours to 480 nits, HDR to 1000 nits, and synthetic colours with
+negative scRGB channels; BT.709 and SMPTE 170M targets), 99.9th percentile / maximum:
+
+| Samples | 12 steps | 5 steps and chord |
+| --- | --- | --- |
+| SDR, 709 | 0.6 / 17 | 0.5 / 14 |
+| SDR, 170M | 0.8 / 16 | 0.4 / 9 |
+| HDR, 709 | 0.5 / 6 | 0.7 / 9 |
+| HDR, 170M | 0.6 / 14 | 0.5 / 17 |
+| Negative channels, 709 | 2.2 / 15 | 4.4 / 45 |
+| Negative channels, 170M | 0.8 / 13 | 0.3 / 1 |
+
+The GPU conversions stay within 1 (8-bit) and 4 (10-bit) codes of the CPU reference, and the reference within 1 code
+of Foundation Sunshine's sixteen patches. Not measured: an NVIDIA or integrated GPU, PyroWave, 4:4:4, a real stream,
+or capture of a real HDR desktop.
 
 ## November 20: AMF output on a thread of its own by default
 

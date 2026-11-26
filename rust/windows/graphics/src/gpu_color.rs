@@ -197,7 +197,24 @@ pub(crate) fn constants(
     ]);
     values[11] = u32::from(config.chroma_packing);
     values[12..].copy_from_slice(&pointer_constants(pointer));
+    values[17] = u32::from(config.sdr_tone_map);
     values
+}
+/// [`constants`] for one captured picture, whose display decides `sdrDesktop`.
+pub(crate) fn frame_constants(
+    config: &butterpollo_media_policy::rtsp::Negotiated,
+    image: &GpuImage,
+    luminance: [f32; 2],
+) -> [u32; 20] {
+    let source = (image.width, image.height, image.pixel);
+    let mut values = constants(config, source, luminance, image.cursor.as_ref());
+    values[18] = sdr_desktop(image.pixel, image.gpu.display_in_hdr());
+    values
+}
+/// Windows hands over FP16 for some SDR displays too (advanced colour, beside
+/// a virtual display); those keep their SDR codes instead of being tone-mapped.
+fn sdr_desktop(pixel: Pixel, in_hdr: Option<bool>) -> u32 {
+    u32::from(pixel == Pixel::RgbaF16 && in_hdr == Some(false))
 }
 /// `cbuffer Config`'s `hdr`: 0 for SDR, 1 for PQ, 2 for HLG (`hlg` in
 /// color.hlsl), which Dolby Vision 8.4's base layer is too.
@@ -267,8 +284,14 @@ fn prepare_source_views(
     image.order_d3d11()?;
     let pointer = image.cursor.as_ref();
     let pointer_values = pointer_constants(pointer);
-    if values[12..] != pointer_values {
-        values[12..].copy_from_slice(&pointer_values);
+    // The words past `pointerMode` belong to the tone mapping.
+    if values[12..17] != pointer_values[..5] {
+        values[12..17].copy_from_slice(&pointer_values[..5]);
+        *dirty = true;
+    }
+    let sdr = sdr_desktop(image.pixel, image.gpu.display_in_hdr());
+    if values[18] != sdr {
+        values[18] = sdr;
         *dirty = true;
     }
     let source = source_view(sources, gpu, image)?;

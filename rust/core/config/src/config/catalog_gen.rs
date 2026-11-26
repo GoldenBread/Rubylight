@@ -164,6 +164,7 @@ pub const OVERRIDE_ALLOWED: &[&str] = &[
     "rtx_video",
     "rtx_video_intensity",
     "hdr_dynamic_metadata",
+    "hdr_sdr_tone_map",
     "hdr_dolby_vision",
     "hdr_hlg",
     "audio_passthrough",
@@ -444,6 +445,10 @@ impl Config {
     /// HDR10+ and HDR Vivid dynamic metadata in HDR streams (`hdr_dynamic_metadata`, on by default).
     pub fn hdr_dynamic_metadata(&self) -> bool {
         self.boolean("hdr_dynamic_metadata", true)
+    }
+    /// BT.2446 Method B for SDR streams of an HDR desktop (`hdr_sdr_tone_map`, off by default).
+    pub fn hdr_sdr_tone_map(&self) -> bool {
+        self.boolean("hdr_sdr_tone_map", false)
     }
     /// The Dolby Vision offer on HEVC and AV1 HDR streams (`hdr_dolby_vision`, on by default).
     pub fn hdr_dolby_vision(&self) -> bool {

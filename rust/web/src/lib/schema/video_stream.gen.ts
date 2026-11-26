@@ -258,6 +258,16 @@ export const settings: Setting[] = [
     default: true,
   },
   {
+    key: 'hdr_sdr_tone_map',
+    label: 'Keep HDR highlights in SDR streams',
+    description: 'SDR streams of an HDR desktop keep bright detail instead of clipping it, but white looks a little grey. Costs GPU time per frame; try it for HDR games on an SDR screen.',
+    details: 'Uses ITU-R BT.2446-1 Method B for a 1000-nit picture: 203 nits is about 86 % signal, and neutral light of 1000 nits and above is white. On an RX 7900 XT it adds about 0.05 ms per 4K frame of grey content and about 0.5 ms of saturated content with the compute conversion, about 0.9 ms without it. HDR streams and SDR desktops are unaffected. A change applies from the next stream.',
+    category: 'hdr',
+    group: 'HDR',
+    control: { kind: 'toggle' },
+    default: false,
+  },
+  {
     key: 'hdr_dolby_vision',
     label: 'Dolby Vision',
     description: 'Offers Dolby Vision to devices that ask for it: profile 8.1 (8.4 while HLG is on) on HEVC HDR streams and profile 10.1 on AV1 HDR streams. Leave it on; others get HDR10 or HLG.',

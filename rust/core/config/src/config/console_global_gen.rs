@@ -80,6 +80,7 @@ pub const GLOBAL: &[Setting] = console_settings! {
         "dd_hdr_option", "Display HDR", Choice(&["auto", "force_on", "force_off", "disabled"]);
         "hdr_peak_brightness", "Peak brightness a virtual display reports (nits)", Number;
         "hdr_dynamic_metadata", "HDR10+ and HDR Vivid dynamic metadata", Bool;
+        "hdr_sdr_tone_map", "Keep HDR highlights in SDR streams", Bool;
         "hdr_dolby_vision", "Dolby Vision 8.1, 8.4 and 10.1 for devices that ask", Bool;
         "hdr_hlg", "HLG for devices that ask", Bool;
         "dd_disconnect_behavior", "When a device disconnects (restore: after the delay; keep_while_paused: keep its display while paused)", Choice(&["restore", "keep_while_paused"]);

@@ -107,6 +107,8 @@ fn sdr_bt2020_gpu_matches_reference_primaries_and_transfer() -> Result<()> {
             codec: 1,
             sdr_10bit: true,
             csc_mode: 4,
+            // The clip path, whatever this PC's display runs.
+            sdr_tone_map: false,
             ..Default::default()
         };
         // Advanced-color Windows desktops can deliver the same SDR picture
@@ -141,6 +143,8 @@ fn sdr_bt2020_gpu_matches_reference_primaries_and_transfer() -> Result<()> {
         codec: 1,
         sdr_10bit: true,
         csc_mode: 4,
+        // The clip path, whatever this PC's display runs.
+        sdr_tone_map: false,
         ..Default::default()
     };
     for compute in [false, true] {

@@ -75,7 +75,7 @@ fn generated_tables_match_settings_toml_counts_and_uniqueness() {
             toml_restarts.insert(key);
         }
     }
-    assert_eq!(toml_keys.len(), 295);
+    assert_eq!(toml_keys.len(), 296);
 
     let generated_overrides: BTreeSet<&str> = super::super::catalog_gen::OVERRIDE_ALLOWED
         .iter()
@@ -86,7 +86,7 @@ fn generated_tables_match_settings_toml_counts_and_uniqueness() {
         super::super::catalog_gen::OVERRIDE_ALLOWED.len()
     );
     assert_eq!(generated_overrides, toml_overrides);
-    assert_eq!(generated_overrides.len(), 148);
+    assert_eq!(generated_overrides.len(), 149);
     for key in &generated_overrides {
         assert!(override_allowed(key), "{key}");
         assert!(!retired_name(key), "{key} is retired yet overridable");
@@ -134,7 +134,7 @@ fn generated_console_catalog_preserves_layers_and_choice_labels() {
     use super::super::console_catalog::{APP, CLIENT, GLOBAL, GRIPS, choice_label};
 
     assert_eq!(GRIPS.len(), 20);
-    assert_eq!(GLOBAL.len(), 187);
+    assert_eq!(GLOBAL.len(), 188);
     assert_eq!(APP.len(), 41);
     assert_eq!(CLIENT.len(), 22);
 

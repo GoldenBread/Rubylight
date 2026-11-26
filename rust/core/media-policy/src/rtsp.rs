@@ -113,6 +113,11 @@ pub struct Negotiated {
     /// `rubylight_protocol::audio_ext::CODEC_*` bit); 0 or 1 is Opus.
     #[serde(default)]
     pub audio_codec: u8,
+    /// The host setting `hdr_sdr_tone_map` is on: an SDR stream of an HDR
+    /// desktop compresses highlights with BT.2446 Method B instead of clipping
+    /// at SDR white. The encoder sets it, not the client.
+    #[serde(default)]
+    pub sdr_tone_map: bool,
 }
 /// `fec_percentage`'s default.
 fn default_launch_fec() -> u8 {
@@ -160,6 +165,7 @@ impl Default for Negotiated {
             hdr_format: 0,
             dolby_vision_full_range: false,
             audio_codec: 0,
+            sdr_tone_map: false,
         }
     }
 }

@@ -6,7 +6,10 @@ cbuffer Config : register(b0) {
     uint pixel; uint hdr; uint colorMatrix; uint fullRange;
     uint tenBit; float sdrWhiteScale; float hdrScale; uint padding;
     int2 pointerPosition; uint2 pointerSize;
-    uint pointerMode; uint3 pointerPadding;
+    uint pointerMode;
+    // SDR streams of FP16 captures: `toneMap` is `hdr_sdr_tone_map`, and
+    // `sdrDesktop` marks a capture whose display is not in HDR.
+    uint toneMap; uint sdrDesktop; uint pointerPadding;
 };
 float4 vertex(uint id : SV_VertexID) : SV_Position {
     float2 p = float2((id << 1) & 2, id & 2);
@@ -53,6 +56,91 @@ float3 hlg(float3 light) {
     return lerp(0.17883277 * log(max(12.0 * scene - 0.28466892, 1e-6)) + 0.55991073,
                 sqrt(3.0 * scene), step(scene, 1.0 / 12.0));
 }
+// An HDR desktop to an SDR stream: ITU-R BT.2446-1 Method B (section 5.2),
+// ported from Foundation Sunshine's MethodBScRgbToSdr and LimitSdrGamut
+// (src_assets/windows/assets/shaders/directx/include/convert_linear_base.hlsl,
+// AlkaidLab/foundation-sunshine, commit 9d761ba, PR #1387). Copyright (c)
+// Foundation Sunshine authors, GPL-3.0. `color::method_b` is the CPU reference.
+bool tone_mapped() { return hdr == 0 && pixel == 1 && toneMap != 0 && sdrDesktop == 0; }
+// BT.2100 LMS matrix composed with the linear primary conversions.
+static const float3x3 rec709ToLms = {
+    0.295809355, 0.623101305, 0.081089341,
+    0.156248976, 0.727325725, 0.116425299,
+    0.035135663, 0.156574727, 0.808289610
+};
+static const float3x3 lmsToRec709 = {
+     6.173362742, -5.320380568,  0.147017826,
+    -1.324311500,  2.560226421, -0.235914921,
+    -0.011816903, -0.264672035,  1.276488938
+};
+static const float3x3 lmsToSmpteC = {
+     6.650457157, -5.807419747,  0.156962590,
+    -1.493468713,  2.762204921, -0.268736208,
+    -0.007513590, -0.260458703,  1.267972293
+};
+// Section 5.2.4: reduce chroma at constant ICtCp intensity and hue until the
+// colour intersects the target RGB cube. ICtCp is linear in PQ-encoded LMS:
+// scaling Ct and Cp together is interpolating from (I,I,I). Five bisection
+// steps, then the cube's face along the chord between the last colours inside
+// and outside, instead of Sunshine's twelve steps: as close to the converged
+// intersection for under half the cost (rust/PERFORMANCE.md).
+float3 limit_sdr_gamut(float3 rgb709, float3 target, float3x3 lmsToTarget) {
+    [branch] if (all(target >= 0) && all(target <= 1)) return target;
+    if (all(target >= 1)) return float3(1, 1, 1);
+    float3 lmsPq = pq(mul(rec709ToLms, rgb709) / 100.0);
+    float intensity = (lmsPq.x + lmsPq.y) * 0.5;
+    if (intensity >= 0.50807842) return float3(1, 1, 1); // PQ at 100 nits
+    float lo = 0, hi = 1;
+    // The grey of this intensity, and the colour at full chroma.
+    float3 inner = depq(float3(intensity, intensity, intensity)) * 100.0;
+    float3 outer = target;
+    [loop] for (int i = 0; i < 5; ++i) {
+        float mid = (lo + hi) * 0.5;
+        float3 candidate = mul(lmsToTarget, depq(lerp(intensity, lmsPq, mid)) * 100.0);
+        if (all(candidate >= 0) && all(candidate <= 1)) {
+            lo = mid;
+            inner = candidate;
+        } else {
+            hi = mid;
+            outer = candidate;
+        }
+    }
+    // PQ clips negative LMS, so full chroma can already be inside the cube;
+    // then there is no face to meet.
+    if (hi == 1 && any(mul(rec709ToLms, rgb709) < 0)) return saturate(target);
+    float3 chord = outer - inner;
+    float3 reach = outer > 1 ? (1 - inner) / chord : (outer < 0 ? -inner / chord : 1);
+    return saturate(inner + chord * saturate(min(reach.x, min(reach.y, reach.z))));
+}
+// scRGB to the stream's SDR signal in the primaries of `colorMatrix`.
+float3 method_b(float3 rgb) {
+    // Changing only Y at fixed u'v' scales all linear components equally,
+    // negative ones included.
+    float y = dot(rgb, float3(0.212639, 0.715169, 0.072192));
+    if (y <= 0) return float3(0, 0, 0);
+    // Invert the 1000-nit HLG reference OOTF (gamma 1.2), then render the
+    // same scene light at 291 nits with gamma 1.0 (section 5.2.1).
+    float bridge = 291.0 * pow(y * (80.0 / 1000.0), 1.0 / 1.2);
+    // 78 % BT.1886 signal is 55.0842 nits. The log shoulder's width joins it
+    // with unit slope and maps 291 to nominal SDR white.
+    const float knee = 55.0842;
+    const float width = 16.44899;
+    float nits = bridge <= knee ? bridge : knee + width * log(1.0 + (bridge - knee) / width);
+    float3 mapped = rgb * (nits / 100.0 / y);
+    float3 sdr = limit_sdr_gamut(mapped, mapped, lmsToRec709);
+    if (colorMatrix == 0) { // SMPTE 170M, D65
+        const float3x3 toSmpteC = {
+             1.065379, -0.055401, -0.009978,
+            -0.019633,  1.036363, -0.016730,
+             0.001632,  0.004412,  0.993956
+        };
+        sdr = limit_sdr_gamut(sdr, mul(toSmpteC, sdr), lmsToSmpteC);
+    } else if (colorMatrix == 2) {
+        sdr = gamut2020(sdr);
+    }
+    // Inverse BT.1886, black 0, white 100 nits.
+    return pow(max(sdr, 0), 1.0 / 2.4);
+}
 float3 pointer_srgb(float3 rgb) {
     if (pixel == 1) return saturate(gamma(rgb / sdrWhiteScale));
     if (pixel == 2) {
@@ -90,8 +178,9 @@ float3 load(int2 p) {
     if (hdr != 0 && pixel == 1) rgb *= hdrScale;
     // Normalize scRGB to SDR white. A BT.2020 stream keeps linear, extended
     // Rec.709 values until gamut mapping; clipping to sRGB here would lose
-    // wide-gamut colors that are still inside BT.2020.
-    if (hdr == 0 && pixel == 1) {
+    // wide-gamut colors that are still inside BT.2020. A tone-mapped stream
+    // keeps scRGB here and converts after resizing (`sample_source`).
+    if (hdr == 0 && pixel == 1 && !tone_mapped()) {
         rgb /= sdrWhiteScale;
         if (colorMatrix != 2) rgb = gamma(saturate(rgb));
     }
@@ -172,14 +261,20 @@ float3 sample_source(float2 target) {
         if (!content(target, p, footprint)) return float3(0, 0, 0);
         rgb = resize(p, footprint);
     }
+    [branch] if (tone_mapped()) rgb = method_b(rgb);
     return rgb;
+}
+// The SDR signal of `sample_source`'s colour; a tone-mapped one already is.
+float3 sdr_signal(float3 rgb) {
+    if (colorMatrix != 2 || tone_mapped()) return rgb;
+    return bt2020_sdr(gamut2020(pixel == 1 ? rgb : srgb_linear(rgb)));
 }
 float3 nonlinear(float2 target) {
     float3 rgb = sample_source(target);
     if (hdr == 0) {
         // SDR desktop RGB uses sRGB transfer and Rec.709 primaries. Applying
         // only the BT.2020 YUV coefficients would relabel those primaries.
-        return colorMatrix == 2 ? bt2020_sdr(gamut2020(pixel == 1 ? rgb : srgb_linear(rgb))) : rgb;
+        return sdr_signal(rgb);
     }
     if (hdr == 2) return hlg(pixel == 2 ? depq(rgb) * 125.0 : gamut2020(rgb));
     if (pixel == 2) return rgb;
@@ -255,7 +350,7 @@ float3 chroma_sample_at(float2 target, bool menu) {
     }
     float3 rgb = sample_source(target);
     [branch] if (hdr == 0) {
-        return colorMatrix == 2 ? bt2020_sdr(gamut2020(pixel == 1 ? rgb : srgb_linear(rgb))) : rgb;
+        return sdr_signal(rgb);
     }
     [branch] if (hdr == 2) return pixel == 2 ? depq(rgb) * 125.0 : max(gamut2020(rgb), 0);
     [branch] if (pixel == 2) return depq(rgb);
@@ -282,7 +377,7 @@ float3 pixel_and_light(float2 target, bool menu, out float3 light) {
     }
     float3 rgb = sample_source(target);
     [branch] if (hdr == 0) {
-        light = colorMatrix == 2 ? bt2020_sdr(gamut2020(pixel == 1 ? rgb : srgb_linear(rgb))) : rgb;
+        light = sdr_signal(rgb);
         return light;
     }
     [branch] if (hdr == 2) {

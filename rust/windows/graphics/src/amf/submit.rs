@@ -465,12 +465,7 @@ impl Encoder {
             bail!("GPU frame and encoder must use the same D3D11 device");
         }
         let source = (image.width, image.height, image.pixel);
-        let constants = crate::gpu_color::constants(
-            &self.config,
-            source,
-            self.luminance,
-            image.cursor.as_ref(),
-        );
+        let constants = crate::gpu_color::frame_constants(&self.config, image, self.luminance);
         let cacheable =
             self.overlay.is_none() && self.focus.settings.is_none() && self.focus.fixed.is_none();
         let conversion_started = Instant::now();

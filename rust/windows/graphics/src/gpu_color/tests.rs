@@ -16,6 +16,10 @@ mod overlay;
 mod packed444;
 #[path = "packed444_performance_tests.rs"]
 mod packed444_performance;
+#[path = "tests/sdr_tone_map_tests.rs"]
+mod sdr_tone_map;
+#[path = "tests/sdr_tone_map_timing.rs"]
+mod sdr_tone_map_timing;
 #[path = "tests/single_pass_tests.rs"]
 mod single_pass;
 #[path = "tests/yuv444_tests.rs"]

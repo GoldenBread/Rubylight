@@ -536,12 +536,8 @@ impl Encoder {
                 .as_ref()
                 .map(|cursor| converter.pointer(cursor))
                 .transpose()?;
-            converter.values = crate::gpu_color::constants(
-                &self.config,
-                source,
-                self.luminance,
-                image.cursor.as_ref(),
-            );
+            converter.values =
+                crate::gpu_color::frame_constants(&self.config, image, self.luminance);
             converter.set_overlay(self.overlay.as_ref());
             let converted = converter.convert(
                 &texture,

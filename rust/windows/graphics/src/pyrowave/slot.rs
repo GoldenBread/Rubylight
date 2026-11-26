@@ -208,12 +208,7 @@ impl ComputeTarget {
             .as_ref()
             .map(|cursor| converter.pointer(cursor))
             .transpose()?;
-        converter.values = crate::gpu_color::constants(
-            config,
-            (image.width, image.height, image.pixel),
-            luminance,
-            image.cursor.as_ref(),
-        );
+        converter.values = crate::gpu_color::frame_constants(config, image, luminance);
         converter.values[11] = u32::from(config.yuv444);
         self.target.after = after;
         self.target.done = done;
