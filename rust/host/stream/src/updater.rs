@@ -541,7 +541,7 @@ fn poll_with(h: &Shared, hashed: Option<Hashed>, hash: &dyn Fn(&std::path::Path)
             check_recovery(&h.directory)?;
             butterpollo_session::state::write_json(
                 &h.directory.join("update-result.json"),
-                &json!({"version":candidate.version,"phase":"installing","started_at":now()}),
+                &json!({"version":candidate.version,"phase":"installing","started_at":now(),"install":install}),
             )?;
             let download = path.parent().map(Path::to_path_buf);
             let mut command = std::process::Command::new(path);

@@ -68,9 +68,10 @@ pub fn recover(profile: &Path, install: &Path) -> Result<Option<String>> {
     state::write_json(&path, &record)?;
     restored.map(|()| Some(message))
 }
-/// Only a record that names this installation counts. The one the host
-/// writes before it starts setup names none; setup replaces it with its own,
-/// which does, once it holds update.lock and before it stops the service.
+/// Only a record that names this installation counts. Setup's own names it,
+/// written once it holds update.lock and before it stops the service; so does
+/// the one a host writes before it starts setup, while a host before 7.0's
+/// names none.
 fn interrupted(record: &Value, install: &Path) -> Option<Interrupted> {
     let this_install = record["install"].as_str().is_some_and(|recorded| {
         std::fs::canonicalize(recorded)
