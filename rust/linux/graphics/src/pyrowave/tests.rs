@@ -344,3 +344,14 @@ fn dmabuf_picture_round_trips() {
         "{scores:?}"
     );
 }
+
+#[test]
+fn an_rgb_picture_is_coded_in_the_range_the_stream_declares() {
+    use vk::SamplerYcbcrRange as R;
+    // RGB (PyroWave 4:4:4 from a full-chroma capture): the codec converts, in the stream's range.
+    assert!(output_range(false, false) == (R::ITU_NARROW, 128.0 / 255.0));
+    assert!(output_range(false, true) == (R::ITU_FULL, 0.5));
+    // NV12 is already in the stream's range and is not converted.
+    assert!(output_range(true, false) == (R::ITU_FULL, 0.5));
+    assert!(output_range(true, true) == (R::ITU_FULL, 0.5));
+}

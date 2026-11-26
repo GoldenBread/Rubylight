@@ -617,3 +617,17 @@ fn publication_preserves_static_updates_and_a_waiting_encode_slot() {
     assert_eq!(history.observe(32_000_000), 8_000_000);
     assert_eq!(history.observe(432_000_000), 8_000_000);
 }
+
+#[test]
+fn a_four_four_four_stream_keeps_the_full_chroma_of_its_capture() {
+    let stream = |yuv444: bool, chroma_packing: u8| crate::rtsp::Negotiated {
+        yuv444,
+        chroma_packing,
+        ..Default::default()
+    };
+    // 4:2:0 takes the capture's 4:2:0 picture; packed 4:4:4 and PyroWave 4:4:4 (yuv444)
+    // both need the RGB frames, else the chroma is halved before the encoder sees it.
+    assert!(!Picture::of(&stream(false, 0)).full_chroma);
+    assert!(Picture::of(&stream(false, 1)).full_chroma);
+    assert!(Picture::of(&stream(true, 0)).full_chroma);
+}

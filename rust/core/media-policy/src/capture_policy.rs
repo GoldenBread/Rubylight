@@ -6,8 +6,8 @@ use std::time::{Duration, Instant};
 /// user setting), the capture reads it, and streams share a capture only when it is the same.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct Picture {
-    /// The full chroma of the RGB frames, kept for a packed 4:4:4 stream instead of a 4:2:0
-    /// picture.
+    /// The full chroma of the RGB frames, kept for a 4:4:4 stream (packed, or PyroWave's own
+    /// 4:4:4) instead of a 4:2:0 picture.
     pub full_chroma: bool,
     /// The negotiated YCbCr matrix (0 BT.601, 1 BT.709, 2 BT.2020) and range.
     pub color_matrix: u8,
@@ -32,7 +32,9 @@ impl Picture {
     /// What `stream` takes from its capture.
     pub fn of(stream: &crate::rtsp::Negotiated) -> Self {
         Self {
-            full_chroma: stream.chroma_packing != 0,
+            // PyroWave 4:4:4 is the only native 4:4:4 a Linux host encodes; a 4:2:0 capture
+            // would have halved its chroma before it is coded.
+            full_chroma: stream.chroma_packing != 0 || stream.yuv444,
             color_matrix: stream.color_matrix(),
             full_range: stream.full_range(),
         }

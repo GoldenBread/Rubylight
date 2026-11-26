@@ -86,10 +86,30 @@ fn check_config(config: &Negotiated) -> Result<()> {
     Ok(())
 }
 
+/// The YCbCr range and chroma midpoint PyroWave's own conversion writes. An RGB picture (a
+/// full-chroma capture, for PyroWave 4:4:4) is converted by the codec, which writes full range
+/// unless told otherwise, so a limited-range stream asks for narrow range with the 8-bit
+/// midpoint, as the client decodes it. An NV12 picture is already in the stream's range and
+/// matrix (the capture's video processing made it) and is scaled without conversion.
+fn output_range(planar: bool, full_range: bool) -> (vk::SamplerYcbcrRange, f32) {
+    if planar || full_range {
+        (vk::SamplerYcbcrRange::ITU_FULL, 0.5)
+    } else {
+        (vk::SamplerYcbcrRange::ITU_NARROW, 128.0 / 255.0)
+    }
+}
+
 impl Encoder {
     /// An encoder for the negotiated picture on the GPU `options` names.
     pub fn new(config: &Negotiated, options: &Options) -> Result<Self> {
         check_config(config)?;
+        if config.yuv444 && config.color_matrix() != 1 {
+            // The codec's own RGB conversion has BT.709 coefficients only.
+            tracing::warn!(
+                color_matrix = config.color_matrix(),
+                "PyroWave 4:4:4 is encoded with BT.709 coefficients; colours shift slightly on a client that asked for another matrix"
+            );
+        }
         let api = Arc::new(ffi::Api::load()?);
         let (vid, pid) = options.gpu.unwrap_or((0, 0));
         let mut device = ptr::null_mut();
@@ -220,6 +240,8 @@ impl Encoder {
         if budget < 16 {
             return Ok(Vec::new());
         }
+        let (_, planar) = picture.format()?;
+        let (ycbcr_range, ycbcr_chroma_midpoint) = output_range(planar, self.config.full_range());
         let imported = dmabuf::Imported::new(&self.api, self.device, picture)?;
         let reference = ffi::ExternalReference {
             image: imported.image,
@@ -240,11 +262,11 @@ impl Encoder {
             input_color_space: vk::ColorSpaceKHR::SRGB_NONLINEAR,
             output_color_space: vk::ColorSpaceKHR::SRGB_NONLINEAR,
             intermediate_plane_format: vk::Format::R8_UNORM,
-            ycbcr_chroma_midpoint: 0.5,
+            ycbcr_chroma_midpoint,
             force_linear_filtering: false,
             skip_dither: false,
             crop_rect: ptr::null(),
-            ycbcr_range: vk::SamplerYcbcrRange::ITU_FULL,
+            ycbcr_range,
             ycbcr_range_bit_depth: 0,
         };
         let rate = ffi::RateControl {
