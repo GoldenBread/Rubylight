@@ -2,7 +2,7 @@
   "schema_version": 1,
   "release_target": "7.0.0",
   "integration_branch": "roadmap/redesign-and-waves-1-5",
-  "updated_at": "2026-11-26T15:01:47Z",
+  "updated_at": "2026-11-26T15:37:21Z",
   "waves": {
     "0": {
       "status": "in_progress",
@@ -533,13 +533,14 @@
       ],
       "hw_required": false,
       "visual_review": true,
-      "status": "pending",
-      "phase": "not_started",
+      "status": "in_progress",
+      "phase": "implement (narrowed: 15A-C, Android requester)",
       "branch": "wip/roadmap/15-away-wake-relay",
       "worktree": null,
       "commit_sha": null,
       "quarantine_reason": null,
-      "hw_verified": false
+      "hw_verified": false,
+      "worker_branch": "RamazanKara/r70-15-wake-relay"
     },
     {
       "id": "26",
