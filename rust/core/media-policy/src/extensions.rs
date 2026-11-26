@@ -13,7 +13,7 @@ use anyhow::{Result, bail};
 use rubylight_protocol::{
     audio_ext, clipboard_sync, controller_identity, cursor_shape, fec_report, frame_warp,
     frame_warp_v2, hdr, keyboard_layout, pen, pipeline_rates, quick_suspend, rate_change,
-    text_input, transport_feedback, usb, video_packet,
+    stream_dvr, text_input, transport_feedback, usb, video_packet,
 };
 
 pub use rubylight_protocol::fec_report::FecChoice;
@@ -114,6 +114,9 @@ pub struct Offered {
     /// `QuickSuspendVersion` and Quick Suspend (0x554B), while `quick_suspend`
     /// is on: a device may pause the running game and resume it.
     pub quick_suspend: bool,
+    /// `StreamDvrVersion` and stream DVR requests (0x554A): instant replay and clips. A host
+    /// with Stream DVR always offers it; whether it is turned on travels in its answers.
+    pub stream_dvr: bool,
     /// `NvidiaEnhancements`: the NVIDIA image enhancements the GPU and
     /// driver offer with the NVIDIA component (`nvidia_enhance` bits), which a
     /// launch may ask for with `rlRtxHdr` and `rlRtxVideo`. 0 without it.
@@ -152,6 +155,7 @@ impl Offered {
         clipboard_sync: false,
         transport_feedback: false,
         quick_suspend: false,
+        stream_dvr: false,
         nvidia_enhancements: 0,
         max_video_packet: 0,
         hdr_dynamic_control: false,
@@ -227,6 +231,12 @@ impl Offered {
             fields.push((
                 quick_suspend::SERVERINFO_FIELD,
                 quick_suspend::SERVERINFO_VERSION.to_string(),
+            ));
+        }
+        if self.stream_dvr {
+            fields.push((
+                stream_dvr::SERVERINFO_FIELD,
+                stream_dvr::SERVERINFO_VERSION.to_string(),
             ));
         }
         let nvidia = self.nvidia_enhancements & crate::nvidia_enhance::ALL;
@@ -313,6 +323,7 @@ impl Offered {
                 self.transport_feedback,
                 transport_feedback::TRANSPORT_FEEDBACK_MESSAGE_TYPE,
             ),
+            (self.stream_dvr, stream_dvr::DVR_STATE_MESSAGE_TYPE),
             (
                 self.quick_suspend,
                 quick_suspend::QUICK_SUSPEND_MESSAGE_TYPE,

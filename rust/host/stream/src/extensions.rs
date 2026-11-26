@@ -120,6 +120,9 @@ fn offer(h: &Shared, config: &Config, dolby: u8) -> Offered {
         clipboard_sync: false,
         transport_feedback: transport_feedback(config),
         quick_suspend: quick_suspend(config),
+        // Every host with Stream DVR offers it; `dvr_enabled` travels in its answers, so
+        // turning it on needs no reconnect.
+        stream_dvr: true,
         // Probed with the NVIDIA component installed (`nvidia_enhance`).
         nvidia_enhancements: h
             .nvidia_enhancements
@@ -264,6 +267,8 @@ pub fn native_features(h: &Shared, config: &Config) -> Vec<&'static str> {
         quick_suspend(config)
             .then_some(vec![feature::QUICK_SUSPEND])
             .unwrap_or_default(),
+        // Stream DVR's routes answer with its state whether or not it is on.
+        vec![rubylight_native_api::feature::STREAM_DVR],
     ]
     .concat()
 }
