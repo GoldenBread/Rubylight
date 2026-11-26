@@ -12,6 +12,7 @@ Metrics: lost % and unrecovered FEC blocks from the client's 0x5539 reports (deb
 arms), IDR requests, recovery frames and host processing from the 5 s "stream timings" lines, bitrate and FEC changes
 from the host log, freezes (displayed-frame gaps over 100 ms after the first 5 s) from the client's latency CSV.
 Locks: GPU-LOCK, then RETROID-LOCK, only while the host runs; never one held while waiting for the other.
+Another device: NJ_AB_SERIAL (adb serial), NJ_AB_PROFILE (its own paired profile) and NJ_AB_DEVICE_LOCK (its lock).
 Exit 3: an encoder hang in the host log; stop and investigate, never retry.
 """
 import argparse, base64, csv, datetime, hashlib, io, json, os, pathlib, re, shutil, sqlite3, statistics, subprocess
@@ -19,15 +20,15 @@ import sys, tempfile, time, urllib.request, uuid
 
 REL = pathlib.Path(r'C:\src\butterpollo-release')
 HOST_DIR = REL / 'nj-e2e-host'
-PROFILE = pathlib.Path(r'C:\tests\nj-fec-wifi')
+PROFILE = pathlib.Path(os.environ.get('NJ_AB_PROFILE', r'C:\tests\nj-fec-wifi'))
 OUT = REL / 'unified' / 'nj-fec-wifi'
 BIND, PORT = '192.168.4.69', 48463
-SERIAL = 'e24bb88e'
+SERIAL = os.environ.get('NJ_AB_SERIAL', 'e24bb88e')
 PACKAGE = 'com.butterpollo.client.njrf'
 MOTION_PROBE = REL / 'fixtures' / 'motion_probe.exe'
 AUDIO_PROBE = REL / 'fixtures' / 'audio_probe.exe'
 APP_UUID = '404ccbeb-9f1c-46f2-a532-5cdafaac46aa'
-LOCKS = ('GPU-LOCK', 'RETROID-LOCK')
+LOCKS = ('GPU-LOCK', os.environ.get('NJ_AB_DEVICE_LOCK', 'RETROID-LOCK'))
 OWNER = 'nj-fec-wifi'
 WARMUP_S = 5.0
 FREEZE_MS = 100.0
@@ -96,7 +97,59 @@ def write_profile(host_uuid, client_pem):
     (PROFILE / 'sunshine_state.json').write_text(json.dumps(state, indent=2))
 
 
+def profile_server_pem():
+    """Starts the host on the profile once, which makes its credentials, and returns its server certificate."""
+    take_locks(1800)
+    host = None
+    try:
+        host = start_host('setup')
+        pem_path = PROFILE / 'credentials' / 'cacert.pem'
+        for _ in range(30):
+            if pem_path.exists():
+                break
+            time.sleep(1)
+        return pem_path.read_text()
+    finally:
+        if host is not None:
+            stop_host(host)
+        release_locks()
+
+
+def setup_store(args):
+    """setup for an app that keeps its identity in files/identity.json and its PCs in files/hosts.json."""
+    sh(f'am force-stop {PACKAGE}')
+    hosts = json.loads(run_as('cat files/hosts.json', check=False).strip() or '[]')
+    client_pem = json.loads(run_as('cat files/identity.json'))['certificate_pem'].replace('\r\n', '\n').strip() + '\n'
+    entry = next((h for h in hosts if h.get('name') == args.computer), None)
+    host_uuid = entry['unique_id'] if entry else str(uuid.uuid4()).upper()
+    if PROFILE.exists() and not args.force:
+        raise SystemExit(f'{PROFILE} exists (--force rewrites it)')
+    write_profile(host_uuid, client_pem)
+    pem = profile_server_pem().replace('\r\n', '\n')
+    if entry is None:
+        if not hosts:
+            raise SystemExit('the app knows no PC to copy an entry from: add one in the app first')
+        entry = json.loads(json.dumps(hosts[0]))
+        for key in ('other_addresses', 'other_http_ports', 'wake_macs', 'wake_broadcasts', 'own_wake_macs', 'notices'):
+            if key in entry:
+                entry[key] = []
+        entry.update(alias=None, pinned_address=None, remote_address=None, remote_endpoint=None, mac=None)
+    endpoint = {'address': BIND, 'port': PORT}
+    entry.update(unique_id=host_uuid, name=args.computer, address=BIND, http_port=PORT, https_port=PORT - 5,
+                 server_certificate=pem, local_endpoint=endpoint)
+    hosts = [h for h in hosts if h.get('name') != args.computer] + [entry]
+    with tempfile.NamedTemporaryFile('w', newline='\n', suffix='.json', delete=False) as t:
+        t.write(json.dumps(hosts, indent=2))
+    adb('push', t.name, '/data/local/tmp/nj-fec-hosts.json')
+    os.unlink(t.name)
+    run_as('cp /data/local/tmp/nj-fec-hosts.json files/hosts.json')
+    sh('rm -f /data/local/tmp/nj-fec-hosts.json')
+    log(f'profile {PROFILE} paired as {host_uuid} ({args.computer}) in the app\'s hosts.json')
+
+
 def setup(args):
+    if 'client.crt' not in run_as('ls files', check=False) and 'identity.json' in run_as('ls files', check=False):
+        return setup_store(args)
     with tempfile.TemporaryDirectory() as tmp:
         db = pathlib.Path(tmp) / 'computers4.db'
         sh(f'am force-stop {PACKAGE}')

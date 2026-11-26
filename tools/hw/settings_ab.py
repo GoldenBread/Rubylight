@@ -1,12 +1,16 @@
-r"""One Nightjar Debug setting, Off against On, on the Retroid: 1080p60 HEVC from the isolated host of fec_wifi_ab.py
-(the stream and analysis of smoothest_ab.py, one APK for both arms, the setting flipped in the app's preferences).
+r"""One Nightjar setting, Off against On, on the Retroid (another device through fec_wifi_ab.py's NJ_AB_* variables,
+NJ_AB_OUT for its results): 1080p60 HEVC from the isolated host of fec_wifi_ab.py (the stream and analysis of
+smoothest_ab.py, one APK for both arms, the setting flipped in the app's preferences).
 
-  settings_ab.py run --setting submit|priority --arm off|on --rep N [--load] [--seconds 90] --apk PATH
+  settings_ab.py run --setting submit|priority|tv --arm off|on --rep N [--load] [--defaults] [--seconds 90] --apk PATH
   settings_ab.py table                      every run in results.jsonl as a Markdown table
 
 submit = "Speed up frame hand-off" (checkbox_submit_hint), priority = "Decoder priority for receiving"
-(checkbox_receive_decode_priority). Both runs force Direct submit and Prioritize stream traffic on, which the priority
-setting needs. --load keeps busy loops running on the device's CPUs during the stream (a CPU stress, not a game).
+(checkbox_receive_decode_priority), tv = "Keep TV video smooth" (checkbox_tv_display_compatibility). Every run
+forces Direct submit and Prioritize stream traffic on, which the priority setting needs, and frame hand-off off
+unless it is the setting compared. --load keeps busy loops running on the device's CPUs during the stream (a CPU
+stress, not a game). --defaults keeps Lowest latency pacing and Decoder priority for receiving on (without it:
+Smoothest pacing and priority off, as measured on 2026-11-21).
 Exit 3: an encoder hang in the host log; stop and investigate, never retry.
 """
 import argparse, json, pathlib, subprocess, sys, tempfile, time, os
@@ -14,18 +18,19 @@ import argparse, json, pathlib, subprocess, sys, tempfile, time, os
 import fec_wifi_ab as f
 import smoothest_ab as s
 
-OUT = pathlib.Path('D:/CodexArtifacts/nj-settings-ab/runs')
-KEYS = {'submit': 'checkbox_submit_hint', 'priority': 'checkbox_receive_decode_priority'}
+OUT = pathlib.Path(os.environ.get('NJ_AB_OUT', 'D:/CodexArtifacts/nj-settings-ab/runs'))
+KEYS = {'submit': 'checkbox_submit_hint', 'priority': 'checkbox_receive_decode_priority',
+        'tv': 'checkbox_tv_display_compatibility'}
 STRESS_JOBS = 8
 
 
-def set_prefs(setting, arm):
+def set_prefs(setting, arm, defaults=False):
     f.set_prefs('host', s.KBPS)
     path = f'shared_prefs/{f.PACKAGE}_preferences.xml'
     prefs = f.run_as(f'cat {path}').replace('\r\n', '\n')
-    prefs = f.pset(prefs, 'frame_pacing', 'string', 'smoothness')
+    prefs = f.pset(prefs, 'frame_pacing', 'string', 'latency' if defaults else 'smoothness')
     for key, value in (('checkbox_codec_direct', 'true'), ('checkbox_network_priority', 'true'),
-                       (KEYS['submit'], 'false'), (KEYS['priority'], 'false'),
+                       (KEYS['submit'], 'false'), (KEYS['priority'], 'true' if defaults else 'false'),
                        # Without the marker the app's one-time default migration switches a stored off on.
                        ('receive_decode_priority_default_on', 'true'),
                        (KEYS[setting], 'true' if arm == 'on' else 'false')):
@@ -67,7 +72,7 @@ def check_load(jobs):
 
 
 def run(args):
-    tag = f'{args.setting}-{args.arm}-{"load" if args.load else "idle"}-{args.rep}'
+    tag = f'{args.setting}-{args.arm}-{"load" if args.load else "idle"}-{"defaults-" if args.defaults else ""}{args.rep}'
     OUT.mkdir(parents=True, exist_ok=True)
     if (OUT / f'{tag}-host.log').exists():
         raise SystemExit(f'{tag} exists')
@@ -82,7 +87,7 @@ def run(args):
         f.sh('input keyevent KEYCODE_WAKEUP'); f.sh('svc power stayon true'); f.sh('wm dismiss-keyguard', check=False)
         f.sh(f'am force-stop {f.PACKAGE}')
         f.adb('install', '-r', '-t', str(args.apk))
-        set_prefs(args.setting, args.arm)
+        set_prefs(args.setting, args.arm, args.defaults)
         f.sh('logcat -c', check=False)
         f.run_as('rm -f files/butterpollo-latency.csv files/butterpollo-latency.csv.tmp')
         host = f.start_host(tag)
@@ -133,7 +138,8 @@ def run(args):
         f.sh('svc power stayon false', check=False)
     s.OUT = OUT
     result = s.analyse(tag, f'{args.setting}-{args.arm}', args.rep, args.seconds, mode)
-    result.update(setting=args.setting, on=args.arm == 'on', load=args.load, load_cpu_percent=load_cpu)
+    result.update(setting=args.setting, on=args.arm == 'on', load=args.load, load_cpu_percent=load_cpu,
+                  defaults=args.defaults)
     with open(OUT / 'results.jsonl', 'a') as out:
         out.write(json.dumps(result) + '\n')
     f.log(json.dumps(result))
@@ -160,6 +166,7 @@ def main():
     r.add_argument('--setting', required=True, choices=KEYS); r.add_argument('--arm', required=True, choices=('off', 'on'))
     r.add_argument('--apk', required=True, type=pathlib.Path); r.add_argument('--rep', type=int, default=1)
     r.add_argument('--seconds', type=int, default=90); r.add_argument('--load', action='store_true')
+    r.add_argument('--defaults', action='store_true')
     r.add_argument('--lock-wait', type=int, default=1800)
     r.set_defaults(fn=run)
     sub.add_parser('table').set_defaults(fn=table)
