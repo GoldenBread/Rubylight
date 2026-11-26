@@ -268,7 +268,7 @@ impl Recording {
                         self.written + fragment,
                         fragment,
                         limit,
-                        &[self.id.clone()],
+                        std::slice::from_ref(&self.id),
                     )
                     .map_err(|refusal| match refusal {
                         quota::Refusal::DiskFull => Reason::DiskFull,
