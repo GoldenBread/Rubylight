@@ -41,8 +41,8 @@ export const settings: Setting[] = [
   {
     key: 'launch_curtain',
     label: 'Launch curtain',
-    description: "While a game starts, a device that asks for it shows the game's cover instead of the PC's desktop, store windows and splash screens, and the PC brings the game to the front when its store covers it. The PC checks its windows four times a second during a start, for at most 45 seconds; leave it off to watch every start yourself.",
-    details: "Only Nightjar asks for it; Moonlight and other clients see the stream as before. A launcher that wants a sign in or an update, or a Windows administrator prompt, shows on the device with a button that shows the PC's screen; the PC never clicks them.",
+    description: "While a game starts, the device shows the game's cover instead of the PC's desktop and splash screens, and the PC brings the game forward. Leave it off to watch each start.",
+    details: "During a start the PC checks its windows four times a second, for at most 45 seconds, and brings the game in front of its store's window. Only Nightjar asks for it; Moonlight and other clients see the stream as before. A launcher that wants a sign in or an update, or a Windows administrator prompt, shows on the device with a button that shows the PC's screen; the PC never clicks them.",
     category: 'library',
     group: 'App behavior',
     control: { kind: 'toggle' },
