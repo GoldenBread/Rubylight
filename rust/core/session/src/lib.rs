@@ -29,6 +29,7 @@ pub mod launch_warning;
 pub mod launcher_prompt;
 pub mod library;
 pub mod log_analysis;
+pub mod log_redact;
 pub mod logfile;
 pub mod mic;
 pub mod migration;
