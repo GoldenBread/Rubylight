@@ -25,4 +25,4 @@ You are the mechanical polish, localization, code-map, and documentation special
    - Design tokens (`client/design/tokens.json`): run `python client/scripts/gen_design_tokens.py --check`.
    - Update `docs/code-map.md` & `client/docs/code-map.md` and verify `python tools/code_map.py check`.
    - Write `rust/release/notes.d/` and `client/notes.d/` fragments following their READMEs (preserve all existing contributor credits `Thanks to **Name** (@login, #N).`; keep port credits like Moonlight V+, SAxense, Nonary strictly in code comments/`NOTICE`/`THIRD_PARTY.md`/README, NEVER in UI or release notes; keep Google Play changelog `<= 500` chars).
-4. Keep LF line endings, run `python tools/arch_check.py` + `git diff --check`, commit cleanly to the requested `wip/roadmap/...` branch, and return the exact commit SHA.
+4. **Shared builds & zero garbage:** Use `tools\dev.ps1 check -Fast -Base <base>` (never bare `cargo` / bare `gradlew`), leave zero private `target/` or scratch folders behind, keep LF line endings, run `python tools/arch_check.py` + `git diff --check`, commit cleanly to the requested `wip/roadmap/...` branch, and return the exact commit SHA.

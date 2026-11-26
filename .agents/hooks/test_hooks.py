@@ -73,11 +73,21 @@ class GuardCommandsTests(unittest.TestCase):
             "git push origin wip/roadmap/03-launch-curtain",
             "git push -u origin roadmap/redesign-and-waves-1-5",
             "cargo fmt -- --check",
+            "cargo metadata --format-version 1",
             "tools\\dev.ps1 check -Fast -Base origin/main",
+            r"pwsh C:\src\rl-quick.ps1 -Repo . -Crates butterpollo-session",
+            "python tools/build_lock.py --lane cargo -- cargo test -p butterpollo-config --target-dir D:\\t\\cfg-test",
+            r"python tools/build_lock.py --lane gradle --label nightjar -- cmd /c client\gradlew.bat -p client --no-daemon --max-workers=2 :app:testNonRootDebugUnitTest",
             "python tools/arch_check.py",
+            "python .agents/tools/roadmap_hygiene.py status",
+            "python .agents/tools/roadmap_hygiene.py pick-lane --no-ssh",
+            "python .agents/tools/roadmap_hygiene.py clean --apply --remote-laptop",
+            "python .agents/tools/roadmap_hygiene.py check-firewall --base roadmap/redesign-and-waves-1-5",
             "python tools/build_lock.py -- pwsh rust/build.ps1",
             "python tools\\build_lock.py --timeout 1800 -- pwsh rust\\build.ps1 -Package",
             "python -m unittest discover -s .agents -p test_*.py",
+            "python -m http.server 8123 --bind 127.0.0.1",
+            "npx vite preview --host 127.0.0.1 --port 4173",
             "python rust/release/test_gpu_hang.py",
             "gh workflow run release.yml -R RamazanKara/nightjar -f dry_run=true",
             "cat .claude/settings.json",
@@ -87,7 +97,7 @@ class GuardCommandsTests(unittest.TestCase):
                 res = self._eval(cmd)
                 self.assertEqual(res["decision"], "allow", msg=res)
 
-    def test_always_hard_denied_including_bypass_vectors(self) -> None:
+    def test_always_hard_denied_including_bypass_vectors_hygiene_and_firewall(self) -> None:
         (self.agents_dir / guard_commands.RELEASE_SENTINEL).write_text("ok\n", encoding="utf-8", newline="\n")
         env = {}
         denied = [
@@ -103,6 +113,20 @@ class GuardCommandsTests(unittest.TestCase):
             "git push origin --delete v7.0.0",
             "cargo fmt --all -- --check",
             "cargo.exe +1.98.1-x86_64-pc-windows-gnu fmt --all",
+            # Bare cargo / unlocked pool / bare gradlew (prevents private target/ garbage & daemon leaks)
+            "cargo test -p butterpollo-config",
+            "cargo clippy --workspace --all-targets",
+            "cargo build --release",
+            "python tools/build_lock.py --lane cargo -- cargo test -p butterpollo-config",
+            "cargo test -p butterpollo-config --target-dir ./target",
+            r"cargo test -p butterpollo-config --target-dir C:\src\rl-target-pool\1",
+            r"client\gradlew.bat -p client :app:testNonRootDebugUnitTest",
+            r"python tools/build_lock.py --lane gradle -- cmd /c client\gradlew.bat -p client assembleNonRootDebug",
+            # Wildcard local dev servers (prevents Windows Defender Firewall popups)
+            "python -m http.server 8000",
+            "npx vite --host",
+            "npm run dev -- --host 0.0.0.0",
+            # Sensitive / guardrail / ratchet protection
             r"Get-Content C:\ProgramData\Butterpollo\config\logs\butterpollo.log",
             "cat /c/ProgramData/Butterpollo/config/butterpollo.conf",
             "type client/keystore.properties",
@@ -125,6 +149,7 @@ class GuardCommandsTests(unittest.TestCase):
             "echo '{}' > .claude/settings.local.json",
             "cat foo.json > .claude/settings.json",
             "sed -i 's/xhigh/low/' .claude/agents/wave-reviewer.md",
+            "rm .agents/tools/roadmap_hygiene.py",
         ]
         for cmd in denied:
             with self.subTest(cmd=cmd):
@@ -137,6 +162,7 @@ class GuardCommandsTests(unittest.TestCase):
             r"C:\src\rl-roadmap-prep\.agents\GPU_HANG_HALT",
             r"C:\src\rl-roadmap-prep\.agents\hooks.json",
             r"C:\src\rl-roadmap-prep\.agents\hooks\guard_commands.py",
+            r"C:\src\rl-roadmap-prep\.agents\tools\roadmap_hygiene.py",
             r"C:\src\rl-roadmap-prep\.claude\settings.json",
             r"C:\src\rl-roadmap-prep\.claude\settings.local.json",
             r"C:\src\rl-roadmap-prep\.claude\agents\wave-reviewer.md",
@@ -157,7 +183,6 @@ class GuardCommandsTests(unittest.TestCase):
                     res = guard_commands.handle_payload(_claude_pre_payload(path, tool_name=tool), agents_dir=self.agents_dir)
                     self.assertEqual(res["decision"], "deny", msg=res)
 
-        # Read is allowed on guard/ratchet files, denied on ProgramData\Butterpollo & keystore.properties.
         for path in (r"C:\src\rl-roadmap-prep\tools\size_ratchet.json", r"C:\src\rl-roadmap-prep\.claude\settings.json"):
             self.assertEqual(
                 guard_commands.handle_payload(_claude_pre_payload(path, tool_name="Read"), agents_dir=self.agents_dir)["decision"],
@@ -183,7 +208,6 @@ class GuardCommandsTests(unittest.TestCase):
         wt_agents.mkdir(parents=True)
         (wt / ".git").write_text("gitdir: ../../.git/worktrees/w1-07\n", encoding="utf-8", newline="\n")
 
-        # Setting GPU_HANG_HALT at repo root blocks HW runs inside nested `.claude/worktrees/w1-07`.
         (repo_agents / guard_commands.GPU_HANG_SENTINEL).write_text("halted\n", encoding="utf-8", newline="\n")
         res = guard_commands.evaluate_command(
             "python rust/release/e2e.py --codec hevc",
@@ -241,8 +265,8 @@ class GuardCommandsTests(unittest.TestCase):
             "python rust/tests/crash_restore_soak.py",
             "python rust/release/focus_ab.py quick",
             "python tools/hw/wave1_verify.py",
-            "cargo test -p butterpollo-windows -- --ignored",
-            "cargo nextest run --run-ignored only",
+            "python tools/build_lock.py --lane cargo -- cargo test -p butterpollo-windows --target-dir D:\\t\\hw-ign -- --ignored",
+            "python tools/build_lock.py --lane cargo -- cargo nextest run --target-dir D:\\t\\hw-ign --run-ignored only",
         ]
         for cmd in hw_cmds:
             with self.subTest(phase="default_allow", cmd=cmd):
@@ -268,7 +292,6 @@ class GuardCommandsTests(unittest.TestCase):
         env = dict(os.environ, RUBYLIGHT_AGENTS_DIR=str(self.agents_dir))
         env.pop(guard_commands.HW_DISABLE_ENV, None)
 
-        # 1. Claude Code Bash deny -> hookSpecificOutput contract.
         proc_cc_deny = subprocess.run(
             [sys.executable, str(HOOKS_DIR / "guard_commands.py")],
             input=json.dumps(_claude_pre_payload("git push origin main", tool_name="Bash")),
@@ -283,7 +306,6 @@ class GuardCommandsTests(unittest.TestCase):
         self.assertEqual(hso["permissionDecision"], "deny")
         self.assertIn("RELEASE_7_0_AUTHORIZED", hso["permissionDecisionReason"])
 
-        # 2. Claude Code PowerShell allow -> empty `{}` (defer cleanly to Claude Code permissions).
         proc_cc_allow = subprocess.run(
             [sys.executable, str(HOOKS_DIR / "guard_commands.py")],
             input=json.dumps(_claude_pre_payload("git status --short", tool_name="PowerShell")),
@@ -294,7 +316,6 @@ class GuardCommandsTests(unittest.TestCase):
         )
         self.assertEqual(json.loads(proc_cc_allow.stdout), {})
 
-        # 3. Antigravity compatibility deny.
         proc_ag = subprocess.run(
             [sys.executable, str(HOOKS_DIR / "guard_commands.py")],
             input=json.dumps(_pre_payload("git push origin main")),
@@ -307,7 +328,6 @@ class GuardCommandsTests(unittest.TestCase):
         self.assertEqual(out_ag["decision"], "deny")
         self.assertIn("RELEASE_7_0_AUTHORIZED", out_ag["reason"])
 
-        # 4. Malformed JSON fails closed for both Claude Code and Antigravity.
         proc_bad = subprocess.run(
             [sys.executable, str(HOOKS_DIR / "guard_commands.py")],
             input="{not-json",
@@ -435,7 +455,6 @@ class WatchGpuHangTests(unittest.TestCase):
         }
         self.assertFalse(watch_gpu_hang.process_post_tool(other_exit, agents_dir=self.agents_dir))
 
-        # `tools\remote-check.ps1` exit code 3 is a timeout, NOT an AMD encoder hang.
         remote_timeout = {
             "hook_event_name": "PostToolUse",
             "tool_name": "Bash",

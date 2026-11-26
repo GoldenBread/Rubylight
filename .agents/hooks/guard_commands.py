@@ -9,8 +9,13 @@ Supports BOTH:
 - Legacy Antigravity PreToolUse hooks via `.agents/hooks.json`
   (camelCase `toolCall`, emitting `{"decision": "allow"}` or `{"decision": "deny", "reason": "..."}`).
 
-Guards shell and file tools against unsafe mutations, bypasses, unauthorized releases,
-guardrail tampering, and hardware runs after an AMD encoder hang. Fail-closed on malformed payloads.
+Guards shell and file tools against:
+1. Unsafe mutations, guardrail tampering, force-pushes, tag edits, `cargo fmt --all`, unlocked `rust\build.ps1`.
+2. Garbage pileup & lock bypasses: bare `cargo build/test/clippy/...` without shared target pool/locks,
+   direct unlocked writes to `rl-target-pool`, and bare `gradlew` without Gradle lane + `--no-daemon`.
+3. Windows Defender Firewall popups: wildcard `python -m http.server` / `vite --host 0.0.0.0` dev servers.
+4. Unauthorized Wave 6 releases (`.agents/RELEASE_7_0_AUTHORIZED`) and post-hang GPU runs (`.agents/GPU_HANG_HALT`).
+Fail-closed on malformed payloads.
 """
 from __future__ import annotations
 
@@ -43,7 +48,7 @@ KEYSTORE_PROPS_RE = re.compile(r"(?:^|[\s\"'`/\\])keystore\.properties(?:\b|$)",
 # Protected guardrail / sentinel / baseline files (denied for write/edit tools and mutating shell commands).
 PROTECTED_GUARD_PATH_RE = re.compile(
     r"(?:^|[\\/])(?:"
-    r"\.agents[\\/](?:RELEASE_7_0_AUTHORIZED|GPU_HANG_HALT|hooks\.json|hooks[\\/][^\\/\s]+)"
+    r"\.agents[\\/](?:RELEASE_7_0_AUTHORIZED|GPU_HANG_HALT|hooks\.json|hooks[\\/][^\\/\s]+|tools[\\/]roadmap_hygiene\.py)"
     r"|\.claude[\\/](?:settings(?:\.local)?\.json|agents[\\/][^\\/\s]+)"
     r"|tools[\\/](?:size_ratchet\.json|arch_baselines\.json)"
     r")(?:\b|$)",
@@ -51,14 +56,14 @@ PROTECTED_GUARD_PATH_RE = re.compile(
 )
 PROTECTED_SENTINEL_OR_BASELINE_CMD_RE = re.compile(
     r"(?:"
-    r"\.agents[\\/]+(?:RELEASE_7_0_AUTHORIZED|GPU_HANG_HALT|hooks\.json|hooks[\\/]+(?:guard_commands|watch_gpu_hang)\.py)"
+    r"\.agents[\\/]+(?:RELEASE_7_0_AUTHORIZED|GPU_HANG_HALT|hooks\.json|hooks[\\/]+(?:guard_commands|watch_gpu_hang)\.py|tools[\\/]+roadmap_hygiene\.py)"
     r"|\.claude[\\/]+(?:settings(?:\.local)?\.json|agents[\\/]+[^\\/\s;|&\"']+)"
     r"|tools[\\/]+(?:size_ratchet\.json|arch_baselines\.json)"
     r")",
     re.IGNORECASE,
 )
 READ_ONLY_SHELL_RE = re.compile(
-    r"^\s*(?:python(?:\.exe)?\s+(?:-B\s+)?-m\s+(?:unittest|py_compile)\b|git(?:\.exe)?\s+(?:-C\s+\S+\s+)?(?:status|diff|log|show|ls-files)\b|Test-Path\b|cat\b|head\b|tail\b|ls\b)",
+    r"^\s*(?:python(?:\.exe)?\s+(?:-B\s+)?(?:-m\s+(?:unittest|py_compile)\b|\.agents[\\/]+tools[\\/]+roadmap_hygiene\.py\b)|git(?:\.exe)?\s+(?:-C\s+\S+\s+)?(?:status|diff|log|show|ls-files)\b|Test-Path\b|cat\b|head\b|tail\b|ls\b)",
     re.IGNORECASE,
 )
 
@@ -96,6 +101,35 @@ CD_RUST_BUILD_RE = re.compile(
 )
 BUILD_LOCK_EXCLUSIVE_RE = re.compile(
     r"\btools[\\/]+build_lock\.py\b(?![^\n;|&]*--lane\b)[^\n;|&]*--\s+[^\n;|&]*rust[\\/]+build\.ps1\b",
+    re.IGNORECASE,
+)
+
+# 1b. Autonomous hygiene, shared-build & firewall-prompt guards.
+CARGO_COMPILE_RE = re.compile(
+    CARGO_CMD + r"(?:\s+\+\S+)?\s+(?:build|check|test|clippy|run|bench|doc|nextest|rustc)\b",
+    re.IGNORECASE,
+)
+CARGO_POOL_MANAGED_RE = re.compile(
+    r"(?:\btools[\\/]+dev\.(?:ps1|py)\b|\brl-quick\.ps1\b|\bEnter-RlSlot\b|\brust[\\/]+build\.ps1\b)",
+    re.IGNORECASE,
+)
+CARGO_TARGET_DIR_RE = re.compile(r"(?:--target-dir(?:\s+|=)\s*([^\s;|&\"']+)|\bCARGO_TARGET_DIR\s*=\s*[\"']?([^\s;|&\"']+))", re.IGNORECASE)
+PRIVATE_TARGET_VAL_RE = re.compile(r"^(?:\.[\\/]+)?(?:rust[\\/]+service[\\/]+|client[\\/]+protocol[\\/]+)?target(?:[\\/]*)$", re.IGNORECASE)
+DIRECT_POOL_WRITE_RE = re.compile(r"rl-target-pool[\\/]+(?:client-)?\d+", re.IGNORECASE)
+
+GRADLEW_RE = re.compile(r"(?:^|[\s\"'`/\\])gradlew(?:\.bat)?\b", re.IGNORECASE)
+GRADLE_LOCKED_RE = re.compile(
+    r"\btools[\\/]+build_lock\.py\b[^\n;|&]*(?:--lane\s+gradle\b|--lock-directory\b)",
+    re.IGNORECASE,
+)
+GRADLE_NO_DAEMON_RE = re.compile(r"--no-daemon\b", re.IGNORECASE)
+
+WILDCARD_HTTP_SERVER_RE = re.compile(
+    r"\bpython(?:\.exe)?\b[^\n;|&]*\s-m\s+http\.server\b(?![^\n;|&]*(?:-b|--bind)\s+(?:127\.0\.0\.1|localhost|::1)\b)",
+    re.IGNORECASE,
+)
+WILDCARD_VITE_HOST_RE = re.compile(
+    r"\b(?:vite|npm(?:\.cmd)?\s+run\s+(?:dev|preview))\b[^\n;|&]*--host(?:\s+0\.0\.0\.0\b|\s*=\s*0\.0\.0\.0\b|\s*$|\s+-)",
     re.IGNORECASE,
 )
 
@@ -141,7 +175,6 @@ def _candidate_agents_dirs(
             cand = parent / ".agents"
             if cand.is_dir() and (parent / ".git").exists() and cand not in dirs:
                 dirs.append(cand)
-        # Also honor non-git temp fixtures in unit tests where `cwd` directly contains `.agents/`.
         for parent in (cur, *cur.parents):
             cand = parent / ".agents"
             if cand.is_dir():
@@ -181,8 +214,8 @@ def evaluate_file_tool(tool_name: str, path_value: str) -> dict[str, str]:
             "decision": "deny",
             "reason": (
                 f"Hard-denied ({tool_name}): modifying sentinels (.agents/RELEASE_7_0_AUTHORIZED, "
-                ".agents/GPU_HANG_HALT), hook/agent guards (.agents/hooks*, .claude/settings*.json, "
-                ".claude/agents/*), or architecture baselines (tools/size_ratchet.json, "
+                ".agents/GPU_HANG_HALT), hook/agent/hygiene guards (.agents/hooks*, .agents/tools/roadmap_hygiene.py, "
+                ".claude/settings*.json, .claude/agents/*), or architecture baselines (tools/size_ratchet.json, "
                 "tools/arch_baselines.json) is forbidden."
             ),
         }
@@ -201,6 +234,11 @@ def evaluate_command(
     env_map = os.environ if env is None else env
     dirs = _candidate_agents_dirs(agents_dir, cwd, workspace_paths)
     segments = _split_segments(command_line)
+    has_env_target_dir = bool(env_map.get("CARGO_TARGET_DIR"))
+    m_cmd_target = CARGO_TARGET_DIR_RE.search(command_line)
+    cmd_target_val = (m_cmd_target.group(1) or m_cmd_target.group(2) or "") if m_cmd_target else ""
+    has_external_target_dir = (bool(cmd_target_val) and not PRIVATE_TARGET_VAL_RE.match(cmd_target_val)) or has_env_target_dir
+    has_cmd_pool_managed = bool(CARGO_POOL_MANAGED_RE.search(command_line))
 
     # --- Tier 1: Always hard-denied ---
     if PROGRAMDATA_BP_RE.search(command_line):
@@ -230,7 +268,7 @@ def evaluate_command(
         ):
             return {
                 "decision": "deny",
-                "reason": "Hard-denied: shell commands may not create, edit, or delete sentinels, hook/agent guards, or size/arch baseline files.",
+                "reason": "Hard-denied: shell commands may not create, edit, or delete sentinels, hook/agent/hygiene guards, or size/arch baseline files.",
             }
         if FORCE_PUSH_RE.search(segment):
             return {
@@ -252,6 +290,49 @@ def evaluate_command(
                 "decision": "deny",
                 "reason": "Hard-denied: `rust\\build.ps1` must be wrapped with exclusive `python tools/build_lock.py -- pwsh rust/build.ps1` (no `--lane`).",
             }
+        # Shared target pool & build-lock discipline (prevent private 10-25 GB worktree `target/` & unlocked pool corruption).
+        if CARGO_COMPILE_RE.search(segment):
+            pool_managed = bool(CARGO_POOL_MANAGED_RE.search(segment)) or has_cmd_pool_managed
+            if DIRECT_POOL_WRITE_RE.search(command_line) and not pool_managed:
+                return {
+                    "decision": "deny",
+                    "reason": (
+                        "Hard-denied: never target `C:\\src\\rl-target-pool\\<slot>` directly without locking/claiming it. "
+                        "Use `tools\\dev.ps1 check -Fast -Base <base>` or `pwsh C:\\src\\rl-quick.ps1 -Repo . -Crates <crate>`."
+                    ),
+                }
+            if not pool_managed and not has_external_target_dir:
+                return {
+                    "decision": "deny",
+                    "reason": (
+                        "Hard-denied: `cargo` build/test/clippy without a shared target pool creates a private 10-25 GB `target/` "
+                        "inside the worktree and bypasses `C:\\src\\rl-target-pool`. Use `tools\\dev.ps1 check -Fast -Base <base>` "
+                        "(or `-Paths <file>`), `pwsh C:\\src\\rl-quick.ps1 -Repo . -Crates <crate>`, or "
+                        "`python tools/build_lock.py --lane cargo -- ... --target-dir D:\\t\\<tmp>` (deleted in finally)."
+                    ),
+                }
+        # Gradle lane & `--no-daemon` discipline (prevent leaked 4+ GB Gradle daemons & lock collisions).
+        if GRADLEW_RE.search(segment) and not re.search(r"\btools[\\/]+dev\.(?:ps1|py)\b", segment, re.IGNORECASE):
+            if not (GRADLE_LOCKED_RE.search(segment) and GRADLE_NO_DAEMON_RE.search(segment)):
+                return {
+                    "decision": "deny",
+                    "reason": (
+                        "Hard-denied: wrap direct `gradlew` runs in the shared Gradle lane with `--no-daemon`: "
+                        "`python tools/build_lock.py --lane gradle --label <name> -- cmd /c client\\gradlew.bat -p client --no-daemon --max-workers=2 <task>` "
+                        "(or use `tools\\dev.ps1 check`)."
+                    ),
+                }
+        # Windows Defender Firewall popup prevention on ad-hoc local web servers.
+        if WILDCARD_HTTP_SERVER_RE.search(segment):
+            return {
+                "decision": "deny",
+                "reason": "Hard-denied: pass `--bind 127.0.0.1` to `python -m http.server` to prevent Windows Defender Firewall prompts.",
+            }
+        if WILDCARD_VITE_HOST_RE.search(segment):
+            return {
+                "decision": "deny",
+                "reason": "Hard-denied: pass `--host 127.0.0.1` (never bare `--host` or `0.0.0.0`) to prevent Windows Defender Firewall prompts.",
+            }
 
     gpu_halted = _has_sentinel(dirs, GPU_HANG_SENTINEL)
     release_authorized = _has_sentinel(dirs, RELEASE_SENTINEL)
@@ -265,7 +346,6 @@ def evaluate_command(
             if PUSH_PROTECTED_REF_RE.search(tail):
                 release_reason = "pushing to main, gh-pages, or release tags"
             elif not SAFE_PUSH_REFSPEC_RE.search(tail):
-                # Bare `git push`, `git push origin`, or `git push origin HEAD` is fail-closed unless targeting wip/ or roadmap/.
                 release_reason = "ambiguous or default `git push` without explicit `wip/*` or `roadmap/*` branch"
         elif GH_RELEASE_RE.search(segment):
             release_reason = "running `gh release`"
@@ -388,7 +468,6 @@ def main() -> int:
             raise ValueError("payload must be a JSON object")
     except Exception as exc:
         reason = f"guard_commands: invalid JSON payload ({exc})."
-        # Fail closed for both Claude Code and Antigravity callers when payload cannot be parsed.
         print(
             json.dumps(
                 {
