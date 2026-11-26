@@ -545,3 +545,27 @@ fn downloads_left_in_the_profile_are_removed() -> Result<()> {
     }
     Ok(())
 }
+
+#[test]
+fn an_update_the_host_started_but_setup_never_took_over_ends_as_failed() -> Result<()> {
+    let f = Fixture::new();
+    let install = f.directory.join("Rubylight");
+    std::fs::create_dir_all(&install)?;
+    let path = f.directory.join("update-result.json");
+    butterpollo_session::state::write_json(&path, &installing_record("9.9.9", &install))?;
+    // Another installation's service leaves it alone.
+    let other = f.directory.join("other");
+    std::fs::create_dir_all(&other)?;
+    assert_eq!(
+        butterpollo_session::update_recovery::recover(&f.directory, &other)?,
+        None
+    );
+    assert_eq!(
+        butterpollo_session::update_recovery::recover(&f.directory, &install)?.as_deref(),
+        Some(butterpollo_session::update_recovery::STOPPED_BEFORE_BACKUP)
+    );
+    let record = butterpollo_session::state::load_json(&path, Value::Null)?;
+    assert_eq!(record["phase"], "failed");
+    assert_eq!(record["version"], "9.9.9");
+    Ok(())
+}

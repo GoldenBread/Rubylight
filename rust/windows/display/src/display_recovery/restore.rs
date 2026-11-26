@@ -349,7 +349,7 @@ fn recover_inline(path: &Path) -> Result<()> {
             // seconds, and Windows can move a scale again as it leaves.
             dpi::wait_for_virtual_displays(dpi::LEAVE_AFTER_CRASH, || false);
         }
-        let outcome = dpi::settle(&scales, |_| true);
+        let outcome = dpi::settle(&scales, |_, set| set());
         // One attempt: a scale that will not stay is reported, not set again
         // at every start.
         for entry in kept.entries.values_mut().filter(|e| !stale_only || e.stale) {

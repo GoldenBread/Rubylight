@@ -541,7 +541,7 @@ fn poll_with(h: &Shared, hashed: Option<Hashed>, hash: &dyn Fn(&std::path::Path)
             check_recovery(&h.directory)?;
             butterpollo_session::state::write_json(
                 &h.directory.join("update-result.json"),
-                &json!({"version":candidate.version,"phase":"installing","started_at":now(),"install":install}),
+                &installing_record(&candidate.version, &install),
             )?;
             let download = path.parent().map(Path::to_path_buf);
             let mut command = std::process::Command::new(path);
@@ -586,3 +586,10 @@ fn poll_with(h: &Shared, hashed: Option<Hashed>, hash: &dyn Fn(&std::path::Path)
 
 #[cfg(test)]
 mod tests;
+
+/// The update record a host writes before it starts setup. It names the
+/// installation, so the service can end it as failed when setup never took
+/// over (`update_recovery`).
+fn installing_record(version: &str, install: &Path) -> Value {
+    json!({"version":version,"phase":"installing","started_at":now(),"install":install})
+}
