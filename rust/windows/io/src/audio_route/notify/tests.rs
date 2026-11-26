@@ -2,6 +2,7 @@
 //! wakes, nothing stays registered or referenced after the watch drops.
 
 use super::*;
+use std::rc::Rc;
 use std::sync::{
     Mutex,
     atomic::{AtomicUsize, Ordering},
@@ -16,7 +17,8 @@ struct Fake {
     refuse: bool,
 }
 
-struct Source(Arc<Fake>);
+// `Rc`: the fake holds a COM interface, which is neither Send nor Sync.
+struct Source(Rc<Fake>);
 
 impl EndpointEvents for Source {
     fn register(&self, client: &IMMNotificationClient) -> Result<()> {
@@ -52,11 +54,13 @@ fn counter() -> (Arc<AtomicUsize>, Wake) {
 
 #[test]
 fn every_endpoint_callback_wakes_the_upkeep() {
-    let fake = Arc::new(Fake::default());
+    let fake = Rc::new(Fake::default());
     let (count, wake) = counter();
     let watch = EndpointWatch::register(Box::new(Source(fake.clone())), wake).unwrap();
     let client = fake.held.lock().unwrap().clone().unwrap();
     let id = w!("{0.0.0.00000000}.{fake}");
+    // SAFETY: `id` is a static NUL-terminated string and `client` is the live
+    // listener the fake holds.
     unsafe {
         client
             .OnDefaultDeviceChanged(eRender, eConsole, id)
@@ -77,7 +81,7 @@ fn every_endpoint_callback_wakes_the_upkeep() {
 
 #[test]
 fn dropping_the_watch_unregisters_and_releases_the_listener() {
-    let fake = Arc::new(Fake::default());
+    let fake = Rc::new(Fake::default());
     let (count, wake) = counter();
     let watch = EndpointWatch::register(Box::new(Source(fake.clone())), wake.clone()).unwrap();
     assert_eq!(fake.registers.load(Ordering::SeqCst), 1);
@@ -93,7 +97,7 @@ fn dropping_the_watch_unregisters_and_releases_the_listener() {
 
 #[test]
 fn a_refused_registration_leaves_nothing_behind() {
-    let fake = Arc::new(Fake {
+    let fake = Rc::new(Fake {
         refuse: true,
         ..Fake::default()
     });

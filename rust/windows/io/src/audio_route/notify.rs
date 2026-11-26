@@ -36,10 +36,12 @@ pub trait EndpointEvents {
 
 impl EndpointEvents for IMMDeviceEnumerator {
     fn register(&self, client: &IMMNotificationClient) -> Result<()> {
+        // SAFETY: `client` is a live COM interface; the enumerator AddRefs it.
         unsafe { self.RegisterEndpointNotificationCallback(client) }
             .context("RegisterEndpointNotificationCallback")
     }
     fn unregister(&self, client: &IMMNotificationClient) -> Result<()> {
+        // SAFETY: `client` is the live interface registered above.
         unsafe { self.UnregisterEndpointNotificationCallback(client) }
             .context("UnregisterEndpointNotificationCallback")
     }
