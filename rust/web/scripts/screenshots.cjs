@@ -4,6 +4,7 @@
 // SHOT_PAGES=/,/devices picks pages (/design.html is the component gallery);
 // SHOT_FULL=1 captures the full page on desktop too (phones always are).
 // SHOT_CLICK=Select,"Select all" clicks those buttons, in order, before each shot.
+// SHOT_OPEN="Per device" then opens the folds whose summary holds that text.
 // SHOT_KEYS=Control+k presses those keys, in order, after the clicks; SHOT_TYPE=text then types it
 // (Control+k and SHOT_TYPE=po show the quick switcher with results).
 // SHOT_AUTH=signed-out shows the sign-in page, SHOT_AUTH=setup first-run setup
@@ -13,17 +14,26 @@
 // SHOT_HOME sets Home's state: fresh (nothing paired), fresh-off (and pairing off), warning (paired, audio and
 // wake need a look), ready, streaming, or paired-now (a device pairs a few seconds in; with SHOT_WAIT=7000).
 // Each gives Portal 2 a last-played time and the home art as its cover. SHOT_WAIT=ms waits before each shot.
+// SHOT_STREAM shows the play and guest pages (SHOT_PAGES=/play/ or /guest/#<32 hex digits>) against a fake
+// host (scripts/fake-stream.cjs lists the states); SHOT_PAD=xbox, playstation or nintendo holds that pad,
+// and SHOT_HOLD=Escape holds a key for the second that opens the play dock, after the clicks.
+// SHOT_SETTLE=ms waits once more right before the shot (the stats capsule's second look).
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const path = require('node:path');
 const fs = require('node:fs');
+const fakeStream = require('./fake-stream.cjs');
 
 const out = path.resolve(process.argv[2] || 'shots');
 const label = process.argv[3] || 'shot';
 const auth = process.env.SHOT_AUTH || '';
 if (auth && !['signed-out', 'setup'].includes(auth)) throw new Error(`SHOT_AUTH is signed-out or setup, not ${auth}`);
 const pages = (process.env.SHOT_PAGES || { 'signed-out': '/login', setup: '/setup' }[auth] || '/,/devices,/settings,/help').split(',');
-const themes = ['light', 'dark'];
-const forms = { desktop: { width: 1440, height: 900 }, phone: { width: 390, height: 844 } };
+// SHOT_THEMES=dark picks themes; SHOT_FORMS=360,768,1440 picks viewport widths instead of desktop and phone
+// (a width under 900 px is shot as a full page, like the phone).
+const themes = (process.env.SHOT_THEMES || 'light,dark').split(',');
+const forms = process.env.SHOT_FORMS
+  ? Object.fromEntries(process.env.SHOT_FORMS.split(',').map(width => [width, { width: Number(width), height: Number(width) < 900 ? 844 : 900 }]))
+  : { desktop: { width: 1440, height: 900 }, phone: { width: 390, height: 844 } };
 
 const metadata = {
   version: '3.0.0-rc.3', host_name: 'Gaming PC', pc_address: '192.168.4.20', pc_addresses: ['192.168.4.20'],
@@ -44,13 +54,20 @@ const replies = {
   '/api/clients/pending': { requests: [] },
   '/api/clients/list': { clients: [
     { uuid: 'phone', name: 'Pixel 9', enabled: true, connected: true, perm: 0x071f1f00 },
-    { uuid: 'tv', name: 'Living room TV', enabled: true, connected: false, perm: 0x071f1f00 },
+    { uuid: 'tv', name: 'Living room TV', enabled: true, connected: false, perm: 0x071f1f00, output_name_override: '{d1}',
+      config_overrides: { max_bitrate: 40000, dd_hdr_option: 'force_off' } },
   ] },
   '/api/clients/hdr-profiles': { profiles: [] },
-  '/api/display-devices': [],
+  // Three displays as Windows would arrange them: a portrait monitor left of the primary, a virtual display right of it.
+  '/api/display-devices': [
+    { device_id: '{d1}', display_name: '\\\\.\\DISPLAY1', friendly_name: 'LG UltraGear 27GP950', hdr_supported: true, hdr_enabled: true, primary: true, x: 0, y: 0, width: 3840, height: 2160, refresh: 144, scale: 150, virtual: false },
+    { device_id: '{d2}', display_name: '\\\\.\\DISPLAY2', friendly_name: 'Dell U2415', hdr_supported: false, hdr_enabled: false, primary: false, x: -1200, y: -220, width: 1200, height: 1920, refresh: 60, scale: 100, virtual: false },
+    { device_id: '{d3}', display_name: '\\\\.\\DISPLAY3', friendly_name: 'Rubylight Virtual Display', hdr_supported: true, hdr_enabled: false, primary: false, x: 3840, y: 0, width: 2560, height: 1600, refresh: 120, scale: 200, virtual: true },
+  ],
   '/api/apps': { apps: [
     { uuid: 'desktop', name: 'Desktop' }, { uuid: 'steam', name: 'Steam Big Picture', cmd: 'steam://open/bigpicture' },
-    { uuid: 'steam-620', name: 'Portal 2', 'steam-id': '620', 'synced-by': 'steam' },
+    { uuid: 'steam-620', name: 'Portal 2', 'steam-id': '620', 'synced-by': 'steam', 'config-overrides': { fec_percentage: 10 },
+      'device-overrides': { tv: { 'config-overrides': { max_bitrate: 80000, hevc_mode: '2', frame_limiter_fps_limit: 60 } } } },
     { uuid: 'mirage', name: 'Assassin’s Creed Mirage', 'launcher-source': 'ubisoft', 'launcher-id': '13504', 'synced-by': 'launcher' },
     { uuid: 'fortnite', name: 'Fortnite', 'launcher-source': 'epic', 'launcher-id': 'Fortnite', 'synced-by': 'launcher' },
     { uuid: 'forza', name: 'Forza Horizon 5', 'launcher-source': 'microsoft', 'launcher-id': 'Microsoft.SunriseBaseGame', 'synced-by': 'launcher' },
@@ -125,9 +142,13 @@ const sessionsState = process.env.SHOT_SESSIONS || 'full';
 if (!['full', 'live', 'empty'].includes(sessionsState)) throw new Error(`SHOT_SESSIONS is full, live or empty, not ${sessionsState}`);
 /** One running stream, as `/api/rtsp/sessions` reports it. */
 function liveStream() {
-  const history = Array.from({ length: 90 }, (_, second) => ({ fps: 119 + (second % 3 === 0 ? 1 : 0),
+  const history = Array.from({ length: 90 }, (_, second) => ({ fps: 119 + (second % 3 === 0 ? 1 : 0) - (second % 29 === 0 ? 3 : 0),
     bitrate_mbps: 44 + 6 * Math.sin(second / 7) + (second % 11 === 0 ? 5 : 0), encode_mean_ms: 2.9, encode_max_ms: 4.1,
-    host_processing_mean_ms: 3.2, host_processing_max_ms: 4.4, frame_age_mean_ms: 0.8 }));
+    host_processing_mean_ms: 3.2 + 0.3 * Math.sin(second / 4) + (second % 17 === 0 ? 0.6 : 0), host_processing_max_ms: 4.4, frame_age_mean_ms: 0.8 }));
+  const timed = (mean_ms) => ({ mean_ms, p95_ms: mean_ms * 1.3, p99_ms: mean_ms * 1.6 });
+  const stages = { frames: 1190, window_seconds: 10, capture: timed(0.42), hold: timed(0.08), claim: timed(0.05), convert: timed(0.31),
+    encode: timed(1.84), queue: timed(0.06), packetize: timed(0.12), send_queue: timed(0.09), send: timed(0.23),
+    present_to_sent: timed(3.2), moonlight_host: timed(2.9) };
   return {
     uuid: 'phone', device_name: 'Pixel 9', role: 'stream', state: 'RUNNING', width: 2400, height: 1080, fps: 120,
     video_format: 1, hdr: false, vrr: false, encoder: 'amf', encoder_bitrate_kbps: 50_000, pyrowave_minimum_kbps: null,
@@ -135,7 +156,7 @@ function liveStream() {
     uptime_seconds: 754, warnings: [],
     performance: { fps: 120, bitrate_mbps: 47.6, encode_mean_ms: 2.9, encode_p95_ms: 3.4, encode_p99_ms: 3.8,
       host_processing_mean_ms: 3.2, host_processing_p95_ms: 3.7, host_processing_p99_ms: 4.1, host_processing_max_ms: 4.4,
-      frame_age_mean_ms: 0.8, frame_age_p95_ms: 1.2, present_to_send_mean_ms: 4.1, send_interval_p99_ms: 9, sample_frames: 240, history },
+      frame_age_mean_ms: 0.8, frame_age_p95_ms: 1.2, present_to_send_mean_ms: 4.1, send_interval_p99_ms: 9, sample_frames: 240, history, stages },
   };
 }
 /** The ended sessions `/api/sessions/history` lists, newest first. */
@@ -183,11 +204,29 @@ if (home === 'streaming') {
     app: { name: 'Portal 2', id: 3, uuid: 'steam-620' } };
   replies['/api/rtsp/sessions'] = { status: true, sessions: [liveStream()] };
 }
+// SHOT_PAIR: pairing on /devices, with two devices paired already: on (a code shows), pin (a device
+// waits for its PIN) or now (a third device pairs a few seconds in; with SHOT_WAIT=7000).
+const pair = process.env.SHOT_PAIR || '';
+if (pair && !['on', 'pin', 'now'].includes(pair)) throw new Error(`SHOT_PAIR is on, pin or now, not ${pair}`);
+if (pair) {
+  metadata.enable_pairing = true;
+  replies['/api/config'].enable_pairing = true;
+}
+if (pair === 'pin') {
+  replies['/api/clients/pending'] = { requests: [{ uniqueid: 'deck', name: 'Steam Deck', address: '192.168.4.31', age_seconds: 12 }] };
+}
 /** Answers that change while a page is open. */
 // Home polls the co-op sessions alone.
 replies['/api/coop/sessions'] = { sessions: replies['/api/coop'].sessions };
 
 function dynamic(pathname) {
+  if (pair === 'now') {
+    const deck = { uuid: 'deck', name: 'Steam Deck', enabled: true, connected: false, perm: 0x07001f00 };
+    const before = replies['/api/clients/list'].clients;
+    if (pathname === '/api/clients/list') return { clients: ++clientLists > 1 ? [...before, deck] : before };
+    if (pathname === '/api/metadata') return { ...metadata, paired_devices: before.length + (clientLists > 1 ? 1 : 0) };
+    return undefined;
+  }
   if (home !== 'paired-now') return undefined;
   if (pathname === '/api/clients/list') return { clients: ++clientLists > 1 ? [pixel] : [] };
   if (pathname === '/api/metadata') return { ...metadata, paired_devices: clientLists > 1 ? 1 : 0 };
@@ -251,6 +290,7 @@ function power(ready = false) {
           }
           return route.fulfill({ json: dynamic(url.pathname) ?? replies[url.pathname] ?? { status: true, available: false, enabled: false } });
         });
+        if (process.env.SHOT_STREAM) await page.addInitScript(fakeStream.install, { state: process.env.SHOT_STREAM, pad: process.env.SHOT_PAD || '' });
         for (const where of pages) {
           clientLists = 0;
           await page.goto(base + where);
@@ -258,6 +298,16 @@ function power(ready = false) {
           await page.waitForTimeout(Number(process.env.SHOT_WAIT || 300));
           for (const button of (process.env.SHOT_CLICK || '').split(',').filter(Boolean)) {
             await page.getByRole('button', { name: button, exact: true }).first().click();
+            await page.waitForTimeout(300);
+          }
+          for (const fold of (process.env.SHOT_OPEN || '').split(',').filter(Boolean)) {
+            await page.locator('summary', { hasText: fold }).first().click();
+            await page.waitForTimeout(300);
+          }
+          if (process.env.SHOT_HOLD) {
+            await page.keyboard.down(process.env.SHOT_HOLD);
+            await page.waitForTimeout(1300);
+            await page.keyboard.up(process.env.SHOT_HOLD);
             await page.waitForTimeout(300);
           }
           for (const key of (process.env.SHOT_KEYS || '').split(',').filter(Boolean)) {
@@ -268,9 +318,10 @@ function power(ready = false) {
             await page.keyboard.type(process.env.SHOT_TYPE);
             await page.waitForTimeout(300);
           }
-          const name = where === '/' ? 'home' : where.slice(1).replace(/\.html$/, '').replace(/\//g, '-');
+          if (process.env.SHOT_SETTLE) await page.waitForTimeout(Number(process.env.SHOT_SETTLE));
+          const name = where === '/' ? 'home' : where.slice(1).replace(/#.*$/, '').replace(/\/$/, '').replace(/\.html$/, '').replace(/\//g, '-');
           const file = path.join(out, `${label}-${name}-${theme}-${form}.png`);
-          await page.screenshot({ path: file, fullPage: form !== 'desktop' || !!process.env.SHOT_FULL });
+          await page.screenshot({ path: file, fullPage: viewport.width < 900 || !!process.env.SHOT_FULL });
           console.log(file);
         }
         await page.close();

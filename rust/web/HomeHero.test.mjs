@@ -6,7 +6,7 @@ import { createTestServer } from './test-server.mjs';
 globalThis.location = new URL('http://localhost/');
 globalThis.window = new EventTarget();
 const server = await createTestServer();
-const { heroGame, lastPlayed, liveFigures, readyCopy, pairedCopy } = await server.ssrLoadModule('/src/components/overview/now-playing.ts');
+const { heroGame, lastPlayed, readyCopy, pairedCopy } = await server.ssrLoadModule('/src/components/overview/now-playing.ts');
 const { knownDevices, newlyPaired } = await server.ssrLoadModule('/src/components/devices/paired.ts');
 const { applyFix, fixes } = await server.ssrLoadModule('/src/lib/host-fixes.svelte.ts');
 const { problems } = await server.ssrLoadModule('/src/lib/host-readiness.ts');
@@ -48,22 +48,14 @@ test('a paired Home says where a game starts: the device, and this PC by name', 
   assert.match(overview, /welcomed \? pairedCopy\(welcomed\.name, metadata\?\.host_name\)/);
 });
 
-test('the live figures are the first running stream’s, measured or a dash', () => {
-  const stream = (name, state, sample_frames = 240) => ({
-    device_name: name, state, performance: { fps: 119.6, bitrate_mbps: 47.62, sample_frames,
-      history: [{ bitrate_mbps: 40 }, { bitrate_mbps: 48 }] },
-  });
-  assert.equal(liveFigures([]), null);
-  assert.equal(liveFigures([stream('TV', 'STOPPING')]), null);
-  assert.deepEqual(liveFigures([stream('TV', 'STOPPING'), stream('Pixel 9', 'RUNNING'), stream('Deck', 'RUNNING')]),
-    { device: 'Pixel 9', more: 1, fps: 120, mbps: 47.62, trend: [40, 48] });
-  const quiet = liveFigures([stream('Pixel 9', 'RUNNING', 0)]);
-  assert.equal(quiet.fps, null);
-  assert.equal(quiet.mbps, null);
-  // The bitrate line comes from the stream poll Home already runs every 2 s.
+test('while a device streams, Home’s top is the live command stage, fed by the poll Home already runs', () => {
   const overview = source('pages/Overview.svelte');
   assert.match(overview, /poll\(refreshSessions, 2000\)/);
-  assert.match(overview, /<Sparkline values=\{figures\.trend\}/);
+  assert.match(overview, /const staged = \$derived\(lead === 'live' && streams\.length > 0\);/);
+  assert.match(overview, /\{:else if staged\}\s*<LiveCommandStage label="PC status" \{streams\} \{game\} \{status\} stale=\{Boolean\(sessionsError\)\}/);
+  // The stage holds every stream's row and Quit game, so Home shows neither a second time.
+  assert.match(overview, /\{#if streams\.length && !staged\}/);
+  assert.match(overview, /\{#if status\?\.appRunning && !staged\}<RunningApp/);
 });
 
 test('a device that pairs while the panel is open is the new one, never one already there', () => {
@@ -185,7 +177,7 @@ test('a console that loses the host shows Cannot connect over the page and comes
   assert.equal(unreachable(new TimeoutError(20_000)), true);
   assert.equal(unreachable(new ApiError(500, 'boom')), false);
   assert.equal(unreachable(new ApiError(401, 'signed out')), false);
-  const before = { state: session.state, metadata: session.metadata, pending: session.pending };
+  const before = { state: session.state, metadata: session.metadata, pending: session.pending, live: session.live };
   session.state = 'signed-in';
   const realFetch = globalThis.fetch;
   globalThis.fetch = async () => { throw new TypeError('Failed to fetch'); };
@@ -205,17 +197,20 @@ test('a console that loses the host shows Cannot connect over the page and comes
     ['/api/auth/status', { credentials_configured: true, authenticated: true }],
     ['/api/metadata', metadata],
     ['/api/clients/pending', { status: true, requests: [] }],
+    ['/api/session/status', { activeSessions: 1, appRunning: true, appName: 'Portal 2' }],
   ]);
   try {
     await heartbeat();
-    for (let wait = 0; wait < 50 && sent.length < 3; wait++) await new Promise((resolve) => setTimeout(resolve, 1));
+    for (let wait = 0; wait < 50 && (sent.length < 4 || !session.live); wait++) await new Promise((resolve) => setTimeout(resolve, 1));
   } finally {
     restore();
   }
   assert.equal(session.reconnecting, false);
   assert.equal(session.state, 'signed-in');
   assert.equal(session.error, '');
-  assert.deepEqual(sent.map(([, url]) => url), ['/api/auth/status', '/api/metadata', '/api/clients/pending']);
+  // The command bar's live badge is asked for with the rest, so it is right as soon as the host is back.
+  assert.deepEqual(sent.map(([, url]) => url), ['/api/auth/status', '/api/metadata', '/api/clients/pending', '/api/session/status']);
+  assert.deepEqual(session.live, { streams: 1, app: 'Portal 2' });
   // The shell covers the page instead of replacing it, so unsaved edits survive the outage.
   const app = source('App.svelte');
   assert.match(app, /return poll\(heartbeat, 3000\);/);

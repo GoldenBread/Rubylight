@@ -15,6 +15,9 @@
   import Table from '../components/Table.svelte';
   import Tabs from '../components/Tabs.svelte';
   import Toggle from '../components/Toggle.svelte';
+  import DisplayTopologyCanvas from '../components/devices/DisplayTopologyCanvas.svelte';
+  import OverrideCascadeCards from '../components/library/OverrideCascadeCards.svelte';
+  import DisclosureMeta from '../components/settings/DisclosureMeta.svelte';
   import { applyTheme, storedTheme, type Theme } from '../lib/theme';
 
   let theme = $state<Theme>(storedTheme());
@@ -28,9 +31,20 @@
   let dialogOpen = $state(false);
   let tab = $state('video');
 
-  const swatches = ['bg', 'panel', 'sunken', 'ink', 'ink-2', 'muted', 'accent', 'accent-text', 'accent-soft',
-    'ok', 'ok-soft', 'warn', 'warn-soft', 'danger', 'danger-soft', 'focus', 'line', 'line-strong'];
-  const sizes = ['2xl', 'xl', 'lg', 'md', '', 'sm', 'xs'];
+  const swatches = ['bg', 'panel', 'panel-raised', 'sunken', 'field', 'ink', 'ink-2', 'muted', 'line', 'line-strong',
+    'accent', 'accent-strong', 'accent-text', 'accent-soft', 'accent-line', 'focus',
+    'ok', 'ok-soft', 'ok-line', 'warn', 'warn-soft', 'warn-line', 'danger', 'danger-soft', 'danger-line'];
+  const media = ['media-bg', 'media-panel', 'media-panel-raised', 'media-line', 'media-ink', 'media-ink-2', 'media-idle',
+    'media-ok', 'media-warn', 'media-danger', 'media-accent', 'media-focus', 'media-viz-1', 'media-viz-2', 'media-viz-3', 'media-viz-4'];
+  /** Fixtures for the display map and the override cascade: a desk with three displays, a TV with a game profile. */
+  const displays = [
+    { device_id: 'a', display_name: 'DISPLAY1', friendly_name: 'Studio display', hdr_supported: true, hdr_enabled: true, primary: true, x: 0, y: 0, width: 3840, height: 2160, refresh: 144, scale: 150, virtual: false },
+    { device_id: 'b', display_name: 'DISPLAY2', friendly_name: 'Side display', hdr_supported: false, hdr_enabled: false, primary: false, x: -1200, y: -220, width: 1200, height: 1920, refresh: 60, scale: 100, virtual: false },
+    { device_id: 'c', display_name: 'DISPLAY3', friendly_name: 'Virtual display', hdr_supported: true, hdr_enabled: false, primary: false, x: 3840, y: 0, width: 2560, height: 1600, refresh: 120, scale: 200, virtual: true },
+  ];
+  let pairOverrides = $state<Record<string, unknown>>({ max_bitrate: 80000 });
+  const radii = ['xs', 'sm', '', 'lg', 'xl', 'pill'];
+  const sizes = ['hero', '2xl', 'xl', 'lg', 'md', '', 'sm', 'xs'];
 </script>
 
 <main class="gallery stack">
@@ -51,11 +65,40 @@
     </div>
   </Panel>
 
+  <Panel title="Media: over game art and video, dark in both themes">
+    <div class="stage">
+      <p class="eyebrow">Now streaming</p>
+      <p class="stage-title">Portal 2 on Pixel 9</p>
+      <div class="swatches">
+        {#each media as swatch (swatch)}
+          <div class="swatch"><span style:background="var(--{swatch})"></span><code>--{swatch}</code></div>
+        {/each}
+      </div>
+    </div>
+  </Panel>
+
+  <Panel title="Shape and depth">
+    <div class="shapes">
+      {#each radii as radius (radius)}
+        <div class="shape" style:border-radius="var(--radius{radius ? `-${radius}` : ''})"><code>--radius{radius ? `-${radius}` : ''}</code></div>
+      {/each}
+    </div>
+    <div class="shapes">
+      <div class="plane"><code>--edge, --shadow</code></div>
+      <div class="plane raised"><code>--shadow-raised</code></div>
+      <div class="plane pop"><code>--shadow-pop</code></div>
+      <div class="plane wash"><code>--wash</code></div>
+      <div class="plane wash-accent"><code>--wash-accent</code></div>
+    </div>
+  </Panel>
+
   <Panel title="Type">
     <div class="stack type">
       {#each sizes as size (size)}
         <p style:font-size="var(--text{size ? `-${size}` : ''})">--text{size ? `-${size}` : ''} Stream your games</p>
       {/each}
+      <p class="eyebrow">.eyebrow Now playing</p>
+      <p class="num">.num 2400x1080 at 120 fps, 47.6 Mbps</p>
     </div>
   </Panel>
 
@@ -150,6 +193,34 @@
       <Card padding="none"><EmptyState icon="devices" title="No devices yet">Pair a phone, TV or PC to stream to it.</EmptyState></Card>
     </div>
   </Panel>
+  <Panel title="Display map: read-only, drawn as Windows arranges the displays">
+    <DisplayTopologyCanvas {displays} target="c" />
+  </Panel>
+
+  <Panel title="Override cascade: who decides a stream setting">
+    <OverrideCascadeCards
+      id="gallery-cascade"
+      groups={[{ id: 'stream', title: 'Stream and codec', keys: ['max_bitrate', 'fec_percentage', 'dd_hdr_option', 'packed_444'] }]}
+      layers={[
+        { id: 'pair', name: 'This game, this device', values: pairOverrides },
+        { id: 'app', name: 'This game', values: { fec_percentage: 10 } },
+        { id: 'device', name: 'Living room TV', values: { max_bitrate: 40000, dd_hdr_option: 'force_off' } },
+        { id: 'host', name: 'Host', values: {} },
+      ]}
+      onset={(key, value) => {
+        if (value === undefined) delete pairOverrides[key];
+        else pairOverrides[key] = value;
+      }}
+    />
+  </Panel>
+
+  <Panel title="Fold facts">
+    <div class="row">
+      <DisclosureMeta count={20} />
+      <DisclosureMeta count={20} customized={2} />
+      <DisclosureMeta count={1} customized={1} unsaved={1} />
+    </div>
+  </Panel>
 </main>
 
 <Dialog bind:open={dialogOpen} title="Unpair Pixel 9?" description="It will need a new PIN to stream from this PC again.">
@@ -188,6 +259,67 @@
   }
   .type {
     gap: var(--space-2);
+  }
+  .stage {
+    display: grid;
+    gap: var(--space-2);
+    padding: var(--space-5);
+    border: 1px solid var(--media-line);
+    border-radius: var(--radius-xl);
+    background: var(--media-glow), var(--media-bg);
+    box-shadow: var(--media-edge);
+    color: var(--media-ink);
+  }
+  .stage .eyebrow,
+  .stage code {
+    color: var(--media-ink-2);
+  }
+  .stage-title {
+    margin-bottom: var(--space-3);
+    font-family: var(--font-display);
+    font-size: var(--text-xl);
+    font-weight: var(--weight-bold);
+    letter-spacing: var(--tracking-display);
+    line-height: var(--leading-tight);
+  }
+  .stage .swatch span {
+    border-color: var(--media-line-strong);
+  }
+  .shapes {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    gap: var(--space-4);
+    font-size: var(--text-xs);
+  }
+  .shapes + .shapes {
+    margin-top: var(--space-5);
+  }
+  .shape,
+  .plane {
+    display: grid;
+    place-items: center;
+    min-height: 72px;
+    padding: var(--space-2);
+    border: 1px solid var(--line);
+    background: var(--sunken);
+  }
+  .plane {
+    border-radius: var(--radius-lg);
+    background: var(--panel);
+    box-shadow: var(--edge), var(--shadow);
+  }
+  .plane.raised {
+    box-shadow: var(--edge), var(--shadow-raised);
+  }
+  .plane.pop {
+    background: var(--panel-raised);
+    box-shadow: var(--edge), var(--shadow-pop);
+  }
+  .plane.wash {
+    background: var(--wash);
+  }
+  .plane.wash-accent {
+    background: var(--wash-accent);
   }
   .tight {
     gap: 0;

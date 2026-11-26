@@ -41,6 +41,8 @@ Broadcasts do not cross routers. A TV on another subnet needs the PC's address e
 
 The app then holds a client ID and a secret and signs in with them from then on. The secret is stored in `sunshine_state.json` and is never shown in the console. A request lasts 5 minutes and allows one attempt.
 
+The TV app and the browser client pair over the plain `ws://` signalling port, which protocol version 2 does not encrypt: the secret crosses the network once, in the pairing reply, where a passive observer on the local network could read it. After that it never crosses the network again; the app proves it with a one-time challenge. The host log notes each device paired this way. Pair on a network you trust, and unpair a device on **Devices** if someone could have watched that exchange. The console's **Stream** page and the play page in a TV browser pair and sign in over the console's TLS ports (`wss://`) instead.
+
 ### Stream in the console
 
 The console's **Stream** page plays a game from this PC in the browser tab, with no app and no pairing: AV1, HEVC or H.264 at any resolution and frame rate the host offers, stereo sound, keyboard and mouse.
@@ -68,7 +70,7 @@ A TV, console or car browser plays games from this PC with no app: it pairs once
 3. The page shows a four-digit PIN and the name it pairs as, such as "Xbox" or "Edge on Windows". In the console, open **Devices**, enter the PIN there and confirm.
 4. Pick a game with the remote, the arrow keys or a controller (D-pad or left stick, A to start).
 
-Hold Back, Escape or the controller's View (Select) button for a second for the menu: **Back to game**, **Disconnect** (the game keeps running) and **Quit game**. The chip at the top of the games picks the codec; the first time the page picks one as the Stream page does. Browsers allow sound and full screen only after a key press or a click, and a controller press does not count: if the game starts silent, press a key or click once.
+Hold Back, Escape or the controller's View (Select, Create, −) button for a second for the stream menu, a dock at the bottom of the picture: **Back to game**, **Full screen**, **Sound**, **Stats**, **Disconnect** (the game keeps running) and **Quit game**. With a mouse or a finger, move or tap once and click the handle that shows at the top edge. **Stats** shows a small capsule in the top right corner with the frame rate, the bitrate and the round trip the browser itself measures, and the codec and height it receives; the page asks the browser once a second and only while the capsule shows, and remembers the choice in its site data. The hints at the bottom name the buttons of the input last used (an Xbox, PlayStation or Nintendo pad, a keyboard or a TV remote); with touch or a mouse there are none. The chip at the top of the games picks the codec; the first time the page picks one as the Stream page does. Browsers allow sound and full screen only after a key press or a click, and a controller press does not count: if the game starts silent, press a key or click once.
 
 The browser keeps its device ID and secret in its site data (`localStorage`), never in the address: clearing the site's data pairs it anew. It is a paired WebRTC device like a TV and gets what a TV gets: the first device paired with the PC may do everything, later ones only watch until you allow more on **Devices**. Unpairing or disabling it there ends its access at once. The page answers only devices on the local network and Tailscale; everyone else gets the same plain "not found" as any other path on the guest port. Only the connection's own address counts, never headers such as `X-Forwarded-For`. A 100.64.0.0/10 address is taken as Tailscale only when it reaches the PC's own Tailscale address, and a connection from the PC's default gateway is refused: a router that rewrites forwarded connections to its own address, or a carrier-grade NAT neighbour, would otherwise look local. Some setups still make an internet connection look local: a tunnel on the PC (Cloudflare Tunnel, ngrok), a reverse proxy, `netsh portproxy`, or a router that rewrites forwards to an address other than its gateway one ([Guests in the browser](browser-guests.md#what-must-be-reachable)). What protects you then is the pairing itself: nothing pairs until you type the PIN in the console, the console and the tray notice show the address each request came from before the name it chose, and a name that contains its own PIN, a digit other than 0-9, or an invisible format or line-break character is refused. That name check can't catch everything (Chinese numerals, letters that look like digits, a PIN spelled out in words), and the device picks its own PIN, so the address shown with the request is what tells you whose it is. Pair only a device you are holding, from the address you expect. Each device may ask to pair five times a minute, and a PIN that does not match is a warning in the host log.
 
@@ -100,6 +102,19 @@ One stream runs at a time. A WebRTC stream and a Moonlight stream exclude each o
 ### Network and safety
 
 Signalling is plain `ws://`, so it is not encrypted. Signing in keeps other devices from using or interrupting the stream; it does not hide what the app and the PC say to each other. The media itself is encrypted (DTLS-SRTP). Use it on a trusted LAN only.
+
+Browsers let any page they show open a WebSocket to any address, so the signalling port checks which page opened it (its `Origin`) before it answers:
+
+| Origin | Answer |
+| --- | --- |
+| None, as from the TV app's runtime or a program | Accepted; `auth-required` carries the PC's Wake-on-LAN address for the TV's reachability probe |
+| `file://` or another scheme that is not `http` or `https`, as from a packaged TV app | Accepted, as above |
+| A page on this PC or the local network: an address there (including Tailscale's 100.64.0.0/10), `localhost`, a name without a dot, a name ending in `.local`, `.lan`, `.home.arpa`, `.internal` or `.localdomain`, or the PC's own name | Accepted; the Wake-on-LAN address comes only after signing in (`gateway-status`) |
+| `https://openstreamco.github.io`, where the protocol's browser client is published | Accepted, as a page |
+| An entry of **Trusted origins** (`csrf_allowed_origins`) | Accepted, as a page |
+| Any other page, and `null` (which a sandboxed frame of any site sends) | Refused with `403` before the upgrade, with the reason in the reply and the host log |
+
+A browser client served from elsewhere (your own domain, say) needs its origin, such as `https://games.example.com`, in **Trusted origins**.
 
 Rubylight serves only peers on the local network: loopback, private (RFC 1918), link-local, unique-local IPv6 and carrier-grade NAT (100.64.0.0/10) addresses. Anything else is closed before its first message and logged. Do not forward these ports on your router. The one exception is guests of the console's stream, who may come from anywhere with a link: the guest port (TCP 47991, which serves nothing of the console's) and their media ports (UDP 8002-8005) may be forwarded ([What must be reachable](browser-guests.md#what-must-be-reachable)). The play page on the guest port still refuses every address outside the local network and Tailscale, and pairs only with the PIN you type in the console ([Play in a TV browser](#play-in-a-tv-browser)). Never forward the console's port, TCP 47990.
 

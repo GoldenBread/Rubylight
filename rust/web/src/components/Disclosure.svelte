@@ -9,6 +9,7 @@
     title,
     description,
     meta,
+    facts,
     open = $bindable(false),
     variant = 'card',
     level,
@@ -21,6 +22,8 @@
     description?: string;
     /** Quiet facts after the title, such as "20 settings, 1 customized". */
     meta?: string;
+    /** Facts after the title drawn by the caller, such as count pills, in place of `meta`. */
+    facts?: Snippet;
     open?: boolean;
     variant?: 'card' | 'inline';
     /** The card title's heading level; it looks the same at either. */
@@ -48,7 +51,7 @@
         {:else}
           <span class="title">{title}</span>
         {/if}
-        {#if meta}<span class="meta">{meta}</span>{/if}
+        {#if facts}{@render facts()}{:else if meta}<span class="meta">{meta}</span>{/if}
       </span>
       {#if description}<span class="description">{description}</span>{/if}
     {:else}
@@ -69,7 +72,7 @@
     background: var(--panel);
     border: 1px solid var(--line);
     border-radius: var(--radius-lg);
-    box-shadow: var(--shadow);
+    box-shadow: var(--edge), var(--shadow);
   }
   .card > summary {
     display: grid;
@@ -88,7 +91,7 @@
   .card > summary::after {
     grid-column: 2;
     grid-row: 1 / span 2;
-    margin-right: var(--space-1);
+    margin-inline-end: var(--space-1);
   }
   .card[open] > summary {
     border-bottom: 1px solid var(--line);
@@ -107,6 +110,7 @@
     font-family: var(--font-display);
     font-size: var(--text-md);
     font-weight: var(--weight-bold);
+    letter-spacing: var(--tracking-tight);
     line-height: var(--leading-tight);
     color: var(--ink);
   }
@@ -138,7 +142,7 @@
     font-weight: var(--weight-medium);
   }
   .inline > summary::after {
-    margin-left: 2px;
+    margin-inline-start: 2px;
   }
   .inline > summary:hover {
     color: var(--ink);
