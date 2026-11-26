@@ -2,7 +2,7 @@
   "schema_version": 1,
   "release_target": "7.0.0",
   "integration_branch": "roadmap/redesign-and-waves-1-5",
-  "updated_at": "2026-11-26T14:01:24Z",
+  "updated_at": "2026-11-26T14:10:14Z",
   "waves": {
     "0": {
       "status": "in_progress",
@@ -101,11 +101,12 @@
       "visual_review": true,
       "status": "merged",
       "phase": "awaiting_visual_and_wave_review",
-      "branch": "RamazanKara/r70-01-host-ui",
+      "branch": "wip/roadmap/01-ui-rubylight-studio",
       "worktree": "C:/Users/ramaz/orca/workspaces/rubylight-rel/r70-01-host-ui",
       "commit_sha": "3681b3a21c",
       "quarantine_reason": null,
-      "hw_verified": false
+      "hw_verified": false,
+      "worker_branch": "RamazanKara/r70-01-host-ui"
     },
     {
       "id": "02",
@@ -118,11 +119,12 @@
       "visual_review": true,
       "status": "in_progress",
       "phase": "implement (Opus continues from hand-over)",
-      "branch": "RamazanKara/r70-02-nightjar-ui",
+      "branch": "wip/roadmap/02-ui-nightjar-glass",
       "worktree": "C:/Users/ramaz/orca/workspaces/rubylight-rel/r70-02-nightjar-ui",
       "commit_sha": null,
       "quarantine_reason": null,
-      "hw_verified": false
+      "hw_verified": false,
+      "worker_branch": "RamazanKara/r70-02-nightjar-ui"
     },
     {
       "id": "03",
@@ -155,11 +157,12 @@
       "visual_review": false,
       "status": "merged",
       "phase": "awaiting_hw_and_wave_review",
-      "branch": "RamazanKara/r70-04-frame-warp-2",
+      "branch": "wip/roadmap/04-frame-warp-2",
       "worktree": "C:/Users/ramaz/orca/workspaces/rubylight-rel/r70-04-frame-warp-2",
       "commit_sha": "b4cee4ae6e",
       "quarantine_reason": null,
-      "hw_verified": false
+      "hw_verified": false,
+      "worker_branch": "RamazanKara/r70-04-frame-warp-2"
     },
     {
       "id": "05",
@@ -192,11 +195,12 @@
       "visual_review": false,
       "status": "merged",
       "phase": "awaiting_hw_and_wave_review",
-      "branch": "RamazanKara/r70-06-hdr-sdr",
+      "branch": "wip/roadmap/06-hdr-sdr-tonemap",
       "worktree": "C:/Users/ramaz/orca/workspaces/rubylight-rel/r70-06-hdr-sdr",
       "commit_sha": "ffb0e9ae55",
       "quarantine_reason": null,
-      "hw_verified": false
+      "hw_verified": false,
+      "worker_branch": "RamazanKara/r70-06-hdr-sdr"
     },
     {
       "id": "21",
@@ -212,11 +216,12 @@
       "visual_review": false,
       "status": "merged",
       "phase": "awaiting_hw_and_wave_review",
-      "branch": "RamazanKara/r70-21-desktop",
+      "branch": "wip/roadmap/21-desktop-perf-and-nvenc",
       "worktree": null,
       "commit_sha": "6662cdf30a",
       "quarantine_reason": null,
-      "hw_verified": false
+      "hw_verified": false,
+      "worker_branch": "RamazanKara/r70-21-desktop"
     },
     {
       "id": "22",
@@ -229,11 +234,12 @@
       "visual_review": false,
       "status": "merged",
       "phase": "awaiting_hw_and_wave_review",
-      "branch": "RamazanKara/r70-22-parity-core",
+      "branch": "wip/roadmap/22-vibepollo-parity-core",
       "worktree": "C:/Users/ramaz/orca/workspaces/rubylight-rel/r70-22-parity-core",
       "commit_sha": "8d569c878a",
       "quarantine_reason": null,
-      "hw_verified": false
+      "hw_verified": false,
+      "worker_branch": "RamazanKara/r70-22-parity-core"
     },
     {
       "id": "27",
@@ -246,11 +252,12 @@
       "visual_review": false,
       "status": "merged",
       "phase": "awaiting_wave_review",
-      "branch": "RamazanKara/r70-27-security",
+      "branch": "wip/roadmap/27-security-and-privacy-hardening",
       "worktree": "C:/Users/ramaz/orca/workspaces/rubylight-rel/r70-27-security",
       "commit_sha": "cf4e03645c",
       "quarantine_reason": null,
-      "hw_verified": false
+      "hw_verified": false,
+      "worker_branch": "RamazanKara/r70-27-security"
     },
     {
       "id": "28",
@@ -284,13 +291,14 @@
       ],
       "hw_required": true,
       "visual_review": false,
-      "status": "in_progress",
-      "phase": "implement",
+      "status": "merged",
+      "phase": "awaiting_hw_and_wave_review",
       "branch": "wip/roadmap/29-android-pacing-and-transport",
       "worktree": null,
-      "commit_sha": null,
+      "commit_sha": "ec7b3f6d4f",
       "quarantine_reason": null,
-      "hw_verified": false
+      "hw_verified": false,
+      "worker_branch": "RamazanKara/r70-29-pacing"
     },
     {
       "id": "07",
@@ -371,11 +379,12 @@
       "visual_review": true,
       "status": "merged",
       "phase": "awaiting_hw_and_wave_review",
-      "branch": "RamazanKara/r70-10-audio-fixes",
+      "branch": "wip/roadmap/10-couch-party-audio",
       "worktree": null,
       "commit_sha": "32a231df34",
       "quarantine_reason": null,
-      "hw_verified": false
+      "hw_verified": false,
+      "worker_branch": "RamazanKara/r70-10-audio-fixes"
     },
     {
       "id": "11",
@@ -426,11 +435,12 @@
       "visual_review": false,
       "status": "merged",
       "phase": "awaiting_hw_and_wave_review",
-      "branch": "RamazanKara/r70-23-dolby-rtsp",
+      "branch": "wip/roadmap/23-vibepollo-dolby-rtsp",
       "worktree": null,
       "commit_sha": "9458a301b0",
       "quarantine_reason": null,
-      "hw_verified": false
+      "hw_verified": false,
+      "worker_branch": "RamazanKara/r70-23-dolby-rtsp"
     },
     {
       "id": "24",
@@ -443,11 +453,12 @@
       "visual_review": false,
       "status": "merged",
       "phase": "awaiting_hw_and_wave_review",
-      "branch": "RamazanKara/r70-24-usb-desktop",
+      "branch": "wip/roadmap/24-usb-forwarding-convenience",
       "worktree": null,
       "commit_sha": "dbfdb1e363",
       "quarantine_reason": null,
-      "hw_verified": false
+      "hw_verified": false,
+      "worker_branch": "RamazanKara/r70-24-usb-desktop"
     },
     {
       "id": "25",
