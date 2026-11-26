@@ -120,7 +120,7 @@ fn refuse(s: &Session, request: &Request, state: State, reason: Reason) {
 }
 
 /// Sends `s`'s queued 0x554A frames to its device, reliable and in order.
-pub(crate) fn send_outgoing(
+pub(in crate::stream) fn send_outgoing(
     host: &mut Host<ControlSocket>,
     peer_id: PeerID,
     p: &mut ControlPeer,

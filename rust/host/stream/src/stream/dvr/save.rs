@@ -68,7 +68,6 @@ pub(super) fn io_reason(error: &io::Error) -> Reason {
 pub(super) struct ReplayJob {
     handle: JoinHandle<Result<ClipSummary, Reason>>,
     reply: Reply,
-    pub(super) id: String,
 }
 
 impl ReplayJob {
@@ -80,14 +79,13 @@ impl ReplayJob {
         clip: Clip,
         reply: Reply,
     ) -> io::Result<Self> {
-        let name = id.clone();
         let handle = std::thread::Builder::new()
             .name("dvr-write".into())
             .spawn(move || {
                 butterpollo_win_io::background_write::lower_current_thread();
-                write_replay(&dir, &name, &title, &clip)
+                write_replay(&dir, &id, &title, &clip)
             })?;
-        Ok(Self { handle, reply, id })
+        Ok(Self { handle, reply })
     }
 
     pub(super) fn is_finished(&self) -> bool {

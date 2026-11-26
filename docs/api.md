@@ -98,6 +98,7 @@ JSON requests use `Content-Type: application/json`; most responses include a Boo
 | Webhooks ([format](webhooks.md)) | `GET /api/webhooks` | `POST /api/webhooks`, `POST /api/webhooks/delete`, `POST /api/webhooks/test` |
 | Active sessions | `GET /api/session/status`, `GET /api/rtsp/sessions`, `GET /api/sessions/history`, `GET /api/session/console` | `POST /api/session/console` |
 | Forwarded USB devices | `GET /api/usb` | `POST /api/usb/detach` |
+| Stream DVR and clips ([setting](configuration.md#stream-dvr-and-clips)) | `GET /api/dvr`, `GET /api/dvr/clips?limit=50&cursor=`, `GET /api/dvr/clips/{id}/video`, `GET /api/dvr/clips/{id}/download` | `POST /api/dvr/clip`, `POST /api/dvr/record`, `DELETE /api/dvr/clips/{id}` |
 | Displays | `GET /api/display-devices`, `GET /api/clients/display-layout`, `GET /api/clients/hdr-profiles`, `GET /api/display/golden_status` | `PUT /api/clients/display-layout`, `POST /api/display/export_golden`, `POST /api/display/restore_golden`, `DELETE /api/display/golden`, `POST /api/display/terminate_virtual`, `POST /api/reset-display-device-persistence` |
 | Frame limiting and HDR | `GET /api/frame-limiter/status`, `GET /api/rtss/status`, `GET /api/health/vulkan-hdr-layer`, `GET /api/framegen/edid-refresh?device_id=...` | `POST /api/health/vulkan-hdr-layer/register` |
 | Steam | `GET /api/steam/status`, `GET /api/steam/games` | `POST /api/steam/force_sync`, `POST /api/steam/launch` |
@@ -140,7 +141,7 @@ These routes back console pages. They take Basic or web-session authentication l
 | Removed child sessions | `GET /api/child-session` | `POST /api/child-session/restore` |
 | Settings backup ([backup and restore](configuration.md#settings-backup-and-restore)) | | `POST /api/backup/export`, `POST /api/backup/inspect`, `POST /api/backup/restore` |
 | Stream in the console ([WebRTC](webrtc.md#stream-in-the-console)) | `GET /api/webrtc/signal` (WebSocket, web session only) | |
-| Stream DVR and clips ([setting](configuration.md#stream-dvr-and-clips)) | `GET /api/dvr`, `GET /api/dvr/clips?limit=50&cursor=`, `GET /api/dvr/clips/{id}/video`, `GET /api/dvr/clips/{id}/download` | `POST /api/dvr/clip`, `POST /api/dvr/record`, `DELETE /api/dvr/clips/{id}`, `POST /api/dvr/open-folder` |
+| Opening the clips folder ([Stream DVR](configuration.md#stream-dvr-and-clips)) | | `POST /api/dvr/open-folder` |
 | Account and file picker | `GET /api/browse` | `POST /api/password` |
 
 - **Co-op.** `GET /api/coop` shows the background mode and why, the Nucleus Co-op install (the chosen folder, or why it can't run from it), each app's co-op status and every co-op session; `GET /api/coop/sessions` returns only `sessions`, for Home's poll. `POST /api/coop/folder` checks the folder in `path` and keeps it as `nucleus_path`. `open` and `close` open and close Nucleus Co-op's window on the PC. `kick` takes `session` and `slot` and removes that player; `end` takes `session` and ends it; both end the streams those seats held.
