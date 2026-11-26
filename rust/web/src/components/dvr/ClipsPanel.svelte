@@ -109,6 +109,14 @@
   }
   .storage .notice {
     margin: 0;
+    flex-wrap: wrap;
+  }
+  /* The quota link keeps its width and drops below the sentence when the row is narrow. */
+  .storage .notice > span {
+    flex: 1 1 28ch;
+  }
+  .storage .notice :global(.button) {
+    flex: none;
   }
   .folder {
     display: flex;

@@ -134,6 +134,16 @@
     margin: 0;
     max-width: 70ch;
   }
+  /* The setting link keeps its width and drops below the sentence when the row is narrow. */
+  .notice {
+    flex-wrap: wrap;
+  }
+  .notice > span {
+    flex: 1 1 28ch;
+  }
+  .notice :global(.button) {
+    flex: none;
+  }
   .actions {
     display: flex;
     flex-wrap: wrap;
