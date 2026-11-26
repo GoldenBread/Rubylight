@@ -428,6 +428,8 @@ mod tests {
         assert_eq!(packets[0].0[31], 0);
     }
 
+    // Windows fails a receive into a too small buffer (WSAEMSGSIZE); Linux truncates the datagram.
+    #[cfg(windows)]
     #[test]
     fn oversized_datagram_is_classified_as_datagram_lost_and_keeps_serving() {
         let server_sock = UdpSocket::bind("127.0.0.1:0").unwrap();
@@ -492,6 +494,8 @@ mod tests {
         assert_eq!(snap[0].code, WARNING);
     }
 
+    // Used by the Windows-only oversized datagram test.
+    #[cfg(windows)]
     fn crc32(bytes: &[u8]) -> u32 {
         let mut crc = 0xffff_ffffu32;
         for &byte in bytes {

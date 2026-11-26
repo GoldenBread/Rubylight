@@ -236,6 +236,8 @@ fn a_game_folder_import_starts_its_program_from_its_folder() {
     assert!(hades.matches(app));
 }
 
+// A Windows folder (`D:\Games\Dispatcher`): its name is the last component on Windows only.
+#[cfg(windows)]
 #[test]
 fn helper_token_check_does_not_hide_dispatcher_exe() {
     let folder = Path::new(r"D:\Games\Dispatcher");

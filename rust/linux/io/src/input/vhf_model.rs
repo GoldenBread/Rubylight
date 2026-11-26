@@ -152,7 +152,8 @@ impl VhfModel {
                 if self.phase != Phase::Silent {
                     self.reports.push(data[..report.length as usize].to_vec());
                 }
-                self.state.submit_finish(self.id);
+                // Taken: the report reached uhid, or was dropped on purpose while silent.
+                self.state.submit_finish(self.id, true);
             }
             let now = self.now();
             match self.state.on_vhf_ready_for_next_report(self.id, now).0 {

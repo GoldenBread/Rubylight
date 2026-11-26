@@ -30,6 +30,11 @@ impl<B: RadeonBackend> Controller<B> {
         let mut journal = saved.clone();
         let original = |id: &str| find(&before, id).and_then(|s| s.value.clone());
         for change in changes {
+            // As on Windows: the raw keys before the write, for a backend that keeps them.
+            let raw = self
+                .backend
+                .snapshot_keys(gpu, &change.id)
+                .map_err(unavailable)?;
             journal.record(Entry {
                 user: user.clone(),
                 gpu,
@@ -44,6 +49,7 @@ impl<B: RadeonBackend> Controller<B> {
                 })?,
                 written: change.value.clone(),
                 side_effect: false,
+                raw,
             });
         }
         // The partners the driver is expected to switch off go in too. If it does not switch one,
@@ -58,6 +64,7 @@ impl<B: RadeonBackend> Controller<B> {
                 original: Value::Bool(true),
                 written: Value::Bool(false),
                 side_effect: true,
+                raw: None,
             });
         }
         // The originals reach the disk before the first byte changes in the driver.
@@ -152,6 +159,7 @@ impl<B: RadeonBackend> Controller<B> {
                     original: was.clone(),
                     written: now.clone(),
                     side_effect: true,
+                    raw: None,
                 });
             }
         }
@@ -243,6 +251,7 @@ impl<B: RadeonBackend> Controller<B> {
                         original: was.clone(),
                         written: current,
                         side_effect: requested.is_none(),
+                        raw: None,
                     });
                 }
                 failure.message = format!(

@@ -528,6 +528,8 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&file).unwrap(), INI);
     }
 
+    // A path that differs only in case is the same file on Windows only.
+    #[cfg(windows)]
     #[test]
     fn a_managed_file_that_is_also_a_swapped_settings_file_fails_the_launch_unwritten() {
         let f = Fixture::new();
@@ -685,6 +687,8 @@ mod tests {
         check(&app).unwrap();
     }
 
+    // UNC paths are Windows paths.
+    #[cfg(windows)]
     #[test]
     fn same_file_rejects_unc_paths_without_network_resolution() {
         let f = Fixture::new();

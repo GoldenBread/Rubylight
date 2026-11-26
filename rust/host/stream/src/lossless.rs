@@ -594,6 +594,9 @@ fn run(
 /// Verifies that no existing component in `path` is a reparse point (junction or
 /// symlink) before the host (often running elevated) reads or writes it.
 fn refuse_reparse_points(path: &Path) -> Result<()> {
+    // Lossless Scaling runs on Windows only; a Linux host has no reparse points to refuse.
+    #[cfg(not(windows))]
+    let _ = path;
     #[cfg(windows)]
     {
         use std::os::windows::fs::MetadataExt;

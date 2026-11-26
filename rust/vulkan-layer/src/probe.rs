@@ -1,8 +1,9 @@
 //! Stream-state and Win32 monitor-HDR probing with short-lived caching.
 
+#[cfg(windows)]
+use std::ffi::c_void;
 use std::{
     collections::BTreeMap,
-    ffi::c_void,
     time::{Duration, Instant},
 };
 

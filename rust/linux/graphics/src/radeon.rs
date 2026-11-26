@@ -12,7 +12,7 @@ pub mod worker;
 
 pub use control::{
     BackendError, Change, Controller, Entry, ErrorKind, GpuInfo, Journal, RadeonBackend,
-    RestoreReport, Scope, WriteError,
+    RawSettingKeys, RestoreReport, Scope, WriteError,
 };
 pub use model::{Kind, Setting, State, Writable};
 

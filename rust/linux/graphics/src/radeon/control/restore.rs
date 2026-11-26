@@ -214,6 +214,7 @@ impl<B: RadeonBackend> Controller<B> {
                 original: Value::Bool(original),
                 written: Value::Bool(written),
                 side_effect: true,
+                raw: None,
             });
         }
         let forget = |journal: &mut Journal| {

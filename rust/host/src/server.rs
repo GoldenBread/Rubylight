@@ -1,5 +1,7 @@
 //! Async Tokio host server lifecycle, logging, panic hook, and graceful shutdown.
 use crate::service_tasks;
+
+mod os;
 use anyhow::{Context, Result};
 use butterpollo_stream::{
     child_session, dsu, game_files, game_settings, host_warnings, internet_play, invites, library,
@@ -287,14 +289,8 @@ async fn run_logged(
             "game audio devices from an interrupted stream were not all restored; retrying"
         );
     }
-    // A video encoder clock an interrupted Linux stream left raised goes back to automatic.
     #[cfg(target_os = "linux")]
-    butterpollo_win_graphics::encoder_clock::recover();
-    // An interrupted stream's virtual display goes, and the monitors it changed come back.
-    #[cfg(target_os = "linux")]
-    if let Err(error) = butterpollo_win_display::display::recover_after_restart() {
-        tracing::error!(error = %format!("{error:#}"), "the monitors an interrupted stream's virtual display changed were not restored");
-    }
+    os::recover_interrupted_stream();
     if let Some(journal) = h.recover_session() {
         tracing::warn!(
             state = ?journal.state,
@@ -537,7 +533,7 @@ async fn run_logged(
                 }
             }
         },
-        _=terminated()=>{
+        _=os::terminated()=>{
             tracing::info!("SIGTERM received; host shutting down");
             stop_source = Some("sigterm");
             Ok(())
@@ -682,7 +678,7 @@ async fn run_logged(
     if h.restart.load(Ordering::Acquire) {
         // As a systemd unit's own process a restart is an exit the unit's Restart= answers: a
         // host that started itself again would be killed with its unit's control group.
-        let supervised = supervised || under_systemd();
+        let supervised = supervised || os::under_systemd();
         let exit_code = if supervised {
             butterpollo_win_io::service::RESTART_EXIT_CODE
         } else {
@@ -704,26 +700,6 @@ async fn run_logged(
     outcome?;
     tracing::info!(reason, exit_code = 0u32, "host exiting");
     Ok(ExitAction::Return)
-}
-/// Resolves when systemd (or a shell) asks the host to stop with SIGTERM; never on Windows.
-async fn terminated() {
-    #[cfg(unix)]
-    if let Ok(mut stream) =
-        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-    {
-        stream.recv().await;
-        return;
-    }
-    std::future::pending::<()>().await
-}
-
-/// Whether the host is a systemd unit's own process: systemd sets SYSTEMD_EXEC_PID to the pid
-/// it started. A program a unit's process started (a terminal's shell) inherits the variable
-/// with another pid, and INVOCATION_ID alike, so neither is enough on its own.
-fn under_systemd() -> bool {
-    cfg!(target_os = "linux")
-        && std::env::var("SYSTEMD_EXEC_PID")
-            .is_ok_and(|pid| pid.trim().parse() == Ok(std::process::id()))
 }
 /// What the host's own waits at a service stop take together, at most: under the 20 s after
 /// which the service ends it, with room for the steps that do not wait.

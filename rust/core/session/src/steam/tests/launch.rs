@@ -678,14 +678,18 @@ fn steam_rejects_escaped_or_remote_installdir_and_preserves_unreadable_library_a
     assert!(discovery.unreadable_apps.contains(&104));
     assert!(discovery.unreadable_libraries.contains(&apps));
 
-    // Lexical dotdot resolving back inside ValidGame still finds ValidGame cleanly.
-    let linked_install = apps.join("common").join("ValidGame").join("sub");
-    std::fs::create_dir_all(&linked_install).unwrap();
-    let exe = apps.join("common").join("ValidGame").join("game.exe");
-    std::fs::write(&exe, b"").unwrap();
-    assert_eq!(
-        super::super::launch::library_folder(&linked_install.join("..").join("game.exe"))
-            .map(|(lib, game, rel)| (same_path(&lib, &apps), game, rel)),
-        Some((true, "ValidGame".into(), "game.exe".into()))
-    );
+    // Lexical dotdot resolving back inside ValidGame still finds ValidGame cleanly. A launch's
+    // library folder is a Windows drive path, so this part runs on Windows only.
+    #[cfg(windows)]
+    {
+        let linked_install = apps.join("common").join("ValidGame").join("sub");
+        std::fs::create_dir_all(&linked_install).unwrap();
+        let exe = apps.join("common").join("ValidGame").join("game.exe");
+        std::fs::write(&exe, b"").unwrap();
+        assert_eq!(
+            super::super::launch::library_folder(&linked_install.join("..").join("game.exe"))
+                .map(|(lib, game, rel)| (same_path(&lib, &apps), game, rel)),
+            Some((true, "ValidGame".into(), "game.exe".into()))
+        );
+    }
 }

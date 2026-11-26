@@ -139,6 +139,8 @@ pub fn for_platform(offered: Offered, linux: bool) -> Offered {
     }
     Offered {
         hdr_formats: 0,
+        // HDR10+ control is for HDR streams, which a Linux host does not offer.
+        hdr_dynamic_control: false,
         usb: false,
         text_input: false,
         keyboard_layout: false,
@@ -409,6 +411,7 @@ mod tests {
     fn linux_offers_only_what_it_can_do() {
         let everything = Offered {
             hdr_formats: 0xFF,
+            hdr_dynamic_control: true,
             client_fec: true,
             bandwidth_probe: true,
             usb: true,
@@ -434,6 +437,7 @@ mod tests {
             for_platform(everything, true),
             Offered {
                 hdr_formats: 0,
+                hdr_dynamic_control: false,
                 usb: false,
                 text_input: false,
                 keyboard_layout: false,

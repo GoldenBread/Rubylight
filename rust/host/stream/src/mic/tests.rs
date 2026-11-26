@@ -584,6 +584,8 @@ fn microphone_install_restores_defaults_on_success_timeout_and_error() {
     assert_eq!(restored.load(Ordering::Relaxed), 1);
 }
 
+// Windows fails a receive into a too small buffer (WSAEMSGSIZE); Linux truncates the datagram.
+#[cfg(windows)]
 #[test]
 fn oversized_datagram_is_classified_as_datagram_lost_in_microphone_loop() {
     let receiver = UdpSocket::bind("127.0.0.1:0").unwrap();

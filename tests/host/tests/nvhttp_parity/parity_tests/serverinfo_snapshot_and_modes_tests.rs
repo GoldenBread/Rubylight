@@ -40,6 +40,11 @@ async fn serverinfo_for_a_default_config_is_byte_identical() {
     let hostname = butterpollo_stream::network::host_name(&config);
     let unique_id = f.host.paired.read().unwrap().unique_id.clone();
     let version = butterpollo_stream::stream::reconnect_harness::HOST_VERSION;
+    let platform = if cfg!(target_os = "linux") {
+        "linux"
+    } else {
+        "windows"
+    };
     let profile = butterpollo_session::migration::profile_id(&f.host.directory);
     let sleep = u8::from(f.host.power.supported());
     // AudioCodecs 3 is Opus and PCM: the test binary's folder has no FFmpeg for AC3 and E-AC3.
@@ -65,6 +70,7 @@ async fn serverinfo_for_a_default_config_is_byte_identical() {
              <MaxLumaPixelsHEVC>1869449984</MaxLumaPixelsHEVC>\
              <ServerCodecModeSupport>769</ServerCodecModeSupport>\
              <RustHostVersion>{version}</RustHostVersion>\
+             <HostPlatform>{platform}</HostPlatform>\
              <RustHostEncoderBitrateKbps>0</RustHostEncoderBitrateKbps>\
              <RustHostInitialEncoderBitrateKbps>0</RustHostInitialEncoderBitrateKbps>\
              <RustHostLastFailure></RustHostLastFailure>\
@@ -135,6 +141,7 @@ async fn serverinfo_for_a_default_config_is_byte_identical() {
              <MaxLumaPixelsHEVC>1869449984</MaxLumaPixelsHEVC>\
              <ServerCodecModeSupport>769</ServerCodecModeSupport>\
              <RustHostVersion>{version}</RustHostVersion>\
+             <HostPlatform>{platform}</HostPlatform>\
              <RustHostEncoderBitrateKbps>0</RustHostEncoderBitrateKbps>\
              <RustHostInitialEncoderBitrateKbps>0</RustHostInitialEncoderBitrateKbps>\
              <RustHostLastFailure></RustHostLastFailure>\

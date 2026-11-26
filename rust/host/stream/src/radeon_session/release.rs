@@ -377,5 +377,6 @@ impl crate::state::Host {
     }
 }
 
-#[cfg(test)]
+// NVIDIA's global profile, the subject of these tests, is on Windows only.
+#[cfg(all(test, windows))]
 mod tests;

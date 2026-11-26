@@ -216,6 +216,7 @@ const SERVERINFO_FIELDS: &[(&str, Reading)] = &[
     ("Permission", Reading::Read),
     ("ServerCommand", Reading::Read),
     ("RustHostVersion", Reading::Read),
+    ("HostPlatform", Reading::Read),
     ("RustHostEncoderBitrateKbps", Reading::Read),
     ("RustHostInitialEncoderBitrateKbps", Reading::Read),
     ("RustHostLastFailure", Reading::Read),

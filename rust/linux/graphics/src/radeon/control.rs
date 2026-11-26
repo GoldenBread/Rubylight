@@ -44,7 +44,24 @@ pub trait RadeonBackend {
     fn gpus(&mut self) -> Result<Vec<GpuInfo>, BackendError> {
         Ok(Vec::new())
     }
+    /// The driver's raw keys for `id` before a write, for a restore that puts them back as
+    /// they were. As on Windows a backend that does not say otherwise keeps none.
+    fn snapshot_keys(
+        &mut self,
+        _gpu: i32,
+        _id: &str,
+    ) -> Result<Option<RawSettingKeys>, BackendError> {
+        Ok(None)
+    }
+    /// Puts `entry` back from its raw keys: `Ok(true)` when done and verified, `Ok(false)` to
+    /// restore through `write`, which every Linux backend does.
+    fn restore_raw(&mut self, _entry: &Entry) -> Result<bool, BackendError> {
+        Ok(false)
+    }
 }
+
+/// Raw driver `(key, optional value)` pairs captured before a setting is applied.
+pub type RawSettingKeys = Vec<(u32, Option<u32>)>;
 
 /// One GPU as its driver names it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -141,6 +158,10 @@ pub struct Entry {
     /// nobody.
     #[serde(default)]
     pub user: String,
+    /// The driver's raw keys before the first write ([`RadeonBackend::snapshot_keys`]); none
+    /// on a Linux host yet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub raw: Option<RawSettingKeys>,
 }
 impl Entry {
     /// The entry for this setting of this user's.

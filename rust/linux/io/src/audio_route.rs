@@ -134,9 +134,11 @@ impl Route {
     pub fn capture_sink(&self, _config: &Config) -> Result<String> {
         Ok(self.sink.clone())
     }
-    /// Give the virtual speakers `channels` channels.
-    pub fn set_channels(&self, _channels: usize) -> Result<()> {
-        Ok(())
+    /// The channels the sink has for a stream of `channels`: the Linux host does not format
+    /// its sink, so it returns `channels`, as the Windows host does for a sink it does not
+    /// format.
+    pub fn set_channels(&self, channels: usize) -> Result<usize> {
+        Ok(channels)
     }
 }
 
