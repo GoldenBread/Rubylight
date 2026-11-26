@@ -633,8 +633,23 @@ impl Worker {
     }
 
     fn finish(mut self) {
+        // Nothing waits on a worker that no longer reads: what is queued is answered now, a
+        // stop with the finished recording.
+        let mut stop = None;
+        for command in self.shared.close() {
+            match command {
+                Command::StopRecord { reply } if stop.is_none() => stop = Some(reply),
+                Command::Query { request_id } => self.post_finished_state(request_id),
+                Command::SaveClip { reply, .. }
+                | Command::StartRecord { reply }
+                | Command::StopRecord { reply } => {
+                    self.answer(reply, Err((Outcome::Refused, Reason::NotStreaming)))
+                }
+            }
+        }
+        // The recording first: it is the file a slow clip write must not keep from finishing.
+        self.stop_recording(stop);
         self.poll_job(true);
-        self.stop_recording(None);
         self.shared.set_live(|live| {
             live.state = State::Off;
             live.reason = Reason::NotStreaming;
@@ -643,7 +658,21 @@ impl Worker {
         if let Some(s) = self.session.upgrade() {
             s.dvr.disarm();
         }
-        self.h.dvr.unregister(&self.shared.session_id);
+        self.h.dvr.unregister(&self.shared.session_id, &self.shared);
         tracing::info!(tap_drops = self.drops_seen, "stream dvr ended");
+    }
+
+    /// The state a query gets from a worker that is finishing: off, nothing streaming.
+    fn post_finished_state(&mut self, request_id: u32) {
+        self.post(Message::State(HostState {
+            request_id,
+            state: State::Off,
+            reason: Reason::NotStreaming,
+            ring_buffered_secs: 0,
+            ring_capacity_secs: self.shared.capacity_secs,
+            recording_elapsed_secs: 0,
+            quota_used_bytes: self.quota_on_disk,
+            quota_limit_bytes: self.shared.quota_limit,
+        }));
     }
 }

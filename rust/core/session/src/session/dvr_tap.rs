@@ -16,8 +16,9 @@ use std::sync::mpsc::{Receiver, SyncSender, TrySendError, sync_channel};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Instant;
 
-/// Copies the channel holds before the tap drops them: about two seconds at 120 fps with audio
-/// packets beside.
+/// Copies the channel holds before the tap drops them: about a second at 120 fps with the
+/// Opus packets beside, less with slice delivery (each slice is a copy). A drop costs the
+/// clip and recording up to one GOP, never the stream.
 pub const CAPACITY: usize = 256;
 /// Outgoing frames kept for the control loop; the oldest goes first when it falls behind.
 pub const OUTGOING: usize = 32;
@@ -74,6 +75,7 @@ pub struct DvrTap {
     outgoing_pending: AtomicBool,
     wake: Mutex<Option<Wake>>,
     layout: Mutex<Option<OpusLayout>>,
+    keyframe: AtomicBool,
 }
 
 /// An Opus layout: channels, streams, coupled streams and the channel mapping.
@@ -182,6 +184,14 @@ impl DvrTap {
         *self.wake.lock().unwrap() = Some(Arc::new(wake));
     }
 
+    /// Whether the encoder owes Stream DVR a keyframe, clearing the request: one relaxed load
+    /// while none is asked for. Kept apart from the session's `idr`, which means the client lost
+    /// something: a DVR keyframe skips no frame and starts no recovery.
+    #[inline]
+    pub fn take_keyframe(&self) -> bool {
+        self.keyframe.load(Ordering::Relaxed) && self.keyframe.swap(false, Ordering::AcqRel)
+    }
+
     /// Whether frames wait; one relaxed load.
     #[inline]
     pub fn has_outgoing(&self) -> bool {
@@ -202,7 +212,7 @@ impl<P, A> Session<P, A> {
     pub fn request_dvr_keyframe(&self) {
         if self.config.codec != 3 {
             self.keyframe_loss.lock().unwrap().host_keyframe();
-            self.idr.store(true, Ordering::Release);
+            self.dvr.keyframe.store(true, Ordering::Release);
         }
     }
 }

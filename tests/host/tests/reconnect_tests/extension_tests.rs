@@ -73,7 +73,7 @@ async fn frame_warp_is_listed_only_while_its_setting_is_on() -> Result<()> {
     let launch = h.launch(0, false).await?;
     let describe = h.rtsp(&launch, 10, "DESCRIBE", "").await?;
     assert!(
-        describe.contains("a=x-rl-control:0x5539,0x553b,0x553d,0x553e\r\n"),
+        describe.contains("a=x-rl-control:0x5539,0x553b,0x553d,0x553e,0x554a\r\n"),
         "{describe}"
     );
     for id in ["0x5543", "0x5544", "0x5545", "0x5546", "0x5549"] {

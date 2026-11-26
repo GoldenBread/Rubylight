@@ -78,3 +78,66 @@ fn a_replay_clip_is_written_whole_or_not_at_all() {
     assert!(result.is_err());
     assert_eq!(left, 0);
 }
+
+fn shared(session: &str) -> Arc<Shared> {
+    Shared::new(session, "Game".into(), 60, std::env::temp_dir(), 1 << 30)
+}
+
+#[test]
+fn a_finished_worker_takes_no_commands_and_answers_the_queued_ones() {
+    let dvr = shared("dvr-closed");
+    let (reply, answer) = sync_channel(1);
+    let save = Command::SaveClip {
+        secs: 30,
+        reply: Reply::Api(reply),
+    };
+    assert!(dvr.push(save).is_ok());
+    let queued = dvr.close();
+    assert_eq!(queued.len(), 1, "close hands the queue to the worker");
+    assert!(dvr.take_commands().is_empty());
+    let (late, _) = sync_channel(1);
+    let stop = Command::StopRecord {
+        reply: Reply::Api(late),
+    };
+    assert!(
+        dvr.push(stop).is_err(),
+        "given back at once, not left to wait"
+    );
+    drop(queued);
+    assert!(answer.try_recv().is_err());
+}
+
+#[test]
+fn one_stream_gets_one_registration_however_many_threads_arm_it() {
+    let store = Arc::new(crate::dvr_store::DvrStore::default());
+    let starts = Arc::new(AtomicU64::new(0));
+    let threads: Vec<_> = (0..4)
+        .map(|_| {
+            let (store, starts) = (store.clone(), starts.clone());
+            std::thread::spawn(move || {
+                store.get_or_start("dvr-race", || {
+                    starts.fetch_add(1, Ordering::Relaxed);
+                    std::thread::sleep(Duration::from_millis(20));
+                    Some(shared("dvr-race"))
+                })
+            })
+        })
+        .collect();
+    let got: Vec<Arc<Shared>> = threads
+        .into_iter()
+        .map(|t| t.join().unwrap().unwrap())
+        .collect();
+    assert_eq!(starts.load(Ordering::Relaxed), 1);
+    assert!(got.iter().all(|dvr| Arc::ptr_eq(dvr, &got[0])));
+    // Another stream gets none while this one has it.
+    assert!(
+        store
+            .get_or_start("dvr-other", || Some(shared("dvr-other")))
+            .is_none()
+    );
+    // Only the running buffer itself unregisters it.
+    store.unregister("dvr-race", &shared("dvr-race"));
+    assert!(store.active_for("dvr-race").is_some());
+    store.unregister("dvr-race", &got[0]);
+    assert!(store.active().is_none());
+}

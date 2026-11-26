@@ -58,7 +58,7 @@ pub(crate) fn handle_control(
     };
     shared.client_speaks.store(true, Ordering::Release);
     let reply = Reply::Control(request.request_id);
-    shared.push(match request.op {
+    let pushed = shared.push(match request.op {
         Op::QueryState => Command::Query {
             request_id: request.request_id,
         },
@@ -69,6 +69,10 @@ pub(crate) fn handle_control(
         Op::StartRecord => Command::StartRecord { reply },
         Op::StopRecord => Command::StopRecord { reply },
     });
+    if pushed.is_err() {
+        // The worker is finishing with the stream.
+        refuse(s, &request, State::Off, Reason::NotStreaming);
+    }
 }
 
 /// Whether `s`'s device may save clips: the owner's plain stream, with the launch permission.

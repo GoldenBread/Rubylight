@@ -73,7 +73,8 @@ pub struct Shared {
     pub(crate) capacity_secs: u16,
     pub(crate) clips_dir: PathBuf,
     pub(crate) quota_limit: u64,
-    commands: Mutex<VecDeque<Command>>,
+    /// Requests for the worker, and whether it still takes them (`false` once it finishes).
+    commands: Mutex<(VecDeque<Command>, bool)>,
     commands_pending: AtomicBool,
     stop: AtomicBool,
     /// The device sent a 0x554A request, so it reads the frames the worker pushes.
@@ -85,12 +86,45 @@ pub struct Shared {
 }
 
 impl Shared {
-    pub(crate) fn push(&self, command: Command) {
-        self.commands
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .push_back(command);
+    pub(crate) fn new(
+        session_id: &str,
+        app_title: String,
+        capacity_secs: u16,
+        clips_dir: PathBuf,
+        quota_limit: u64,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            session_id: session_id.to_owned(),
+            app_title,
+            capacity_secs,
+            clips_dir,
+            quota_limit,
+            commands: Mutex::new((VecDeque::new(), true)),
+            commands_pending: AtomicBool::new(false),
+            stop: AtomicBool::new(false),
+            client_speaks: AtomicBool::new(false),
+            live: Mutex::new(Live {
+                state: State::Armed,
+                reason: Reason::None,
+                buffered_secs: 0,
+                recording_since: None,
+                quota_used_bytes: 0,
+            }),
+            worker: Mutex::default(),
+            recording_id: Mutex::default(),
+            tap_drops: AtomicU64::new(0),
+        })
+    }
+
+    /// Queues `command` for the worker; gives it back once the worker no longer takes any.
+    pub(crate) fn push(&self, command: Command) -> Result<(), Command> {
+        let mut commands = self.commands.lock().unwrap_or_else(PoisonError::into_inner);
+        if !commands.1 {
+            return Err(command);
+        }
+        commands.0.push_back(command);
         self.commands_pending.store(true, Ordering::Release);
+        Ok(())
     }
 
     pub(crate) fn take_commands(&self) -> Vec<Command> {
@@ -100,8 +134,16 @@ impl Shared {
         self.commands
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
+            .0
             .drain(..)
             .collect()
+    }
+
+    /// Takes no more commands and returns those still queued, for the worker to answer.
+    pub(crate) fn close(&self) -> Vec<Command> {
+        let mut commands = self.commands.lock().unwrap_or_else(PoisonError::into_inner);
+        commands.1 = false;
+        commands.0.drain(..).collect()
     }
 
     pub(crate) fn live(&self) -> Live {
@@ -154,36 +196,29 @@ pub(crate) fn start(h: &HostShared, s: &Arc<Session>, c: &Config) -> Option<Arc<
         tracing::info!(reason = reason.as_str(), client = %s.launch.client.name, "stream dvr: this stream cannot be clipped");
         return None;
     }
-    let clips_dir = crate::dvr_store::clips_dir(&h.config_path, c);
-    let capacity_secs = c.dvr_ring_seconds();
-    let shared = Arc::new(Shared {
-        session_id: s.launch.id.clone(),
-        app_title: crate::stream::config::launch_app(h, &s.launch)
-            .map_or_else(|| "Desktop".to_owned(), |app| app.name),
-        capacity_secs,
-        clips_dir,
-        quota_limit: crate::dvr_store::quota_bytes(c),
-        commands: Mutex::default(),
-        commands_pending: AtomicBool::new(false),
-        stop: AtomicBool::new(false),
-        client_speaks: AtomicBool::new(false),
-        live: Mutex::new(Live {
-            state: State::Armed,
-            reason: Reason::None,
-            buffered_secs: 0,
-            recording_since: None,
-            quota_used_bytes: 0,
-        }),
-        worker: Mutex::default(),
-        recording_id: Mutex::default(),
-        tap_drops: AtomicU64::new(0),
-    });
-    if !h.dvr.register(&s.launch.id, shared.clone()) {
+    if h.dvr.active().is_some() {
         tracing::info!(client = %s.launch.client.name, "stream dvr: another stream has the replay buffer");
         return None;
     }
+    // Under the store's lock: two threads arming one stream get one worker.
+    h.dvr.get_or_start(&s.launch.id, || arm(h, s, c))
+}
+
+/// Builds `s`'s DVR, arms its tap and starts its worker; `None` when the tap was armed before
+/// in this stream (the setting was turned off and on again) or the worker did not start.
+fn arm(h: &HostShared, s: &Arc<Session>, c: &Config) -> Option<Arc<Shared>> {
+    let clips_dir = crate::dvr_store::clips_dir(&h.config_path, c);
+    let capacity_secs = c.dvr_ring_seconds();
+    let shared = Shared::new(
+        &s.launch.id,
+        crate::stream::config::launch_app(h, &s.launch)
+            .map_or_else(|| "Desktop".to_owned(), |app| app.name),
+        capacity_secs,
+        clips_dir,
+        crate::dvr_store::quota_bytes(c),
+    );
     let Some(receiver) = s.dvr.arm() else {
-        h.dvr.unregister(&s.launch.id);
+        tracing::info!(client = %s.launch.client.name, "stream dvr: turned on again during this stream; it returns with the next stream");
         return None;
     };
     let limits = butterpollo_media_policy::dvr::ring::Limits {
@@ -203,7 +238,6 @@ pub(crate) fn start(h: &HostShared, s: &Arc<Session>, c: &Config) -> Option<Arc<
         }
         Err(error) => {
             s.dvr.disarm();
-            h.dvr.unregister(&s.launch.id);
             tracing::warn!(%error, "stream dvr: its worker did not start");
             None
         }
@@ -247,7 +281,7 @@ pub(crate) fn end(h: &HostShared, s: &Session) {
             tracing::warn!("stream dvr: the worker is still finishing after the stream ended");
         }
     }
-    h.dvr.unregister(&s.launch.id);
+    h.dvr.unregister(&s.launch.id, &shared);
 }
 
 /// Copies a frame's encoded pictures to the DVR worker while armed; one relaxed load when not.
@@ -293,7 +327,7 @@ pub fn status(h: &HostShared) -> DvrStatus {
         ring_capacity_secs: u32::from(config.dvr_ring_seconds()),
         quota_used_bytes: used,
         quota_limit_bytes: crate::dvr_store::quota_bytes(&config),
-        clips_dir_available: crate::dvr_store::writable(&dir),
+        clips_dir_available: crate::dvr_store::available(&dir),
         container: "mp4".into(),
         ..Default::default()
     };
@@ -336,9 +370,12 @@ fn owner_stream(h: &HostShared) -> Option<Arc<Session>> {
         .unwrap_or_else(PoisonError::into_inner)
         .active
         .values()
-        .find(|s| match &active {
-            Some(shared) => s.launch.id == shared.session_id,
-            None => s.launch.guest().is_none() && s.launch.plain_stream(),
+        .find(|s| {
+            !s.stopping()
+                && match &active {
+                    Some(shared) => s.launch.id == shared.session_id,
+                    None => s.launch.guest().is_none() && s.launch.plain_stream(),
+                }
         })
         .cloned()
 }
@@ -370,7 +407,10 @@ fn running(h: &HostShared) -> Result<Arc<Shared>, Reason> {
 fn ask(h: &HostShared, command: impl FnOnce(Reply) -> Command) -> Result<Answer, Reason> {
     let shared = running(h)?;
     let (reply, answer) = sync_channel(1);
-    shared.push(command(Reply::Api(reply)));
+    if shared.push(command(Reply::Api(reply))).is_err() {
+        // The worker is finishing with its stream.
+        return Err(Reason::NotStreaming);
+    }
     match answer.recv_timeout(API_WAIT) {
         Ok(answer) => Ok(answer),
         Err(RecvTimeoutError::Timeout) => Err(Reason::Busy),
@@ -439,7 +479,8 @@ pub fn api_reason(reason: Reason) -> DvrReason {
 /// Plain English for `reason`, as the console and the native API's errors show it.
 pub fn reason_text(reason: Reason) -> &'static str {
     match reason {
-        Reason::None => "Saved.",
+        // A stop with no recording running is refused with no other reason.
+        Reason::None => "No recording is running.",
         Reason::Disabled => {
             "Instant replay is turned off on this PC. Turn on Instant replay in Rubylight's settings to save clips."
         }

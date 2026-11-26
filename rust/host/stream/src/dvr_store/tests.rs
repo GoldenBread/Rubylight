@@ -173,7 +173,8 @@ fn room_is_made_by_deleting_the_oldest_replays_never_recordings() {
         400,
     );
     let store = DvrStore::default();
-    let evicted = store.make_room(dir, 300, 300, 1_000, &[]).unwrap();
+    // 1200 stored + 100 incoming: deleting the oldest replay is enough for the 1000 limit.
+    let evicted = store.make_room(dir, 100, 100, 1_000, &[]).unwrap();
     assert_eq!(evicted, ["20260101-100000-replay-0001"]);
     assert!(!video_path(dir, "20260101-100000-replay-0001").exists());
     // Only recordings and the clip being written are left: no room.

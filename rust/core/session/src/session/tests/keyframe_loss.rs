@@ -472,3 +472,27 @@ fn inter_frame_recovery_keeps_invalidation_ranges_and_idr_fallback() {
         );
     }
 }
+
+#[test]
+fn a_stream_dvr_keyframe_is_no_recovery() {
+    let s = steady_stream("dvr-keyframe");
+    // The stream's first keyframe was sent.
+    s.idr.store(false, Ordering::Release);
+    let requests = s.stats.idr_requests.load(Ordering::Relaxed);
+    s.request_dvr_keyframe();
+    // The client lost nothing: the recovery flag stays clear, so no frame is skipped.
+    assert!(!s.idr.load(Ordering::Acquire));
+    assert_eq!(s.stats.idr_requests.load(Ordering::Relaxed), requests);
+    assert!(s.dvr.take_keyframe(), "the encoder is asked once");
+    assert!(!s.dvr.take_keyframe());
+    // PyroWave pictures are all intra: nothing to ask for.
+    let pyrowave = Session::new(
+        launch("dvr-pyrowave", Role::Stream),
+        Negotiated {
+            codec: 3,
+            ..Negotiated::default()
+        },
+    );
+    pyrowave.request_dvr_keyframe();
+    assert!(!pyrowave.dvr.take_keyframe());
+}

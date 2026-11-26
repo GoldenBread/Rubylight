@@ -37,20 +37,32 @@ pub struct DvrStore {
 }
 
 impl DvrStore {
-    /// Makes `dvr` the running replay buffer of `session`; `false` when another stream has one.
-    pub fn register(&self, session: &str, dvr: Arc<crate::stream::dvr::Shared>) -> bool {
+    /// `session`'s running replay buffer, or the one `start` makes, registered while the lock is
+    /// held, so two threads arming one stream get one worker. `None` when another stream has
+    /// the replay buffer or `start` makes none; a running one is never replaced.
+    pub fn get_or_start(
+        &self,
+        session: &str,
+        start: impl FnOnce() -> Option<Arc<crate::stream::dvr::Shared>>,
+    ) -> Option<Arc<crate::stream::dvr::Shared>> {
         let mut active = self.active.lock().unwrap_or_else(PoisonError::into_inner);
-        if active.as_ref().is_some_and(|(id, _)| id != session) {
-            return false;
+        match active.as_ref() {
+            Some((id, dvr)) if id == session => return Some(dvr.clone()),
+            Some(_) => return None,
+            None => {}
         }
-        *active = Some((session.to_owned(), dvr));
-        true
+        let dvr = start()?;
+        *active = Some((session.to_owned(), dvr.clone()));
+        Some(dvr)
     }
 
-    /// Forgets `session`'s replay buffer, when it is the running one.
-    pub fn unregister(&self, session: &str) {
+    /// Forgets `session`'s replay buffer `dvr`, when it is still the running one.
+    pub fn unregister(&self, session: &str, dvr: &Arc<crate::stream::dvr::Shared>) {
         let mut active = self.active.lock().unwrap_or_else(PoisonError::into_inner);
-        if active.as_ref().is_some_and(|(id, _)| id == session) {
+        if active
+            .as_ref()
+            .is_some_and(|(id, running)| id == session && Arc::ptr_eq(running, dvr))
+        {
             *active = None;
         }
     }
@@ -167,6 +179,19 @@ pub fn writable(dir: &Path) -> bool {
     let ok = std::fs::write(&probe, b"").is_ok();
     let _ = std::fs::remove_file(&probe);
     ok
+}
+
+/// Whether clips can go to `dir`, found without writing: a folder that is not read-only, or
+/// one not made yet under a folder that exists.
+pub fn available(dir: &Path) -> bool {
+    match std::fs::metadata(dir) {
+        Ok(meta) => meta.is_dir() && !meta.permissions().readonly(),
+        Err(_) => dir
+            .ancestors()
+            .skip(1)
+            .find(|parent| parent.exists())
+            .is_some_and(Path::is_dir),
+    }
 }
 
 /// The path of clip `id`'s video.

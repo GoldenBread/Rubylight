@@ -128,7 +128,8 @@ fn salvage_one(dir: &Path, id: &str) -> bool {
         .unwrap_or_else(|| ClipSummary {
             app_title: "Unknown".into(),
             container: "mp4".into(),
-            kind: ClipKind::Manual,
+            // A recording writes its draft first: without one, it was a replay clip.
+            kind: ClipKind::Replay,
             ..Default::default()
         });
     summary.id = recovered.clone();

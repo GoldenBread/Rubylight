@@ -159,6 +159,8 @@ pub(super) fn encode_frame(
         *confirm_keyframe = None;
     }
     let recovering = idr || invalidation.is_some();
+    // Stream DVR's keyframe is the host's own: no recovery, nothing skipped or re-sent.
+    let keyframe = idr || s.dvr.take_keyframe();
     // A client-chosen FEC share moves the encoder's part of the
     // budget at a fence (an IDR or a new encoder) or after a
     // statistical FEC report; a new rate needs no keyframe.
@@ -248,9 +250,9 @@ pub(super) fn encode_frame(
         #[cfg(debug_assertions)]
         crate::soak_fault::check("DXGI_ERROR_DEVICE_REMOVED")?;
         Ok(if direct_encoder_input {
-            active.encode_gpu(presented_image, idr, bitrate)?
+            active.encode_gpu(presented_image, keyframe, bitrate)?
         } else {
-            active.encode(&readback(presented_image)?, idr, bitrate)?
+            active.encode(&readback(presented_image)?, keyframe, bitrate)?
         })
     })();
     if let Some(at) = encode_trace_started {
