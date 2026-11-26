@@ -6,6 +6,7 @@ use std::net::{IpAddr, Ipv4Addr};
 pub mod grace;
 pub mod idle;
 mod readiness;
+pub mod relay;
 pub use readiness::*;
 
 /// What an adapter carries, as far as waking the PC goes.

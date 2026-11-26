@@ -131,6 +131,7 @@ fn offer(h: &Shared, config: &Config, dolby: u8) -> Offered {
         max_video_packet: rubylight_protocol::video_packet::MAX_VIDEO_PACKET,
         // `rlHdrDynamic` is read on every launch.
         hdr_dynamic_control: true,
+        away_wake_relay: crate::wake_relay::offered(config),
     }
 }
 

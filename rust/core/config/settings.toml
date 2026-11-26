@@ -461,6 +461,7 @@ keys = [
   "internet_play",
   "enable_discovery",
   "internet_play_stun_servers",
+  "away_wake_relay",
   "lan_encryption_mode",
   "wan_encryption_mode",
   "ping_timeout",
@@ -753,6 +754,7 @@ global_order = [
   "upnp",
   "internet_play",
   "internet_play_stun_servers",
+  "away_wake_relay",
   "webrtc_server",
   "webrtc_port",
   "webrtc_media_port",
@@ -1689,6 +1691,23 @@ control = { kind = "text", placeholder = "stun.moonlight-stream.org:3478, stun.c
 visible_when = { on = "internet_play", default = false }
 doc_summary = "Public STUN servers that tell the host its public address. Empty uses `stun.moonlight-stream.org:3478` and `stun.cloudflare.com:3478`. Needs a restart."
 console = { group = "Network, administration and commands", label = "STUN servers (host:port, comma separated; empty for the defaults)", control = "text" }
+
+[[setting]]
+key = "away_wake_relay"
+part = "basics_core"
+type = "bool"
+default = false
+category = "network"
+group = "Discovery and internet"
+label = "Away wake relay"
+description = "Lets another always-on device on your network that runs Nightjar wake this PC when you are away, without port forwarding. Wake requests are encrypted and signed, and only your paired devices can send them."
+details = "The relay is a paired device with Host control on this PC's network, such as a mini PC running Nightjar's wake relay. It sends Wake-on-LAN only to this PC's network cards, at most once every ten seconds, and only for devices that may launch apps here. Unpairing a device ends its access at the relay's next check, within five minutes."
+inactive_hint = "Turn on Play over the internet to use this setting."
+control = { kind = "toggle" }
+visible_when = { on = "internet_play", default = false }
+rust_accessor = { kind = "bool", method = "away_wake_relay", doc = "Away wake relay (`away_wake_relay`): an always-on paired device on this PC's network wakes it for a device that is away." }
+doc_summary = "Let an always-on paired Nightjar device on your network wake this PC for your devices when they are away, over the same direct paths as Play over the internet. Needs Play over the internet. [Away wake relay](#away-wake-relay)"
+console = { group = "Network, administration and commands", label = "Away wake relay (another device on this network wakes the PC from away)", control = "bool" }
 
 [[setting]]
 key = "webrtc_server"

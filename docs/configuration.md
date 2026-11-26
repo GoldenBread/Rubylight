@@ -1102,6 +1102,16 @@ Devices away from home reach the PC in this order: its IPv6 address, a forwarded
 | `internet_play` | `false` | Play over the internet for paired Nightjar devices. Needs a restart. |
 | `internet_play_stun_servers` | empty | STUN servers for the public address, `host:port` separated by commas or spaces. Empty uses `stun.moonlight-stream.org:3478` and `stun.cloudflare.com:3478`. Needs a restart. |
 
+### Away wake relay
+
+A sleeping PC cannot answer from the internet, so a device that is away cannot wake it by itself. **Away wake relay** (`away_wake_relay`, **All settings → Network → Discovery and internet**, needs Play over the internet) lets an always-on paired device on the PC's network do it: a Nightjar desktop client left running on a mini PC or a home server enrolls as a relay while the PC is awake, and when a paired device that is away taps **Wake**, it asks that relay over the same direct path as Play over the internet, and the relay sends the PC's Wake-on-LAN packets on the local network.
+
+The PC gives each relay only what it needs: the network adapters' MAC addresses and broadcast addresses to wake, and a key per paired device that may wake it. A relay sends a wake only for a device paired with this PC that may start games, only to those MAC addresses on its own network, at most one short burst per request and one every ten seconds per PC, and never twice for a repeated request. Enrolling needs Host control from a device on the PC's network. Unpairing a device, revoking a relay or rotating the keys in **Settings → Network → Away wake relay** stops it within five minutes, as soon as each relay refreshes while the PC is awake.
+
+| Key | Default | What it means |
+| --- | --- | --- |
+| `away_wake_relay` | `false` | Paired devices on this network may enroll as wake relays, and paired devices that are away may ask them to wake this PC. Needs Play over the internet and Wake-on-LAN. |
+
 ## Multiple instances
 
 Give each instance its own profile folder and base port. An explicit `--config-dir` takes precedence over the portable defaults. From the extracted package, run these commands in separate PowerShell windows, one in each intended Windows session:
@@ -1416,6 +1426,7 @@ The Games tab lists these as one row, Game sources, with a link to the Games pag
 | Discovery and internet: Play over the internet | `internet_play` | `false` | Let paired Nightjar devices reach this PC from outside your network without port forwarding, over a direct path found through public STUN servers and a public peer-to-peer directory. Needs a restart. [Play over the internet](#play-over-the-internet) |
 | Discovery and internet: Local network discovery | `enable_discovery` | `true` | Announce this PC on the local network (mDNS) so Moonlight finds it without typing an address. Leave it on; off, you add this PC on each device by its address. |
 | Discovery and internet: STUN servers | `internet_play_stun_servers` | empty | Public STUN servers that tell the host its public address. Empty uses `stun.moonlight-stream.org:3478` and `stun.cloudflare.com:3478`. Needs a restart. |
+| Discovery and internet: Away wake relay | `away_wake_relay` | `false` | Let an always-on paired Nightjar device on your network wake this PC for your devices when they are away, over the same direct paths as Play over the internet. Needs Play over the internet. [Away wake relay](#away-wake-relay) |
 | Streams: Local network encryption | `lan_encryption_mode` | `0` (Off) | Encrypts streams on the local network, Tailscale included. Off suits a network you trust: encrypting costs slower devices performance; Required refuses devices that cannot encrypt. |
 | Streams: Internet encryption | `wan_encryption_mode` | `1` (When the device supports it) | Encrypts streams outside the local network. Leave it on When the device supports it: Off sends video over the internet unencrypted; Required refuses devices that cannot encrypt. |
 | Streams: Device timeout | `ping_timeout` | `10000` ms | How long this PC waits without hearing from a device before it ends the stream. Longer rides out dropouts on unreliable networks, but a vanished device holds its stream that long. |

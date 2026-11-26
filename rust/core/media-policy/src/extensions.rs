@@ -21,6 +21,10 @@ pub use rubylight_protocol::fec_report::FecChoice;
 /// The first version of every extension's serverinfo element.
 const VERSION: u8 = 1;
 
+/// Away wake relay (`rubylight_traverse::wake_relay`): a paired device on the PC's network wakes
+/// it for a device that is away. Proven together with the native `wake.relay` feature.
+pub const AWAY_WAKE_RELAY_SERVERINFO_FIELD: &str = "AwayWakeRelayVersion";
+
 /// `GET` and `POST /actions/clipboard?type=` value for an image clipboard (PNG).
 pub const CLIPBOARD_TYPE_PNG: &str = "png";
 
@@ -131,6 +135,8 @@ pub struct Offered {
     /// `HdrDynamicControl`: a launch may turn HDR10+ and HDR Vivid off with
     /// `rlHdrDynamic=0`. A serverinfo element only.
     pub hdr_dynamic_control: bool,
+    /// `AwayWakeRelayVersion`: Play over the internet and Away wake relay are both on.
+    pub away_wake_relay: bool,
 }
 
 impl Offered {
@@ -159,6 +165,7 @@ impl Offered {
         nvidia_enhancements: 0,
         max_video_packet: 0,
         hdr_dynamic_control: false,
+        away_wake_relay: false,
     };
 
     /// The serverinfo elements of what is offered, in a fixed order; none for
@@ -245,6 +252,9 @@ impl Offered {
         }
         if self.hdr_dynamic_control {
             fields.push((hdr::DYNAMIC_SERVERINFO_FIELD, version()));
+        }
+        if self.away_wake_relay {
+            fields.push((AWAY_WAKE_RELAY_SERVERINFO_FIELD, version()));
         }
         fields
     }

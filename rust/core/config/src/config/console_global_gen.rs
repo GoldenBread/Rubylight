@@ -235,6 +235,7 @@ pub const GLOBAL: &[Setting] = console_settings! {
         "upnp", "Automatic router port forwarding (UPnP, PCP, NAT-PMP)", Bool;
         "internet_play", "Play over the internet (STUN, DHT rendezvous, direct paths)", Bool;
         "internet_play_stun_servers", "STUN servers (host:port, comma separated; empty for the defaults)", Text;
+        "away_wake_relay", "Away wake relay (another device on this network wakes the PC from away)", Bool;
         "webrtc_server", "WebRTC server (unencrypted ws:// on the local network)", Bool;
         "webrtc_port", "WebRTC signalling port (TCP; discovery stays on UDP 8000)", Number;
         "webrtc_media_port", "WebRTC media port (UDP)", Number;

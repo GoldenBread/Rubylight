@@ -67,6 +67,7 @@ pub mod updater;
 pub mod usb_forward;
 pub mod video_send;
 pub mod wake;
+pub mod wake_relay;
 pub mod web_sessions;
 pub mod webhooks;
 pub mod webrtc_bridge;

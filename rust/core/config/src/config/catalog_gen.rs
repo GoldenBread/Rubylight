@@ -346,6 +346,10 @@ impl Config {
             1..=16,
         ) as u8
     }
+    /// Away wake relay (`away_wake_relay`): an always-on paired device on this PC's network wakes it for a device that is away.
+    pub fn away_wake_relay(&self) -> bool {
+        self.boolean("away_wake_relay", false)
+    }
     /// The WebRTC server for TV and browser clients (off by default).
     pub fn webrtc_server(&self) -> bool {
         self.boolean("webrtc_server", false)

@@ -302,6 +302,18 @@ export const settings: Setting[] = [
     restart: true,
   },
   {
+    key: 'away_wake_relay',
+    label: 'Away wake relay',
+    description: 'Lets another always-on device on your network that runs Nightjar wake this PC when you are away, without port forwarding. Wake requests are encrypted and signed, and only your paired devices can send them.',
+    details: "The relay is a paired device with Host control on this PC's network, such as a mini PC running Nightjar's wake relay. It sends Wake-on-LAN only to this PC's network cards, at most once every ten seconds, and only for devices that may launch apps here. Unpairing a device ends its access at the relay's next check, within five minutes.",
+    category: 'network',
+    group: 'Discovery and internet',
+    control: { kind: 'toggle' },
+    default: false,
+    inactiveHint: 'Turn on Play over the internet to use this setting.',
+    visibleWhen: (values) => on(values, 'internet_play', false),
+  },
+  {
     key: 'webrtc_server',
     label: 'WebRTC server',
     description: 'Let TVs and browsers that speak the Moonlight WebRTC protocol find this PC, pair and stream. Leave it off unless you use one: its signalling (connection setup) is not encrypted.',

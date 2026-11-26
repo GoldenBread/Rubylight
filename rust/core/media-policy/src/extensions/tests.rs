@@ -27,6 +27,7 @@ const ALL_ON: Offered = Offered {
     nvidia_enhancements: crate::nvidia_enhance::ALL,
     max_video_packet: video_packet::MAX_VIDEO_PACKET,
     hdr_dynamic_control: true,
+    away_wake_relay: true,
 };
 
 #[test]
@@ -70,6 +71,7 @@ fn everything_offered_gives_the_exact_fields_and_lines() {
             ("StreamDvrVersion", "1"),
             ("NvidiaEnhancements", "3"),
             ("HdrDynamicControl", "1"),
+            ("AwayWakeRelayVersion", "1"),
         ]
     );
     assert_eq!(
