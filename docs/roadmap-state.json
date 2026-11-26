@@ -2,7 +2,7 @@
   "schema_version": 1,
   "release_target": "7.0.0",
   "integration_branch": "roadmap/redesign-and-waves-1-5",
-  "updated_at": "2026-11-26T14:26:29Z",
+  "updated_at": "2026-11-26T14:27:49Z",
   "waves": {
     "0": {
       "status": "in_progress",
@@ -176,13 +176,14 @@
       ],
       "hw_required": true,
       "visual_review": true,
-      "status": "pending",
-      "phase": "not_started",
+      "status": "in_progress",
+      "phase": "implement",
       "branch": "wip/roadmap/05-stream-dvr",
       "worktree": null,
       "commit_sha": null,
       "quarantine_reason": null,
-      "hw_verified": false
+      "hw_verified": false,
+      "worker_branch": "RamazanKara/r70-05-dvr"
     },
     {
       "id": "06",
@@ -339,13 +340,14 @@
       ],
       "hw_required": true,
       "visual_review": true,
-      "status": "pending",
-      "phase": "not_started",
+      "status": "in_progress",
+      "phase": "implement (narrowed: explicit suspend/resume)",
       "branch": "wip/roadmap/08-quick-suspend",
       "worktree": null,
       "commit_sha": null,
       "quarantine_reason": null,
-      "hw_verified": false
+      "hw_verified": false,
+      "worker_branch": "RamazanKara/r70-08-suspend"
     },
     {
       "id": "09",
