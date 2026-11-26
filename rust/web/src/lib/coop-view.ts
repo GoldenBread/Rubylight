@@ -37,7 +37,7 @@ export function megabytes(bytes: number): string {
   return `${Math.round(bytes / 1_000_000)}\u00a0MB`;
 }
 
-/** The host's reasons are clauses; the panel shows them as sentences, with the co-op splitter unnamed. */
+/** The host's reasons are clauses; the panel shows them as sentences, with the co-op helper unnamed. */
 export function sentence(text: string): string {
   const said = neutral(text);
   return /[.!?…]$/.test(said) ? said : `${said}.`;
@@ -64,15 +64,15 @@ export const UNPACK_WHERE = 'Unpacked in a folder under C:\\Program Files, which
 export function folderTitle(problem: CoopInstall['problem']): string {
   switch (problem) {
     case 'missing':
-      return 'The co-op splitter isn’t in the folder chosen';
+      return 'The co-op helper isn’t in the folder chosen';
     case 'version':
-      return 'The folder chosen holds another version of the co-op splitter';
+      return 'The folder chosen holds another version of the co-op helper';
     case 'untrusted':
-      return 'Rubylight won’t run the co-op splitter from the folder chosen';
+      return 'Rubylight won’t run the co-op helper from the folder chosen';
     case 'blocked':
       return 'Windows still blocks the folder chosen';
     default:
-      return 'The co-op splitter can’t run';
+      return 'The co-op helper can’t run';
   }
 }
 
@@ -81,8 +81,8 @@ export function folderTitle(problem: CoopInstall['problem']): string {
  * session runs, the folder's own check (or a `#` in its path) otherwise.
  */
 export function refusalTitle(status: number | undefined, forgetting: boolean): string {
-  if (status === 409) return 'The co-op splitter is in use';
-  return forgetting ? 'The folder wasn’t forgotten' : 'This folder can’t run the co-op splitter';
+  if (status === 409) return 'The co-op helper is in use';
+  return forgetting ? 'The folder wasn’t forgotten' : 'This folder can’t run the co-op helper';
 }
 
 /** Games are added in a copy of Nucleus Co-op; another copy starts without them. */
@@ -117,14 +117,14 @@ export function runsText(game: CoopGame): string | null {
 const STILL_RUNS = 'games Rubylight adds itself still stream if they need no administrator rights';
 export const NO_ELEVATION = {
   standard: 'Windows doesn’t give this account any: sign in to Windows on this PC as an administrator',
-  game: `Windows’ Administrator protection keeps them from Rubylight, so the co-op splitter can’t run this game on this PC; ${STILL_RUNS}`,
-  open: `Windows’ Administrator protection keeps them from Rubylight, so the co-op splitter can’t open on this PC; ${STILL_RUNS}`,
+  game: `Windows’ Administrator protection keeps them from Rubylight, so the co-op helper can’t run this game on this PC; ${STILL_RUNS}`,
+  open: `Windows’ Administrator protection keeps them from Rubylight, so the co-op helper can’t open on this PC; ${STILL_RUNS}`,
 };
 
 /** Why Open Nucleus Co-op on this PC can't work on an account Windows doesn't elevate, and what to do. */
 export function openRefused(status: CoopStatus): string {
   const why = status.admin_protection === true ? NO_ELEVATION.open : NO_ELEVATION.standard;
-  return `The co-op splitter needs administrator rights, and ${why}.`;
+  return `The co-op helper needs administrator rights, and ${why}.`;
 }
 
 /** Why a game with its hub handler added can't start on an account Windows doesn't elevate, and what to do. */
@@ -142,7 +142,7 @@ export function playTogether(status: CoopStatus, app: string): PlayTogetherView 
   // An older host lists no games; an app without an .exe has no co-op.
   if (!game || game.status === 'no_executable') return { kind: 'hidden' };
   if (!status.available) {
-    return { kind: 'unavailable', reason: sentence(status.reason ?? 'The co-op splitter can’t run on this PC') };
+    return { kind: 'unavailable', reason: sentence(status.reason ?? 'The co-op helper can’t run on this PC') };
   }
   if (game.status === 'launcher') {
     return {
@@ -157,7 +157,7 @@ export function playTogether(status: CoopStatus, app: string): PlayTogetherView 
       return {
         kind: 'failed',
         title: folderTitle(status.install.problem),
-        error: sentence(status.install.error ?? 'The co-op splitter’s folder could not be checked'),
+        error: sentence(status.install.error ?? 'The co-op helper’s folder could not be checked'),
       };
   }
   if (status.catalog_error) return { kind: 'broken', error: neutral(status.catalog_error) };
@@ -195,8 +195,8 @@ export function playTogether(status: CoopStatus, app: string): PlayTogetherView 
       return {
         kind: 'handler',
         added: false,
-        text: `${name} streams in the background without a handler. To play it together, the co-op splitter needs one.`,
-        steps: `The co-op splitter opens on the PC’s screen. There, search its handler hub for ${name}, download the handler, then add the game. This panel moves on by itself.`,
+        text: `${name} streams in the background without a handler. To play it together, the co-op helper needs one.`,
+        steps: `The co-op helper opens on the PC’s screen. There, search its handler hub for ${name}, download the handler, then add the game. This panel moves on by itself.`,
         runs: runsText(game),
         openRefusal,
       };
@@ -204,8 +204,8 @@ export function playTogether(status: CoopStatus, app: string): PlayTogetherView 
       return {
         kind: 'handler',
         added: true,
-        text: `The co-op splitter has a handler for ${name}, but the game isn’t added yet.`,
-        steps: `The co-op splitter opens on the PC’s screen. There, add ${name} once, choosing the .exe this app starts. This panel moves on by itself.`,
+        text: `The co-op helper has a handler for ${name}, but the game isn’t added yet.`,
+        steps: `The co-op helper opens on the PC’s screen. There, add ${name} once, choosing the .exe this app starts. This panel moves on by itself.`,
         runs: runsText(game),
         openRefusal,
       };
@@ -266,8 +266,8 @@ export function lastEnded(status: CoopSessions | null): CoopSession | null {
 const endings: Record<CoopEnd['reason'], string> = {
   ended: 'It was ended from this console or by the host.',
   empty: 'Every player left and none came back in time.',
-  crashed: 'A game instance or the co-op splitter exited',
-  failed: 'The co-op splitter did not start the game',
+  crashed: 'A game instance or the co-op helper exited',
+  failed: 'The co-op helper did not start the game',
 };
 
 /** Why a session ended, with what stopped when the host says. A newer reason still shows. */
@@ -398,7 +398,7 @@ export function endConfirmation(session: CoopSession): Confirmation {
 }
 
 /** Beside Close Nucleus Co-op once the game is ready: the window the console opened is still on the PC's screen. */
-export const OPEN_ON_PC = 'The co-op splitter is still open on the PC’s screen. Co-op closes it when a game starts.';
+export const OPEN_ON_PC = 'The co-op helper is still open on the PC’s screen. Co-op closes it when a game starts.';
 
 /** For a console opened away from the PC: what happens where. */
-export const AWAY_FROM_PC = 'The co-op splitter opens on the PC’s own screen, not on this device. This page shows the game as ready once its handler is in.';
+export const AWAY_FROM_PC = 'The co-op helper opens on the PC’s own screen, not on this device. This page shows the game as ready once its handler is in.';

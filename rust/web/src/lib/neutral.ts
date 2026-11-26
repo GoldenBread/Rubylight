@@ -1,5 +1,5 @@
 /**
- * The console names no third-party component (GPL-3.0 section 7(e)): it says what the co-op splitter
+ * The console names no third-party component (GPL-3.0 section 7(e)): it says what the co-op helper
  * does. The host's reasons and errors still name it, so text from the host passes through `neutral`
  * before the console shows it. A folder or file in a path stays as it is on the disk.
  */
@@ -16,7 +16,7 @@ export function neutral(text: string): string {
     const before = text.slice(0, at);
     if (/[\\/]$/.test(before)) return match;
     const adjectival = !exe && ADJECTIVAL.test(text.slice(at + match.length));
-    const noun = exe ? 'co-op splitter program' : adjectival ? 'co-op' : 'co-op splitter';
+    const noun = exe ? 'co-op helper program' : adjectival ? 'co-op' : 'co-op helper';
     const words = adjectival || DETERMINER.test(before) ? noun : `the ${noun}`;
     return SENTENCE_START.test(before) ? words.charAt(0).toUpperCase() + words.slice(1) : words;
   });

@@ -14,10 +14,13 @@ export const STAYS: readonly { value: string; label: string; seconds: number | n
 
 export const staySeconds = (value: string): number | null => STAYS.find((stay) => stay.value === value)?.seconds ?? null;
 
-/** Whether the card has anything to show: guests, joins waiting, or a game others may join. */
+/**
+ * Whether the card has anything to show: guests, joins waiting, or a game others may join.
+ * A reply without its lists (a host that does not know the route) has nothing to show.
+ */
 export function shown(status: SessionGuestsStatus | null): boolean {
   if (!status) return false;
-  return status.guests.length > 0 || status.waiting.length > 0;
+  return (status.guests?.length ?? 0) > 0 || (status.waiting?.length ?? 0) > 0;
 }
 
 /** "Phone · Controller", with the keyboard and mouse when this guest holds them. */

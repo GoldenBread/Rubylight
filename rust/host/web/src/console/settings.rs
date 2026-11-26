@@ -11,7 +11,7 @@ pub use butterpollo_config::config::console_catalog::{
 fn shown(setting: &Setting) -> &'static str {
     match setting.key {
         "background_stream" | "background-stream" => {
-            "Stream in the background (co-op splitter, controllers only)"
+            "Stream in the background (co-op helper, controllers only)"
         }
         _ => setting.label,
     }
@@ -139,7 +139,7 @@ mod tests {
         apply("client_", CLIENT, &fields, &mut values).unwrap();
         assert_eq!(values["background_stream"], "true");
         let de = i18n::render(&render("client_", CLIENT, &Value::Null), "de");
-        assert!(!de.contains("co-op splitter"), "untranslated: {de}");
+        assert!(!de.contains("co-op helper"), "untranslated: {de}");
     }
     #[test]
     fn hardware_metrics_settings_keep_their_typed_values() {

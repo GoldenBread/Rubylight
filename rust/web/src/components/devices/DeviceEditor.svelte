@@ -506,11 +506,11 @@
   <section>
     <Toggle
       label="Stream in the background"
-      hint="Lets this device play while someone keeps using the PC. The co-op splitter runs its games in their own window, away from your monitors, and only their own sound streams. Controllers work; this device's keyboard, mouse, touch and clipboard are off."
+      hint="Lets this device play while someone keeps using the PC. The co-op helper runs its games in their own window, away from your monitors, and only their own sound streams. Controllers work; this device's keyboard, mouse, touch and clipboard are off."
       bind:checked={draft.background_stream}
     />
     <p class="note">
-      The co-op splitter tells the game it has the focus, so the PC keeps its own. A game the co-op splitter cannot run this
+      The co-op helper tells the game it has the focus, so the PC keeps its own. A game the co-op helper cannot run this
       way, such as one with anti-cheat, is refused with the reason and never streams your monitors instead. Exclusive
       fullscreen and Steam Input do not work this way.
     </p>

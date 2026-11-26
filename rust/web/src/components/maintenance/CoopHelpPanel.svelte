@@ -46,7 +46,7 @@
   });
 </script>
 
-<Panel title="Co-op splitter" level={3} description="Co-op games, and games played while someone uses this PC.">
+<Panel title="Co-op helper" level={3} description="Co-op games, and games played while someone uses this PC.">
   {#snippet actions()}
     {#if install}<StatusPill status={install.status} label={install.label} />{/if}
   {/snippet}
@@ -83,7 +83,7 @@
       <div class="row">
         {#if needsDownload}
           <a class="button-link" href={release.page} target="_blank" rel="noreferrer">
-            Download the co-op splitter {release.version}<Icon name="external" size={14} />
+            Download the co-op helper {release.version}<Icon name="external" size={14} />
           </a>
         {/if}
         <Button href={folderLink} icon="folder" variant={status.install.state === 'missing' ? 'primary' : 'secondary'}>

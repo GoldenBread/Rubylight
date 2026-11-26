@@ -1,6 +1,6 @@
 /**
  * The console names no third-party component (AGENTS.md, GPL-3.0 section 7(e)): its own text says
- * "co-op splitter", and the host's reasons lose the name before they are shown.
+ * "co-op helper", and the host's reasons lose the name before they are shown.
  */
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
@@ -34,7 +34,7 @@ function sources(dir) {
   });
 }
 
-test('no console text names the co-op splitter’s project', () => {
+test('no console text names the co-op helper’s project', () => {
   const named = sources(fileURLToPath(new URL('./src/', import.meta.url))).flatMap((path) =>
     shown(readFileSync(path, 'utf8'))
       .split('\n')
@@ -46,18 +46,18 @@ test('no console text names the co-op splitter’s project', () => {
 
 test('the host’s reasons read the same without the name', () => {
   const said = [
-    ['Nucleus Co-op is running Portal 2: end that session first, then choose the folder', 'The co-op splitter is running Portal 2: end that session first, then choose the folder'],
-    ['Rubylight doesn\'t run Nucleus Co-op from D:\\Downloads', 'Rubylight doesn\'t run the co-op splitter from D:\\Downloads'],
+    ['Nucleus Co-op is running Portal 2: end that session first, then choose the folder', 'The co-op helper is running Portal 2: end that session first, then choose the folder'],
+    ['Rubylight doesn\'t run Nucleus Co-op from D:\\Downloads', 'Rubylight doesn\'t run the co-op helper from D:\\Downloads'],
     [
       'Nucleus Co-op sessions need the host to run as the Rubylight Windows service, which starts Nucleus Co-op as the signed-in user',
-      'Co-op sessions need the host to run as the Rubylight Windows service, which starts the co-op splitter as the signed-in user',
+      'Co-op sessions need the host to run as the Rubylight Windows service, which starts the co-op helper as the signed-in user',
     ],
-    ['No Nucleus Co-op handler for other.exe: add one in Nucleus Co-op\'s handler hub', 'No co-op handler for other.exe: add one in the co-op splitter\'s handler hub'],
-    ['Saving the Nucleus Co-op folder failed: disk full', 'Saving the co-op splitter folder failed: disk full'],
+    ['No Nucleus Co-op handler for other.exe: add one in Nucleus Co-op\'s handler hub', 'No co-op handler for other.exe: add one in the co-op helper\'s handler hub'],
+    ['Saving the Nucleus Co-op folder failed: disk full', 'Saving the co-op helper folder failed: disk full'],
     ['the compatibility settings a Nucleus Co-op session changed', 'the compatibility settings a co-op session changed'],
-    ['It stopped. Nucleus Co-op exited', 'It stopped. The co-op splitter exited'],
-    ['D:\\Downloads holds no NucleusCoop.exe: choose the folder you unpacked Nucleus Co-op 2.4.2 into', 'D:\\Downloads holds no co-op splitter program: choose the folder you unpacked the co-op splitter 2.4.2 into'],
-    ['The NucleusCoop.exe in D:\\Old isn\'t Nucleus Co-op 2.4.2\'s', 'The co-op splitter program in D:\\Old isn\'t the co-op splitter 2.4.2\'s'],
+    ['It stopped. Nucleus Co-op exited', 'It stopped. The co-op helper exited'],
+    ['D:\\Downloads holds no NucleusCoop.exe: choose the folder you unpacked Nucleus Co-op 2.4.2 into', 'D:\\Downloads holds no co-op helper program: choose the folder you unpacked the co-op helper 2.4.2 into'],
+    ['The NucleusCoop.exe in D:\\Old isn\'t Nucleus Co-op 2.4.2\'s', 'The co-op helper program in D:\\Old isn\'t the co-op helper 2.4.2\'s'],
     ['Portal 2 uses anti-cheat', 'Portal 2 uses anti-cheat'],
   ];
   for (const [host, console] of said) assert.equal(neutral(host), console);
@@ -82,7 +82,7 @@ test('an error the host answers with reaches the console without the name', asyn
   };
   try {
     await assert.rejects(api.coop.open(), (error) => {
-      assert.equal(error.message, 'The co-op splitter is not ready: reading the owner of C:\\Nucleus: access denied');
+      assert.equal(error.message, 'The co-op helper is not ready: reading the owner of C:\\Nucleus: access denied');
       return true;
     });
   } finally {

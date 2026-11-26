@@ -52,9 +52,9 @@
     busy = 'open';
     try {
       await api.coop.open();
-      notify('The co-op splitter is opening on the PC’s screen.', 'ok');
+      notify('The co-op helper is opening on the PC’s screen.', 'ok');
     } catch (error) {
-      failed('Opening the co-op splitter failed', error);
+      failed('Opening the co-op helper failed', error);
     } finally {
       busy = '';
     }
@@ -65,9 +65,9 @@
     busy = 'close';
     try {
       const { closed } = await api.coop.close();
-      notify(closed ? 'The co-op splitter closed on the PC.' : 'The co-op splitter was already closed.', 'ok');
+      notify(closed ? 'The co-op helper closed on the PC.' : 'The co-op helper was already closed.', 'ok');
     } catch (error) {
-      failed('Closing the co-op splitter failed', error);
+      failed('Closing the co-op helper failed', error);
     } finally {
       busy = '';
     }
@@ -84,7 +84,7 @@
 </script>
 
 {#snippet closeAction()}
-  <Button busy={busy === 'close'} disabled={busy !== '' && busy !== 'close'} onclick={close}>Close the co-op splitter</Button>
+  <Button busy={busy === 'close'} disabled={busy !== '' && busy !== 'close'} onclick={close}>Close the co-op helper</Button>
 {/snippet}
 
 {#if loadError && !status}
@@ -120,10 +120,10 @@
         <p class="lead">{view.text}</p>
         {#if view.runs}<p class="muted note">{view.runs}</p>{/if}
         {#if view.openRefusal}
-          <Banner tone="warn" title="The co-op splitter can’t open on this account">{view.openRefusal}</Banner>
+          <Banner tone="warn" title="The co-op helper can’t open on this account">{view.openRefusal}</Banner>
         {/if}
         <div class="action">
-          <Button variant="primary" busy={busy === 'open'} disabled={status?.opened === true || view.openRefusal !== null} onclick={open}>Open the co-op splitter on this PC</Button>
+          <Button variant="primary" busy={busy === 'open'} disabled={status?.opened === true || view.openRefusal !== null} onclick={open}>Open the co-op helper on this PC</Button>
           {#if status?.opened}{@render closeAction()}{/if}
         </div>
         <p class="muted note">{view.steps}</p>

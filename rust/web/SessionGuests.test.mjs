@@ -143,6 +143,8 @@ test('an invites reply without its lists draws the card, not a crash', () => {
     assert.match(html, /Invite a friend/);
     assert.doesNotMatch(html, /Links not used yet|Invited devices/);
   }
+  // The same for the guests of the running game: Home asks whether to show their card first.
+  for (const reply of [{}, { status: true }, { guests: null, waiting: undefined }]) assert.equal(guests.shown(reply), false);
   // The screenshot fixture answers the route, so Home's card shows its lists.
   const fixture = readFileSync(new URL('./scripts/screenshots.cjs', import.meta.url), 'utf8');
   assert.match(fixture, /replies\['\/api\/session-guests\/invites'\] = \{\s*links: \[/);

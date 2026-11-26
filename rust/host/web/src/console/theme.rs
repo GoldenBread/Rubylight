@@ -425,7 +425,7 @@ mod tests {
             assert!(!html.contains("Nucleus") && !word(html, "ANR"), "{path}");
         }
         let devices = &pages.iter().find(|(p, _)| *p == "/devices").unwrap().1;
-        assert!(devices.contains("Stream in the background (co-op splitter, controllers only)"));
+        assert!(devices.contains("Stream in the background (co-op helper, controllers only)"));
         let live = &pages.iter().find(|(p, _)| *p == "/").unwrap().1;
         assert!(live.contains("class=\"telemetry\""), "{live}");
     }

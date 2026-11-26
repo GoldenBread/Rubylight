@@ -42,7 +42,7 @@
     const earlier = earlierCopyRuns(status.install);
     try {
       const install = await api.coop.folder(path.trim());
-      notify(`Co-op splitter ${install.version ?? release.version} found in ${install.path ?? path.trim()}.`, 'ok');
+      notify(`Co-op helper ${install.version ?? release.version} found in ${install.path ?? path.trim()}.`, 'ok');
       replaced = earlier;
       onchosen();
     } catch (error) {
@@ -57,7 +57,7 @@
     refusal = null;
     try {
       await api.coop.folder('');
-      notify('Co-op splitter folder forgotten.', 'ok');
+      notify('Co-op helper folder forgotten.', 'ok');
       path = '';
       replaced = false;
       onchosen();
@@ -74,7 +74,7 @@
     <Banner tone="warn" title="Rubylight runs the earlier copy">{sentence(status.install.notice)}</Banner>
   {/if}
   <p class="note">
-    <a class="release" href={release.page} target="_blank" rel="noreferrer">Download the co-op splitter {release.version}<Icon name="external" size={14} /></a>
+    <a class="release" href={release.page} target="_blank" rel="noreferrer">Download the co-op helper {release.version}<Icon name="external" size={14} /></a>
     <span class="muted">{UNPACK_WHERE}</span>
   </p>
   <div class="choose">
@@ -82,10 +82,10 @@
       <input
         id="{uid}-folder"
         class="input mono"
-        aria-label="Co-op splitter folder"
+        aria-label="Co-op helper folder"
         autocomplete="off"
         spellcheck="false"
-        placeholder="C:\Program Files\Co-op splitter"
+        placeholder="C:\Program Files\Co-op helper"
         bind:value={path}
       />
     </PathPicker>
