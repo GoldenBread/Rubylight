@@ -431,6 +431,8 @@ fn expected(feature: Feature) -> Availability {
         Feature::StreamDvr => Supported,
         // Listed to a device with View or Launch, which every permission includes.
         Feature::StreamDoctorV2 => Supported,
+        // The launch curtain is off by default (`launch_curtain`).
+        Feature::LaunchCurtain => Unsupported(None),
     }
 }
 
