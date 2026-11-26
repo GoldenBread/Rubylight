@@ -217,21 +217,40 @@ mod tests {
         assert!(!restore_nucleus_layers(profile.path()));
     }
     #[test]
-    fn the_service_looks_for_the_drivers_own_device() {
-        // The service reads Plug and Play itself, without this crate.
+    fn the_service_looks_for_the_drivers_own_devices() {
+        // The service reads Plug and Play itself, without this crate: its table of each
+        // driver's interface (first) and hardware ID must name the drivers' own.
         let driver = include_str!("../../../service/src/driver.rs");
-        let guid = driver
-            .split_once("const INTERFACE: GUID = GUID::from_u128(0x")
-            .and_then(|(_, rest)| rest.split_once(')'))
-            .map(|(digits, _)| digits.replace('_', ""))
-            .unwrap();
+        let guid = |variant: &str| {
+            let at = format!("Self::{variant} => GUID::from_u128(0x");
+            let digits = driver
+                .split_once(at.as_str())
+                .unwrap()
+                .1
+                .split_once(')')
+                .unwrap()
+                .0;
+            u128::from_str_radix(&digits.replace('_', ""), 16).unwrap()
+        };
         assert_eq!(
-            u128::from_str_radix(&guid, 16).unwrap(),
+            guid("Display"),
             rubylight_vdisplay_proto::INTERFACE_GUID_U128
         );
-        assert!(driver.contains(&format!(
-            "const HARDWARE_ID: &str = r\"{}\";",
-            rubylight_vdisplay_proto::HARDWARE_ID
-        )));
+        assert_eq!(
+            guid("Gamepad"),
+            rubylight_vgamepad_proto::protocol::DEVICE_INTERFACE_GUID
+        );
+        for (variant, id) in [
+            ("Display", rubylight_vdisplay_proto::HARDWARE_ID),
+            (
+                "Gamepad",
+                rubylight_vgamepad_proto::protocol::ROOT_HARDWARE_ID,
+            ),
+        ] {
+            assert!(
+                driver.contains(&format!("Self::{variant} => r\"{id}\",")),
+                "{id}"
+            );
+        }
     }
 }
