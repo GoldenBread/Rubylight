@@ -1,7 +1,9 @@
-//! Cover images, written as PNG for Moonlight. On Linux the size of a PNG, JPEG or BMP is read from its header, a PNG is taken as it is and an uncompressed BMP is rewritten as PNG; decoding JPEG, WebP or any other format is not available yet.
+//! Cover images, written as PNG for Moonlight. On Linux the size of a PNG, JPEG or BMP is read from its header, a PNG is taken as it is, and a JPEG (Steam's covers) and an uncompressed BMP are rewritten as PNG; decoding WebP or any other format is not available yet.
 
 use anyhow::{Context, Result, bail, ensure};
 use std::path::Path;
+use zune_jpeg::JpegDecoder;
+use zune_jpeg::zune_core::{colorspace::ColorSpace, options::DecoderOptions};
 
 const PNG_SIGNATURE: &[u8; 8] = b"\x89PNG\r\n\x1a\n";
 /// No cover is larger; a header that claims more is refused before anything is allocated.
@@ -90,6 +92,38 @@ fn jpeg_size(bytes: &[u8]) -> Result<(u32, u32)> {
     }
 }
 
+/// A JPEG decoded with `zune-jpeg` and written as an 8-bit RGB or grey PNG.
+fn jpeg_to_png(bytes: &[u8]) -> Result<((u32, u32), Vec<u8>)> {
+    let (width, height) = jpeg_size(bytes)?;
+    ensure!(
+        width <= LARGEST_SIDE && height <= LARGEST_SIDE,
+        "the JPEG is {width}x{height}, not a picture's size"
+    );
+    let options = DecoderOptions::default()
+        .jpeg_set_out_colorspace(ColorSpace::RGB)
+        .set_max_width(LARGEST_SIDE as usize)
+        .set_max_height(LARGEST_SIDE as usize);
+    let mut decoder = JpegDecoder::new_with_options(std::io::Cursor::new(bytes), options);
+    let pixels = decoder.decode()?;
+    let (width, height) = decoder
+        .dimensions()
+        .context("the JPEG has no frame header")?;
+    let color = match decoder.output_colorspace() {
+        Some(ColorSpace::RGB) => png::ColorType::Rgb,
+        Some(ColorSpace::Luma) => png::ColorType::Grayscale,
+        other => bail!("the JPEG decodes to {other:?}, not RGB or grey"),
+    };
+    let (width, height) = (width as u32, height as u32);
+    let mut png = Vec::with_capacity(pixels.len() / 2);
+    let mut encoder = png::Encoder::new(&mut png, width, height);
+    encoder.set_color(color);
+    encoder.set_depth(png::BitDepth::Eight);
+    let mut writer = encoder.write_header()?;
+    writer.write_image_data(&pixels)?;
+    writer.finish()?;
+    Ok(((width, height), png))
+}
+
 /// An uncompressed bitmap's layout: where its rows are and how to read them.
 struct Bitmap {
     width: u32,
@@ -165,8 +199,8 @@ pub fn dimensions(path: &Path) -> Result<(u32, u32)> {
 }
 
 /// Write `source` to `destination` as a PNG, replacing it only once the new file is
-/// complete. A PNG is copied once its chunks check out and an uncompressed BMP is encoded;
-/// any other format is an error, since Linux has no decoder for it yet.
+/// complete. A PNG is copied once its chunks check out, and a JPEG or an uncompressed BMP is
+/// encoded; any other format is an error, since Linux has no decoder for it yet.
 pub fn to_png(source: &Path, destination: &Path) -> Result<(u32, u32)> {
     let bytes = read(source)?;
     let (size, png) = (|| match format(&bytes) {
@@ -179,7 +213,7 @@ pub fn to_png(source: &Path, destination: &Path) -> Result<(u32, u32)> {
             let bitmap = bitmap(&bytes)?;
             Ok(((bitmap.width, bitmap.height), Some(encode(&bitmap, &bytes))))
         }
-        Format::Jpeg => Err(crate::unsupported("Converting a JPEG image to PNG")),
+        Format::Jpeg => jpeg_to_png(&bytes).map(|(size, png)| (size, Some(png))),
         Format::Other => Err(crate::unsupported("Converting this image format to PNG")),
     })()
     .with_context(|| format!("decoding {}", source.display()))?;
@@ -372,6 +406,42 @@ mod tests {
         let _ = std::fs::remove_dir_all(&folder);
     }
 
+    /// The pixel at `x`, `y` of an 8-bit PNG, and its channel count.
+    fn pixel(png: &Path, x: usize, y: usize) -> Vec<u8> {
+        let decoder =
+            ::png::Decoder::new(std::io::BufReader::new(std::fs::File::open(png).unwrap()));
+        let mut reader = decoder.read_info().unwrap();
+        let mut buffer = vec![0; reader.output_buffer_size().unwrap()];
+        let frame = reader.next_frame(&mut buffer).unwrap();
+        let channels = frame.color_type.samples();
+        let at = y * frame.line_size + x * channels;
+        buffer[at..at + channels].to_vec()
+    }
+
+    #[test]
+    fn a_jpeg_cover_becomes_a_png_of_the_same_picture() {
+        let folder = folder("jpeg");
+        let (source, png) = (folder.join("cover.jpg"), folder.join("covers/cover.png"));
+        // 60x90, red above and blue below, as Steam's covers are JPEG.
+        std::fs::write(&source, include_bytes!("image_fixtures/cover.jpg")).unwrap();
+        assert_eq!(to_png(&source, &png).unwrap(), (60, 90));
+        check_png(&std::fs::read(&png).unwrap()).unwrap();
+        assert_eq!(dimensions(&png).unwrap(), (60, 90));
+        assert!(!folder.join("covers/cover.png.partial").exists());
+        let near = |got: Vec<u8>, want: [u8; 3]| {
+            got.len() == 3 && got.iter().zip(want).all(|(g, w)| g.abs_diff(w) <= 8)
+        };
+        assert!(near(pixel(&png, 30, 10), [220, 30, 30]));
+        assert!(near(pixel(&png, 30, 80), [30, 30, 220]));
+        // A grey JPEG comes out grey.
+        let (grey, grey_png) = (folder.join("grey.jpg"), folder.join("grey.png"));
+        std::fs::write(&grey, include_bytes!("image_fixtures/grey.jpg")).unwrap();
+        assert_eq!(to_png(&grey, &grey_png).unwrap(), (30, 20));
+        let value = pixel(&grey_png, 15, 10);
+        assert!(near(value.clone(), [128; 3]), "{value:?}");
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
     #[test]
     fn a_damaged_png_and_an_undecodable_format_are_refused_and_leave_no_file() {
         let folder = folder("refused");
@@ -384,14 +454,13 @@ mod tests {
         std::fs::write(&damaged, cut).unwrap();
         let destination = folder.join("out.png");
         assert!(to_png(&damaged, &destination).is_err());
-        // A JPEG's size is read, but it cannot be converted.
+        // A JPEG's size is read from its header, but one with no picture after it is refused.
         let mut jpeg = vec![0xFF, 0xD8, 0xFF, 0xE0, 0, 4, 0, 0, 0xFF, 0xC2, 0, 11, 8];
         jpeg.extend_from_slice(&[0x03, 0x84, 0x02, 0x58, 1, 0, 0, 0]);
         let photo = folder.join("photo.jpg");
         std::fs::write(&photo, jpeg).unwrap();
         assert_eq!(dimensions(&photo).unwrap(), (600, 900));
-        let error = format!("{:#}", to_png(&photo, &destination).unwrap_err());
-        assert!(error.contains("not available on a Linux host"), "{error}");
+        assert!(to_png(&photo, &destination).is_err());
         let text = folder.join("notes.txt");
         std::fs::write(&text, b"not a picture").unwrap();
         assert!(dimensions(&text).is_err() && to_png(&text, &destination).is_err());
