@@ -491,7 +491,10 @@ fn gamestream_audio_is_the_packetizer_output_on_the_wire() {
                 .map(|i| i as u8 ^ index)
                 .collect();
             expected.extend(reference.encode(&opus).unwrap());
-            assert_eq!(sink.send(&opus, Instant::now(), 0).unwrap(), 0);
+            assert_eq!(
+                sink.send(&opus, Instant::now(), 0).unwrap(),
+                AudioSendLoss::default()
+            );
         }
         // Nine data packets and two FEC groups of two parity packets.
         assert_eq!(expected.len(), 9 + 4);
@@ -653,7 +656,7 @@ fn gamestream_audio_wire_bytes_are_pinned() {
                     u64::from(index) * 240
                 )
                 .unwrap(),
-                0
+                AudioSendLoss::default()
             );
         }
         let mut buffer = [0u8; 2048];

@@ -337,6 +337,22 @@ pub const RULES: &[Rule] = &[
         setting: None,
     },
     Rule {
+        id: "route_unavailable",
+        category: Category::Network,
+        all: &[],
+        any: &[
+            "the network route to the client is unavailable",
+            "the network route to the client was unavailable",
+            "The network route to this device is unavailable",
+        ],
+        at_least: None,
+        title: "The network route to the device dropped",
+        explanation: "Windows had no route to the device (for example, Wi-Fi or a mobile hotspot disconnected or changed subnet), so the host dropped packets until the connection returned.",
+        fix: "Check that the PC and device stay on the same Wi-Fi or hotspot connection; reconnect after the network is back.",
+        anchor: NETWORK,
+        setting: None,
+    },
+    Rule {
         id: "send_failed",
         category: Category::Network,
         all: &[],

@@ -104,6 +104,10 @@ const LINES: &[(&str, &str)] = &[
         "2026-10-14T20:31:06.000000Z  WARN butterpollo_core::session: Audio stopped (client audio ping timed out); video is still running without sound. Check the playback device and network, then reconnect.",
     ),
     (
+        "route_unavailable",
+        "2026-10-07T12:37:06.661614Z  WARN butterpollo_win_io::net::batch: UDP send failed: the network route to the client is unavailable, so packets were dropped until the connection returns code=10051 dropped=45",
+    ),
+    (
         "send_failed",
         "2026-10-07T12:37:06.661614Z  WARN butterpollo_win_io::net: UDP send failed; packets dropped and the client may stutter. Lower bitrate and check the network adapter code=10035 dropped=45",
     ),

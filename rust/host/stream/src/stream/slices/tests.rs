@@ -129,7 +129,7 @@ fn streaming(packetizer: &mut VideoPacketizer, spare: Vec<Vec<u8>>, cap: usize) 
         payload_bytes: 0,
         processing: 0,
         bps: 0,
-        sent: Sent::new(0, 0),
+        sent: Sent::new(butterpollo_win_io::net::BatchDrops::default()),
         failed: false,
     }
 }

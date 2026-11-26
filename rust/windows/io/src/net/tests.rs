@@ -600,3 +600,44 @@ fn segmented_enobufs_falls_back_to_datagrams_without_waiting_in_place() {
     assert!(!segmented_retries_in_place(WSAENOBUFS));
     assert!(segmented_retries_in_place(WSAEWOULDBLOCK));
 }
+
+#[test]
+fn route_unavailable_is_separated_from_socket_backpressure() {
+    for error in [
+        WSAENETDOWN,
+        WSAENETUNREACH,
+        WSAENETRESET,
+        WSAEHOSTUNREACH,
+        WSAEHOSTDOWN,
+        WSAEADDRNOTAVAIL,
+    ] {
+        assert!(datagram::route_unavailable(error), "{}", error.0);
+        assert!(transient(error), "{}", error.0);
+    }
+    for error in [WSAEWOULDBLOCK, WSAENOBUFS, WSAECONNRESET, WSAEMSGSIZE] {
+        assert!(!datagram::route_unavailable(error), "{}", error.0);
+    }
+
+    let mut batch = Batch::default();
+    let start = batch.drops();
+    batch.dropped(10, WSAENETUNREACH);
+    let route_delta = batch.drops_since(start);
+    assert!(route_delta.any());
+    assert!(route_delta.route_only());
+    assert_eq!(route_delta.dropped, 10);
+    assert_eq!(route_delta.route_unavailable, 10);
+    assert_eq!(route_delta.refused, 0);
+
+    let mid = batch.drops();
+    batch.dropped(4, WSAEWOULDBLOCK);
+    let congested = batch.drops_since(mid);
+    assert!(!congested.route_only());
+    assert_eq!(congested.refused, 4);
+    assert_eq!(congested.route_unavailable, 0);
+
+    let combined = batch.drops_since(start);
+    assert!(!combined.route_only());
+    assert_eq!(combined.dropped, 14);
+    assert_eq!(combined.route_unavailable, 10);
+    assert_eq!(combined.refused, 4);
+}

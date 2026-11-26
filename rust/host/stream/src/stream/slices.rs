@@ -19,7 +19,7 @@ use butterpollo_win_graphics::{
     encoder::{Encoded, Unit},
     frame_pool,
 };
-use butterpollo_win_io::net::{Batch, ReplySocket};
+use butterpollo_win_io::net::{Batch, BatchDrops, ReplySocket};
 use std::{cell::Cell, net::SocketAddr, sync::atomic::Ordering, time::Instant};
 
 /// Whether slice delivery is still on for the stream. A frame past its byte
@@ -299,17 +299,14 @@ pub struct Sent {
     pub bytes: usize,
     /// The socket refused more than FEC repairs: no more of the frame is sent.
     pub abandoned: bool,
-    /// The batch's refused-datagram count when the frame began.
-    pub dropped_at_start: u64,
-    /// The batch's oversized-datagram count when the frame began.
-    pub oversized_at_start: u64,
+    /// Cumulative batch drop counters when the frame began.
+    pub drops_at_start: BatchDrops,
 }
 
 impl Sent {
-    pub fn new(dropped_at_start: u64, oversized_at_start: u64) -> Self {
+    pub fn new(drops_at_start: BatchDrops) -> Self {
         Self {
-            dropped_at_start,
-            oversized_at_start,
+            drops_at_start,
             lost: SendLoss::streamed(),
             first_sent: None,
             packets: 0,

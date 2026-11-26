@@ -72,22 +72,39 @@ pub fn set_dont_fragment(socket: &UdpSocket, enabled: bool) -> Result<()> {
     }
 }
 
+/// Send errors meaning the PC has no route to the peer (e.g. Wi-Fi or mobile
+/// hotspot dropped), as opposed to a full local socket send buffer.
+pub(super) fn route_unavailable(error: WSA_ERROR) -> bool {
+    matches!(
+        error,
+        WSAENETDOWN
+            | WSAENETUNREACH
+            | WSAENETRESET
+            | WSAEHOSTUNREACH
+            | WSAEHOSTDOWN
+            | WSAEADDRNOTAVAIL
+    )
+}
+
 /// Send errors after which the socket still works and only these datagrams
 /// are lost: a full send buffer, no buffer space, or a route that is down for
 /// the moment. Vibepollo drops the packets and keeps streaming; so do we.
 pub(super) fn transient(error: WSA_ERROR) -> bool {
-    [
-        WSAEWOULDBLOCK,
-        WSAENOBUFS,
-        WSAENETDOWN,
-        WSAENETUNREACH,
-        WSAENETRESET,
-        WSAEHOSTUNREACH,
-        WSAEHOSTDOWN,
-        WSAECONNRESET,
-        WSAEADDRNOTAVAIL,
-    ]
-    .contains(&error)
+    matches!(error, WSAEWOULDBLOCK | WSAENOBUFS | WSAECONNRESET) || route_unavailable(error)
+}
+
+/// Outcome of one datagram send that does not end the stream on transient errors.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DatagramSend {
+    Sent,
+    Refused,
+    RouteUnavailable,
+}
+
+impl DatagramSend {
+    pub fn is_sent(self) -> bool {
+        matches!(self, Self::Sent)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -420,13 +437,14 @@ fn send_datagram_budget(
     packet: &[u8],
     peer: SocketAddr,
     budget: &mut WaitBudget,
-) -> Result<bool> {
+) -> Result<DatagramSend> {
     let (result, _) = socket.send_pinned(peer, socket.source(peer), |source| {
         send_one(socket, packet, peer, source, budget, None)
     })?;
     match result {
-        Ok(()) => Ok(true),
-        Err(error) if transient(error) => Ok(false),
+        Ok(()) => Ok(DatagramSend::Sent),
+        Err(error) if route_unavailable(error) => Ok(DatagramSend::RouteUnavailable),
+        Err(error) if transient(error) => Ok(DatagramSend::Refused),
         Err(error) => Err(std::io::Error::from_raw_os_error(error.0).into()),
     }
 }
@@ -444,7 +462,7 @@ pub fn send_datagram_with_wait(
     peer: SocketAddr,
     wait: &mut DatagramWait,
 ) -> Result<bool> {
-    send_datagram_budget(socket, packet, peer, &mut wait.0)
+    send_datagram_budget(socket, packet, peer, &mut wait.0).map(DatagramSend::is_sent)
 }
 
 /// One datagram, from the address `peer` reached; `Ok(false)` when a
@@ -462,14 +480,26 @@ pub fn send_datagram_pass(
     peer: SocketAddr,
     pass: &mut DatagramPass,
 ) -> Result<bool> {
+    send_datagram_pass_outcome(socket, packet, peer, pass).map(DatagramSend::is_sent)
+}
+
+/// Like [`send_datagram_pass`], distinguishing a full socket buffer from an
+/// unreachable network route.
+pub fn send_datagram_pass_outcome(
+    socket: &ReplySocket,
+    packet: &[u8],
+    peer: SocketAddr,
+    pass: &mut DatagramPass,
+) -> Result<DatagramSend> {
     let mut budget = WaitBudget::for_frame_with_enobufs(
         Some(pass.until),
         pass.deadline,
         Some(pass.enobufs_until),
         pass.enobufs_deadline,
     );
-    let ok = send_datagram_budget(socket, packet, peer, &mut budget)?;
+    let outcome = send_datagram_budget(socket, packet, peer, &mut budget)?;
+    let ok = outcome.is_sent();
     pass.deadline = budget.deadline.filter(|_| !ok);
     pass.enobufs_deadline = budget.enobufs_deadline.filter(|_| !ok);
-    Ok(ok)
+    Ok(outcome)
 }

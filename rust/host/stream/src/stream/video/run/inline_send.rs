@@ -315,7 +315,15 @@ impl InlineSender {
                 if let Some(st) = &self.streaming {
                     self.batch.end_frame();
                     if st.sent.packets > 0 {
-                        ctx.s.keyframe_abandoned_as(st.wire_frame, false);
+                        let frame_drops = self.batch.drops_since(st.sent.drops_at_start);
+                        crate::video_send::recovery::abandon_incomplete_streamed(
+                            ctx.s,
+                            &mut self.send_loss,
+                            st.wire_frame,
+                            st.sent.lost.unrecoverable(),
+                            st.sent.packets > frame_drops.dropped as usize,
+                            frame_drops,
+                        );
                     }
                 }
                 let next = slices::drop_frame(

@@ -38,6 +38,10 @@ impl Media {
                 // channel 0, where one lost ping holds up all controller
                 // input. The previous host allowed the protocol maximum.
                 channel_limit: 255,
+                // Round up ENet's integer SRTT steps so host-side smoothed RTT
+                // converges back to actual ping latency after a spike instead
+                // of stalling up to 7 ms high (matches Nightjar).
+                round_up_srtt: true,
                 ..Default::default()
             },
         )?;

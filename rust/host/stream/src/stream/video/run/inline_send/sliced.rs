@@ -98,7 +98,7 @@ impl InlineSender {
                     payload_bytes: 0,
                     processing,
                     bps,
-                    sent: slices::Sent::new(self.batch.dropped, self.batch.oversized),
+                    sent: slices::Sent::new(self.batch.drops()),
                     failed: false,
                 }),
                 Err(error) => {
@@ -177,7 +177,7 @@ impl InlineSender {
                             );
                         let count = butterpollo_win_io::net::Batch::count(remaining, budget);
                         let send_started = Instant::now();
-                        let refused = self.batch.dropped;
+                        let batch_before = self.batch.drops();
                         let result = match self
                             .send_outage
                             .filter(|outage| outage.active(self.start, Instant::now()))
@@ -198,8 +198,9 @@ impl InlineSender {
                                     drop,
                                 )
                                 .map(|bytes| {
-                                    let sent = count
-                                        .saturating_sub((self.batch.dropped - refused) as usize);
+                                    let sent = count.saturating_sub(
+                                        self.batch.drops_since(batch_before).dropped as usize,
+                                    );
                                     (bytes, sent)
                                 }),
                                 None => self
@@ -238,17 +239,22 @@ impl InlineSender {
                         ctx.s.stats.bytes.fetch_add(bytes as u64, Ordering::Relaxed);
                         // As for a whole frame: once the socket refused more
                         // than FEC repairs, stop spending the link on it.
-                        if sent
-                            .lost
-                            .sent(count, (self.batch.dropped - refused) as usize)
-                        {
-                            if self.send_loss.lost(
+                        let batch_drops = self.batch.drops_since(batch_before);
+                        let non_route_unrecoverable = sent.lost.sent_with_route(
+                            count,
+                            batch_drops.dropped as usize,
+                            batch_drops.route_unavailable as usize,
+                        );
+                        if non_route_unrecoverable || batch_drops.route_unavailable > 0 {
+                            crate::video_send::recovery::on_block_unrecoverable(
+                                ctx.s,
+                                &mut self.send_loss,
                                 Instant::now(),
                                 ctx.stream_period,
                                 sent.lost.reached_socket(),
-                            ) {
-                                ctx.s.request_send_loss_recovery();
-                            }
+                                non_route_unrecoverable,
+                                batch_drops,
+                            );
                             sent.abandoned = true;
                             break;
                         }
@@ -282,7 +288,15 @@ impl InlineSender {
         self.batch.end_frame();
         if st.failed {
             if st.sent.packets > 0 {
-                ctx.s.keyframe_abandoned_as(st.wire_frame, false);
+                let frame_drops = self.batch.drops_since(st.sent.drops_at_start);
+                crate::video_send::recovery::abandon_incomplete_streamed(
+                    ctx.s,
+                    &mut self.send_loss,
+                    st.wire_frame,
+                    st.sent.lost.unrecoverable(),
+                    st.sent.packets > frame_drops.dropped as usize,
+                    frame_drops,
+                );
             }
             self.slice_spare = recycle_streamed_pieces(st.frame);
             return Ok(());
@@ -305,32 +319,29 @@ impl InlineSender {
             sent,
             ..
         } = st;
-        let unrecoverable = sent.lost.unrecoverable();
+        let frame_drops = self.batch.drops_since(sent.drops_at_start);
+        let non_route_unrecoverable = sent.lost.unrecoverable();
+        let unrecoverable = non_route_unrecoverable || frame_drops.route_unavailable > 0;
         let (link_packets, link_bytes) = crate::video_send::reached_socket(
             sent.packets,
-            self.batch.dropped - sent.dropped_at_start,
+            frame_drops.dropped,
             sent.bytes,
             peer.ip().to_canonical().is_ipv6(),
         );
         ctx.s.record_link_sent(wire_frame, link_packets, link_bytes);
-        let refused = self.batch.dropped.saturating_sub(self.batch.oversized)
-            != sent
-                .dropped_at_start
-                .saturating_sub(sent.oversized_at_start);
-        if unrecoverable {
-            ctx.s.keyframe_abandoned_as(wire_frame, refused);
-            tracing::debug!(
-                frame = wire_frame,
-                finished = streamed.is_done(),
-                "video frame lost on send; the rest of it was not sent"
-            );
-        } else {
-            self.send_loss.delivered(false);
-        }
-        if refused {
-            ctx.s.launch.warnings.event("network_send", "The PC could not send the video fast enough (its CPU or network adapter fell behind), so video packets were dropped. You may see stutter or recovery frames; close other work on the PC, or lower the bitrate, resolution or frame rate. The log includes the socket error code.", butterpollo_session::session::EVENT_PERIOD);
-        }
-        crate::video_send::report_oversized(ctx.s, &self.batch, sent.oversized_at_start);
+        crate::video_send::recovery::finish_frame_drops(
+            ctx.s,
+            &mut self.send_loss,
+            crate::video_send::recovery::FrameDrop {
+                wire_frame,
+                idr: false,
+                non_route_unrecoverable,
+                reached_socket: link_packets > 0,
+                abandoned: 0,
+                drops: frame_drops,
+            },
+        );
+        crate::video_send::report_oversized(ctx.s, &self.batch, sent.drops_at_start.oversized);
         // As the whole-frame path judges it, from the frame's size, so an
         // abandoned frame reports as well as a finished one.
         if (streamed.fec_limited() || self.packetizer.fec_limited(payload_bytes))

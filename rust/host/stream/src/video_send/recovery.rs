@@ -1,9 +1,130 @@
 //! Shared pacing decisions for encoder admission and both conventional send paths.
 use crate::state::Session;
 use butterpollo_config::config::Config;
-use butterpollo_media_policy::{network_pacing, packet::VideoPacketizer};
-use butterpollo_win_io::net::Link;
-use std::{net::SocketAddr, time::Duration};
+use butterpollo_media_policy::{
+    network_pacing, packet::VideoPacketizer, stream_policy::SendLossRecovery,
+};
+use butterpollo_win_io::net::{BatchDropDelta, Link};
+use std::{
+    net::SocketAddr,
+    time::{Duration, Instant},
+};
+
+pub(crate) const SEND_CONGESTION_WARNING: &str = "The PC could not send the video fast enough (its CPU or network adapter fell behind), so video packets were dropped. You may see stutter or recovery frames; close other work on the PC, or lower the bitrate, resolution or frame rate. The log includes the socket error code.";
+pub(crate) const ROUTE_UNAVAILABLE_WARNING: &str = "The network route to this device is unavailable, so video packets could not be sent. Streaming will resume once the network connection returns. The log includes the socket error code.";
+
+/// Handle a video block or batch that could not recover within FEC. When every drop in the
+/// batch happened because the route to the client is down, suppress keyframe storms and remember
+/// the outage until a frame gets through again.
+pub(crate) fn on_block_unrecoverable(
+    session: &Session,
+    send_loss: &mut SendLossRecovery,
+    now: Instant,
+    period: Duration,
+    reached_socket: bool,
+    non_route_unrecoverable: bool,
+    batch_drops: BatchDropDelta,
+) {
+    if !non_route_unrecoverable && batch_drops.route_unavailable > 0 {
+        send_loss.route_unavailable();
+    } else if send_loss.lost(now, period, reached_socket) {
+        session.request_send_loss_recovery();
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct FrameDrop {
+    pub wire_frame: u32,
+    pub idr: bool,
+    pub non_route_unrecoverable: bool,
+    pub reached_socket: bool,
+    pub abandoned: usize,
+    pub drops: BatchDropDelta,
+}
+
+/// Account for frame-level send drops at the end of a frame: avoid keyframe-loss pacing latches
+/// and congestion warnings when drops came only from an unreachable network route, and request
+/// one recovery keyframe once a non-keyframe delivers after the route returns.
+pub(crate) fn finish_frame_drops(
+    session: &Session,
+    send_loss: &mut SendLossRecovery,
+    frame: FrameDrop,
+) {
+    let FrameDrop {
+        wire_frame,
+        idr,
+        non_route_unrecoverable,
+        reached_socket,
+        abandoned,
+        drops,
+    } = frame;
+    let unrecoverable = non_route_unrecoverable || drops.route_unavailable > 0;
+    if unrecoverable {
+        if !non_route_unrecoverable {
+            session.keyframe_abandoned_route(wire_frame, reached_socket);
+            send_loss.route_unavailable();
+            tracing::debug!(
+                frame = wire_frame,
+                idr,
+                abandoned,
+                "video frame dropped while network route is unavailable"
+            );
+        } else {
+            session.keyframe_abandoned_as(wire_frame, drops.refused > 0);
+            tracing::debug!(
+                frame = wire_frame,
+                idr,
+                abandoned,
+                "video frame lost on send; the rest of it was not sent"
+            );
+        }
+    } else if drops.route_unavailable == 0 && send_loss.delivered(idr) {
+        session.request_host_keyframe();
+    }
+    if drops.refused > 0 && (non_route_unrecoverable || drops.route_unavailable == 0) {
+        session.launch.warnings.event(
+            "network_send",
+            SEND_CONGESTION_WARNING,
+            butterpollo_session::session::EVENT_PERIOD,
+        );
+    } else if drops.route_unavailable > 0 {
+        session.launch.warnings.event(
+            "network_send",
+            ROUTE_UNAVAILABLE_WARNING,
+            butterpollo_session::session::EVENT_PERIOD,
+        );
+    }
+}
+
+/// Classify an incomplete streamed frame abandoned before its last part finishes:
+/// route-unavailable-only drops stay out of host send-loss counters and latches.
+pub(crate) fn abandon_incomplete_streamed(
+    session: &Session,
+    send_loss: &mut SendLossRecovery,
+    wire_frame: u32,
+    non_route_unrecoverable: bool,
+    reached_socket: bool,
+    drops: BatchDropDelta,
+) {
+    if !non_route_unrecoverable && drops.route_unavailable > 0 {
+        session.keyframe_abandoned_route(wire_frame, reached_socket);
+        send_loss.route_unavailable();
+    } else {
+        session.keyframe_abandoned_as(wire_frame, false);
+    }
+}
+
+/// Include the next batch's due time and all remaining bytes. Counting even
+/// the final batch's wire interval deliberately opens admission a little late.
+pub(crate) fn recovery_remaining(
+    now: Instant,
+    due: Instant,
+    wire_bytes: usize,
+    bps: u64,
+) -> Duration {
+    due.saturating_duration_since(now)
+        + Duration::from_secs_f64(wire_bytes as f64 * 8. / bps.max(1) as f64)
+}
 
 pub(crate) struct Pace {
     pub bps: u64,

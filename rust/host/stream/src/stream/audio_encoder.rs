@@ -1,7 +1,7 @@
 //! The audio thread's encoder: Opus for every stock client, or the PCM, AC3 or E-AC3
 //! passthrough a client picked in its ANNOUNCE (`x-rl-audio.codec`).
 
-use super::audio_sink::AudioSink;
+use super::audio_sink::{AudioSendLoss, AudioSink};
 use anyhow::{Context, Result, bail};
 use butterpollo_media_policy::{
     audio_passthrough::{self, Codec},
@@ -205,8 +205,8 @@ impl AudioEncoder {
     }
 
     /// Encodes one packet's samples (one AC3 frame for AC3 and E-AC3) and sends it, returning
-    /// how many RTP packets did not go out. An Opus packet is also copied to Stream DVR's tap
-    /// while it runs (one relaxed load otherwise).
+    /// how many RTP packets did not go out and why. An Opus packet is also copied to Stream
+    /// DVR's tap while it runs (one relaxed load otherwise).
     pub(super) fn send(
         &mut self,
         output: &mut dyn AudioSink,
@@ -214,7 +214,7 @@ impl AudioEncoder {
         captured: Instant,
         position: u64,
         dvr: &butterpollo_session::session::dvr_tap::DvrTap,
-    ) -> Result<usize> {
+    ) -> Result<AudioSendLoss> {
         match self {
             Self::Opus(opus) => {
                 let packet = opus.encode_frame(samples)?;

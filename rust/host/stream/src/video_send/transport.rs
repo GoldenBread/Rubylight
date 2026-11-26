@@ -8,7 +8,7 @@ use butterpollo_media_policy::{
     },
 };
 use butterpollo_win_graphics::timing::Timer;
-use butterpollo_win_io::net::{Batch, Link, WRITABLE_WAIT, WritableWaits};
+use butterpollo_win_io::net::{Batch, BatchDrops, Link, WRITABLE_WAIT, WritableWaits};
 
 /// How long the sender waits between frames before it looks for a new one,
 /// while a test stall holds datagrams.
@@ -100,13 +100,6 @@ impl Slot {
     }
 }
 
-/// Include the next batch's due time and all remaining bytes. Counting even
-/// the final batch's wire interval deliberately opens admission a little late.
-fn recovery_remaining(now: Instant, due: Instant, wire_bytes: usize, bps: u64) -> Duration {
-    due.saturating_duration_since(now)
-        + Duration::from_secs_f64(wire_bytes as f64 * 8. / bps.max(1) as f64)
-}
-
 /// What the paced sender keeps of the frame it is sending. A streamed frame
 /// arrives as one part per FEC block and this lives from its first part to
 /// its last; a whole frame is a single part.
@@ -123,8 +116,7 @@ struct Sending {
     /// `remaining_wire_bytes` counted the whole frame with its first part.
     frame_wire_known: bool,
     recovery_overlap_safe: bool,
-    dropped: u64,
-    oversized: u64,
+    drops_before: BatchDrops,
     before: WritableWaits,
     pacing_wait: Duration,
     send_time: Duration,
@@ -255,8 +247,7 @@ impl Transport<'_> {
             remaining_wire_bytes: 0,
             frame_wire_known: false,
             recovery_overlap_safe: true,
-            dropped: self.batch.dropped,
-            oversized: self.batch.oversized,
+            drops_before: self.batch.drops(),
             before: waits,
             pacing_wait: Duration::ZERO,
             send_time: Duration::ZERO,
@@ -433,7 +424,7 @@ impl Transport<'_> {
                     0
                 };
                 let send_started = Instant::now();
-                let refused = self.batch.dropped;
+                let batch_before = self.batch.drops();
                 let full_until = self.stall.as_mut().and_then(|stall| {
                     stall.full_until(remaining[..count].iter().map(Vec::len).sum(), send_started)
                 });
@@ -484,13 +475,13 @@ impl Transport<'_> {
                         cur.remaining_wire_bytes.saturating_sub(batch_wire_bytes);
                     // A stalled socket is not predictable from the configured
                     // pace. Keep the strict barrier for the rest of that IDR.
-                    cur.recovery_overlap_safe &= self.batch.dropped == cur.dropped
+                    cur.recovery_overlap_safe &= self.batch.dropped == cur.drops_before.dropped
                         && self.batch.waits.unwrap().count == cur.before.count
                         && finished.saturating_duration_since(send_started)
                             <= network_pacing::SEND_SLACK;
                     self.shared
                         .recovery_progress(cur.recovery_overlap_safe.then(|| {
-                            recovery_remaining(
+                            recovery::recovery_remaining(
                                 finished,
                                 self.pacer.due(),
                                 cur.remaining_wire_bytes,
@@ -500,16 +491,22 @@ impl Transport<'_> {
                 }
                 s.stats.packets.fetch_add(count as u64, Ordering::Relaxed);
                 s.stats.bytes.fetch_add(bytes as u64, Ordering::Relaxed);
-                if cur
-                    .lost
-                    .sent(count, (self.batch.dropped - refused) as usize)
-                {
-                    if self
-                        .send_loss
-                        .lost(Instant::now(), period, cur.lost.reached_socket())
-                    {
-                        s.request_send_loss_recovery();
-                    }
+                let batch_drops = self.batch.drops_since(batch_before);
+                let non_route_unrecoverable = cur.lost.sent_with_route(
+                    count,
+                    batch_drops.dropped as usize,
+                    batch_drops.route_unavailable as usize,
+                );
+                if non_route_unrecoverable || batch_drops.route_unavailable > 0 {
+                    recovery::on_block_unrecoverable(
+                        &s,
+                        &mut self.send_loss,
+                        Instant::now(),
+                        period,
+                        cur.lost.reached_socket(),
+                        non_route_unrecoverable,
+                        batch_drops,
+                    );
                     cur.given_up = true;
                     break 'blocks;
                 }
@@ -534,8 +531,7 @@ impl Transport<'_> {
             packets: packet_count,
             frame_bytes,
             wire_bytes,
-            dropped,
-            oversized,
+            drops_before,
             before,
             pacing_wait,
             send_time,
@@ -550,26 +546,25 @@ impl Transport<'_> {
             ..
         } = cur;
         let ipv6 = frame.peer.ip().to_canonical().is_ipv6();
+        let frame_drops = self.batch.drops_since(drops_before);
         let (link_packets, link_bytes) =
-            super::reached_socket(sent_packets, self.batch.dropped - dropped, sent_bytes, ipv6);
+            super::reached_socket(sent_packets, frame_drops.dropped, sent_bytes, ipv6);
         s.record_link_sent(frame.wire_frame, link_packets, link_bytes);
-        let refused = self.batch.dropped.saturating_sub(self.batch.oversized)
-            != dropped.saturating_sub(oversized);
-        if lost.unrecoverable() {
-            s.keyframe_abandoned_as(frame.wire_frame, refused);
-            tracing::debug!(
-                frame = frame.wire_frame,
-                idr = frame.idr,
+        let non_route_unrecoverable = lost.unrecoverable();
+        let unrecoverable = non_route_unrecoverable || frame_drops.route_unavailable > 0;
+        recovery::finish_frame_drops(
+            s,
+            &mut self.send_loss,
+            recovery::FrameDrop {
+                wire_frame: frame.wire_frame,
+                idr: frame.idr,
+                non_route_unrecoverable,
+                reached_socket: link_packets > 0,
                 abandoned,
-                "video frame lost on send; the rest of it was not sent"
-            );
-        } else {
-            self.send_loss.delivered(frame.idr);
-        }
-        if refused {
-            s.launch.warnings.event("network_send", "The PC could not send the video fast enough (its CPU or network adapter fell behind), so video packets were dropped. You may see stutter or recovery frames; close other work on the PC, or lower the bitrate, resolution or frame rate. The log includes the socket error code.", butterpollo_session::session::EVENT_PERIOD);
-        }
-        super::report_oversized(s, &self.batch, oversized);
+                drops: frame_drops,
+            },
+        );
+        super::report_oversized(s, &self.batch, drops_before.oversized);
         s.stats.latency_us.store(frame.latency, Ordering::Relaxed);
         s.stats.frames.fetch_add(1, Ordering::Relaxed);
         let sent = Instant::now();
@@ -590,7 +585,7 @@ impl Transport<'_> {
                 wire_bytes: wire_bytes as u64,
                 pace_bps: bps,
                 elapsed,
-                lost: lost.unrecoverable(),
+                lost: unrecoverable,
             },
         );
         let after = self.batch.waits.unwrap();
@@ -601,7 +596,7 @@ impl Transport<'_> {
             first_send_us=micros(first_send.unwrap_or(dequeued).saturating_duration_since(start)),
             last_send_us=micros(last_send.unwrap_or(sent).saturating_duration_since(start)),
             writable_waits=after.count-before.count, writable_wait_us=micros(after.elapsed-before.elapsed),
-            dropped=self.batch.dropped-dropped, stream_id=%s.launch.id, "send");
+            dropped=frame_drops.dropped, stream_id=%s.launch.id, "send");
         if (elapsed >= period * 2 || queue_wait >= period)
             && self
                 .slow_reported
@@ -619,7 +614,7 @@ impl Transport<'_> {
                 pacing_wait_ms = pacing_wait.as_secs_f64() * 1000.,
                 socket_ms = send_time.as_secs_f64() * 1000.,
                 writable_wait_ms = (after.elapsed - before.elapsed).as_secs_f64() * 1000.,
-                dropped = self.batch.dropped - dropped,
+                dropped = frame_drops.dropped,
                 "paced video frame delayed"
             );
         }
@@ -635,7 +630,7 @@ impl Transport<'_> {
             },
             frame_bytes as u64,
         );
-        let stamps = frame.claim.filter(|_| !lost.unrecoverable()).map(|claim| {
+        let stamps = frame.claim.filter(|_| !unrecoverable).map(|claim| {
             // A streamed frame is encoded when its last unit is in hand, which can be
             // after its first block was sent; its first unit and early blocks go with it.
             let mut stamps = claim.sent(
@@ -669,7 +664,15 @@ impl Transport<'_> {
         if frame.stream.is_none_or(|part| part.first) {
             if let Some(prev) = sending.take() {
                 self.batch.end_frame();
-                self.s.keyframe_abandoned_as(prev.wire_frame, false);
+                let drops = self.batch.drops_since(prev.drops_before);
+                recovery::abandon_incomplete_streamed(
+                    &self.s,
+                    &mut self.send_loss,
+                    prev.wire_frame,
+                    prev.lost.unrecoverable(),
+                    prev.sent_packets > drops.dropped as usize,
+                    drops,
+                );
             }
             *sending = Some(self.begin(frame));
         }
@@ -773,26 +776,4 @@ pub(super) fn run_with(
         }
         None => transport.idle(),
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn recovery_estimate_includes_existing_pacing_debt_and_remaining_wire_bytes() {
-        let now = Instant::now();
-        assert_eq!(
-            recovery_remaining(now, now + Duration::from_millis(1), 50_000, 80_000_000),
-            Duration::from_millis(6)
-        );
-        assert_eq!(
-            recovery_remaining(now, now - Duration::from_millis(20), 50_000, 80_000_000),
-            Duration::from_millis(5)
-        );
-        assert_eq!(
-            recovery_remaining(now, now + Duration::from_millis(1), 0, 80_000_000),
-            Duration::from_millis(1)
-        );
-    }
 }

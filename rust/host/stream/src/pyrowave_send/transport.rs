@@ -1,7 +1,7 @@
 use super::*;
 use butterpollo_media_policy::network_pacing::{self, ClientPath, Pacer};
 use butterpollo_win_graphics::timing::Timer;
-use butterpollo_win_io::net::{Batch, Link};
+use butterpollo_win_io::net::{Batch, BatchDropDelta, Link};
 
 pub(super) fn run(
     shared: &Slot,
@@ -74,8 +74,7 @@ pub(super) fn run(
         let mut sent = 0;
         let mut sent_packets = 0;
         let mut first_sent = None;
-        let packets_dropped = batch.dropped;
-        let packets_oversized = batch.oversized;
+        let drops_before = batch.drops();
         let ipv6 = frame.peer.ip().to_canonical().is_ipv6();
         current
             .stats
@@ -105,7 +104,7 @@ pub(super) fn run(
                     return Ok(());
                 }
                 let count = Batch::count(remaining, batch_limit(bps, remaining[0].len(), ipv6));
-                let dropped = batch.dropped;
+                let batch_before = batch.drops();
                 let send_at = Instant::now();
                 let bytes = batch.send(&socket, &remaining[..count], frame.peer)?;
                 let left = batch.sent_packets();
@@ -129,9 +128,12 @@ pub(super) fn run(
                     .bytes
                     .fetch_add(bytes as u64, Ordering::Relaxed);
                 remaining = &remaining[count..];
-                // The socket stayed full for this whole frame's wait: give up
-                // the rest of this picture, not the later ones.
-                if batch.dropped > dropped && batch.frame_wait_spent() {
+                // Stop sending the rest of this picture if the route is down or
+                // the socket stayed full for this whole frame's wait.
+                let batch_drops = batch.drops_since(batch_before);
+                if batch_drops.any()
+                    && (batch_drops.route_unavailable > 0 || batch.frame_wait_spent())
+                {
                     stalled = true;
                     break;
                 }
@@ -151,14 +153,9 @@ pub(super) fn run(
             ready.sending = false;
             std::mem::take(&mut ready.abandoned) || stalled
         };
-        if batch.dropped != packets_dropped {
-            host_dropped(
-                &current,
-                frame.wire_frame,
-                batch.oversized != packets_oversized,
-                batch.dropped.saturating_sub(batch.oversized)
-                    != packets_dropped.saturating_sub(packets_oversized),
-            );
+        let frame_drops = batch.drops_since(drops_before);
+        if frame_drops.any() {
+            host_dropped(&current, frame.wire_frame, sent_packets, frame_drops);
         }
         // What left for the client, which the link-rate controller weighs the
         // client's loss reports against.
@@ -190,7 +187,7 @@ pub(super) fn run(
             sent as u64,
         );
         // A frame with packets dropped on send never had its last packet sent.
-        if let Some(claim) = frame.claim.filter(|_| batch.dropped == packets_dropped) {
+        if let Some(claim) = frame.claim.filter(|_| frame_drops.dropped == 0) {
             let mut stamps = claim.sent(
                 frame.polled,
                 frame.packetized,
@@ -370,17 +367,27 @@ fn pace(current: &Session, config: &Config, kbps: u32, wire_frame: u32, route: L
     current.keyframe_loss_bps(paced, safe, wire_frame, true)
 }
 
-/// The socket refused packets of this frame. That is the host's loss, not
-/// the network's: the client's report of the frame is not counted against the
-/// link, and the link-rate controller counts it as a send loss (E3).
-fn host_dropped(current: &Session, wire_frame: u32, oversized: bool, transient: bool) {
-    current.keyframe_abandoned_as(wire_frame, transient);
+/// The socket refused packets of this frame. Unless only the network route is
+/// unavailable, that is the host's loss rather than the network's: the client's
+/// report of the frame is not counted against the link, and the link-rate
+/// controller counts it as a send loss (E3).
+fn host_dropped(current: &Session, wire_frame: u32, sent_packets: usize, drops: BatchDropDelta) {
+    if drops.route_only() {
+        current.keyframe_abandoned_route(wire_frame, sent_packets > 0);
+        current.launch.warnings.event(
+            "network_send",
+            crate::video_send::recovery::ROUTE_UNAVAILABLE_WARNING,
+            butterpollo_session::session::EVENT_PERIOD,
+        );
+        return;
+    }
+    current.keyframe_abandoned_as(wire_frame, drops.refused > 0);
     current.request_send_loss_recovery();
-    if oversized {
+    if drops.oversized > 0 {
         // The path's MTU refused the datagrams, not a transient socket error.
         crate::video_send::oversized_warning(current);
     }
-    if transient {
+    if drops.refused > 0 {
         current.launch.warnings.event("network_send", "The PC could not send the video fast enough (its CPU or network adapter fell behind), so PyroWave video packets were dropped and the client may stutter. Close other work on the PC, or lower the bitrate, resolution or frame rate. The log includes the socket error code.", butterpollo_session::session::EVENT_PERIOD);
     }
 }
@@ -517,7 +524,15 @@ mod tests {
                 ..Default::default()
             },
         );
-        host_dropped(&session, 7, false, false);
+        host_dropped(
+            &session,
+            7,
+            1,
+            BatchDropDelta {
+                dropped: 1,
+                ..Default::default()
+            },
+        );
         assert_eq!(session.stats.frames_lost_on_send.load(Ordering::Relaxed), 1);
         assert_eq!(
             session.stats.send_loss_recoveries.load(Ordering::Relaxed),
@@ -533,7 +548,15 @@ mod tests {
         }
         session.stats.video_frame.store(70, Ordering::Release);
         for frame in 50..=52 {
-            host_dropped(&session, frame, false, false);
+            host_dropped(
+                &session,
+                frame,
+                1,
+                BatchDropDelta {
+                    dropped: 1,
+                    ..Default::default()
+                },
+            );
         }
         let (from, to) = session
             .tick_link_rate(
@@ -543,5 +566,97 @@ mod tests {
             .expect("three frames the socket refused lower the bitrate");
         assert!(to < from, "{from} -> {to}");
         assert_eq!(session.info()["link_rate"]["state"], "limited");
+    }
+
+    #[test]
+    fn route_unavailable_does_not_penalize_pyrowave_link_rate_or_latch() {
+        let fixture = crate::state::test_support::Fixture::new();
+        let session = Session::new(
+            fixture.launch(fixture.client(0), Role::Stream),
+            butterpollo_media_policy::rtsp::Negotiated {
+                codec: 3,
+                pyrowave_records: true,
+                bitrate_kbps: 400_000,
+                configured_bitrate_kbps: 400_000,
+                ..Default::default()
+            },
+        );
+        let config = Config::default();
+        session.configure_keyframe_loss(true);
+        session.keyframe_loss.lock().unwrap().sending_at(
+            1,
+            true,
+            Instant::now()
+                - butterpollo_media_policy::keyframe_loss::STARTUP_WINDOW
+                - Duration::from_millis(50),
+        );
+        session.configure_link_rate(true, 0);
+        session.record_link_sent(1, 300, 420_000);
+        for frame in 2..=5u32 {
+            let _ = pace(&session, &config, 400_000, frame, Link::default());
+            session.record_link_sent(frame, 300, 420_000);
+        }
+        std::thread::sleep(Duration::from_millis(20));
+        let _ = pace(&session, &config, 400_000, 6, Link::default());
+        session.record_link_sent(6, 300, 420_000);
+
+        let route_only = BatchDropDelta {
+            dropped: 12,
+            route_unavailable: 12,
+            ..Default::default()
+        };
+        for frame in 7..=17u32 {
+            let _ = pace(&session, &config, 400_000, frame, Link::default());
+            session.record_link_sent(frame, 1, 1_400);
+            host_dropped(&session, frame, 1, route_only);
+        }
+        for frame in 18..=22u32 {
+            let _ = pace(&session, &config, 400_000, frame, Link::default());
+            host_dropped(&session, frame, 0, route_only);
+        }
+        let _ = pace(&session, &config, 400_000, 23, Link::default());
+        session.record_link_sent(23, 300, 420_000);
+        session.stats.video_frame.store(30, Ordering::Release);
+
+        // Delayed 0x5502 coarse-block reports for frames 7..=9 after 11 partial frames + clean
+        // frame 23 rotate both 8-slot `abandoned` and `keyframes` rings must still be ignored via
+        // `route_outages` without latching or stepping down LinkRate.
+        for frame in 7..=9u32 {
+            let mut report = [0u8; 21];
+            report[..4].copy_from_slice(&frame.to_be_bytes());
+            for (offset, word) in [(4, 11u16), (10, 10), (12, 2), (14, 7), (16, 1)] {
+                report[offset..offset + 2].copy_from_slice(&word.to_be_bytes());
+            }
+            report[18] = 20;
+            report[19] = 0;
+            report[20] = 3;
+            session.record_fec_status(&report);
+            assert!(
+                session.keyframe_loss.lock().unwrap().is_abandoned(frame),
+                "frame {frame}"
+            );
+        }
+
+        assert!(!session.keyframe_loss_active());
+        assert!(!session.keyframe_loss_ever_latched());
+        assert_eq!(
+            session.tick_link_rate(
+                Instant::now() + Duration::from_millis(200),
+                Duration::from_millis(10)
+            ),
+            None
+        );
+        assert_eq!(session.link_rate_snapshot()["state"], "full");
+        assert_eq!(session.link_rate_snapshot()["steps_down"], 0);
+        assert_eq!(session.stats.frames_lost_on_send.load(Ordering::Relaxed), 0);
+        assert_eq!(
+            session.stats.send_loss_recoveries.load(Ordering::Relaxed),
+            0
+        );
+        let warnings = serde_json::to_string(&session.launch.warnings.snapshot()).unwrap();
+        assert!(
+            warnings.contains(crate::video_send::recovery::ROUTE_UNAVAILABLE_WARNING),
+            "warnings={warnings}"
+        );
     }
 }

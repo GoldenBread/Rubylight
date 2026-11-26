@@ -1,3 +1,4 @@
+use super::super::audio_sink::AudioSendLoss;
 use super::{AudioEncoder, AudioSink, check};
 use anyhow::Result;
 use butterpollo_media_policy::audio_passthrough::{Codec, pcm_s16le};
@@ -24,13 +25,13 @@ impl AudioSink for Recorder {
     fn ready(&mut self) -> bool {
         true
     }
-    fn send(&mut self, packet: &[u8], _: Instant, _: u64) -> Result<usize> {
+    fn send(&mut self, packet: &[u8], _: Instant, _: u64) -> Result<AudioSendLoss> {
         self.packets.push(packet.to_vec());
-        Ok(0)
+        Ok(AudioSendLoss::default())
     }
-    fn send_frame(&mut self, parts: &[Vec<u8>], _: Instant, _: u64) -> Result<usize> {
+    fn send_frame(&mut self, parts: &[Vec<u8>], _: Instant, _: u64) -> Result<AudioSendLoss> {
         self.parts.push(parts.to_vec());
-        Ok(0)
+        Ok(AudioSendLoss::default())
     }
 }
 
@@ -41,8 +42,8 @@ impl AudioSink for OpusOnly {
     fn ready(&mut self) -> bool {
         true
     }
-    fn send(&mut self, _: &[u8], _: Instant, _: u64) -> Result<usize> {
-        Ok(0)
+    fn send(&mut self, _: &[u8], _: Instant, _: u64) -> Result<AudioSendLoss> {
+        Ok(AudioSendLoss::default())
     }
 }
 
@@ -55,7 +56,7 @@ fn pcm_goes_out_as_s16le_packets_and_opus_is_not_a_passthrough() {
     assert_eq!(
         pcm.send(&mut sink, &samples, Instant::now(), 0, &Default::default())
             .unwrap(),
-        0
+        AudioSendLoss::default()
     );
     assert_eq!(sink.packets, [pcm_s16le(&samples)]);
     assert!(sink.parts.is_empty());
@@ -258,8 +259,8 @@ fn ffmpeg_dolby_frames_go_out_in_numbered_chunks_and_never_as_opus_packets() {
     for _ in 0..3 {
         assert_eq!(
             ac3.send(&mut sink, &samples, Instant::now(), 0, &Default::default())
-                .unwrap(),
-            0
+            .unwrap(),
+            AudioSendLoss::default()
         );
     }
     assert!(sink.packets.is_empty());

@@ -83,18 +83,6 @@ impl<P, A> Session<P, A> {
         self.config.client_wireless && self.client_link_mbps() == 0
     }
 
-    fn pacing_ceiling(&self, base: u64, needed: u64) -> u64 {
-        if self.wireless_unknown_link() && self.automatic_pacing_enabled() {
-            butterpollo_media_policy::network_pacing::wireless_unknown_link_ceiling_bps(
-                base,
-                self.bitrate.load(Ordering::Acquire),
-                needed,
-            )
-        } else {
-            base
-        }
-    }
-
     pub fn configure_automatic_pacing(&self, enabled: bool) {
         let mut pacing = butterpollo_media_policy::adaptive_pacing::AdaptivePacing::new(enabled);
         pacing.set_wireless_unknown_link(self.wireless_unknown_link());
@@ -114,21 +102,20 @@ impl<P, A> Session<P, A> {
         self.automatic_pacing_on.load(Ordering::Acquire)
     }
     pub fn video_pacing_bps(&self, base: u64, needed: u64) -> u64 {
-        let ceiling = self.pacing_ceiling(base, needed);
         let mut pacing = self.automatic_pacing.lock().unwrap();
         pacing.set_wireless_unknown_link(self.wireless_unknown_link());
-        let paced = pacing.rate(ceiling, needed, self.bitrate.load(Ordering::Acquire));
+        let paced = pacing.rate(base, needed, self.bitrate.load(Ordering::Acquire));
         drop(pacing);
         self.adaptive_pacing_bps(paced)
     }
     /// Encoder-side budget queries must not change the sender's feedback
     /// state when recovery parity differs from the current ordinary-frame FEC.
     pub fn preview_video_pacing_bps(&self, base: u64, needed: u64) -> u64 {
-        let ceiling = self.pacing_ceiling(base, needed);
-        let paced = self.automatic_pacing.lock().unwrap().preview_rate(
-            ceiling,
+        let paced = self.automatic_pacing.lock().unwrap().preview_rate_for(
+            base,
             needed,
             self.bitrate.load(Ordering::Acquire),
+            self.wireless_unknown_link(),
         );
         self.adaptive_pacing_bps(paced)
     }
@@ -219,6 +206,16 @@ impl<P, A> Session<P, A> {
     /// Sender selection uses this before deciding whether to send inline.
     pub fn keyframe_loss_rate_bps(&self, base: u64, safe: u64) -> u64 {
         self.keyframe_loss.lock().unwrap().bps(base, safe)
+    }
+    /// The host dropped this frame because the client's network route was
+    /// unavailable: mark it abandoned for `KeyframeLoss` so client repeats or FEC
+    /// reports do not treat it as in-transit loss, without penalizing send loss
+    /// counters, pacing, or link rate.
+    pub fn keyframe_abandoned_route(&self, wire_frame: u32, reached_socket: bool) {
+        self.keyframe_loss
+            .lock()
+            .unwrap()
+            .route_abandoned(wire_frame, reached_socket);
     }
     /// The host stopped sending this frame part way because its socket
     /// refused packets: loss on send. See [`Self::keyframe_abandoned_as`].

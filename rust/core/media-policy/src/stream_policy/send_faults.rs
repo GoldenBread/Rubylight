@@ -43,15 +43,29 @@ impl SendLoss {
     /// is charged as if they all fell in it. Returns whether the frame is
     /// beyond repair.
     pub fn sent(&mut self, packets: usize, dropped: usize) -> bool {
+        self.sent_with_route(packets, dropped, 0)
+    }
+    /// Like [`Self::sent`], while separating `route_unavailable` drops from
+    /// non-route socket/path drops: total `dropped` counts against
+    /// [`Self::reached_socket`], whereas only `dropped - route_unavailable`
+    /// charges FEC block parity (`unrecoverable`). Returns whether non-route
+    /// drops alone exceeded FEC parity.
+    pub fn sent_with_route(
+        &mut self,
+        packets: usize,
+        dropped: usize,
+        route_unavailable: usize,
+    ) -> bool {
         let (first, last) = (self.offered, self.offered + packets);
         self.offered = last;
         self.refused += dropped.min(packets);
-        if dropped > 0 {
+        let non_route_dropped = dropped.saturating_sub(route_unavailable);
+        if non_route_dropped > 0 {
             let mut start = 0;
             for ((data, parity), lost) in self.blocks.iter().zip(self.lost.iter_mut()) {
                 let end = start + data + parity;
                 let overlap = last.min(end).saturating_sub(first.max(start));
-                *lost = (*lost + dropped.min(overlap)).min(data + parity);
+                *lost = (*lost + non_route_dropped.min(overlap)).min(data + parity);
                 start = end;
             }
         }
@@ -82,6 +96,9 @@ pub struct SendLossRecovery {
     /// When the last keyframe started this way was asked for, until one is
     /// sent whole.
     pending: Option<Instant>,
+    /// An earlier frame dropped because no network route reached the client;
+    /// cleared on the next delivered frame so a P-frame asks for one clean keyframe.
+    route_down: bool,
 }
 impl SendLossRecovery {
     pub fn lost(&mut self, now: Instant, period: Duration, reached_socket: bool) -> bool {
@@ -96,11 +113,18 @@ impl SendLossRecovery {
         self.pending = Some(now);
         true
     }
-    /// A frame went out whole; a keyframe ends the hold.
-    pub fn delivered(&mut self, keyframe: bool) {
+    /// Record a frame dropped while the route to the client was unavailable without
+    /// requesting an immediate keyframe storm.
+    pub fn route_unavailable(&mut self) {
+        self.route_down = true;
+    }
+    /// A frame went out whole; a keyframe ends any pending hold. Returns `true` when
+    /// a non-keyframe recovers from a route outage and needs one recovery keyframe.
+    pub fn delivered(&mut self, keyframe: bool) -> bool {
         if keyframe {
             self.pending = None;
         }
+        std::mem::take(&mut self.route_down) && !keyframe
     }
 }
 /// Test-only radio outage on the host's video socket, from
