@@ -425,6 +425,8 @@ fn expected(feature: Feature) -> Availability {
         Feature::HostUpdate => Unsupported(None),
         // Quick Suspend is off by default.
         Feature::QuickSuspend => Unsupported(None),
+        // Always offered; whether a stream's replay buffer runs travels in its DVR state.
+        Feature::StreamDvr => Supported,
     }
 }
 

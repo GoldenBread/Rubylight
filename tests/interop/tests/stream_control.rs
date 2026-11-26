@@ -20,7 +20,7 @@ use std::{
 };
 
 /// The host's control extensions Nightjar must know, in the order the host announces them.
-const CONTROL_EXTENSIONS: [u16; 18] = [
+const CONTROL_EXTENSIONS: [u16; 19] = [
     ptype::PHASE_LOCK_REPORT,
     ptype::DISPLAY_CAPS,
     ptype::RECONFIGURE,
@@ -40,6 +40,7 @@ const CONTROL_EXTENSIONS: [u16; 18] = [
     butterpollo_media_policy::frame_warp::FRAME_WARP_TAGS_MESSAGE_TYPE,
     butterpollo_media_policy::frame_warp::FRAME_WARP_MASK_MESSAGE_TYPE,
     butterpollo_media_policy::frame_warp::FRAME_WARP_V2_META_MESSAGE_TYPE,
+    rubylight_protocol::stream_dvr::DVR_STATE_MESSAGE_TYPE,
 ];
 
 /// Launch, the RTSP handshake and the control stream both ways: Nightjar's keyframe request
