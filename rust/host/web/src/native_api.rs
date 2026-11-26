@@ -42,7 +42,7 @@ use butterpollo_stream::{
 use rubylight_native_api as native_api;
 use rubylight_native_api::{
     capabilities::{Capabilities, HostInfo, Permissions},
-    error::{ApiError, ErrorBody, ErrorCode},
+    error::{ErrorBody, ErrorCode},
     feature,
 };
 use serde::Serialize;
@@ -68,12 +68,7 @@ impl IntoResponse for ApiFailure {
         json(
             status,
             &ErrorBody {
-                error: ApiError {
-                    code: self.0.code,
-                    message: self.0.message,
-                    setting: self.0.setting,
-                    retry_after_ms: self.0.retry_after_ms,
-                },
+                error: self.0.into_api_error(),
             },
         )
     }
