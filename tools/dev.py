@@ -2,6 +2,7 @@
 
 usage: python tools/dev.py check [--base REF] [--dry-run] [--fast] [--log-dir DIR]
                                  [--target-dir DIR] [--paths PATH ...]
+       python tools/dev.py cargo [--client] [--fast] [--label L] -- <cargo args...>   (tools/dev_cargo.py)
 
 The changed files are those between the merge base of HEAD and --base
 (default origin/main) and the working tree, plus untracked files. Each maps to
@@ -1205,6 +1206,10 @@ def check_lane(check):
 
 
 def main(argv=None):
+    argv = sys.argv[1:] if argv is None else list(argv)
+    if argv[:1] == ['cargo']:
+        import dev_cargo  # it imports this module
+        return dev_cargo.main(argv[1:])
     parser = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     parser.add_argument('command', choices=['check', 'claim-slot'])
     parser.add_argument('--slot', type=pathlib.Path, help="claim-slot: the slot's lock file, which the caller holds")

@@ -14,6 +14,7 @@ The paths and names on this page are checked: `python tools/code_map.py check` f
 | What else changes when this file changes? | `python tools/code_map.py with rust/core/config/src/config.rs` |
 | Where have bugs been found? | `python tools/code_map.py hot rust/windows` lists fix commits per file |
 | Which checks cover my change? | `tools\dev.ps1 check -DryRun` |
+| Run one Cargo command in a warm target slot? | `python tools/dev.py cargo -- <args>` ([dev_cargo.py](../tools/dev_cargo.py)) |
 | Batch-edit or verify all locales? | `python tools/i18n.py check` (or `apply`, `rename`, `prune` with `tools/i18n_glossary.json`) |
 | Scaffold boilerplate or load a workflow skill? | `python tools/scaffold.py --help` and `.agents/skills/` |
 

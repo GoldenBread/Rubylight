@@ -774,6 +774,9 @@ def main(argv=None):
         return 0
     if not command:
         parser.error('provide a command after --')
+    if args.lane == 'cargo' and pathlib.Path(command[0]).stem.lower() == 'cargo' and not os.environ.get('CARGO_TARGET_DIR'):
+        print('build_lock: no CARGO_TARGET_DIR, so this builds into a private target/; '
+              'use `python tools/dev.py cargo -- ...` for a warm pool slot', file=sys.stderr)
     try:
         if args.lane:
             lease = StageLease(LANE_GROUPS[args.lane](args.lock_directory), args.lock_directory, args.label, args.timeout)

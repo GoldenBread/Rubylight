@@ -47,14 +47,14 @@ Use this skill when adding, changing, renaming, or retiring a setting in Rubylig
 
 ## Verification
 
-Always set `$env:TEMP="D:\t"; $env:TMP="D:\t"` and wrap Cargo/Web builds with `tools/build_lock.py`:
+Always set `$env:TEMP="D:\t"; $env:TMP="D:\t"` and run Cargo with `tools/dev.py cargo` and wrap Web builds with `tools/build_lock.py`:
 
 ```powershell
-python tools/build_lock.py --lane cargo -- cargo test -p butterpollo-config --locked
+python tools/dev.py cargo -- test -p butterpollo-config --locked
 python tools/build_lock.py --lane web -- pwsh -c "cd rust/web; node --test SettingsSchema.test.mjs SettingsHome.test.mjs SettingsTiers.test.mjs"
-python tools/build_lock.py --lane cargo -- cargo test --manifest-path client/protocol/Cargo.toml -p nightjar-policy --test settings_catalog --locked
-python tools/build_lock.py --lane cargo -- cargo test --manifest-path client/protocol/Cargo.toml -p nightjar-desktop-config --test settings_catalog_parity --locked
-python tools/build_lock.py --lane cargo -- cargo test --manifest-path client/protocol/Cargo.toml -p nightjar-desktop-ui settings --locked
+python tools/dev.py cargo -- test --manifest-path client/protocol/Cargo.toml -p nightjar-policy --test settings_catalog --locked
+python tools/dev.py cargo -- test --manifest-path client/protocol/Cargo.toml -p nightjar-desktop-config --test settings_catalog_parity --locked
+python tools/dev.py cargo -- test --manifest-path client/protocol/Cargo.toml -p nightjar-desktop-ui settings --locked
 python client/scripts/test_generate_settings.py
 python tools/generated_docs.py --check
 python tools/i18n.py check

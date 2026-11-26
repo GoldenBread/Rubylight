@@ -906,5 +906,90 @@ class Execution(unittest.TestCase):
                 self.assertEqual(env['TMP'], str(long_temp))
 
 
+class HandRunCargo(unittest.TestCase):
+    def cargo(self, *argv, code=0, error=None):
+        """Run `dev.py cargo` with private locks and a fake cargo; what the child saw."""
+        seen = {}
+
+        def popen(command, cwd=None, env=None):
+            seen.update(command=command, cwd=pathlib.Path(cwd), target=pathlib.Path(env['CARGO_TARGET_DIR']))
+            if error:
+                raise error
+            return mock.Mock(wait=mock.Mock(return_value=code))
+
+        def claim(lock, root=ROOT):
+            seen['claimed'] = pathlib.Path(lock)
+            return pathlib.Path(lock).with_suffix('')
+
+        def env(target, **_):
+            return {'CARGO_TARGET_DIR': str(target)}
+
+        with tempfile.TemporaryDirectory() as directory, \
+                mock.patch.object(dev, 'claim_slot', side_effect=claim), \
+                mock.patch.object(dev, 'claim_target') as claim_target, \
+                mock.patch.object(dev, 'host_env', side_effect=env), \
+                mock.patch.object(dev, 'client_env', side_effect=env), \
+                mock.patch.object(dev.build_lock, 'end_children_with_me'), \
+                mock.patch.object(dev.build_lock, 'prune_pool'), \
+                mock.patch.object(dev.shutil, 'which', return_value='cargo'), \
+                mock.patch.object(dev.subprocess, 'Popen', side_effect=popen), \
+                contextlib.redirect_stderr(io.StringIO()) as stderr:
+            base = pathlib.Path(directory).resolve()
+            pool = base / 'pool'
+            options = ['--lock-directory', str(base / 'locks'), '--pool', str(pool), '--lock-timeout', '0']
+            argv = [a.replace('TARGET', str(base / 'own')) for a in argv]
+            try:
+                seen['code'] = dev.main(['cargo', *options, *argv])
+            finally:
+                # Every lane is free again.
+                locks = list(base.rglob('*.lock'))
+                self.assertTrue(locks)
+                for path in locks:
+                    slot = dev.build_lock.HandleSlot(path)
+                    self.assertTrue(slot.try_take('test'), path)
+                    slot.release()
+            seen.update(base=base, pool=pool, claim_target=claim_target.call_args, stderr=stderr.getvalue())
+        return seen
+
+    def test_a_host_command_builds_in_a_claimed_host_slot_and_returns_its_code(self):
+        seen = self.cargo('--', 'test', '-p', 'x', '--', '--manifest-path', 'client/protocol/Cargo.toml', code=101)
+        self.assertEqual(seen['code'], 101)
+        self.assertEqual(seen['claimed'], seen['pool'] / '1.lock')
+        self.assertEqual(seen['target'], seen['pool'] / '1')
+        self.assertEqual(seen['cwd'], ROOT.resolve())
+        self.assertEqual(seen['command'][1:3], ['test', '-p'])
+
+    def test_a_client_flag_or_manifest_takes_a_client_slot(self):
+        manifest = ROOT.resolve() / 'client' / 'protocol' / 'Cargo.toml'
+        for argv, expected in (
+                (['--client', '--', 'check'], ['check']),
+                (['--', 'check', '--manifest-path', 'client/protocol/Cargo.toml'],
+                 ['check', '--manifest-path', str(manifest)]),
+                (['--', 'check', '--manifest-path=client/protocol/Cargo.toml'],
+                 ['check', f'--manifest-path={manifest}'])):
+            seen = self.cargo(*argv)
+            self.assertEqual(seen['code'], 0)
+            self.assertEqual(seen['claimed'], seen['pool'] / 'client-1.lock', argv)
+            self.assertEqual(seen['target'], seen['pool'] / 'client-1', argv)
+            self.assertEqual(seen['cwd'], ROOT.resolve() / 'client' / 'protocol')
+            self.assertEqual(seen['command'][1:], expected)
+
+    def test_target_dir_is_claimed_instead_of_a_slot(self):
+        for flags, suffix in (([], ''), (['--client'], '-client')):
+            seen = self.cargo(*flags, '--target-dir', 'TARGET', '--', 'build')
+            target = pathlib.Path(f"{seen['base'] / 'own'}{suffix}")
+            self.assertEqual(seen['target'], target)
+            self.assertEqual(seen['claim_target'].args[0], target)
+            self.assertNotIn('claimed', seen)
+
+    def test_the_lanes_are_released_when_cargo_fails_to_run(self):
+        seen = self.cargo('--', 'build', error=OSError('no cargo'))
+        self.assertEqual(seen['code'], 1)
+        self.assertIn('no cargo', seen['stderr'])
+        self.assertEqual(self.cargo('--', 'build', error=KeyboardInterrupt())['code'], 130)
+        with self.assertRaises(ValueError):  # anything else propagates, after the release
+            self.cargo('--', 'build', error=ValueError())
+
+
 if __name__ == '__main__':
     unittest.main()

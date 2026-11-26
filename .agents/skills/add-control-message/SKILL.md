@@ -45,9 +45,9 @@ Use this skill when adding a client<->host control-stream message on ENet (or We
 
 ```powershell
 $env:TEMP="D:\t"; $env:TMP="D:\t"
-python tools/build_lock.py --lane cargo -- cargo test --manifest-path client/protocol/Cargo.toml -p rubylight-protocol -p nightjar-core --locked
-python tools/build_lock.py --lane cargo -- cargo test -p butterpollo-host-tests --test reconnect_tests --locked
-python tools/build_lock.py --lane cargo -- cargo test -p rubylight-interop --locked
+python tools/dev.py cargo -- test --manifest-path client/protocol/Cargo.toml -p rubylight-protocol -p nightjar-core --locked
+python tools/dev.py cargo -- test -p butterpollo-host-tests --test reconnect_tests --locked
+python tools/dev.py cargo -- test -p rubylight-interop --locked
 python tools/arch_check.py
 python tools/code_map.py check
 tools\dev.ps1 check

@@ -1,4 +1,4 @@
-import concurrent.futures, json, os, pathlib, queue, shutil, subprocess, sys, tempfile, threading, time, unittest
+import concurrent.futures, contextlib, io, json, os, pathlib, queue, shutil, subprocess, sys, tempfile, threading, time, unittest
 from unittest import mock
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
@@ -661,6 +661,28 @@ try { 'acquired' } finally { Exit-CheckLocks $held -NoPause }
         with mock.patch.object(shutil, 'disk_usage', return_value=enough):
             self.assertEqual(build_lock.prune_pool(pool=pool, min_free_gb=float('nan')), [])
             self.assertEqual(build_lock.prune_pool(pool=pool, min_free_gb=float('inf')), [])
+
+class CargoHint(unittest.TestCase):
+    def stderr(self, lane, target):
+        with tempfile.TemporaryDirectory() as directory, \
+                mock.patch.dict(os.environ, {'CARGO_TARGET_DIR': target}), \
+                mock.patch.object(build_lock.subprocess, 'Popen'), \
+                mock.patch.object(build_lock, 'wait_child', return_value=7), \
+                mock.patch.object(build_lock, 'prune_pool'), \
+                contextlib.redirect_stderr(io.StringIO()) as stderr:
+            if not target:
+                del os.environ['CARGO_TARGET_DIR']
+            argv = ['--lock-directory', directory, '--lane', lane, '--', 'cargo', 'test']
+            self.assertEqual(build_lock.main(argv), 7)
+        return stderr.getvalue()
+
+    def test_a_cargo_lane_without_a_target_dir_names_dev_cargo(self):
+        hint = self.stderr('cargo', '')
+        self.assertIn('python tools/dev.py cargo -- ', hint)
+        self.assertEqual(hint.count('\n'), 1)
+        self.assertNotIn('dev.py cargo', self.stderr('cargo', 'x'))
+        self.assertNotIn('dev.py cargo', self.stderr('web', ''))
+
 
 if __name__ == '__main__':
     unittest.main()

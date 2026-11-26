@@ -36,9 +36,9 @@ Use this skill whenever writing or reviewing changes touching NVENC, CUDA intero
 
 ```powershell
 $env:TEMP="D:\t"; $env:TMP="D:\t"
-python tools/build_lock.py --lane cargo -- cargo test -p butterpollo-media-policy --locked nvenc
-python tools/build_lock.py --lane cargo -- cargo test -p butterpollo-win-graphics --locked nvenc
-python tools/build_lock.py --lane cargo -- cargo test -p butterpollo-win-graphics --locked nvidia_
-python tools/build_lock.py --lane cargo -- cargo clippy -p butterpollo-media-policy -p butterpollo-win-graphics --all-targets -- -D warnings
+python tools/dev.py cargo -- test -p butterpollo-media-policy --locked nvenc
+python tools/dev.py cargo -- test -p butterpollo-win-graphics --locked nvenc
+python tools/dev.py cargo -- test -p butterpollo-win-graphics --locked nvidia_
+python tools/dev.py cargo -- clippy -p butterpollo-media-policy -p butterpollo-win-graphics --all-targets -- -D warnings
 python tools/arch_check.py
 ```

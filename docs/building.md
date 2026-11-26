@@ -171,9 +171,12 @@ packaging and then wait until every lane is given back; a stage that sees it,
 or a live release `PRIORITY` ticket, gives its lanes back and waits. `-Jobs`
 defaults to 4 and sets the Cargo, CMake, PyroWave and FFmpeg build limits.
 Wrap other heavy commands with `tools/build_lock.py`, with a lane when the
-work is one stage's:
+work is one stage's. Run a Cargo command by hand through `dev.py cargo`, which
+takes the Cargo lane and a warm target slot as the check does (`--client` for
+Nightjar's workspace; a `--manifest-path` below `client/` implies it):
 
 ```powershell
+python tools/dev.py cargo -- test -p butterpollo-config --locked
 python tools/build_lock.py --lane gradle --label nightjar-apk -- cmd /c client\gradlew.bat -p client --no-daemon --max-workers=2 assembleNonRootDebug
 python tools/build_lock.py --status
 ```
@@ -239,7 +242,7 @@ The dev and test profiles keep only line tables for the workspace crates (panics
 - **sccache** caches compiled crates across target folders and checkouts: `cargo install sccache --locked --no-default-features`, then set `RUSTC_WRAPPER=sccache`, `SCCACHE_DIR` (not under `%LOCALAPPDATA%` if it is virtualized) and `CARGO_INCREMENTAL=0`.
 - **lld** links the test binaries faster than GNU ld: install `mingw-w64-ucrt-x86_64-lld` in MSYS2 and set `CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUSTFLAGS=-Clink-arg=-fuse-ld=lld`. Not `RUSTFLAGS`: it would replace the display driver's `+crt-static`. Rust flags are part of every artifact's fingerprint and cache key, so set them the same way for every build or each change rebuilds everything.
 
-Keep target folders between runs instead of deleting them. Two checkouts may reuse one target folder one after the other but never at the same time, and the second must make Cargo rebuild its own packages first: Cargo compares modification times, so a checkout whose files are older than the folder's artifacts would test the other checkout's build. `tools\dev.ps1 check` does this itself (`claim_target` in `tools/dev.py`); for a hand-run Cargo command, touch the sources or use a folder of its own.
+Keep target folders between runs instead of deleting them. Two checkouts may reuse one target folder one after the other but never at the same time, and the second must make Cargo rebuild its own packages first: Cargo compares modification times, so a checkout whose files are older than the folder's artifacts would test the other checkout's build. `tools\dev.ps1 check` does this itself (`claim_target` in `tools/dev.py`); for a hand-run Cargo command, use `python tools/dev.py cargo -- <args>`, which claims a pool slot the same way.
 
 The display driver (`rust/drivers/rubylight-vdisplay`) is outside the main workspace; the build script builds it separately with the Windows Driver Kit. The NVIDIA adapter (`rust/truehdr-runtime`) is outside it too; only `-Nvidia` checks and builds it, for `x86_64-pc-windows-msvc`. Nightjar (`client/`) keeps its own workspace in `client/protocol`; the host takes only its `rubylight-protocol` crate, by path.
 

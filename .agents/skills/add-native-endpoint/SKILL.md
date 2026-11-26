@@ -44,9 +44,9 @@ Use this skill when adding a paired-client HTTPS endpoint under `/api/native/v1`
 
 ```powershell
 $env:TEMP="D:\t"; $env:TMP="D:\t"
-python tools/build_lock.py --lane cargo -- cargo test --manifest-path client/protocol/Cargo.toml -p rubylight-native-api -p nightjar-policy -p nightjar-core --locked
-python tools/build_lock.py --lane cargo -- cargo test -p butterpollo-session -p butterpollo-web --locked
-python tools/build_lock.py --lane cargo -- cargo test -p butterpollo-host-tests --test nvhttp_parity --locked
+python tools/dev.py cargo -- test --manifest-path client/protocol/Cargo.toml -p rubylight-native-api -p nightjar-policy -p nightjar-core --locked
+python tools/dev.py cargo -- test -p butterpollo-session -p butterpollo-web --locked
+python tools/dev.py cargo -- test -p butterpollo-host-tests --test nvhttp_parity --locked
 python tools/arch_check.py
 python tools/code_map.py check
 git diff --check
