@@ -5,9 +5,20 @@
 //! below the current wire demand plus headroom. This is not a measurement of
 //! path capacity: control pings establish activity, not successful video
 //! delivery. Silence alone never authorizes faster probing.
+use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
 use crate::adaptive_fec::Block;
+
+/// Rolling window for the RTT floor used to detect delay growth without
+/// locking onto a one-off minimum from an earlier route state.
+const RTT_FLOOR_WINDOW: Duration = Duration::from_secs(30);
+const RTT_FLOOR_BUCKETS: usize = 32;
+/// Excess RTT over the rolling floor required before an unknown-link wireless
+/// stream treats delay as a standing queue rather than ordinary Wi-Fi jitter.
+const QUEUE_DELAY_MARGIN: Duration = Duration::from_millis(15);
+/// Continuous busy, non-draining queue delay required before stepping down.
+const QUEUE_DELAY_HOLD: Duration = Duration::from_secs(2);
 
 #[derive(Clone, Copy, Default)]
 pub struct Traffic {
@@ -66,12 +77,14 @@ pub struct AdaptivePacing {
     initialized: bool,
     startup: bool,
     wireless_unknown_link: bool,
+    route_ceiling: u64,
     ceiling: u64,
     floor: u64,
     limit: Option<u64>,
     last_sample: Option<(Instant, Traffic)>,
     last_ping: Option<Instant>,
-    minimum_rtt: Option<Duration>,
+    /// Lowest RTT per second over [`RTT_FLOOR_WINDOW`], oldest first.
+    rtt_floor: VecDeque<(Instant, Duration)>,
     /// Feedback at/before this frame describes the previous rate.
     after_frame: Option<u32>,
     /// Recent frames may report their blocks out of order. Retain whether a
@@ -83,6 +96,7 @@ pub struct AdaptivePacing {
     any_loss: bool,
     clean_since: Option<Instant>,
     unhealthy_since: Option<(PacingReason, Instant)>,
+    queue_watch: Option<QueueWatch>,
     last_logged_reason: Option<PacingReason>,
     /// A rate increase is tentative until its feedback interval has elapsed.
     probe: Option<Probe>,
@@ -90,6 +104,12 @@ pub struct AdaptivePacing {
     /// control loop supplies the new sent-frame fence before sampling again.
     awaiting_fence: bool,
     recovery_hold: Duration,
+}
+
+#[derive(Clone, Copy)]
+struct QueueWatch {
+    started: Instant,
+    min_excess: Duration,
 }
 
 struct Probe {
@@ -111,12 +131,13 @@ impl AdaptivePacing {
             initialized: false,
             startup: enabled,
             wireless_unknown_link: false,
+            route_ceiling: 0,
             ceiling: 0,
             floor: 0,
             limit: None,
             last_sample: None,
             last_ping: None,
-            minimum_rtt: None,
+            rtt_floor: VecDeque::new(),
             after_frame: None,
             reported_frames: Vec::new(),
             lost_frames: 0,
@@ -125,6 +146,7 @@ impl AdaptivePacing {
             any_loss: false,
             clean_since: None,
             unhealthy_since: None,
+            queue_watch: None,
             last_logged_reason: None,
             probe: None,
             awaiting_fence: false,
@@ -138,6 +160,7 @@ impl AdaptivePacing {
         self.wireless_unknown_link = wireless_unknown_link;
         if !wireless_unknown_link {
             self.unhealthy_since = None;
+            self.queue_watch = None;
         }
     }
 
@@ -152,34 +175,64 @@ impl AdaptivePacing {
         self.enabled
     }
 
+    fn effective_ceiling(
+        wireless_unknown_link: bool,
+        route_ceiling: u64,
+        needed: u64,
+        encoder_kbps: u32,
+    ) -> u64 {
+        let route_ceiling = route_ceiling.max(1);
+        if wireless_unknown_link {
+            crate::network_pacing::wireless_unknown_link_ceiling_bps(
+                route_ceiling,
+                encoder_kbps,
+                needed,
+            )
+        } else {
+            route_ceiling
+        }
+    }
+
     /// Refresh on each frame: FEC, FPS, bitrate and the route can change.
     /// The physical/configured ceiling wins when the requested stream cannot
     /// fit. The caller reports that shortfall; this controller cannot fix it.
-    pub fn rate(&mut self, ceiling: u64, needed: u64, encoder_kbps: u32) -> u64 {
+    pub fn rate(&mut self, route_ceiling: u64, needed: u64, encoder_kbps: u32) -> u64 {
         let previous_rate = self.current();
+        let previous_route_ceiling = self.route_ceiling;
         let previous_ceiling = self.ceiling;
         let previous_floor = self.floor;
-        self.ceiling = ceiling.max(1);
+        self.route_ceiling = route_ceiling.max(1);
+        self.ceiling = Self::effective_ceiling(
+            self.wireless_unknown_link,
+            self.route_ceiling,
+            needed,
+            encoder_kbps,
+        );
         self.floor = needed
             .saturating_add(needed / 4)
             .max(1_000_000)
             .min(self.ceiling);
         if !self.enabled {
-            return ceiling;
+            return route_ceiling;
         }
         if !self.initialized {
             self.initialized = true;
             self.limit = Some(self.seed_rate(encoder_kbps));
-        } else if self.ceiling != previous_ceiling || self.floor != previous_floor {
-            let ceiling_changed = self.ceiling != previous_ceiling;
-            if ceiling_changed {
-                // Route activity and RTT from before a changed ceiling do
+        } else if self.route_ceiling != previous_route_ceiling
+            || self.ceiling != previous_ceiling
+            || self.floor != previous_floor
+        {
+            let route_changed = self.route_ceiling != previous_route_ceiling;
+            if route_changed {
+                // Route activity and RTT from before a changed route ceiling do
                 // not validate probing the replacement route.
                 self.last_ping = None;
-                self.minimum_rtt = None;
+                self.rtt_floor.clear();
+                self.unhealthy_since = None;
+                self.queue_watch = None;
             }
             if self.ceiling > previous_ceiling && self.limit.is_none() {
-                // A newly faster host route says nothing about downstream
+                // A newly faster ceiling says nothing about downstream
                 // capacity. Keep the previously confirmed rate and probe the
                 // extra headroom using fresh evidence, without reseeding.
                 self.limit = Some(previous_rate);
@@ -204,9 +257,8 @@ impl AdaptivePacing {
             if let Some(limit) = &mut self.limit {
                 *limit = (*limit).clamp(self.floor, self.ceiling);
             }
-            if ceiling_changed || retracted_probe || self.current() != previous_rate {
+            if route_changed || retracted_probe || self.current() != previous_rate {
                 self.clean_since = None;
-                self.unhealthy_since = None;
                 self.last_sample = None;
                 self.awaiting_fence = true;
             }
@@ -226,18 +278,40 @@ impl AdaptivePacing {
     /// demand, tentative probe or feedback fence. Encoder recovery caps use
     /// more parity than ordinary frames; querying that budget must not reset
     /// the controller's evidence on every input picture.
-    pub fn preview_rate(&self, ceiling: u64, needed: u64, encoder_kbps: u32) -> u64 {
+    pub fn preview_rate(&self, route_ceiling: u64, needed: u64, encoder_kbps: u32) -> u64 {
+        self.preview_rate_for(
+            route_ceiling,
+            needed,
+            encoder_kbps,
+            self.wireless_unknown_link,
+        )
+    }
+
+    /// Like [`Self::preview_rate`], evaluating the effective ceiling for the
+    /// caller's current `wireless_unknown_link` state without mutating `self`.
+    pub fn preview_rate_for(
+        &self,
+        route_ceiling: u64,
+        needed: u64,
+        encoder_kbps: u32,
+        wireless_unknown_link: bool,
+    ) -> u64 {
         if !self.enabled {
-            return ceiling;
+            return route_ceiling;
         }
-        let ceiling = ceiling.max(1);
+        let route_ceiling = route_ceiling.max(1);
+        let ceiling =
+            Self::effective_ceiling(wireless_unknown_link, route_ceiling, needed, encoder_kbps);
         let floor = needed
             .saturating_add(needed / 4)
             .max(1_000_000)
             .min(ceiling);
         let limit = if !self.initialized {
             Some(u64::from(encoder_kbps).saturating_mul(2000))
-        } else if ceiling != self.ceiling || floor != self.floor {
+        } else if route_ceiling != self.route_ceiling
+            || ceiling != self.ceiling
+            || floor != self.floor
+        {
             // A changed budget retracts an unconfirmed probe. A confirmed
             // fast route retains its previous ceiling when the route grows.
             self.probe.as_ref().map(|probe| probe.stable).or_else(|| {
@@ -364,14 +438,16 @@ impl AdaptivePacing {
             .last_ping
             .is_some_and(|at| now.saturating_duration_since(at) < Duration::from_secs(2));
         if ping && !rtt.is_zero() {
-            self.minimum_rtt = Some(self.minimum_rtt.map_or(rtt, |minimum| minimum.min(rtt)));
+            self.observe_rtt(now, rtt);
         }
-        let queued = self.minimum_rtt.is_some_and(|minimum| {
-            rtt > minimum.saturating_add((minimum / 2).max(Duration::from_millis(8)))
+        let rtt_floor = self.rtt_floor();
+        let queued = rtt_floor.is_some_and(|floor| {
+            !rtt.is_zero() && rtt > floor.saturating_add((floor / 2).max(Duration::from_millis(8)))
         });
         let mut reason = None;
         if (substantial || (self.probe.is_some() && loss)) && recent && (frames > 0 || probe_loss) {
             self.unhealthy_since = None;
+            self.queue_watch = None;
             let next = if let Some(probe) = self.probe.take() {
                 // A failed probe restores the last working rate, and increases
                 // the quiet period before another attempt (up to a minute).
@@ -392,33 +468,60 @@ impl AdaptivePacing {
                 && frames as f64 >= seconds / period.as_secs_f64().max(0.001) * 0.6
                 && traffic.bytes.saturating_sub(before.bytes) as f64 * 8.
                     >= f64::from(encoder_kbps) * 1000. * seconds * 0.6;
+            let queue_excess = (busy && ping && !rtt.is_zero())
+                .then_some(rtt_floor)
+                .flatten()
+                .and_then(|floor| {
+                    let excess = rtt.saturating_sub(floor);
+                    (excess > (floor / 2).max(QUEUE_DELAY_MARGIN)).then_some(excess)
+                });
             if loss || !ping || !busy || rtt.is_zero() || queued {
                 self.clean_since = None;
                 if self.wireless_unknown_link {
                     let clear_reason = if loss {
                         Some(PacingReason::MinorLoss)
-                    } else if queued {
+                    } else if queue_excess.is_some() {
                         Some(PacingReason::QueueDelay)
                     } else if !ping || rtt.is_zero() {
                         Some(PacingReason::HeadroomCleared)
                     } else {
                         None
                     };
+                    let prior_queue_started = if clear_reason != Some(PacingReason::QueueDelay) {
+                        self.queue_watch.take().map(|watch| watch.started)
+                    } else {
+                        None
+                    };
                     if let Some(clear_reason) = clear_reason {
-                        let started = match self.unhealthy_since {
-                            Some((prev, at)) if prev == clear_reason => at,
-                            _ => {
-                                self.unhealthy_since = Some((clear_reason, now));
-                                now
-                            }
-                        };
-                        let hold = match clear_reason {
-                            PacingReason::MinorLoss => Duration::ZERO,
-                            PacingReason::QueueDelay => Duration::from_secs(1),
-                            _ => Duration::from_secs(2),
+                        let ready = if let Some(excess) =
+                            queue_excess.filter(|_| clear_reason == PacingReason::QueueDelay)
+                        {
+                            let prior_headroom_started = match self.unhealthy_since.take() {
+                                Some((PacingReason::HeadroomCleared, at)) => Some(at),
+                                _ => None,
+                            };
+                            self.advance_queue_watch(now, excess, prior_headroom_started)
+                        } else {
+                            let started = match self.unhealthy_since {
+                                Some((prev, at)) if prev == clear_reason => at,
+                                _ => {
+                                    let at = if clear_reason == PacingReason::HeadroomCleared {
+                                        prior_queue_started.unwrap_or(now)
+                                    } else {
+                                        now
+                                    };
+                                    self.unhealthy_since = Some((clear_reason, at));
+                                    at
+                                }
+                            };
+                            let hold = match clear_reason {
+                                PacingReason::MinorLoss => Duration::ZERO,
+                                _ => Duration::from_secs(2),
+                            };
+                            now.saturating_duration_since(started) >= hold
                         };
                         let baseline = self.seed_rate(encoder_kbps);
-                        if old > baseline && now.saturating_duration_since(started) >= hold {
+                        if old > baseline && ready {
                             let step = (old / 8).max(1_000_000);
                             let next = old
                                 .saturating_sub(step)
@@ -428,7 +531,16 @@ impl AdaptivePacing {
                                 self.limit = Some(next);
                                 self.probe = None;
                                 self.after_frame = last_sent;
-                                self.unhealthy_since = Some((clear_reason, now));
+                                if let Some(excess) = queue_excess
+                                    .filter(|_| clear_reason == PacingReason::QueueDelay)
+                                {
+                                    self.queue_watch = Some(QueueWatch {
+                                        started: now,
+                                        min_excess: excess,
+                                    });
+                                } else {
+                                    self.unhealthy_since = Some((clear_reason, now));
+                                }
                                 if matches!(
                                     clear_reason,
                                     PacingReason::MinorLoss | PacingReason::QueueDelay
@@ -444,6 +556,7 @@ impl AdaptivePacing {
                 }
             } else {
                 self.unhealthy_since = None;
+                self.queue_watch = None;
                 if self.limit.is_some() {
                     // The counters describe the interval just completed. Startup
                     // can use that first active interval; recovery retains its
@@ -520,6 +633,56 @@ impl AdaptivePacing {
             reason,
             reason_changed,
         })
+    }
+
+    fn observe_rtt(&mut self, now: Instant, rtt: Duration) {
+        match self.rtt_floor.back_mut() {
+            Some((at, low)) if now.saturating_duration_since(*at) < Duration::from_secs(1) => {
+                *low = (*low).min(rtt);
+            }
+            _ => {
+                if self.rtt_floor.len() >= RTT_FLOOR_BUCKETS {
+                    self.rtt_floor.pop_front();
+                }
+                self.rtt_floor.push_back((now, rtt));
+            }
+        }
+        while self
+            .rtt_floor
+            .front()
+            .is_some_and(|(at, _)| now.saturating_duration_since(*at) > RTT_FLOOR_WINDOW)
+        {
+            self.rtt_floor.pop_front();
+        }
+    }
+
+    fn rtt_floor(&self) -> Option<Duration> {
+        self.rtt_floor.iter().map(|(_, low)| *low).min()
+    }
+
+    fn advance_queue_watch(
+        &mut self,
+        now: Instant,
+        excess: Duration,
+        prior_started: Option<Instant>,
+    ) -> bool {
+        let Some(watch) = &mut self.queue_watch else {
+            let started = prior_started.unwrap_or(now);
+            self.queue_watch = Some(QueueWatch {
+                started,
+                min_excess: excess,
+            });
+            return now.saturating_duration_since(started) >= QUEUE_DELAY_HOLD;
+        };
+        if excess < watch.min_excess {
+            // ENet's smoothed RTT reached a new lower excess since the hold
+            // started, so delay is actively draining toward the floor. Wait
+            // instead of stepping pacing down through the decay tail.
+            watch.started = now;
+            watch.min_excess = excess;
+            return false;
+        }
+        now.saturating_duration_since(watch.started) >= QUEUE_DELAY_HOLD
     }
 
     pub fn snapshot(&self) -> serde_json::Value {
