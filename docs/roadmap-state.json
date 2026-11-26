@@ -2,7 +2,7 @@
   "schema_version": 1,
   "release_target": "7.0.0",
   "integration_branch": "roadmap/redesign-and-waves-1-5",
-  "updated_at": "2026-11-26T13:28:39Z",
+  "updated_at": "2026-11-26T13:33:12Z",
   "waves": {
     "0": {
       "status": "in_progress",
@@ -369,11 +369,11 @@
       ],
       "hw_required": true,
       "visual_review": true,
-      "status": "in_progress",
-      "phase": "implement",
-      "branch": "wip/roadmap/10-couch-party-audio",
+      "status": "merged",
+      "phase": "awaiting_hw_and_wave_review",
+      "branch": "RamazanKara/r70-10-audio-fixes",
       "worktree": null,
-      "commit_sha": null,
+      "commit_sha": "32a231df34",
       "quarantine_reason": null,
       "hw_verified": false
     },
