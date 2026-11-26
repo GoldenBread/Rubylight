@@ -59,7 +59,7 @@ test('the groups most people leave alone fold in place, open when customized', a
     'After a stream', 'Battle.net options', 'Bitrate and network', 'Capture', 'EA app options', 'Epic Games options',
     'Frame limiter', 'Frame pacing', 'GOG options', 'Game folders', 'HDR', 'Hardware metrics', 'Keyboard', 'Lossless Scaling',
     'Microsoft Store and Xbox options', 'Mouse, pen and touch', 'Playnite', 'Playnite launch focus', 'Remote monitors',
-    'Steam Deck and back grips', 'Steam options', 'Ubisoft Connect options',
+    'Steam Deck and back grips', 'Steam options', 'Stream DVR and clips', 'Ubisoft Connect options',
   ]);
   for (const group of FOLDED_GROUPS) {
     const members = schema.settings.filter((setting) => setting.group === group);

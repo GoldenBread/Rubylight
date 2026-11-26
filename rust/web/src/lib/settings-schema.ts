@@ -144,7 +144,7 @@ const GROUP_ORDER: Record<TabId, readonly string[]> = {
   picture: [
     'Preset', 'Streamed display', 'Resolution and refresh rate', 'HDR', 'RTX HDR', 'Codecs', 'Bitrate and network',
     'Frame pacing', 'Frame limiter', 'Encoder', 'RTX Video enhancement', 'Capture', 'After a stream',
-    'Remote monitors',
+    'Remote monitors', 'Stream DVR and clips',
   ],
   sound: [
     'Sound', 'Audio devices', 'Virtual speakers', 'Microphone', 'Input devices', 'Keyboard',
