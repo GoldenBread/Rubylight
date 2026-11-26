@@ -8,7 +8,10 @@ use super::{Journal, PATH, dpi_settle, lock, read_journal};
 use anyhow::{Context, Result};
 use std::{
     collections::BTreeMap,
-    sync::Mutex,
+    sync::{
+        Mutex,
+        atomic::{AtomicU64, Ordering},
+    },
     time::{Duration, Instant},
 };
 
@@ -25,6 +28,9 @@ pub(super) const LEAVE_AFTER_CRASH: Duration = Duration::from_secs(12);
 static USERS: Mutex<usize> = Mutex::new(0);
 /// One restore at a time; a new virtual display never waits for one.
 static RESTORE: Mutex<()> = Mutex::new(());
+/// Counts virtual displays acquired, so a restore can tell that one came and
+/// went while it ran.
+static GENERATION: AtomicU64 = AtomicU64::new(0);
 
 /// Held by every virtual display for its lifetime. The first one records each
 /// physical display's scale before the virtual display is added; when the last
@@ -38,6 +44,7 @@ impl DpiBaseline {
         let first = {
             let mut users = crate::lock_unpoisoned(&USERS);
             *users += 1;
+            GENERATION.fetch_add(1, Ordering::AcqRel);
             *users == 1
         };
         if first && let Err(error) = record() {
@@ -130,31 +137,36 @@ fn restore() -> Result<()> {
     if baseline.is_empty() {
         return Ok(());
     }
+    let generation = GENERATION.load(Ordering::Acquire);
     let outcome = crate::desktop::on_input_desktop(|| {
         wait_for_virtual_displays(LEAVE_AFTER_REMOVAL, in_use);
         settle(&baseline, |id, set| {
             while_journal(|journal| !in_use() && in_baseline(journal, id), set)
         })
     });
-    let mut cleared = false;
+    let mut drifted = Vec::new();
     super::change_journal(|journal| {
-        // A new stream's virtual display holds the baseline now.
-        if in_use() {
+        // A virtual display that came (and maybe went) meanwhile holds the
+        // baseline now; its own end restores and checks again.
+        if in_use() || GENERATION.load(Ordering::Acquire) != generation {
             return;
         }
+        // A display a stream leased meanwhile left the baseline: not a drift.
+        drifted = outcome
+            .drifted
+            .iter()
+            .filter(|id| in_baseline(journal, id))
+            .cloned()
+            .collect();
         if let Some(entry) = journal.entries.get_mut(ID) {
             entry.stale = false;
             entry.dpi_baseline = None;
-            cleared = true;
         }
     })?;
-    if !cleared || outcome.drifted.is_empty() {
+    if drifted.is_empty() {
         Ok(())
     } else {
-        anyhow::bail!(
-            "the Windows scale did not stay on {}",
-            outcome.drifted.join(", ")
-        )
+        anyhow::bail!("the Windows scale did not stay on {}", drifted.join(", "))
     }
 }
 
