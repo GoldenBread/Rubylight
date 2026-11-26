@@ -67,9 +67,22 @@ fn bitrate_clamps_are_reported_with_requested_and_applied_values() {
 fn runtime_bitrate_honours_the_host_ceiling() {
     assert_eq!(runtime_bitrate_kbps(&Config::default(), 80_000), 80_000);
     assert_eq!(runtime_bitrate_kbps(&Config::default(), 900_000), 500_000);
+    assert_eq!(
+        runtime_bitrate_kbps_for(&Config::default(), 3, 900_000),
+        900_000
+    );
+    assert_eq!(
+        runtime_bitrate_kbps_for(&Config::default(), 3, 2_500_000),
+        2_000_000
+    );
     let capped = Config::parse("max_bitrate=25000\n").unwrap();
     assert_eq!(runtime_bitrate_kbps(&capped, 80_000), 25_000);
     assert_eq!(runtime_bitrate_kbps(&capped, 10_000), 10_000);
+    let pyrowave_capped = Config::parse("max_bitrate=750000\n").unwrap();
+    assert_eq!(
+        runtime_bitrate_kbps_for(&pyrowave_capped, 3, 900_000),
+        750_000
+    );
 }
 #[test]
 fn pacing_defaults_to_arrival_and_keeps_the_grid_option() {

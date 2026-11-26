@@ -139,7 +139,7 @@ fn start_deferred(h: &Shared) {
                 // The game this launch started is closed again, and nothing of
                 // it is kept; the placeholder the deferred app left goes too.
                 drop(started);
-                let canceled = h.sessions.lock().unwrap().stop_role(Role::Stream, None);
+                let canceled = h.sessions.lock().unwrap().stop_host_streams();
                 drop(canceled);
                 h.stop_app(AppStop::LaunchFailed);
             }
@@ -158,7 +158,7 @@ fn start_deferred(h: &Shared) {
             }
             Err(error) => {
                 tracing::warn!(%error, app = %app.name, "deferred application failed to start");
-                let canceled = h.sessions.lock().unwrap().stop_role(Role::Stream, None);
+                let canceled = h.sessions.lock().unwrap().stop_host_streams();
                 drop(canceled);
                 h.stop_app(AppStop::LaunchFailed);
             }
@@ -197,7 +197,7 @@ fn user_action(h: &Shared, action: Action, web_port: u16) {
                 let _transition = h.launch_transition.lock().unwrap();
                 // While the stream a move waited for still runs: see `Host::stop_app`.
                 h.settle_move();
-                let canceled = h.sessions.lock().unwrap().stop_role(Role::Stream, None);
+                let canceled = h.sessions.lock().unwrap().stop_host_streams();
                 drop(canceled);
                 h.stop_app(AppStop::Tray);
             });
@@ -539,7 +539,7 @@ pub async fn maintain(
                     };
                     h.reap_paused_display();
                     if application_finished(&h) {
-                        let canceled = h.sessions.lock().unwrap().stop_role(Role::Stream, None);
+                        let canceled = h.sessions.lock().unwrap().stop_host_streams();
                         drop(canceled);
                         h.stop_app(AppStop::Exited);
                     }

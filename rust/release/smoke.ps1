@@ -66,8 +66,8 @@ if ((Get-Process -Id $PID).SessionId -eq 0) {
         $value = $bound[$key]
         "-$key " + $(if ($value -is [array]) { ($value | ForEach-Object { & $quote $_ }) -join ',' } else { & $quote $value })
     }
-    $command = "& $(& $quote $PSCommandPath) $($forward -join ' ') *> $(& $quote $output); " +
-        "Set-Content $(& $quote $exitFile) ([int]`$LASTEXITCODE)"
+    $qOut, $qExit = (& $quote $output), (& $quote $exitFile)
+    $command = "`$code = 1; try { & $(& $quote $PSCommandPath) $($forward -join ' ') *> $qOut; `$code = [int]`$LASTEXITCODE } catch { `$_ | Out-String | Add-Content -LiteralPath $qOut }; Set-Content -LiteralPath $qExit `$code"
     $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
     $action = New-ScheduledTaskAction -Execute "$env:WINDIR\System32\conhost.exe" -WorkingDirectory $PWD `
         -Argument "--headless `"$((Get-Process -Id $PID).Path)`" -NoProfile -ExecutionPolicy Bypass -EncodedCommand $encoded"

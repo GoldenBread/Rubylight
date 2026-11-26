@@ -437,7 +437,7 @@ impl Host {
         else {
             return Ok(Outcome::Unchanged);
         };
-        let canceled = locked(&self.sessions).stop_role(Role::Stream, None);
+        let canceled = locked(&self.sessions).stop_host_streams();
         drop(canceled);
         // Waits for the app to exit; the nested teardown joins this one.
         self.stop_app(crate::state::AppStop::CloseGame(caller));

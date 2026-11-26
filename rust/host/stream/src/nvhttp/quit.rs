@@ -110,8 +110,8 @@ fn quit_nucleus_player(
 /// The quit of a client that streams nothing: it ends the background stream it stepped away
 /// from, unless it owns the host's app, which Moonlight shows it as running and so quits. No
 /// stream is left to stop.
-fn quit_vacated_background(h: &Shared, client: &str) -> Option<Vec<String>> {
-    if remote_game(h).is_some_and(|game| game.owner == client) {
+pub(super) fn quit_vacated_background(h: &Shared, client: &str) -> Option<Vec<String>> {
+    if remote_game(h).is_some_and(|game| same_device(&game.owner, client)) {
         return None;
     }
     let session = h.nucleus.background_of(client)?;
@@ -160,12 +160,34 @@ pub fn stop_streams(h: &Shared, terminate_app: Option<&str>) -> StopStreams {
     stop_host_streams_locked(h, None)
 }
 
+fn has_active_nucleus_stream(h: &Shared, client: &str) -> bool {
+    let sessions = h.sessions.lock().unwrap();
+    sessions
+        .pending
+        .values()
+        .chain(sessions.active.values().map(|s| &s.launch))
+        .any(|l| l.role == Role::Stream && l.client.uuid == client && l.nucleus.is_some())
+}
+
+fn switch_refused(h: &Shared, client: &str, stop_app: bool) -> bool {
+    (stop_app && terminate_refused(h, client))
+        || (!stop_app
+            && h.sessions.lock().unwrap().held_by_other(
+                Role::Stream,
+                butterpollo_session::session::Transport::WebRtc,
+                client,
+            ))
+}
+
 /// Stop streams on behalf of `client` (WebRTC `switch-session` with `stop_app = false` or `true`,
 /// and `stop-host-session` with `stop_app = true`). Always enforces Nucleus player scoping,
 /// `terminate_refused` (game owner / Remote Monitor / Continue Here claim), and WebRTC stream
 /// exclusivity on non-terminating switches, while leaving concurrent Nucleus Co-op/background,
 /// Remote Monitor, and InputOnly sessions untouched.
 pub fn stop_streams_for(h: &Shared, client: &str, stop_app: bool) -> StopStreams {
+    if !has_active_nucleus_stream(h, client) && switch_refused(h, client, stop_app) {
+        return StopStreams::Refused;
+    }
     h.stop_launch(|device| same_device(device, client));
     let _transition = h.launch_transition.lock().unwrap();
     if let Some(ids) = quit_nucleus_player(h, client, false, false) {
@@ -175,16 +197,7 @@ pub fn stop_streams_for(h: &Shared, client: &str, stop_app: bool) -> StopStreams
             StopStreams::TimedOut
         };
     }
-    if terminate_refused(h, client) {
-        return StopStreams::Refused;
-    }
-    if !stop_app
-        && h.sessions.lock().unwrap().held_by_other(
-            Role::Stream,
-            butterpollo_session::session::Transport::WebRtc,
-            client,
-        )
-    {
+    if switch_refused(h, client, stop_app) {
         return StopStreams::Refused;
     }
     if stop_app {
@@ -230,6 +243,16 @@ fn cancel_app(h: Shared, connection: Connection) -> Response {
         Ok(client) => client,
         Err(e) => return xml(401, &[], Some(e.to_string())),
     };
+    if !has_active_nucleus_stream(&h, &client.uuid)
+        && remote_game(&h).is_some()
+        && terminate_refused(&h, &client.uuid)
+    {
+        return xml(
+            403,
+            &[("cancel", "0".into())],
+            Some("Only the game owner may cancel while remote sessions are active".into()),
+        );
+    }
     // A Quit during the device's own launch stops that launch instead of waiting for it.
     h.stop_launch(|device| same_device(device, &client.uuid));
     let _transition = h.launch_transition.lock().unwrap();
@@ -248,7 +271,7 @@ fn cancel_app(h: Shared, connection: Connection) -> Response {
     }
     // While the stream a move waited for still runs: see `Host::stop_app`.
     h.settle_move();
-    let canceled = h.sessions.lock().unwrap().stop_role(Role::Stream, None);
+    let canceled = h.sessions.lock().unwrap().stop_host_streams();
     drop(canceled);
     h.stop_app(AppStop::Cancel(&client.uuid));
     xml(200, &[("cancel", "1".into())], None)

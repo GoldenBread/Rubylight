@@ -589,6 +589,9 @@ fn set_channels_with(
         return Ok(());
     }
     let mut journal: Journal = serde_json::from_slice(&std::fs::read(path(directory))?)?;
+    if journal.format.is_none() {
+        anyhow::bail!("virtual audio format is not claimed by this stream");
+    }
     let applied = apply_virtual_format_with(
         policy,
         sink,

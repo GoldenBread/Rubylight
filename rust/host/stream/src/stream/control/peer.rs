@@ -22,8 +22,7 @@ pub(in crate::stream) struct ControlPeer {
     pub(super) coop: Option<crate::nucleus::Player>,
     /// Whether finding the co-op player was tried.
     pub(super) coop_tried: bool,
-    pub(super) sequence: u32,
-    pub(super) received: butterpollo_media_policy::packet::ReplayWindow,
+    pub(super) seq_state: Arc<Mutex<super::super::ControlSeqState>>,
     /// The session key's control cipher, expanded once rather than per message.
     pub(super) ciphers: butterpollo_media_policy::packet::ControlCiphers,
     pub(super) hdr_metadata: Option<[u8; 27]>,
@@ -90,6 +89,7 @@ impl ControlPeer {
         launch: &Launch,
         peer_id: PeerID,
         session: Option<Arc<Session>>,
+        control_seqs: &super::super::ControlSeqMemory,
     ) -> Self {
         let _ = h;
         Self {
@@ -101,8 +101,7 @@ impl ControlPeer {
             pads_wait: PadsWait::default(),
             coop: None,
             coop_tried: false,
-            sequence: 0,
-            received: Default::default(),
+            seq_state: control_seqs.for_launch(&launch.id, launch.key),
             ciphers: Default::default(),
             hdr_metadata: None,
             hdr_seen: 0,
@@ -211,8 +210,12 @@ impl ControlPeer {
     }
 
     pub(super) fn encrypt(&mut self, s: &Session, kind: u16, payload: &[u8]) -> Result<Vec<u8>> {
-        let seq = self.sequence;
-        self.sequence = seq.checked_add(1).context("control nonce exhausted")?;
+        let seq = {
+            let mut state = self.seq_state.lock().unwrap();
+            let seq = state.sequence;
+            state.sequence = seq.checked_add(1).context("control nonce exhausted")?;
+            seq
+        };
         self.ciphers
             .get(&s.launch.key, s.config.encryption & 1 != 0)
             .seal(seq, kind, payload)

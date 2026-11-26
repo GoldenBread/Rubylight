@@ -146,6 +146,71 @@ class MirrorTest(unittest.TestCase):
         self.assertIn(f'monorepo {new}', out.getvalue())
         self.assertIn('fast-forward by 1 commit(s)', out.getvalue())
 
+    def _publish(self, result):
+        self.nj.git('fetch', '-q', self.mono.path, f'{result}:refs/heads/tmp')
+        self.nj.git('merge', '-q', '--ff-only', 'tmp')
+        return self.published()
+
+    def test_reverting_published_commit_fast_forwards_and_keeps_subsequent_commits(self):
+        c1 = self.mono.commit('client/app/a.txt', '3', 'publish a3')
+        pub = self._publish(m.split(self.git, 'HEAD', self.published()))
+        # Revert restores the prior published tree (nj two).
+        self.mono.git('revert', '--no-edit', c1)
+        reverted = m.split(self.git, 'HEAD', pub)
+        self.check(reverted, pub, ['Revert "publish a3"'])
+        pub = self._publish(reverted)
+        # Subsequent client commit after a host-only commit still builds cleanly on pub.
+        self.mono.commit('rust/r.txt', 'r2', 'host note')
+        self.mono.commit('client/app/a.txt', '4', 'reapply a4')
+        next_split = m.split(self.git, 'HEAD', pub)
+        self.check(next_split, pub, ['reapply a4'])
+        self.assertEqual(next_split, self.mono.git('subtree', 'split', '-q', '--prefix', 'client', 'HEAD'))
+
+    def test_revert_followed_by_new_commit_before_mirror_keeps_both(self):
+        c1 = self.mono.commit('client/app/a.txt', '3', 'publish a3')
+        pub = self._publish(m.split(self.git, 'HEAD', self.published()))
+        self.mono.git('revert', '--no-edit', c1)
+        self.mono.commit('client/app/b.txt', '4', 'after revert')
+        result = m.split(self.git, 'HEAD', pub)
+        self.check(result, pub, ['Revert "publish a3"', 'after revert'])
+
+    def test_commit_and_revert_before_mirror_matches_subtree_split(self):
+        pub = self.published()
+        c_unpub = self.mono.commit('client/app/a.txt', '3', 'unmirrored a3')
+        self.mono.git('revert', '--no-edit', c_unpub)
+        self.mono.commit('client/app/a.txt', '4', 'after reverted unmirrored')
+        result = m.split(self.git, 'HEAD', pub)
+        self.check(result, pub, ['unmirrored a3', 'Revert "unmirrored a3"', 'after reverted unmirrored'])
+        self.assertEqual(result, self.mono.git('subtree', 'split', '-q', '--prefix', 'client', 'HEAD'))
+
+    def test_side_branch_after_published_revert_keeps_true_fork_parent(self):
+        self.mono.commit('client/app/a.txt', '3', 'a3')
+        self.mono.git('checkout', '-q', '-b', 'side')
+        self.mono.commit('client/app/side.txt', 's', 'side change')
+        self.mono.git('checkout', '-q', 'main')
+        c_pub2 = self.mono.commit('client/app/a.txt', '4', 'a4')
+        pub = self._publish(m.split(self.git, 'HEAD', self.published()))
+        self.mono.git('revert', '--no-edit', c_pub2)
+        pub = self._publish(m.split(self.git, 'HEAD', pub))
+        self.mono.git('merge', '-q', '--no-ff', '-m', 'merge side', 'side')
+        result = m.split(self.git, 'HEAD', pub)
+        self.check(result, pub, ['side change', 'merge side'])
+        # Side branch forked from a3, not from the newer revert commit sharing a3's tree.
+        nj_a3 = self.mono.git('log', '-1', '--format=%H', '--grep=^a3$', pub)
+        self.assertEqual(self.mono.git('rev-parse', f'{result}^2^'), nj_a3)
+
+    def test_unmirrored_commit_plus_subtree_pull_and_revert_to_pulled_tree(self):
+        # Publish c_base first, then diverge with an unmirrored commit on mono + direct commit on nj.
+        self.mono.commit('client/app/a.txt', '3', 'base a3')
+        pub = self._publish(m.split(self.git, 'HEAD', self.published()))
+        c_un = self.mono.commit('client/app/u.txt', 'u1', 'unmirrored client')
+        self.nj.commit('app/t.txt', 'tr', 'direct nj commit')
+        self.mono.git('subtree', 'pull', '-q', '--prefix', 'client', self.nj.path, 'main', '-m', 'pull nj')
+        pub = self.published()
+        self.mono.git('revert', '--no-edit', c_un)
+        result = m.split(self.git, 'HEAD', pub)
+        self.check(result, pub, ['unmirrored client', 'pull nj', 'Revert "unmirrored client"'])
+
 
 if __name__ == '__main__':
     unittest.main()

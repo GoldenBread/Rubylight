@@ -135,6 +135,9 @@ class Plan(unittest.TestCase):
         planned, _ = checks('rust/release/e2e_result.py')
         self.assertIn('test_e2e_result.py', planned['release-py'].items)
         self.assertIn('test_release.py', planned['release-py'].items)
+        self.assertEqual(set(planned['release-py'].items),
+                         {p.name for p in (ROOT / 'rust/release').glob('test_*.py')})
+        self.assertGreaterEqual(len(planned['release-py'].items), 14)
         planned, _ = checks('rust/release/test_soak.py')
         self.assertIn('test_soak.py', planned['release-py'].items)
         planned, _ = checks('tools/hw/catalog.yaml')

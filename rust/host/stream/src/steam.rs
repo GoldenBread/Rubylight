@@ -32,7 +32,7 @@ fn now() -> u64 {
         .map_or(0, |d| d.as_secs())
 }
 /// The installed games, or why there are none to read.
-pub fn catalog(settings: &Settings) -> Result<(Vec<PathBuf>, Vec<Game>)> {
+pub fn catalog(settings: &Settings) -> Result<(Vec<PathBuf>, steam::Discovery)> {
     if !settings.enabled {
         bail!("Steam integration is disabled");
     }
@@ -40,39 +40,58 @@ pub fn catalog(settings: &Settings) -> Result<(Vec<PathBuf>, Vec<Game>)> {
     if roots.is_empty() {
         bail!("Steam installation was not found");
     }
-    let games = steam::discover(&roots);
-    Ok((roots, games))
+    let discovery = steam::discover_checked(&roots);
+    Ok((roots, discovery))
 }
 /// Sync the managed Steam apps now.
 pub fn sync(h: &Shared) -> Result<Outcome> {
     let settings = Settings::from_config(&h.config.read().unwrap());
-    let (_, games) = butterpollo_win_io::library::in_background(|| catalog(&settings))?;
-    sync_beside(h, &settings, &games, crate::playnite::syncs_launchers(h))
+    let (_, discovery) = butterpollo_win_io::library::in_background(|| catalog(&settings))?;
+    sync_beside(
+        h,
+        &settings,
+        &discovery,
+        crate::playnite::syncs_launchers(h),
+    )
 }
 /// While Playnite syncs the library its export brings the Steam games too, so the Steam
 /// sync stands aside as the other launchers' does and no game is added twice.
-fn sync_beside(h: &Shared, settings: &Settings, games: &[Game], playnite: bool) -> Result<Outcome> {
+fn sync_beside(
+    h: &Shared,
+    settings: &Settings,
+    discovery: &steam::Discovery,
+    playnite: bool,
+) -> Result<Outcome> {
     if playnite {
         return Ok(Outcome {
             changed: false,
-            games: games.len(),
-            importable: games
+            games: discovery.games.len(),
+            importable: discovery
+                .games
                 .iter()
                 .filter(|g| steam::importable(g, settings.include_tools))
                 .count(),
         });
     }
-    sync_catalog(h, settings, games)
+    sync_catalog(h, settings, discovery)
 }
-fn sync_catalog(h: &Shared, settings: &Settings, games: &[Game]) -> Result<Outcome> {
+fn sync_catalog(h: &Shared, settings: &Settings, discovery: &steam::Discovery) -> Result<Outcome> {
+    let games = &discovery.games;
     let selected = steam::select(games, settings, now());
     let covers: HashMap<u32, PathBuf> = selected
         .iter()
         .filter_map(|game| cover(h, game).map(|path| (game.appid, path)))
         .collect();
+    if discovery.incomplete {
+        tracing::warn!(
+            unreadable_libraries = ?discovery.unreadable_libraries,
+            unreadable_apps = ?discovery.unreadable_apps,
+            "some Steam libraries could not be read; keeping synced entries from those libraries"
+        );
+    }
     let changed = update_library(h, |apps, document| {
         let dismissed = crate::library::dismissed(document);
-        steam::reconcile(apps, &selected, settings, &covers, &dismissed)
+        steam::reconcile_checked(apps, &selected, settings, &covers, &dismissed, discovery)
     })?;
     if changed {
         tracing::info!(selected = selected.len(), "Steam library synced");
@@ -96,27 +115,40 @@ pub fn update_library(
     h: &Shared,
     change: impl FnOnce(&mut Vec<Value>, &mut Value) -> bool,
 ) -> Result<bool> {
+    static SAVE_SERIALIZER: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _serialize = SAVE_SERIALIZER
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     // A sync changes the library as it is on disk, not one another program has since replaced.
     h.reload_apps();
-    let mut apps = h.apps.write().unwrap();
-    let mut document = h.app_document.read().unwrap().clone();
-    let mut values = match serde_json::to_value(&*apps)? {
-        Value::Array(values) => values,
-        _ => vec![],
+    let (document, previous_apps, previous_doc, dropped) = {
+        let mut apps = h.apps.write().unwrap();
+        let previous_doc = h.app_document.read().unwrap().clone();
+        let mut document = previous_doc.clone();
+        let mut values = match serde_json::to_value(&*apps)? {
+            Value::Array(values) => values,
+            _ => vec![],
+        };
+        if !change(&mut values, &mut document) {
+            return Ok(false);
+        }
+        let mut next: Vec<App> = serde_json::from_value(Value::Array(values))?;
+        h.assign_apps(&mut next)?;
+        document["apps"] = serde_json::to_value(&next)?;
+        let dropped = crate::neural::dropped(&apps, &next);
+        let previous_apps = std::mem::replace(&mut *apps, next);
+        *h.app_document.write().unwrap() = document.clone();
+        h.config_version
+            .fetch_add(1, std::sync::atomic::Ordering::Release);
+        (document, previous_apps, previous_doc, dropped)
     };
-    if !change(&mut values, &mut document) {
-        return Ok(false);
+    if let Err(error) = h.save_apps(&document) {
+        *h.apps.write().unwrap() = previous_apps;
+        *h.app_document.write().unwrap() = previous_doc;
+        h.config_version
+            .fetch_add(1, std::sync::atomic::Ordering::Release);
+        return Err(error);
     }
-    let mut next: Vec<App> = serde_json::from_value(Value::Array(values))?;
-    h.assign_apps(&mut next)?;
-    document["apps"] = serde_json::to_value(&next)?;
-    h.save_apps(&document)?;
-    let dropped = crate::neural::dropped(&apps, &next);
-    *apps = next;
-    *h.app_document.write().unwrap() = document;
-    h.config_version
-        .fetch_add(1, std::sync::atomic::Ordering::Release);
-    drop(apps);
     // An uninstalled game the sync dropped loses the mod as a deleted one
     // does, after the apps are unlocked: the removal runs a helper process.
     crate::neural::remove_dropped(h, &dropped);
@@ -524,8 +556,9 @@ pub fn status(h: &Shared) -> Value {
 /// `/api/steam/games`, optionally one app with its cover prepared.
 pub fn games(h: &Shared, appid: Option<u32>) -> Result<Value> {
     let settings = Settings::from_config(&h.config.read().unwrap());
-    let (_, games) = catalog(&settings)?;
-    let selected: Vec<u32> = steam::select(&games, &settings, now())
+    let (_, discovery) = catalog(&settings)?;
+    let games = &discovery.games;
+    let selected: Vec<u32> = steam::select(games, &settings, now())
         .iter()
         .map(|g| g.appid)
         .collect();
@@ -569,8 +602,12 @@ pub fn launch(h: &Shared, appid: u32) -> Result<Value> {
         bail!("Rubylight is installing an update");
     }
     let settings = Settings::from_config(&h.config.read().unwrap());
-    let (_, games) = catalog(&settings)?;
-    let Some(game) = games.iter().find(|g| g.appid == appid && g.installed) else {
+    let (_, discovery) = catalog(&settings)?;
+    let Some(game) = discovery
+        .games
+        .iter()
+        .find(|g| g.appid == appid && g.installed)
+    else {
         bail!("Steam game {appid} is not installed");
     };
     if !steam::importable(game, settings.include_tools)

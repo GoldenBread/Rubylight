@@ -95,7 +95,11 @@ impl FrameNumbers {
         let at = reader.at;
         let number = u64::from(reader.bits(bits)?);
         let renumbered = (number + period - skipped % period) % period;
-        let original = rbsp.clone();
+        let edit_from = at / 8;
+        let edit_to = (at + bits as usize).saturating_sub(1) / 8;
+        let edit_len = (edit_to - edit_from + 1).min(8);
+        let mut orig_slice = [0u8; 8];
+        orig_slice[..edit_len].copy_from_slice(&rbsp[edit_from..edit_from + edit_len]);
         for bit in 0..bits as usize {
             let (byte, mask) = ((at + bit) / 8, 0x80u8 >> ((at + bit) % 8));
             if (renumbered >> (bits as usize - 1 - bit)) & 1 == 1 {
@@ -106,17 +110,24 @@ impl FrameNumbers {
         }
         // Re-escape up to a byte that is non-zero before and after the edit,
         // so no escape in the bytes kept spans the seam.
-        let seam = |rbsp: &[u8], original: &[u8]| {
-            ((at + bits as usize).div_ceil(8)..=rbsp.len())
-                .find(|&end| end > 0 && rbsp[end - 1] != 0 && original[end - 1] != 0)
+        let orig_at = |idx: usize, fallback: &[u8]| -> u8 {
+            if idx >= edit_from && idx < edit_from + edit_len {
+                orig_slice[idx - edit_from]
+            } else {
+                fallback[idx]
+            }
         };
-        let end = match seam(&rbsp, &original) {
+        let end = match ((at + bits as usize).div_ceil(8)..=rbsp.len())
+            .find(|&end| end > 0 && rbsp[end - 1] != 0 && orig_at(end - 1, &rbsp) != 0)
+        {
             Some(end) => end,
             None => {
                 let (full, map) = unescape(&nal[1..], usize::MAX);
                 let mut edited = full.clone();
                 edited[..rbsp.len()].copy_from_slice(&rbsp);
-                let end = seam(&edited, &full).ok_or(Unsupported("H.264 slice of zero bytes"))?;
+                let end = ((at + bits as usize).div_ceil(8)..=edited.len())
+                    .find(|&end| end > 0 && edited[end - 1] != 0 && full[end - 1] != 0)
+                    .ok_or(Unsupported("H.264 slice of zero bytes"))?;
                 (rbsp, from) = (edited, map);
                 end
             }
@@ -128,8 +139,18 @@ impl FrameNumbers {
     }
 }
 
-/// The SPS id, log2_max_frame_num and separate_colour_plane_flag.
-fn sequence_parameter_set(rbsp: &[u8]) -> Result<(usize, (u32, bool))> {
+pub(super) struct SpsHeader {
+    pub id: usize,
+    pub profile: u32,
+    pub log2_max_frame_num: u32,
+    pub separate_colour_plane: bool,
+    pub gaps_bit: usize,
+    pub frame_mbs_only: Result<bool>,
+}
+
+/// Shared H.264 SPS RBSP parser returning syntax fields needed by both
+/// `FrameNumbers` and `h264_reference_recovery`.
+pub(super) fn parse_sps(rbsp: &[u8], stop_on_poc0: bool) -> Result<SpsHeader> {
     let mut reader = Reader::new(rbsp);
     let profile = reader.bits(8)?;
     reader.skip(16)?;
@@ -164,10 +185,14 @@ fn sequence_parameter_set(rbsp: &[u8]) -> Result<(usize, (u32, bool))> {
             }
         }
     }
-    let bits = reader.ue_max(12, "frame_num length")? + 4;
-    match reader.ue()? {
+    let log2_max_frame_num = reader.ue_max(12, "frame_num length")? + 4;
+    let poc_type = reader.ue()?;
+    match poc_type {
         // POC type 0 counts its own low bits, which a gap would also break.
-        0 => return Err(Unsupported("H.264 POC type 0")),
+        0 if stop_on_poc0 => return Err(Unsupported("H.264 POC type 0")),
+        0 => {
+            reader.ue()?;
+        }
         1 => {
             reader.skip(1)?;
             reader.se()?;
@@ -180,13 +205,30 @@ fn sequence_parameter_set(rbsp: &[u8]) -> Result<(usize, (u32, bool))> {
         _ => return Err(Unsupported("H.264 POC type")),
     }
     reader.ue()?;
+    let gaps_bit = reader.at;
     reader.skip(1)?;
-    reader.ue()?;
-    reader.ue()?;
-    if !reader.flag()? {
+    let frame_mbs_only = (|| {
+        reader.ue()?;
+        reader.ue()?;
+        reader.flag()
+    })();
+    Ok(SpsHeader {
+        id,
+        profile,
+        log2_max_frame_num,
+        separate_colour_plane,
+        gaps_bit,
+        frame_mbs_only,
+    })
+}
+
+/// The SPS id, log2_max_frame_num and separate_colour_plane_flag.
+fn sequence_parameter_set(rbsp: &[u8]) -> Result<(usize, (u32, bool))> {
+    let sps = parse_sps(rbsp, true)?;
+    if !sps.frame_mbs_only? {
         return Err(Unsupported("H.264 field coding"));
     }
-    Ok((id, (bits, separate_colour_plane)))
+    Ok((sps.id, (sps.log2_max_frame_num, sps.separate_colour_plane)))
 }
 
 #[cfg(test)]

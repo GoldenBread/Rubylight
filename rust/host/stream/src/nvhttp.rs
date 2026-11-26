@@ -274,6 +274,7 @@ async fn mark_second_screen(mut request: axum::extract::Request) -> axum::extrac
 /// Ends every session of a paired device, its second screen's too: an unpaired or turned off
 /// device keeps neither streaming.
 pub fn end_device(h: &Shared, device: &str) {
+    h.stop_launch(|launching| same_device(launching, device));
     let device = butterpollo_session::state::device_uuid(device);
     for uuid in [
         device.to_owned(),

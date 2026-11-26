@@ -207,13 +207,14 @@ pub(super) async fn apply<P: Provider>(
     record: &std::sync::Mutex<LeaseRecord>,
     guest: &[Mapping],
 ) -> Applied {
+    let mut held = previous.to_vec();
     apply_round(
         gateway,
         local,
         wanted,
         description,
         reported,
-        previous,
+        &mut held,
         record,
         guest,
         false,

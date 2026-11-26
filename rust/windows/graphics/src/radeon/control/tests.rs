@@ -84,6 +84,7 @@ struct Driver {
     /// Writing this id turns the journal path into a directory, so the next save fails.
     break_journal_at: Option<&'static str>,
     writes_of: HashMap<String, usize>,
+    reads: usize,
 }
 #[derive(Clone, Default)]
 struct Fake(Rc<RefCell<Driver>>);
@@ -111,6 +112,7 @@ impl Fake {
 impl RadeonBackend for Fake {
     fn read(&mut self, _gpu: i32) -> Result<Vec<Setting>, BackendError> {
         let mut d = self.0.borrow_mut();
+        d.reads += 1;
         if d.unreadable {
             return Err(BackendError("ADLX_FAIL".into()));
         }
@@ -450,6 +452,7 @@ fn restore_drops_an_entry_whose_write_never_happened() {
         original: Value::Int(140),
         written: Value::Int(150),
         side_effect: false,
+        raw: None,
     });
     journal.save(&c.journal).unwrap();
     let report = c.recover_on_startup().unwrap();
@@ -627,6 +630,34 @@ fn an_unreadable_driver_fails_the_request_before_anything_is_journaled() {
         .unwrap_err();
     assert_eq!(e.kind, ErrorKind::Unavailable);
     assert!(!dir.path().join(JOURNAL_FILE).exists());
+}
+
+#[test]
+fn restore_batches_driver_reads_once_per_gpu_for_multiple_unchanged_entries() {
+    let fake = panel();
+    let (mut c, _dir) = controller(&fake);
+    c.apply(
+        "s1",
+        1,
+        &[
+            change("chill.enabled", on(true)),
+            change("pacing.limit", Value::Int(120)),
+            change("anti_lag.enabled", on(false)),
+        ],
+    )
+    .unwrap();
+    // Simulate external/already-reverted driver originals so restore verifies all 3 without writing.
+    fake.set("chill.enabled", on(false));
+    fake.set("pacing.limit", Value::Int(140));
+    fake.set("anti_lag.enabled", on(true));
+    fake.0.borrow_mut().reads = 0;
+    let report = c.restore(types::Scope::Session("s1")).unwrap();
+    assert_eq!(report.outcomes.len(), 3);
+    assert_eq!(
+        fake.0.borrow().reads,
+        1,
+        "restore must batch all initial setting readbacks into one read per GPU"
+    );
 }
 
 fn entry_of<'a>(journal: &'a Journal, id: &str) -> &'a Entry {

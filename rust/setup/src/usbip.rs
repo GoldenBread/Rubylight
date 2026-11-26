@@ -14,16 +14,38 @@ pub fn selected(profile: &Path, explicit: Option<bool>) -> bool {
 }
 
 pub fn remember(profile: &Path, enabled: bool) -> Result<()> {
-    std::fs::create_dir_all(profile)?;
-    std::fs::write(
-        profile.join(CHOICE),
-        if enabled {
-            br#"{"enabled":true}"#.as_slice()
-        } else {
-            br#"{"enabled":false}"#.as_slice()
-        },
+    remember_choice(
+        profile,
+        CHOICE,
+        enabled,
+        "saving the USB audio and haptics installer choice",
     )
-    .context("saving the USB audio and haptics installer choice")
+}
+
+pub(crate) fn remember_choice(
+    profile: &Path,
+    file: &str,
+    enabled: bool,
+    context: &str,
+) -> Result<()> {
+    use anyhow::bail;
+    std::fs::create_dir_all(profile)?;
+    let target = profile.join(file);
+    let temp = profile.join(format!("{file}.tmp-{}", std::process::id()));
+    let bytes = if enabled {
+        br#"{"enabled":true}"#.as_slice()
+    } else {
+        br#"{"enabled":false}"#.as_slice()
+    };
+    if let Err(error) = std::fs::write(&temp, bytes) {
+        let _ = std::fs::remove_file(&temp);
+        return Err(error).context(context.to_owned());
+    }
+    if let Err(error) = std::fs::rename(&temp, &target) {
+        let _ = std::fs::remove_file(&temp);
+        bail!("{context}: {error}");
+    }
+    Ok(())
 }
 
 #[cfg(test)]

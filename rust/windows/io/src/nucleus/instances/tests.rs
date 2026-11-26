@@ -650,3 +650,51 @@ fn a_stream_too_large_to_park_is_an_error() {
         .to_string();
     assert!(error.contains("does not fit"), "{error}");
 }
+
+#[test]
+fn assigning_one_restarted_instance_preserves_surviving_siblings_processes() {
+    let mut keeper = keeper(2);
+    let mut desktop = Fake {
+        processes: vec![
+            process(10, 1, 100, "NucleusCoop.exe"),
+            process(20, 10, 110, "Game.exe"),
+            process(30, 10, 120, "Game.exe"),
+            process(31, 30, 121, "Game.exe"),
+            process(32, 30, 122, "Helper.exe"),
+        ],
+        paths: BTreeMap::from([
+            (20, r"C:\Nucleus\content\G\Instance1\Game.exe".into()),
+            (30, r"C:\Nucleus\content\G\Instance0\Game.exe".into()),
+            (31, r"C:\Nucleus\content\G\Instance0\Game.exe".into()),
+            (32, r"C:\Nucleus\content\G\Instance0\Helper.exe".into()),
+        ]),
+        windows: vec![window(2, 20, ON_SCREEN), window(3, 31, ON_SCREEN)],
+        ..Default::default()
+    };
+    let job = BTreeSet::from([10, 20, 30, 31, 32]);
+    keeper.pass(&mut desktop, &job, &SIZES).unwrap();
+    assert_eq!(
+        keeper.processes(),
+        BTreeMap::from([(20, 110), (30, 120), (31, 121), (32, 122)])
+    );
+
+    // Parent process 30 exits leaving its two sibling children 31 (heir) and 32 running;
+    // both 31 and its sibling 32 must stay tracked alongside Instance 1 (20).
+    desktop.processes = vec![
+        process(10, 1, 100, "NucleusCoop.exe"),
+        process(20, 10, 110, "Game.exe"),
+        process(31, 30, 121, "Game.exe"),
+        process(32, 30, 122, "Helper.exe"),
+    ];
+    desktop.paths = BTreeMap::from([
+        (20, r"C:\Nucleus\content\G\Instance1\Game.exe".into()),
+        (31, r"C:\Nucleus\content\G\Instance0\Game.exe".into()),
+        (32, r"C:\Nucleus\content\G\Instance0\Helper.exe".into()),
+    ]);
+    let job = BTreeSet::from([10, 20, 31, 32]);
+    keeper.pass(&mut desktop, &job, &SIZES).unwrap();
+    assert_eq!(
+        keeper.processes(),
+        BTreeMap::from([(20, 110), (31, 121), (32, 122)])
+    );
+}

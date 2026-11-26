@@ -36,7 +36,7 @@ fn launcher(installs: &[Installed], name: &str, relative: &[&str]) -> Option<Pat
     let paths = installs
         .iter()
         .filter(|item| item.name.to_lowercase().contains(name))
-        .filter(|item| !item.folder.as_os_str().is_empty())
+        .filter(|item| !item.folder.as_os_str().is_empty() && super::on_this_pc(&item.folder))
         .flat_map(|item| relative.iter().map(|file| item.folder.join(file)));
     paths.into_iter().find(|path| path.is_file())
 }
@@ -72,9 +72,9 @@ pub(super) fn gog_registered(
         let id = values.get("gameID").map(|id| id.trim());
         // The .info scan already reported a folder it could not read.
         let has_info = values.get("path").is_some_and(|folder| {
-            files(Path::new(folder.trim()), &mut vec![])
-                .iter()
-                .any(|path| gog_info(path))
+            let folder = Path::new(folder.trim());
+            super::on_this_pc(folder)
+                && files(folder, &mut vec![]).iter().any(|path| gog_info(path))
         });
         if has_info
             || games
@@ -92,11 +92,25 @@ pub(super) fn scan_steam(games: &mut Vec<Game>, errors: &mut Vec<String>) -> boo
     for (root, key) in locations(r"SOFTWARE\Valve\Steam") {
         for name in ["SteamPath", "InstallPath"] {
             if let Some(folder) = registry_string(root, &key, name) {
-                let path = PathBuf::from(folder);
-                if (path.join("steamapps").is_dir() || path.join("steam.exe").is_file())
-                    && !roots.contains(&path)
+                let candidate = PathBuf::from(folder);
+                if !super::on_this_pc(&candidate) {
+                    continue;
+                }
+                let Ok(canonical) = std::fs::canonicalize(&candidate) else {
+                    continue;
+                };
+                if !super::on_this_pc(&canonical) {
+                    continue;
+                }
+                let clean = canonical.to_string_lossy();
+                let clean = PathBuf::from(clean.strip_prefix(r"\\?\").unwrap_or(&clean));
+                let exists = clean.join("steamapps").is_dir() || clean.join("steam.exe").is_file();
+                if exists
+                    && !roots.iter().any(|existing| {
+                        crate::user_folder::same_name(existing.as_os_str(), clean.as_os_str())
+                    })
                 {
-                    roots.push(path);
+                    roots.push(clean);
                 }
             }
         }
@@ -127,10 +141,13 @@ pub(super) fn scan_epic(
 ) -> bool {
     let folder = program_data.join(r"Epic\EpicGamesLauncher\Data\Manifests");
     let can_launch = protocol("com.epicgames.launcher");
+    if !super::on_this_pc(&folder) {
+        return can_launch;
+    }
     // The launcher's box art, from its catalog cache. Covers are a nicety: a cache
     // that cannot be read leaves the games without, and the scan is not incomplete.
     let catalog = program_data.join(r"Epic\EpicGamesLauncher\Data\Catalog\catcache.bin");
-    let covers = if catalog.is_file() {
+    let covers = if super::on_this_pc(&catalog) && catalog.is_file() {
         bytes(&catalog)
             .and_then(|data| library::epic_covers(&data))
             .unwrap_or_else(|error| {
@@ -182,6 +199,7 @@ pub(super) fn scan_battlenet(
     .or_else(|| {
         program_folders
             .iter()
+            .filter(|root| super::on_this_pc(root))
             .flat_map(|root| {
                 ["Battle.net Launcher.exe", "Battle.net.exe"]
                     .map(|file| root.join("Battle.net").join(file))
@@ -190,7 +208,7 @@ pub(super) fn scan_battlenet(
     });
     let database = program_data.join(r"Battle.net\Agent\product.db");
     let mut entries = vec![];
-    if database.exists() {
+    if super::on_this_pc(&database) && database.exists() {
         match bytes(&database).and_then(|data| library::battlenet_database(&data)) {
             Ok(found) => entries.extend(found),
             Err(error) => errors.push(format!("Battle.net product database: {error}")),
@@ -208,7 +226,7 @@ pub(super) fn scan_battlenet(
     // When each game was last played, for the recent-games options: the signed-in
     // user's Battle.net.config. Without one no game counts as played.
     let played = battlenet_config()
-        .filter(|path| path.is_file())
+        .filter(|path| super::on_this_pc(path) && path.is_file())
         .and_then(|path| {
             bytes(&path)
                 .and_then(|data| library::battlenet_last_played(&data))
@@ -248,7 +266,10 @@ pub(super) fn scan_ea(
     ] {
         candidates.extend(folders(key, errors).into_iter().map(|(_, folder)| folder));
     }
-    for root in program_folders {
+    for root in program_folders
+        .iter()
+        .filter(|root| super::on_this_pc(root))
+    {
         for folder in ["EA Games", "Origin Games"] {
             candidates.extend(
                 files(&root.join(folder), errors)
@@ -259,6 +280,9 @@ pub(super) fn scan_ea(
     }
     let can_launch = protocol("origin2");
     for folder in candidates.into_iter().collect::<BTreeSet<_>>() {
+        if !super::on_this_pc(&folder) {
+            continue;
+        }
         let manifest = folder.join(r"__Installer\installerdata.xml");
         if !manifest.exists() {
             continue;
@@ -333,6 +357,7 @@ pub(super) fn scan_gog(
         .into_iter()
         .filter_map(|(root, key)| registry_string(root, &key, "client"))
         .map(PathBuf::from)
+        .filter(|path| super::on_this_pc(path))
         .map(|path| {
             if path.is_dir() {
                 path.join("GalaxyClient.exe")
@@ -344,6 +369,7 @@ pub(super) fn scan_gog(
         .or_else(|| {
             program_folders
                 .iter()
+                .filter(|root| super::on_this_pc(root))
                 .map(|root| root.join(r"GOG Galaxy\GalaxyClient.exe"))
                 .find(|path| path.is_file())
         });
@@ -367,6 +393,7 @@ pub(super) fn scan_gog(
         .map(|path| path.trim())
         .filter(|path| !path.is_empty())
         .map(PathBuf::from)
+        .filter(|path| super::on_this_pc(path))
         .collect();
     folders.extend(
         installs
@@ -375,7 +402,7 @@ pub(super) fn scan_gog(
                 item.publisher.to_lowercase().contains("gog") && item.key.ends_with("_is1")
             })
             .map(|item| item.folder.clone())
-            .filter(|path| !path.as_os_str().is_empty()),
+            .filter(|path| !path.as_os_str().is_empty() && super::on_this_pc(path)),
     );
     let available = galaxy.is_some() || !folders.is_empty();
     for folder in folders {

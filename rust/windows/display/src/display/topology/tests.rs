@@ -281,7 +281,7 @@ fn displays_that_stay_on_keep_their_modes_when_the_layout_changes() {
         path
     };
     // An inactive route from QDC_ALL_PATHS has no rotation or scaling.
-    let kept = keep_active_modes(&[path(0, 10, 4, true), path(1, 11, 6, false)]);
+    let kept = keep_active_modes(&[path(0, 10, 4, true), path(1, 11, 6, false)], &[]);
     assert!(kept.iter().all(|p| p.flags == DISPLAYCONFIG_PATH_ACTIVE));
     // SAFETY: The test initialized the source mode-index union field in this path.
     assert_eq!(unsafe { kept[0].sourceInfo.Anonymous.modeInfoIdx }, 4);
@@ -307,6 +307,38 @@ fn displays_that_stay_on_keep_their_modes_when_the_layout_changes() {
     );
     assert_eq!(kept[1].targetInfo.rotation, DISPLAYCONFIG_ROTATION_IDENTITY);
     assert_eq!(kept[1].targetInfo.scaling, DISPLAYCONFIG_SCALING_PREFERRED);
+}
+#[test]
+fn inactive_routes_receive_saved_rotations_while_active_routes_keep_theirs() {
+    let path = |source, target, rotation: i32, active: bool| {
+        let mut path = DISPLAYCONFIG_PATH_INFO::default();
+        path.sourceInfo.id = source;
+        path.targetInfo.id = target;
+        path.targetInfo.rotation = DISPLAYCONFIG_ROTATION(rotation);
+        path.flags = if active { DISPLAYCONFIG_PATH_ACTIVE } else { 0 };
+        path
+    };
+    let kept = keep_active_modes(
+        &[
+            path(0, 10, DISPLAYCONFIG_ROTATION_ROTATE180.0, true),
+            path(1, 11, 0, false),
+            path(2, 12, 0, false),
+            path(3, 13, 0, false),
+            path(4, 14, 0, false),
+        ],
+        &[Some(2), Some(2), Some(4), None, Some(0)],
+    );
+    assert_eq!(
+        kept[0].targetInfo.rotation,
+        DISPLAYCONFIG_ROTATION_ROTATE180
+    );
+    assert_eq!(kept[1].targetInfo.rotation, DISPLAYCONFIG_ROTATION_ROTATE90);
+    assert_eq!(
+        kept[2].targetInfo.rotation,
+        DISPLAYCONFIG_ROTATION_ROTATE270
+    );
+    assert_eq!(kept[3].targetInfo.rotation, DISPLAYCONFIG_ROTATION_IDENTITY);
+    assert_eq!(kept[4].targetInfo.rotation, DISPLAYCONFIG_ROTATION_IDENTITY);
 }
 #[test]
 fn switching_on_a_virtual_display_keeps_duplicated_tvs_and_their_modes() {

@@ -9,10 +9,7 @@ pub(super) async fn pyrowave_bandwidth(
     if authenticated(&h, &connection, 0).is_err() {
         return StatusCode::UNAUTHORIZED.into_response();
     }
-    static PAYLOAD: std::sync::OnceLock<Bytes> = std::sync::OnceLock::new();
-    let payload = PAYLOAD
-        .get_or_init(|| Bytes::from(vec![0xa5; 32 * 1024 * 1024]))
-        .clone();
+    let payload = Bytes::from(vec![0xa5; 32 * 1024 * 1024]);
     (
         [
             (header::CONTENT_TYPE, "application/octet-stream"),
@@ -110,24 +107,31 @@ pub(super) struct ProbeBody<F> {
     offset: usize,
     pub(super) deadline: Instant,
     busy: F,
+    noise: Vec<u8>,
+    next_busy_check: Instant,
 }
 impl<F: Fn() -> bool> ProbeBody<F> {
     pub(super) fn new(remaining: usize, deadline: Instant, busy: F) -> Self {
+        use rand::RngCore;
+        let len = remaining.clamp(
+            1,
+            butterpollo_media_policy::bandwidth_probe::MAX_BYTES as usize,
+        );
+        let mut noise = vec![0; len];
+        rand::thread_rng().fill_bytes(&mut noise);
         Self {
             remaining,
             offset: 0,
             deadline,
             busy,
+            noise,
+            next_busy_check: Instant::now(),
         }
     }
-    pub(super) fn noise() -> &'static [u8] {
-        static NOISE: std::sync::OnceLock<Vec<u8>> = std::sync::OnceLock::new();
-        NOISE.get_or_init(|| {
-            use rand::RngCore;
-            let mut bytes = vec![0; butterpollo_media_policy::bandwidth_probe::MAX_BYTES as usize];
-            rand::thread_rng().fill_bytes(&mut bytes);
-            bytes
-        })
+
+    #[cfg(test)]
+    pub(super) fn recheck_now(&mut self) {
+        self.next_busy_check = Instant::now();
     }
 }
 impl<F: Fn() -> bool + Unpin> tokio::io::AsyncRead for ProbeBody<F> {
@@ -137,22 +141,25 @@ impl<F: Fn() -> bool + Unpin> tokio::io::AsyncRead for ProbeBody<F> {
         buf: &mut tokio::io::ReadBuf<'_>,
     ) -> std::task::Poll<std::io::Result<()>> {
         // The body ends early at the deadline, or when a stream runs or
-        // starts: the client times what arrived.
-        if self.remaining > 0 && (self.busy)() {
-            tracing::info!(
-                unsent = self.remaining,
-                "bandwidth probe stopped for a stream"
-            );
-            self.remaining = 0;
+        // starts: the client times what arrived (busy check throttled to 1 Hz).
+        let now = Instant::now();
+        if self.remaining > 0 && now >= self.next_busy_check {
+            self.next_busy_check = now + std::time::Duration::from_secs(1);
+            if (self.busy)() {
+                tracing::info!(
+                    unsent = self.remaining,
+                    "bandwidth probe stopped for a stream"
+                );
+                self.remaining = 0;
+            }
         }
-        if self.remaining > 0 && Instant::now() < self.deadline {
-            let noise = Self::noise();
+        if self.remaining > 0 && now < self.deadline {
             let n = self
                 .remaining
                 .min(buf.remaining())
-                .min(noise.len() - self.offset);
-            buf.put_slice(&noise[self.offset..self.offset + n]);
-            self.offset = (self.offset + n) % noise.len();
+                .min(self.noise.len() - self.offset);
+            buf.put_slice(&self.noise[self.offset..self.offset + n]);
+            self.offset = (self.offset + n) % self.noise.len();
             self.remaining -= n;
         }
         std::task::Poll::Ready(Ok(()))

@@ -228,7 +228,10 @@ impl Store {
             processes: Vec::new(),
             error: None,
         });
-        self.save(&journal)?;
+        if let Err(error) = self.save(&journal) {
+            let _ = std::fs::remove_dir_all(&originals);
+            return Err(error);
+        }
         let index = journal.swaps.len() - 1;
         let mut report = Report::default();
         let mut failure = None;
@@ -257,7 +260,10 @@ impl Store {
             match placed {
                 Ok(()) => {
                     journal.swaps[index].files[file].step = Step::Playing;
-                    self.save(&journal)?;
+                    if let Err(error) = self.save(&journal) {
+                        failure = Some(error);
+                        break;
+                    }
                 }
                 Err(error) => {
                     failure = Some(error);
@@ -274,9 +280,12 @@ impl Store {
                 file.step = Step::Saved;
             }
         }
-        self.save(&journal)?;
+        let save_error = self.save(&journal).err();
         match self.finish_in(&mut journal, &id, Mode::Cancel) {
-            Ok(_) => Err(error),
+            Ok(_) => Err(match save_error {
+                Some(save_err) => error.context(format!("journal save failed: {save_err:#}")),
+                None => error,
+            }),
             Err(again) => Err(error.context(format!(
                 "and the originals could not all be put back yet ({again:#}); the host tries again"
             ))),
@@ -477,24 +486,29 @@ impl Store {
             }
             if matches!(step, Step::Playing | Step::Saved | Step::Placing) {
                 let original = originals.join(&key);
-                let restored = match read_store(&original) {
-                    Ok(Some(bytes)) => self.write_game(&path, &bytes).with_context(|| {
+                match read_store(&original) {
+                    Ok(Some(bytes)) => match self.write_game(&path, &bytes).with_context(|| {
                         format!("{written} ({}) could not be put back", path.display())
-                    }),
-                    Ok(None) => Err(anyhow!(
-                        "{written}: the kept original {} is missing",
-                        original.display()
-                    )),
-                    Err(error) => Err(anyhow!(error))
-                        .with_context(|| format!("reading {}", original.display())),
-                };
-                match restored {
-                    Ok(()) => {
-                        report.restored.push(written.clone());
+                    }) {
+                        Ok(()) => {
+                            report.restored.push(written.clone());
+                            journal.swaps[index].files[file].step = Step::Done;
+                            self.save(journal)?;
+                        }
+                        Err(error) => failures.push(format!("{error:#}")),
+                    },
+                    Ok(None) => {
+                        report.warnings.push(format!(
+                            "{written}: the kept original {} is missing, so it could not be put back",
+                            original.display()
+                        ));
                         journal.swaps[index].files[file].step = Step::Done;
                         self.save(journal)?;
                     }
-                    Err(error) => failures.push(format!("{error:#}")),
+                    Err(error) => failures.push(format!(
+                        "{:#}",
+                        anyhow!(error).context(format!("reading {}", original.display()))
+                    )),
                 }
             }
         }
@@ -585,12 +599,29 @@ impl Store {
             if std::fs::symlink_metadata(path).is_ok() {
                 game_files::replace(path, bytes)
             } else {
-                let mut out = std::fs::OpenOptions::new()
-                    .write(true)
-                    .create_new(true)
-                    .open(path)?;
-                out.write_all(bytes)?;
-                out.sync_all()
+                let (Some(parent), Some(name)) = (path.parent(), path.file_name()) else {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        "the file has no folder",
+                    ));
+                };
+                let temporary = parent.join(format!(
+                    ".{}.{}.tmp",
+                    name.to_string_lossy(),
+                    uuid::Uuid::new_v4()
+                ));
+                let result = (|| {
+                    let mut out = std::fs::OpenOptions::new()
+                        .write(true)
+                        .create_new(true)
+                        .open(&temporary)?;
+                    out.write_all(bytes)?;
+                    out.sync_all()?;
+                    drop(out);
+                    std::fs::hard_link(&temporary, path)
+                })();
+                let _ = std::fs::remove_file(&temporary);
+                result
             }
         })
         .and_then(|written| written)

@@ -1,7 +1,10 @@
 import copy, csv, pathlib, tempfile, unittest
 from soak_result import audio_windows, fault_outcome, load_limit, resource_growth, video_windows
-from soak import cases
-from e2e_host import stage_fault_host
+try:
+    from soak import cases
+    from e2e_host import stage_fault_host
+except ModuleNotFoundError as exc:
+    raise unittest.SkipTest(f'requires optional dependency ({exc.name})')
 
 
 class SoakMeasurements(unittest.TestCase):

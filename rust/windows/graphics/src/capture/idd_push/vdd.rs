@@ -3,8 +3,11 @@ use anyhow::{Context, Result};
 use rubylight_vdisplay_proto::control::{MonitorStatus, SetFenceRingRequest, SetFrameRingRequest};
 use windows::Win32::Foundation::{
     CloseHandle, DUPLICATE_CLOSE_SOURCE, DUPLICATE_SAME_ACCESS, DuplicateHandle, HANDLE,
+    WAIT_OBJECT_0,
 };
-use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcess, PROCESS_DUP_HANDLE};
+use windows::Win32::System::Threading::{
+    GetCurrentProcess, OpenProcess, PROCESS_DUP_HANDLE, PROCESS_SYNCHRONIZE, WaitForSingleObject,
+};
 
 /// A monitor owned by the Rubylight virtual display driver, decoupled from `butterpollo-win-display`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -48,15 +51,22 @@ pub(crate) fn wanted_for(
 pub(super) struct Remote {
     process: HANDLE,
 }
-// SAFETY: a process handle is a process-wide token, closed once in Drop.
+// SAFETY: a process handle is a process-wide token, safe to wait on or duplicate concurrently across threads, closed once in Drop.
 unsafe impl Send for Remote {}
+// SAFETY: Win32 `WaitForSingleObject` and `DuplicateHandle` take the handle by value concurrently without mutating `Remote`.
+unsafe impl Sync for Remote {}
 
 impl Remote {
     pub(super) fn open(pid: u32) -> Result<Self> {
         // SAFETY: plain FFI; the returned handle is owned and closed in Drop.
-        let process = unsafe { OpenProcess(PROCESS_DUP_HANDLE, false, pid) }
+        let process = unsafe { OpenProcess(PROCESS_DUP_HANDLE | PROCESS_SYNCHRONIZE, false, pid) }
             .with_context(|| format!("open the display driver's host process {pid}"))?;
         Ok(Self { process })
+    }
+    /// Whether the remote driver process has already terminated.
+    pub(super) fn has_exited(&self) -> bool {
+        // SAFETY: `self.process` was opened with `PROCESS_SYNCHRONIZE` and stays live until `Drop`.
+        unsafe { WaitForSingleObject(self.process, 0) == WAIT_OBJECT_0 }
     }
     pub(super) fn duplicate(&self, handle: HANDLE) -> Result<u64> {
         let mut remote = HANDLE::default();

@@ -660,6 +660,10 @@ pub fn resend_anchor(
 /// again only for the client's recovery request does not: it would hold the
 /// game's next frame back by up to a period, and leave every frame for about
 /// a second after it late while the credit is repaid.
+pub fn counts_toward_rate(fresh: bool, recovery: bool) -> bool {
+    fresh || !recovery
+}
+
 /// Whether claims wait for the capture's learned phase, for the backend that
 /// opened. Only WGC's frames arrive on a composition beat the wait can align
 /// with: Rubylight's display driver pushes every composed frame, and a wait for
@@ -668,8 +672,4 @@ pub fn resend_anchor(
 /// `frame_pacing_source_phase` set either way wins.
 pub fn source_phase(config: &Config, backend: &str) -> bool {
     config.boolean("frame_pacing_source_phase", backend == "wgc")
-}
-
-pub fn counts_toward_rate(fresh: bool, recovery: bool) -> bool {
-    fresh || !recovery
 }

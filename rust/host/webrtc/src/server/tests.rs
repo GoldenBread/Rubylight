@@ -451,6 +451,8 @@ async fn console_revocation_is_not_starved_by_continuous_websocket_pong_frames()
                             None,
                             peer,
                             Some((sign_in, Duration::from_millis(20))),
+                            None,
+                            None,
                             socket,
                         )
                         .await;
@@ -525,5 +527,183 @@ async fn console_revocation_is_not_starved_by_continuous_websocket_pong_frames()
     .expect("console_revoked was starved by continuous Pong frames");
     assert_eq!(close_code, Some(axum::extract::ws::close_code::POLICY));
     flood.abort();
+    let _ = flood.await;
     server.abort();
+}
+
+#[tokio::test]
+async fn send_within_times_out_stalled_send_and_reports_errors() {
+    assert!(send_within(Duration::from_millis(50), async { Ok::<(), ()>(()) }).await);
+    assert!(!send_within(Duration::from_millis(50), async { Err::<(), ()>(()) }).await);
+    let started = std::time::Instant::now();
+    let stalled = send_within(
+        Duration::from_millis(20),
+        std::future::pending::<Result<(), ()>>(),
+    )
+    .await;
+    assert!(!stalled);
+    assert!(started.elapsed() < Duration::from_secs(1));
+}
+
+#[tokio::test]
+async fn full_session_inbox_reports_error_on_answer_and_stop() {
+    let f = Fixture::new();
+    let h = f.host.clone();
+    let clients = crate::WebRtcRuntime::for_host(&h).clients;
+    let peer = Peer {
+        address: ([192, 168, 1, 9], 5000).into(),
+        local: ([192, 168, 1, 2], 8000).into(),
+        this_pc: false,
+    };
+    let Registered {
+        id,
+        closed: _closed,
+    } = clients.open(peer.address.ip()).unwrap();
+    let device = clients.console_device(&h, "owner").unwrap();
+    let mut state = Connection::new(h, clients, Limits::default(), peer, id);
+    state.client = Some(Authenticated {
+        client_id: device.webrtc().unwrap().0.to_owned(),
+        name: device.name,
+    });
+    let (commands, _rx) = crate::session::Commands::test_channel(crate::session::COMMAND_CAP);
+    for _ in 0..crate::session::COMMAND_CAP {
+        assert!(commands.send(crate::session::Command::Stop));
+    }
+    state.session = Some(commands);
+
+    let mut out = Vec::new();
+    state
+        .handle(r#"{"version":2,"type":"stop-session"}"#, &mut out)
+        .await;
+    state
+        .handle(
+            r#"{"version":2,"type":"answer","sessionId":1,"sdp":"v=0"}"#,
+            &mut out,
+        )
+        .await;
+    assert_eq!(out.len(), 2, "{out:?}");
+    assert!(matches!(
+        &out[0],
+        ServerMessage::Error {
+            request_type,
+            code: butterpollo_session::webrtc::protocol::ErrorCode::InternalError,
+            ..
+        } if request_type == "stop-session"
+    ));
+    assert!(matches!(
+        &out[1],
+        ServerMessage::Error {
+            request_type,
+            code: butterpollo_session::webrtc::protocol::ErrorCode::InternalError,
+            ..
+        } if request_type == "answer"
+    ));
+}
+
+async fn ws_upgrade_and_read_first_frame(addr: SocketAddr) -> (tokio::net::TcpStream, Vec<u8>) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+    stream
+        .write_all(
+            b"GET /ws HTTP/1.1\r\nHost: 127.0.0.1\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n",
+        )
+        .await
+        .unwrap();
+    let mut header = Vec::new();
+    let mut byte = [0u8; 1];
+    while !header.ends_with(b"\r\n\r\n") {
+        stream.read_exact(&mut byte).await.unwrap();
+        header.push(byte[0]);
+    }
+    assert!(
+        String::from_utf8_lossy(&header).starts_with("HTTP/1.1 101"),
+        "{}",
+        String::from_utf8_lossy(&header)
+    );
+    let mut h2 = [0u8; 2];
+    stream.read_exact(&mut h2).await.unwrap();
+    let len = match h2[1] & 0x7f {
+        126 => {
+            let mut ext = [0u8; 2];
+            stream.read_exact(&mut ext).await.unwrap();
+            usize::from(u16::from_be_bytes(ext))
+        }
+        n => usize::from(n),
+    };
+    let mut payload = vec![0u8; len];
+    stream.read_exact(&mut payload).await.unwrap();
+    (stream, payload)
+}
+
+#[tokio::test]
+async fn socket_permit_spans_upgraded_websocket_and_dropping_running_closes_it() {
+    use tokio::io::AsyncReadExt;
+
+    let f = Fixture::new();
+    let running = start_with_cap(
+        f.host.clone(),
+        [127, 0, 0, 1].into(),
+        0,
+        0,
+        None,
+        Limits::default(),
+        2,
+    )
+    .unwrap();
+    let addr = crate::WebRtcRuntime::for_host(&f.host)
+        .clients
+        .status()
+        .signalling
+        .unwrap();
+
+    // Two upgraded WebSocket connections consume both permits across their lifetime.
+    let (mut ws1, frame1) = ws_upgrade_and_read_first_frame(addr).await;
+    assert!(
+        std::str::from_utf8(&frame1)
+            .unwrap()
+            .contains("auth-required")
+    );
+    let (ws2, frame2) = ws_upgrade_and_read_first_frame(addr).await;
+    assert!(
+        std::str::from_utf8(&frame2)
+            .unwrap()
+            .contains("auth-required")
+    );
+
+    // A third connection is closed before handshake while both upgraded sockets remain open.
+    let mut rejected = tokio::net::TcpStream::connect(addr).await.unwrap();
+    let mut buf = [0u8; 1];
+    let n = tokio::time::timeout(Duration::from_secs(2), rejected.read(&mut buf))
+        .await
+        .expect("3rd connection should close immediately when MAX_SOCKETS are active");
+    assert!(matches!(n, Ok(0) | Err(_)));
+
+    // Closing ws2 frees a permit for a subsequent connection.
+    drop(ws2);
+    let (ws3, frame3) = tokio::time::timeout(
+        Duration::from_secs(2),
+        ws_upgrade_and_read_first_frame(addr),
+    )
+    .await
+    .expect("a freed permit should allow the next WebSocket upgrade");
+    assert!(
+        std::str::from_utf8(&frame3)
+            .unwrap()
+            .contains("auth-required")
+    );
+
+    // Dropping `Running` notifies and closes active upgraded WebSocket connections cleanly.
+    drop(running);
+    let mut close_h2 = [0u8; 2];
+    let got_close = tokio::time::timeout(Duration::from_secs(2), async {
+        match ws1.read_exact(&mut close_h2).await {
+            Ok(_) => Some(close_h2[0] & 0x0f),
+            Err(_) => None,
+        }
+    })
+    .await
+    .expect("dropping Running did not close active upgraded WebSocket");
+    assert!(matches!(got_close, Some(0x8) | None));
+    drop(ws3);
 }

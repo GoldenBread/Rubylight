@@ -262,7 +262,11 @@ fn install_with(
                 );
             },
         )?;
-        crate::usbip::remember(&profile, options.usbip_driver)?;
+        if let Err(error) = crate::usbip::remember(&profile, options.usbip_driver) {
+            notes.push(format!(
+                "The USB audio and haptics driver choice could not be saved: {error:#}"
+            ));
+        }
         // A reinstall also repairs the profile's permissions and the firewall
         // rule, as it did before.
         if let Err(error) = secure_install(&install) {
@@ -295,6 +299,7 @@ fn install_with(
             service,
             &mut payload,
             progress,
+            notes,
         );
     }
 
@@ -435,7 +440,11 @@ fn install_with(
         progress,
         &mut notes,
     );
-    crate::usbip::remember(&profile, options.usbip_driver)?;
+    if let Err(error) = crate::usbip::remember(&profile, options.usbip_driver) {
+        notes.push(format!(
+            "The USB audio and haptics driver choice could not be saved: {error:#}"
+        ));
+    }
 
     progress.set("Adding Rubylight to Start and Apps…");
     match system::shortcut(
@@ -499,33 +508,50 @@ fn remove_hosts(
     progress: &Progress,
     notes: &mut Vec<String>,
 ) -> Result<bool> {
+    use windows::Win32::System::Registry::{HKEY, HKEY_CURRENT_USER};
     let mut restart_needed = false;
+    let msiexec = system::system32("msiexec.exe");
+    let mut removed_msis: Vec<(&str, HKEY)> = Vec::new();
     for package in &found.packages {
+        if package.root == HKEY_CURRENT_USER {
+            notes.push(format!(
+                "{} is installed for the current user and could not be removed automatically; remove it from Settings > Apps.",
+                package.name
+            ));
+            continue;
+        }
         let Some(code) = package.product_code() else {
             continue;
         };
         progress.set(&format!("Removing {} {}…", package.name, package.version));
         let log = std::env::temp_dir().join("butterpollo-setup-previous-uninstall.log");
-        let (result, _) = system::run(
-            "msiexec.exe",
-            &[
-                "/x",
-                code,
-                "/qn",
-                "/norestart",
-                "/l*v",
-                &log.display().to_string(),
-                "REBOOT=ReallySuppress",
-                "SUPPRESSMSGBOXES=1",
-                "FACTORYRESET=0",
-                "REMOVEVIRTUALDISPLAYDRIVER=0",
-                "REMOVEVIRTUALGAMEPADDRIVER=0",
-            ],
-            Duration::from_secs(900),
-        )?;
+        let args = [
+            "/x",
+            code,
+            "/qn",
+            "/norestart",
+            "/l*v",
+            &log.display().to_string(),
+            "REBOOT=ReallySuppress",
+            "SUPPRESSMSGBOXES=1",
+            "FACTORYRESET=0",
+            "REMOVEVIRTUALDISPLAYDRIVER=0",
+            "REMOVEVIRTUALGAMEPADDRIVER=0",
+        ];
+        let mut result = system::run(&msiexec, &args, Duration::from_secs(900))?.0;
+        for _ in 0..6 {
+            if result != 1618 {
+                break;
+            }
+            std::thread::sleep(Duration::from_secs(5));
+            result = system::run(&msiexec, &args, Duration::from_secs(900))?.0;
+        }
         match result {
-            0 | 1605 => {}
-            3010 => restart_needed = true,
+            0 | 1605 => removed_msis.push((&package.name, package.root)),
+            3010 => {
+                restart_needed = true;
+                removed_msis.push((&package.name, package.root));
+            }
             code => notes.push(format!(
                 "{} could not be removed completely (msiexec {code}); remove it from Settings > Apps.",
                 package.name
@@ -533,19 +559,48 @@ fn remove_hosts(
         }
     }
     for entry in &found.vibepollo_entries {
-        // The Vibepollo uninstaller's own entry, if the package left it.
-        if system::registry_string(
-            entry.root,
-            &format!("{UNINSTALL}\\{}", entry.key),
-            "DisplayName",
-        )
-        .is_some()
-            && found.packages.iter().any(|p| p.product_code().is_some())
-        {
-            system::delete_key(entry.root, &format!("{UNINSTALL}\\{}", entry.key));
+        if entry.root == HKEY_CURRENT_USER {
+            notes.push(format!(
+                "{} is installed for the current user and could not be removed automatically; remove it from Settings > Apps.",
+                entry.name
+            ));
+            continue;
+        }
+        let has_matching_msi = found.packages.iter().any(|p| {
+            p.root == entry.root
+                && p.name.eq_ignore_ascii_case(&entry.name)
+                && p.product_code().is_some()
+        });
+        if has_matching_msi {
+            let matches_removed = removed_msis
+                .iter()
+                .any(|(name, root)| *root == entry.root && name.eq_ignore_ascii_case(&entry.name));
+            // The Vibepollo uninstaller's own entry, if the removed MSI package left it.
+            if matches_removed
+                && system::registry_string(
+                    entry.root,
+                    &format!("{UNINSTALL}\\{}", entry.key),
+                    "DisplayName",
+                )
+                .is_some()
+            {
+                system::delete_key(entry.root, &format!("{UNINSTALL}\\{}", entry.key));
+            }
+        } else {
+            progress.set(&format!("Removing {} {}…", entry.name, entry.version));
+            if let Err(error) = remove_legacy(entry) {
+                notes.push(format!("{} could not be removed: {error:#}", entry.name));
+            }
         }
     }
     for legacy in &found.legacy {
+        if legacy.root == HKEY_CURRENT_USER {
+            notes.push(format!(
+                "{} is installed for the current user and could not be removed automatically; remove it from Settings > Apps.",
+                legacy.name
+            ));
+            continue;
+        }
         progress.set(&format!("Removing {} {}…", legacy.name, legacy.version));
         if let Err(error) = remove_legacy(legacy) {
             notes.push(format!("{} could not be removed: {error:#}", legacy.name));
@@ -562,6 +617,7 @@ fn remove_hosts(
 /// Afterwards nothing uses the old folder. Its files are left for the user
 /// to delete: deleting in a folder another user controls can be redirected
 /// to other files.
+#[allow(clippy::too_many_arguments)]
 fn move_install(
     options: &Options,
     old: &Path,
@@ -570,6 +626,7 @@ fn move_install(
     service: &'static str,
     payload: &mut Payload,
     progress: &Progress,
+    mut notes: Vec<String>,
 ) -> Result<Outcome> {
     line(format!(
         "moving Rubylight from {} to {}",
@@ -598,7 +655,6 @@ fn move_install(
         payload::packaged_stub(staging.path(), &entries)?.as_deref(),
     )?;
     remember_driver_choice(profile, options.display_driver);
-    let mut notes = Vec::new();
     let mut restart_needed = false;
     let point_at = |folder: &Path| {
         system::install_service(
@@ -667,7 +723,11 @@ fn move_install(
         ));
     }
     refresh_entries(install, &mut notes);
-    crate::usbip::remember(profile, options.usbip_driver)?;
+    if let Err(error) = crate::usbip::remember(profile, options.usbip_driver) {
+        notes.push(format!(
+            "The USB audio and haptics driver choice could not be saved: {error:#}"
+        ));
+    }
     crate::update::record_installed(profile);
     notes.push(format!(
         "Rubylight was moved from {} and nothing uses that folder any more. Delete it once you no longer need anything in it.",

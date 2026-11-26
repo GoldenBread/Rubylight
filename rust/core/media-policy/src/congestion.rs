@@ -247,8 +247,12 @@ pub struct Congestion {
     acked: VecDeque<Acked>,
     /// Wire bytes of reports in which nothing arrived, for the next entry of `acked`.
     sent_unacked: u64,
-    /// (host µs, packets, lost) per report.
+    /// (host µs, packets, lost) per report, with running sums across the window.
     losses: VecDeque<(u64, u64, u64)>,
+    acked_received_sum: u128,
+    acked_sent_sum: u128,
+    losses_packets_sum: u64,
+    losses_lost_sum: u64,
     /// The client clock's µs at the last report, for the acked window.
     last_arrival: Option<u64>,
     last_feedback: Option<u64>,
@@ -288,6 +292,10 @@ impl Congestion {
             acked: VecDeque::new(),
             sent_unacked: 0,
             losses: VecDeque::new(),
+            acked_received_sum: 0,
+            acked_sent_sum: 0,
+            losses_packets_sum: 0,
+            losses_lost_sum: 0,
             last_arrival: None,
             last_feedback: None,
             last_tick: None,
@@ -373,12 +381,17 @@ impl Congestion {
         self.counters.packets += packets;
         self.counters.lost += lost;
         self.losses.push_back((now_us, packets, lost));
+        self.losses_packets_sum += packets;
+        self.losses_lost_sum += lost;
         while self
             .losses
             .front()
             .is_some_and(|(at, ..)| at.saturating_add(LOSS_WINDOW_US) < now_us)
         {
-            self.losses.pop_front();
+            if let Some((_, p, l)) = self.losses.pop_front() {
+                self.losses_packets_sum -= p;
+                self.losses_lost_sum -= l;
+            }
         }
         // Skipped packets have no record here: they count at the report's mean size.
         let listed = feedback.packets.len() as u64 * stride;
@@ -391,21 +404,31 @@ impl Congestion {
         };
         if self.last_arrival.is_some_and(|prev| arrival < prev) {
             self.acked.clear();
+            self.acked_received_sum = 0;
+            self.acked_sent_sum = 0;
         }
         self.last_arrival = Some(arrival);
-        self.acked.push_back(Acked {
+        let entry = Acked {
             host_us: now_us,
             arrival,
             received: received_bytes,
             last_send,
             sent: sent_bytes.saturating_add(std::mem::take(&mut self.sent_unacked)),
             least_queue,
-        });
+        };
+        self.acked_received_sum = self
+            .acked_received_sum
+            .saturating_add(u128::from(entry.received));
+        self.acked_sent_sum = self.acked_sent_sum.saturating_add(u128::from(entry.sent));
+        self.acked.push_back(entry);
         while self.acked.front().is_some_and(|report| {
             report.arrival.saturating_add(ACKED_WINDOW_US) < arrival
                 || report.host_us.saturating_add(ACKED_WINDOW_US * 2) < now_us
         }) {
-            self.acked.pop_front();
+            if let Some(evicted) = self.acked.pop_front() {
+                self.acked_received_sum -= u128::from(evicted.received);
+                self.acked_sent_sum -= u128::from(evicted.sent);
+            }
         }
     }
 
@@ -472,12 +495,12 @@ impl Congestion {
     /// What the client received over the last [`ACKED_WINDOW_US`], bps.
     pub fn acked_bps(&self) -> Option<u64> {
         let last = self.last_arrival?;
-        let first = self.acked.front()?.arrival;
-        let span = last.saturating_sub(first).max(ACKED_WINDOW_US / 5);
+        let first = self.acked.front()?;
+        let span = last.saturating_sub(first.arrival).max(ACKED_WINDOW_US / 5);
         // The first report's bytes arrived before the window's start.
-        let bytes = self.acked.iter().skip(1).fold(0u128, |sum, report| {
-            sum.saturating_add(u128::from(report.received))
-        });
+        let bytes = self
+            .acked_received_sum
+            .saturating_sub(u128::from(first.received));
         (self.acked.len() > 1).then(|| {
             (bytes.saturating_mul(8_000_000) / u128::from(span)).min(u128::from(u64::MAX)) as u64
         })
@@ -486,12 +509,12 @@ impl Congestion {
     /// What the host sent for the same reports, bps: their packets' wire bytes, lost ones
     /// included, over the time it sent them in.
     pub fn sent_bps(&self) -> Option<u64> {
-        let first = self.acked.front()?.last_send;
+        let first = self.acked.front()?;
         let last = self.acked.back()?.last_send;
-        let span = last.saturating_sub(first).max(ACKED_WINDOW_US / 5);
-        let bytes = self.acked.iter().skip(1).fold(0u128, |sum, report| {
-            sum.saturating_add(u128::from(report.sent))
-        });
+        let span = last
+            .saturating_sub(first.last_send)
+            .max(ACKED_WINDOW_US / 5);
+        let bytes = self.acked_sent_sum.saturating_sub(u128::from(first.sent));
         (self.acked.len() > 1).then(|| {
             (bytes.saturating_mul(8_000_000) / u128::from(span)).min(u128::from(u64::MAX)) as u64
         })
@@ -529,11 +552,8 @@ impl Congestion {
 
     /// The share of packets lost over [`LOSS_WINDOW_US`], once enough came.
     pub fn loss(&self) -> Option<f64> {
-        let (packets, lost) = self
-            .losses
-            .iter()
-            .fold((0, 0), |(p, l), (_, packets, lost)| (p + packets, l + lost));
-        (packets >= LOSS_MIN_PACKETS).then(|| lost as f64 / packets as f64)
+        (self.losses_packets_sum >= LOSS_MIN_PACKETS)
+            .then(|| self.losses_lost_sum as f64 / self.losses_packets_sum as f64)
     }
 
     /// The video wire rate the controller holds now, bps.

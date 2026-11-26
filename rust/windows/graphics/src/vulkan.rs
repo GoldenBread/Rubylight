@@ -86,13 +86,14 @@ pub fn register(enabled: bool) -> Result<()> {
         (HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE)
     };
     write_registration(root, KEY, &path, enabled)?;
-    // Repair an older registration of this same installation in the other
-    // scope when accessible. Leave other installations and layers alone.
-    if let Some(legacy) = legacy_manifest(&path)
-        && registration(other, KEY, &legacy).is_some()
-        && let Err(error) = write_registration(other, KEY, &path, enabled)
-    {
-        tracing::warn!(%error, "could not repair the older Vulkan HDR registration in the other registry scope");
+    // Repair or clear this installation's entry in the other registry scope when
+    // accessible. Leave other installations and layers alone.
+    let other_has_legacy =
+        legacy_manifest(&path).is_some_and(|legacy| registration(other, KEY, &legacy).is_some());
+    let other_should_update =
+        other_has_legacy || (!enabled && registration(other, KEY, &path).is_some());
+    if other_should_update && let Err(error) = write_registration(other, KEY, &path, enabled) {
+        tracing::warn!(%error, "could not update the Vulkan HDR registration in the other registry scope");
     }
     Ok(())
 }
@@ -223,10 +224,16 @@ impl Lease {
             }
         }
         if events.users == 0 {
-            for handle in &events.handles {
+            for (set_count, handle) in events.handles.iter().enumerate() {
                 // SAFETY: The handle is owned by Events, which the held lock keeps alive and open.
-                unsafe {
-                    SetEvent(*handle)?;
+                if let Err(error) = unsafe { SetEvent(*handle) } {
+                    for reset in &events.handles[..set_count] {
+                        // SAFETY: Already set above; `events` lock is still held.
+                        unsafe {
+                            let _ = ResetEvent(*reset);
+                        }
+                    }
+                    return Err(error.into());
                 }
             }
         }

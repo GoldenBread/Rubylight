@@ -419,3 +419,76 @@ fn disconnected_pad_data_packet_clears_slot_state_and_centers_sticks() {
     assert_eq!(&packet[44..56], &[0; 12], "analog buttons/triggers zeroed");
     assert_eq!(&packet[56..100], &[0; 44], "touch/timestamp/motion zeroed");
 }
+
+#[test]
+fn auxiliary_events_do_not_allocate_slots_without_controller_or_arrival() {
+    let mut slots = Slots::default();
+    assert_eq!(
+        slots.apply(
+            "s1",
+            &Input::Battery {
+                id: 0,
+                state: 3,
+                percent: 80,
+            },
+            100,
+        ),
+        None
+    );
+    assert_eq!(
+        slots.apply(
+            "s1",
+            &Input::Motion {
+                id: 0,
+                kind: 1,
+                xyz: [1.0, 2.0, 3.0],
+            },
+            200,
+        ),
+        None
+    );
+    assert_eq!(
+        slots.apply(
+            "s1",
+            &Input::ControllerTouch {
+                id: 0,
+                event: 1,
+                touchpad: 0,
+                pointer: 0,
+                x: 0.5,
+                y: 0.5,
+                pressure: 1.0,
+            },
+            300,
+        ),
+        None
+    );
+    assert!(slots.pad(0).is_none());
+
+    // Once arrived, auxiliary updates reach that slot.
+    assert_eq!(
+        slots.apply(
+            "s1",
+            &Input::Arrival {
+                id: 0,
+                kind: 0,
+                capabilities: 0,
+                buttons: 0,
+            },
+            400,
+        ),
+        Some(0)
+    );
+    assert_eq!(
+        slots.apply(
+            "s1",
+            &Input::Battery {
+                id: 0,
+                state: 3,
+                percent: 80,
+            },
+            500,
+        ),
+        Some(0)
+    );
+}

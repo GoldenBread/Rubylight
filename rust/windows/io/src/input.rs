@@ -98,7 +98,7 @@ pub fn capabilities(config: &butterpollo_config::config::Config) -> u32 {
     }
     if config.boolean("mouse", true)
         && config.boolean("native_touchpad", true)
-        && usbip_pad::usbip_exe().is_some()
+        && usbip_pad::usbip_available_cached()
     {
         // A tablet's physical touchpad, as Moonlight V+'s and Foundation Sunshine's packets
         // carry it: one contact (LI_FF_TOUCHPAD_EVENTS) or a whole frame
@@ -381,12 +381,26 @@ impl Injector {
         first.map_or(Ok(()), Err)
     }
     fn flush_and_sync(&mut self) {
-        self.flush();
+        let order = SEND_ORDER.lock().unwrap();
+        self.flush_and_sync_locked(&order);
+    }
+    fn flush_and_sync_locked(&mut self, order: &std::sync::MutexGuard<'_, ()>) {
+        self.flush_locked(order);
         self.pending.sync_routes();
         self.virtual_buttons
             .retain(|button| self.buttons.contains(button));
     }
     fn release_button_on_route(&self, button: u8, was_virtual: bool, teardown: bool) -> Result<()> {
+        let order = SEND_ORDER.lock().unwrap();
+        self.release_button_on_route_locked(&order, button, was_virtual, teardown)
+    }
+    fn release_button_on_route_locked(
+        &self,
+        order: &std::sync::MutexGuard<'_, ()>,
+        button: u8,
+        was_virtual: bool,
+        teardown: bool,
+    ) -> Result<()> {
         struct ForcedRouteReset<'a>(&'a std::cell::Cell<Option<MouseRoute>>);
         impl Drop for ForcedRouteReset<'_> {
             fn drop(&mut self) {
@@ -402,17 +416,32 @@ impl Injector {
         self.forced_route.set(Some(route));
         let _reset = ForcedRouteReset(&self.forced_route);
         if teardown {
-            self.release_owned(false, held_id, Self::button(button, false))
+            self.release_owned_locked(order, false, held_id, Self::button(button, false))
         } else {
-            self.held(false, held_id, false, true, Self::button(button, false))
+            self.held_locked(
+                order,
+                false,
+                held_id,
+                false,
+                true,
+                Self::button(button, false),
+            )
         }
     }
     fn release_deferred_left(&mut self, teardown: bool) -> Result<()> {
+        let order = SEND_ORDER.lock().unwrap();
+        self.release_deferred_left_locked(&order, teardown)
+    }
+    fn release_deferred_left_locked(
+        &mut self,
+        order: &std::sync::MutexGuard<'_, ()>,
+        teardown: bool,
+    ) -> Result<()> {
         if self.left_release.take().is_none() {
             return Ok(());
         }
         let was_virtual = std::mem::take(&mut self.left_release_virtual);
-        self.release_button_on_route(1, was_virtual, teardown)
+        self.release_button_on_route_locked(order, 1, was_virtual, teardown)
     }
     /// The controllers' thread, started here when the injector has none yet: making an
     /// injector starts no thread a controller session's would replace at once.

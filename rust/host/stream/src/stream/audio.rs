@@ -120,6 +120,12 @@ impl RouteUpkeep {
                     Ok(com) => com,
                     Err(error) => {
                         tracing::warn!(%error, "audio route upkeep unavailable");
+                        warnings.set(
+                            "audio_route",
+                            format!(
+                                "Audio route upkeep failed ({error:#}); playback device changes may not be tracked."
+                            ),
+                        );
                         return;
                     }
                 };
@@ -317,7 +323,7 @@ impl Media {
                         now,
                         pace.due(),
                         check,
-                        Some(audio_sink::READ_POLL),
+                        (!muted).then_some(audio_sink::READ_POLL),
                     ),
                 ),
             }

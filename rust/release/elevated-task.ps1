@@ -30,8 +30,9 @@ $work = [IO.Path]::GetFullPath((Join-Path $root $version))
 $package = [IO.Path]::GetFullPath("$work\release\butterpollo-rust-release")
 $installer = [IO.Path]::GetFullPath("$work\release\rubylight-setup-$version.exe")
 if (-not (Test-Path -LiteralPath $installer)) {
-    # Releases before rc.30 carry only the Butterpollo name.
-    $installer = [IO.Path]::GetFullPath("$work\release\butterpollo-setup-$version.exe")
+    # Automated CI release candidates use rubylight-rc-setup-*; releases before rc.30 use Butterpollo.
+    $rcInstaller = [IO.Path]::GetFullPath("$work\release\rubylight-rc-setup-$version.exe")
+    $installer = if (Test-Path -LiteralPath $rcInstaller) { $rcInstaller } else { [IO.Path]::GetFullPath("$work\release\butterpollo-setup-$version.exe") }
 }
 foreach ($path in $work, $package, $installer) {
     if (-not $path.StartsWith($root, [StringComparison]::OrdinalIgnoreCase)) { throw "$path is outside $root" }

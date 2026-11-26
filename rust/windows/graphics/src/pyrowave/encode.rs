@@ -213,27 +213,19 @@ impl Encoder {
             self.repeat_cache.clear();
             None
         } else if self.config.pyrowave_records {
+            let meta = RepeatKey::meta_for(image, self.luminance, self.overlay.as_ref(), kbps);
             let pending_match = self.flights.queue.iter().any(|flight| {
-                flight.cache_repeat.as_ref().is_some_and(|key| {
-                    key.matches(image, self.luminance, self.overlay.as_ref(), kbps)
-                })
+                flight
+                    .cache_repeat
+                    .as_ref()
+                    .is_some_and(|key| key.matches_meta(image, &meta))
             });
             if !self.flights.is_empty()
-                && (pending_match
-                    || self.repeat_cache.matches(
-                        image,
-                        self.luminance,
-                        self.overlay.as_ref(),
-                        kbps,
-                        limit,
-                    ))
+                && (pending_match || self.repeat_cache.matches_meta(image, &meta, limit))
             {
                 frames.extend(self.collect(true)?);
             }
-            if let Some(bytes) =
-                self.repeat_cache
-                    .try_hit(image, self.luminance, self.overlay.as_ref(), kbps, limit)
-            {
+            if let Some(bytes) = self.repeat_cache.try_hit_meta(image, &meta, limit) {
                 self.submitted = Some(Instant::now());
                 frames.push(Encoded {
                     bytes,
@@ -249,12 +241,7 @@ impl Encoder {
                 });
                 return Ok(frames);
             }
-            Some(RepeatKey::new(
-                image,
-                self.luminance,
-                self.overlay.as_ref(),
-                kbps,
-            ))
+            Some(RepeatKey::with_meta(image, self.overlay.as_ref(), meta))
         } else {
             None
         };
@@ -283,7 +270,6 @@ impl Encoder {
                 )
             })?);
         }
-        self.submitting = Some(image.clone());
         let release = self.submit(slot, image, budget)?;
         let submitted = Instant::now();
         self.submitted = Some(submitted);
@@ -423,6 +409,9 @@ impl Encoder {
                     .context("PyroWave frame contexts unavailable")?;
                 check(set(self.encoder, slot as std::ffi::c_int))?;
             }
+            // Only once execution reaches `encoder_encode_gpu` has GPU work started whose
+            // completion is ambiguous on error; pre-submit validation/setup errors do not quarantine.
+            self.submitting = Some(image.clone());
             timed("PyroWave encode submit", || {
                 check((self.api.encoder_encode_gpu)(
                     self.encoder,

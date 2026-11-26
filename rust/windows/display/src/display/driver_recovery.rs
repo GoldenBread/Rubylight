@@ -56,14 +56,14 @@ static RECOVERY: Mutex<Recovery> = Mutex::new(Recovery {
 });
 
 pub fn healthy() {
-    let mut recovery = RECOVERY.lock().unwrap();
+    let mut recovery = crate::lock_unpoisoned(&RECOVERY);
     recovery.budget.healthy(Instant::now());
 }
 
 /// Never waits for native SetupAPI. One worker may remain in flight if Windows is
 /// stuck; subsequent heartbeats cannot spawn another or block behind it.
 pub fn request() -> bool {
-    let mut recovery = RECOVERY.lock().unwrap();
+    let mut recovery = crate::lock_unpoisoned(&RECOVERY);
     let now = Instant::now();
     if let Some(worker) = &recovery.worker {
         match worker.try_recv() {

@@ -171,9 +171,10 @@ impl Config {
             };
             // '#' starts a comment and a value opening [ or { runs until it
             // closes, so such a value would be cut short, or swallow the
-            // settings after it, on the next start.
+            // settings after it, on the next start. Check syntax as written
+            // without re-folding against missing sibling keys.
             let expected = value.lines().map(str::trim).collect::<Vec<_>>().join("\n");
-            let stored = Self::parse(&format!("{key} = {value}\n"))?;
+            let (stored, _) = Self::parse_names_as_written(&format!("{key} = {value}\n"))?;
             if stored.values.get(key).map(String::as_str) != Some(expected.trim()) {
                 bail!(
                     "{key} cannot be saved: in the configuration file # starts a comment and a value opening [ or {{ has to close it"

@@ -82,26 +82,73 @@ impl OpusLayout {
     }
 }
 
+const POLYPHASE_PHASES: usize = 128;
+const POLYPHASE_HALF: usize = 4;
+const POLYPHASE_TAPS: usize = POLYPHASE_HALF * 2;
+const POLYPHASE_CENTER_TAP: usize = POLYPHASE_HALF - 1;
+
+fn build_polyphase_table(rate: u32) -> Box<[[f32; POLYPHASE_TAPS]; POLYPHASE_PHASES + 1]> {
+    // Attenuate above 24 kHz when downsampling (cutoff scales with 48 kHz / input rate)
+    // using an 8-tap Blackman-windowed sinc so 96 kHz / 192 kHz endpoints do not alias.
+    let cutoff = (48_000.0 / f64::from(rate)).min(1.0) * 0.85;
+    let mut table = vec![[0f32; POLYPHASE_TAPS]; POLYPHASE_PHASES + 1];
+    for (phase, row) in table.iter_mut().enumerate() {
+        let frac = phase as f64 / POLYPHASE_PHASES as f64;
+        let mut weights = [0f64; POLYPHASE_TAPS];
+        let mut sum = 0.0;
+        for (tap, slot) in weights.iter_mut().enumerate() {
+            let offset = tap as isize - POLYPHASE_CENTER_TAP as isize;
+            let d = offset as f64 - frac;
+            if d.abs() >= POLYPHASE_HALF as f64 {
+                continue;
+            }
+            let u = (d + POLYPHASE_HALF as f64) / (2.0 * POLYPHASE_HALF as f64);
+            let window = 0.42 - 0.5 * (2.0 * std::f64::consts::PI * u).cos()
+                + 0.08 * (4.0 * std::f64::consts::PI * u).cos();
+            let sinc = if d.abs() < 1e-12 {
+                cutoff
+            } else {
+                let x = std::f64::consts::PI * d;
+                (x * cutoff).sin() / x
+            };
+            let w = window * sinc;
+            *slot = w;
+            sum += w;
+        }
+        let inv = if sum.abs() > 1e-12 { 1.0 / sum } else { 1.0 };
+        for (dst, w) in row.iter_mut().zip(weights) {
+            *dst = (w * inv) as f32;
+        }
+    }
+    table.into_boxed_slice().try_into().unwrap()
+}
+
 pub struct Resampler {
     queue: VecDeque<f32>,
+    tail: Vec<f32>,
     channels: usize,
     rate: u32,
     phase: f64,
+    polyphase: Option<Box<[[f32; POLYPHASE_TAPS]; POLYPHASE_PHASES + 1]>>,
 }
 impl Resampler {
     pub fn new(rate: u32, channels: usize) -> Result<Self> {
         if !(8000..=384000).contains(&rate) || !matches!(channels, 2 | 6 | 8 | 12) {
             bail!("unsupported audio rate or layout");
         }
+        let polyphase = (rate != 48_000).then(|| build_polyphase_table(rate));
         Ok(Self {
             queue: VecDeque::new(),
+            tail: Vec::new(),
             channels,
             rate,
             phase: 0.,
+            polyphase,
         })
     }
     pub fn reset(&mut self) {
         self.queue.clear();
+        self.tail.clear();
         self.phase = 0.;
     }
     /// Queues one frame, and returns how many frames of the oldest audio the 100 ms cap
@@ -134,6 +181,7 @@ impl Resampler {
             let dropped = (self.queue.len() + count - limit) / self.channels;
             self.queue.clear();
             self.queue.resize(limit, 0.);
+            self.tail.clear();
             self.phase = 0.;
             return dropped;
         }
@@ -156,6 +204,7 @@ impl Resampler {
         if self.queue.len() > limit {
             let excess = self.queue.len() - limit;
             self.queue.drain(..excess);
+            self.tail.clear();
             self.phase = 0.;
             return excess / self.channels;
         }
@@ -174,6 +223,7 @@ impl Resampler {
         }
         let excess = queued - frames(target_ms).min(queued);
         self.queue.drain(..excess * self.channels);
+        self.tail.clear();
         self.phase = 0.;
         excess
     }
@@ -212,27 +262,77 @@ impl Resampler {
         let ratio = f64::from(self.rate) / 48000.;
         let last = self.phase + (frames - 1) as f64 * ratio;
         let consumed = self.phase + frames as f64 * ratio;
-        let needed = (last.floor() as usize + if last.fract() > 1e-10 { 2 } else { 1 })
-            .max(consumed.floor() as usize);
+        let max_index = last.floor() as usize + POLYPHASE_HALF;
+        let needed = (max_index + 1).max(consumed.floor() as usize);
         if self.queue.len() / self.channels < needed {
             return false;
         }
+        let table = self
+            .polyphase
+            .as_deref()
+            .expect("polyphase table initialized for non-48kHz resampler");
+        let tail_frames = self.tail.len() / self.channels;
         out.reserve(frames * self.channels);
         for i in 0..frames {
             let pos = self.phase + i as f64 * ratio;
             let lo = pos.floor() as usize;
-            let frac = pos.fract() as f32;
+            let frac = pos.fract();
+            let scaled = frac * POLYPHASE_PHASES as f64;
+            let p0 = (scaled.floor() as usize).min(POLYPHASE_PHASES);
+            let p1 = (p0 + 1).min(POLYPHASE_PHASES);
+            let blend = (scaled - p0 as f64) as f32;
+            let w0 = &table[p0];
+            let w1 = &table[p1];
+            let mut weights = [0f32; POLYPHASE_TAPS];
+            for k in 0..POLYPHASE_TAPS {
+                weights[k] = w0[k] + (w1[k] - w0[k]) * blend;
+            }
             for ch in 0..self.channels {
-                let a = self.queue[lo * self.channels + ch];
-                let b = if frac > 1e-10 {
-                    self.queue[(lo + 1) * self.channels + ch]
-                } else {
-                    a
+                let sample = |rel: isize| -> f32 {
+                    if rel >= 0 {
+                        self.queue[rel as usize * self.channels + ch]
+                    } else {
+                        let tail_idx = tail_frames as isize + rel;
+                        if tail_idx >= 0 {
+                            self.tail[tail_idx as usize * self.channels + ch]
+                        } else {
+                            // Hold the first frame across missing pre-roll taps so
+                            // constant levels stay free of startup transients.
+                            self.queue[ch]
+                        }
+                    }
                 };
-                out.push(a + (b - a) * frac);
+                let center = sample(lo as isize);
+                let mut acc = center;
+                for (k, &weight) in weights.iter().enumerate() {
+                    if k != POLYPHASE_CENTER_TAP {
+                        let rel = lo as isize + k as isize - POLYPHASE_CENTER_TAP as isize;
+                        acc += weight * (sample(rel) - center);
+                    }
+                }
+                out.push(acc);
             }
         }
         let whole = consumed.floor() as usize;
+        if whole > 0 {
+            let keep = POLYPHASE_CENTER_TAP;
+            let available = tail_frames + whole;
+            let kept = keep.min(available);
+            let mut next_tail = Vec::with_capacity(kept * self.channels);
+            if kept > whole {
+                let from_old = kept - whole;
+                let old_start = (tail_frames - from_old) * self.channels;
+                next_tail.extend_from_slice(&self.tail[old_start..]);
+            }
+            let from_queue = kept.min(whole);
+            let queue_start = (whole - from_queue) * self.channels;
+            next_tail.extend(
+                self.queue
+                    .range(queue_start..whole * self.channels)
+                    .copied(),
+            );
+            self.tail = next_tail;
+        }
         self.phase = consumed - whole as f64;
         self.queue.drain(..whole * self.channels);
         true
@@ -426,7 +526,9 @@ pub fn mix_matrix(
             for (bit, gain) in [
                 (side, 1.),
                 (4, 0.70710677),
+                (if ch == 0 { 0x40 } else { 0x80 }, 0.70710677),
                 (rear, 0.70710677),
+                (0x100, 0.70710677),
                 (if ch == 0 { 512 } else { 1024 }, 0.70710677),
                 (if ch == 0 { 0x1000 } else { 0x4000 }, 0.70710677),
                 (if ch == 0 { 0x8000 } else { 0x20000 }, 0.70710677),
@@ -465,6 +567,30 @@ pub fn mix_matrix(
                 matrix[ch][i] = 1.;
             }
         }
+        // Fold endpoint speakers outside Moonlight's layout (front-of-center
+        // L/R and back-center) into their nearest neighbors.
+        if output_channels == 2 {
+            for (bit, ch) in [(0x40, 0), (0x80, 1)] {
+                if let Some(i) = index(bit) {
+                    matrix[ch][i] += 0.70710677;
+                }
+            }
+            if let Some(i) = index(0x100) {
+                matrix[0][i] += 0.70710677;
+                matrix[1][i] += 0.70710677;
+            }
+        } else {
+            for (bit, side) in [(0x40, 0), (0x80, 1)] {
+                if let Some(i) = index(bit) {
+                    matrix[side][i] += 0.70710677;
+                    matrix[2][i] += 0.70710677;
+                }
+            }
+            if let Some(i) = index(0x100) {
+                matrix[4][i] += 0.70710677;
+                matrix[5][i] += 0.70710677;
+            }
+        }
         if output_channels < 12 {
             // A client without heights hears them from the speaker below
             // each at -3 dB, as stereo does, rather than not at all.
@@ -479,16 +605,16 @@ pub fn mix_matrix(
                     matrix[below][i] += 0.70710677;
                 }
             }
-            // One factor for every row, so nothing clips and the bed keeps
-            // its balance: the center stays as loud as the fronts.
-            let peak = matrix
-                .iter()
-                .map(|row| row.iter().sum::<f32>())
-                .fold(0., f32::max);
-            if peak > 1. {
-                for v in matrix.iter_mut().flatten() {
-                    *v /= peak;
-                }
+        }
+        // One factor for every row, so nothing clips and the bed keeps
+        // its balance: the center stays as loud as the fronts.
+        let peak = matrix
+            .iter()
+            .map(|row| row.iter().sum::<f32>())
+            .fold(0., f32::max);
+        if peak > 1. {
+            for v in matrix.iter_mut().flatten() {
+                *v /= peak;
             }
         }
     }

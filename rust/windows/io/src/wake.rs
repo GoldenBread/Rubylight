@@ -295,23 +295,26 @@ pub fn output_within(
         .spawn()
         .with_context(|| format!("starting {}", command.get_program().to_string_lossy()))?;
     let read = |stream: Option<Box<dyn Read + Send>>| {
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
         std::thread::spawn(move || {
             let mut bytes = Vec::new();
             if let Some(mut stream) = stream {
                 let _ = stream.read_to_end(&mut bytes);
             }
-            String::from_utf8_lossy(&bytes).into_owned()
-        })
+            let _ = tx.send(String::from_utf8_lossy(&bytes).into_owned());
+        });
+        rx
     };
     let stdout = read(child.stdout.take().map(|s| Box::new(s) as _));
     let stderr = read(child.stderr.take().map(|s| Box::new(s) as _));
-    // Dropped after writing, so the child sees the end of its input.
-    let written = child
-        .stdin
-        .take()
-        .context("the child has no stdin")?
-        .write_all(input);
     let deadline = Instant::now() + timeout;
+    let stdin = child.stdin.take().context("the child has no stdin")?;
+    let input = input.to_vec();
+    let (write_tx, write_rx) = std::sync::mpsc::sync_channel(1);
+    std::thread::spawn(move || {
+        let mut stdin = stdin;
+        let _ = write_tx.send(stdin.write_all(&input));
+    });
     let status = loop {
         if let Some(status) = child.try_wait()? {
             break status;
@@ -323,9 +326,18 @@ pub fn output_within(
         }
         std::thread::sleep(Duration::from_millis(100));
     };
-    let stdout = stdout.join().unwrap_or_default();
-    let stderr = stderr.join().unwrap_or_default();
-    written.context("writing the child's input")?;
+    let wait_left = Duration::from_secs(1);
+    let stdout = stdout.recv_timeout(wait_left).unwrap_or_default();
+    let stderr = stderr.recv_timeout(wait_left).unwrap_or_default();
+    write_rx
+        .recv_timeout(wait_left)
+        .unwrap_or_else(|_| {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "timed out writing stdin",
+            ))
+        })
+        .context("writing the child's input")?;
     Ok((status, stdout, stderr))
 }
 

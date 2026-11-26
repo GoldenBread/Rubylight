@@ -105,13 +105,21 @@ def manifest_version(path):
 
 
 def fetch_releases(repository):
-    request = urllib.request.Request(f'https://api.github.com/repos/{repository}/releases?per_page=100',
-                                     headers={'Accept': 'application/vnd.github+json', 'User-Agent': 'rubylight-build'})
-    token = os.environ.get('GH_TOKEN') or os.environ.get('GITHUB_TOKEN')
-    if token:
-        request.add_header('Authorization', f'Bearer {token}')
-    with urllib.request.urlopen(request, timeout=60) as response:
-        return json.load(response)
+    all_releases = []
+    for page in range(1, 51):
+        request = urllib.request.Request(
+            f'https://api.github.com/repos/{repository}/releases?per_page=100&page={page}',
+            headers={'Accept': 'application/vnd.github+json', 'User-Agent': 'rubylight-build'},
+        )
+        token = os.environ.get('GH_TOKEN') or os.environ.get('GITHUB_TOKEN')
+        if token:
+            request.add_header('Authorization', f'Bearer {token}')
+        with urllib.request.urlopen(request, timeout=60) as response:
+            batch = json.load(response)
+        all_releases.extend(batch)
+        if len(batch) < 100:
+            break
+    return all_releases
 
 
 def download(url, path):
@@ -202,6 +210,9 @@ def main(argv=None):
             return 1
         warn(f'the previous release could not be read ({error}); shipping the fresh build of service {version}')
         return 0
+    if args.required and previous is None:
+        print('error: no earlier release with a windows-x64 service package was found', file=sys.stderr)
+        return 1
     choice = choose(version, fresh, previous)
     print(choice.message)
     if choice.warning:

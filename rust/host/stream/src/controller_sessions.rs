@@ -38,7 +38,18 @@ pub fn key(launch: &Launch) -> String {
 /// launch or a stream its controllers takes them here, so none leaves the answer out.
 pub fn acquire_for(h: &Shared, launch: &Launch, config: &Config) -> Result<Arc<GamepadThread>> {
     let steam_app = crate::stream::launched_through_steam(h, launch);
-    h.controller_sessions.acquire(launch, config, steam_app)
+    let kept: BTreeSet<String> = {
+        let sessions = h.sessions.lock().unwrap();
+        let running = sessions.active.values().filter(|s| !s.stopping());
+        sessions
+            .pending
+            .values()
+            .chain(running.map(|s| &s.launch))
+            .map(key)
+            .collect()
+    };
+    h.controller_sessions
+        .acquire_keeping(launch, config, steam_app, &kept)
 }
 impl Pool {
     /// `launch`'s controllers with its settings `config`; `steam_app`: whether its app starts
@@ -50,6 +61,17 @@ impl Pool {
         config: &Config,
         steam_app: bool,
     ) -> Result<Arc<GamepadThread>> {
+        self.acquire_keeping(launch, config, steam_app, &BTreeSet::new())
+    }
+    /// [`Self::acquire`], sparing parked controllers whose keys are in `kept`
+    /// (such as another device's pending launch).
+    pub fn acquire_keeping(
+        &self,
+        launch: &Launch,
+        config: &Config,
+        steam_app: bool,
+        kept: &BTreeSet<String>,
+    ) -> Result<Arc<GamepadThread>> {
         let key = key(launch);
         let profile = gamepad_profile(config.get("gamepad", "auto"));
         let mut policy = Policy::resolve(config)?;
@@ -57,9 +79,9 @@ impl Pool {
         let mut entries = self.0.lock().unwrap();
         // Parked controllers wait for their own client's reconnect. Another
         // client's stay plugged beside this client's while a game runs, and
-        // can hold the game's first player slot.
+        // can hold the game's first player slot. Pending launches also keep theirs.
         entries.retain(|other, entry| {
-            if *other == key || Arc::strong_count(&entry.pads) > 1 {
+            if *other == key || Arc::strong_count(&entry.pads) > 1 || kept.contains(other) {
                 return true;
             }
             drop(entry.pads.stop());
@@ -468,7 +490,14 @@ mod tests {
         pool.release_parked(Duration::from_secs(5), &pending)
             .unwrap();
         assert_eq!(keys(&pool), ["laptop:Stream"]);
+        // Acquiring controllers for another client spares `laptop:Stream` while pending.
+        let tablet = launch("tablet");
+        let _tablet = pool
+            .acquire_keeping(&tablet, &config, false, &pending)
+            .unwrap();
+        assert_eq!(keys(&pool), ["laptop:Stream", "tablet:Stream"]);
         assert!(!pool.parked(&pending));
+        drop(_tablet);
         pool.release_parked(Duration::from_secs(5), &none).unwrap();
         assert!(keys(&pool).is_empty());
     }

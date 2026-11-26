@@ -236,12 +236,11 @@ pub(super) async fn settings(
     csrf: &str,
 ) -> Result<String, String> {
     let config = get(h, connection, headers, "/api/config").await?;
-    let value = |key: &str, default: &str| {
-        config
-            .get(key)
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or(default)
-            .to_owned()
+    let value = |key: &str, default: &str| match config.get(key) {
+        Some(serde_json::Value::String(text)) => text.clone(),
+        Some(serde_json::Value::Number(number)) => number.to_string(),
+        Some(serde_json::Value::Bool(flag)) => flag.to_string(),
+        _ => default.to_owned(),
     };
     let mut content =
         "<p class=\"intro\">Choose the capture, encoder, display, and sound for your stream.</p>"
@@ -263,6 +262,7 @@ pub(super) async fn settings(
         &[
             ("auto", "Automatic"),
             ("amf", "AMD AMF"),
+            ("nvenc", "NVIDIA NVENC"),
             ("pyrowave", "PyroWave"),
         ],
     ) + &select(
@@ -327,7 +327,8 @@ pub(super) async fn settings(
             &(editor
                 + &console_settings::render("cfg_", console_settings::GLOBAL, &config)
                 + &format!(
-                    "<details><summary>Other settings</summary><p>Edit these settings as JSON. Keep the configuration keys unchanged and use double quotes around text.</p>{}</details><button>Save settings</button>",
+                    "<details><summary>Other settings</summary><p>Edit these settings as JSON. Keep the configuration keys unchanged and use double quotes around text.</p>{}{}</details><button>Save settings</button>",
+                    hidden("advanced_original", &raw(&advanced)),
                     area(
                         "advanced",
                         "Additional configuration (JSON)",

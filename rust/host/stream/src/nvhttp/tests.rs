@@ -198,28 +198,45 @@ fn non_terminating_switch_enforces_owner_webrtc_exclusivity_and_preserves_nucleu
     let f = Fixture::new();
     running_app(&f, "owner");
 
-    // Active RemoteMonitor blocks another device's non-terminating switch (`stop_app = false`).
+    // Terminating switch (`stop_app = true`) is refused when `RemoteMonitor` is active and owned by another device.
     let mut owner_client = f.client(u32::MAX);
     owner_client.uuid = "owner".into();
     let owner_stream = f.session(owner_client.clone(), Role::Stream);
     let monitor = f.session(owner_client.clone(), Role::RemoteMonitor);
     assert_eq!(
-        stop_streams_for(&f.host, "other", false),
+        stop_streams_for(&f.host, "other", true),
         StopStreams::Refused
     );
     assert!(!owner_stream.stopping());
+    assert!(!monitor.stopping());
+
+    // Non-terminating resume/takeover (`stop_app = false`) is allowed despite `RemoteMonitor`
+    // when no active WebRTC `Role::Stream` holds exclusivity, leaving the app and `RemoteMonitor` running.
+    let host = f.host.clone();
+    let owner_id = owner_stream.launch.id.clone();
+    let owner_worker = std::thread::spawn({
+        let s = owner_stream.clone();
+        move || {
+            while !s.stopping() {
+                std::thread::sleep(std::time::Duration::from_millis(2));
+            }
+            host.sessions.lock().unwrap().active.remove(&owner_id);
+        }
+    });
+    assert_eq!(
+        stop_streams_for(&f.host, "other", false),
+        StopStreams::Stopped
+    );
+    owner_worker.join().unwrap();
+    assert!(owner_stream.stopping());
+    assert!(!monitor.stopping());
+    assert!(f.host.current_app.lock().unwrap().is_some());
     f.host
         .sessions
         .lock()
         .unwrap()
         .active
         .remove(&monitor.launch.id);
-    f.host
-        .sessions
-        .lock()
-        .unwrap()
-        .active
-        .remove(&owner_stream.launch.id);
 
     // Active WebRTC stream owned by `owner` blocks another device's non-terminating switch.
     let mut webrtc_launch = f.launch(owner_client.clone(), Role::Stream);
@@ -375,4 +392,86 @@ mod properties {
             prop_assert_eq!(stream_key_id(&(id as i32).to_string()).unwrap(), id);
         }
     }
+}
+
+#[test]
+fn refused_switch_does_not_cancel_callers_launch_and_end_device_stops_launch() {
+    use crate::state::test_support::Fixture;
+    use butterpollo_session::session::{Role, Seat, Transport};
+    let f = Fixture::new();
+    running_app(&f, "owner");
+
+    // Another device holds an active WebRTC stream.
+    let mut owner_client = f.client(u32::MAX);
+    owner_client.uuid = "owner".into();
+    let mut webrtc_launch = f.launch(owner_client.clone(), Role::Stream);
+    webrtc_launch.transport = Transport::WebRtc;
+    let webrtc_stream = crate::state::Session::new(webrtc_launch, Default::default());
+    f.host
+        .sessions
+        .lock()
+        .unwrap()
+        .active
+        .insert(webrtc_stream.launch.id.clone(), webrtc_stream.clone());
+
+    // Caller `other` currently has an in-progress launch; refusing its non-terminating
+    // switch must not cancel its own launch cancellation handle.
+    let transition = f.host.launch_transition.lock().unwrap();
+    let _started = f.host.launch_started("other");
+    assert_eq!(
+        super::stop_streams_for(&f.host, "other", false),
+        super::StopStreams::Refused
+    );
+    assert!(!f.host.launch_stopped());
+
+    // end_device stops an in-progress launch of either screen of the device.
+    drop(_started);
+    let _second = f
+        .host
+        .launch_started(&butterpollo_session::state::second_screen_uuid("other"));
+    let host = f.host.clone();
+    let ended = std::thread::spawn(move || {
+        crate::nvhttp::end_device(&host, "other");
+    });
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    while !f.host.launch_stopped() && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    assert!(f.host.launch_stopped());
+    drop(_second);
+    drop(transition);
+    ended.join().unwrap();
+
+    // Concurrent Nucleus stream is untouched when host streams stop.
+    let mut coop_client = f.client(u32::MAX);
+    coop_client.uuid = "coop-1".into();
+    let mut coop_launch = f.launch(coop_client, Role::Stream);
+    coop_launch.nucleus = Some(Seat {
+        session: 7,
+        slot: 0,
+    });
+    let coop_stream = crate::state::Session::new(coop_launch, Default::default());
+    f.host
+        .sessions
+        .lock()
+        .unwrap()
+        .active
+        .insert(coop_stream.launch.id.clone(), coop_stream.clone());
+    let canceled = f.host.sessions.lock().unwrap().stop_host_streams();
+    drop(canceled);
+    assert!(webrtc_stream.stopping());
+    assert!(!coop_stream.stopping());
+}
+
+#[test]
+fn terminate_confirmation_and_vacated_background_share_device_identity_across_screens() {
+    use crate::state::test_support::Fixture;
+    use butterpollo_session::session::Role;
+    let f = Fixture::new();
+    running_app(&f, "owner");
+    let _monitor = f.session(f.client(u32::MAX), Role::RemoteMonitor);
+    let owner_second = butterpollo_session::state::second_screen_uuid("owner");
+    assert!(super::same_device("owner", &owner_second));
+    assert!(!super::terminate_refused(&f.host, &owner_second));
+    assert!(super::quit_vacated_background(&f.host, &owner_second).is_none());
 }

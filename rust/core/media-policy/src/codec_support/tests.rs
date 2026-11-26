@@ -134,6 +134,7 @@ fn a_setting_is_not_a_warning() {
         .collect();
     let missing = explain_all(name, &outcomes);
     assert_eq!(missing.len(), 2);
+    assert_eq!(missing[0].cause, Cause::Disabled);
     assert!(missing[0].reason.contains("turned off"));
     assert_eq!(warning(&missing), None);
 }

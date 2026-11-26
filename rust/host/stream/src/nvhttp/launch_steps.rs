@@ -47,7 +47,7 @@ pub fn validate_launch_request(
                 .read()
                 .unwrap()
                 .boolean("remote_monitor_terminate_on_first_request", false)
-                && game.owner != client.uuid;
+                && !same_device(&game.owner, &client.uuid);
             let mut confirmations = h.confirmations.lock().unwrap();
             if guard
                 && !confirmations.confirm(
@@ -64,7 +64,7 @@ pub fn validate_launch_request(
             drop(confirmations);
             // While the stream a move waited for still runs: see `Host::stop_app`.
             h.settle_move();
-            let canceled = h.sessions.lock().unwrap().stop_role(Role::Stream, None);
+            let canceled = h.sessions.lock().unwrap().stop_host_streams();
             drop(canceled);
             h.stop_app(AppStop::Terminate(&client.uuid));
             return ControlFlow::Break(xml(
@@ -369,11 +369,11 @@ pub(super) fn replace_launch_app(
         current = h.current_app.lock().unwrap();
         let (canceled, stopped) = {
             let mut sessions = h.sessions.lock().unwrap();
-            let canceled = sessions.stop_role(Role::Stream, None);
+            let canceled = sessions.stop_host_streams();
             let stopped: Vec<_> = sessions
                 .active
                 .values()
-                .filter(|s| s.launch.role == Role::Stream)
+                .filter(|s| s.launch.role == Role::Stream && s.launch.nucleus.is_none())
                 .map(|s| s.launch.id.clone())
                 .chain(sessions.teardown.keys().cloned())
                 .collect();

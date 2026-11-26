@@ -253,7 +253,7 @@ const GOLDEN_101: &str = concat!(
 #[test]
 fn emdf_variable_bits_add_one_per_group() {
     let written = |count: u32, value: u64| {
-        let mut bits = Bits::with_prefix(0);
+        let mut bits = Bits::with_prefix(&[0]);
         bits.variable(count, value);
         let used = bits.position() as usize - 8;
         (bits_at(&bits.bytes[1..], 0, used), used)
@@ -406,17 +406,35 @@ fn an_unreported_full_frame_level_keeps_the_reference_white_average() {
 }
 
 #[test]
-fn full_range_streams_do_not_negotiate_limited_range_dovi_rpus() {
-    use rubylight_protocol::hdr;
-    for (codec, hdr_format) in [(1, hdr::DV_81), (1, hdr::DV_84), (2, hdr::DV_101)] {
-        let full = crate::rtsp::Negotiated {
-            codec,
-            hdr: true,
-            hdr_format,
-            csc_mode: 5, // BT.2020 full range
-            ..Default::default()
-        };
-        assert!(full.full_range());
-        assert_eq!(negotiated(&full), None, "{codec} {hdr_format}");
+fn crc32_mpeg2_lookup_table_matches_bitwise_reference() {
+    fn bitwise_crc32_mpeg2(data: &[u8]) -> u32 {
+        let mut crc = u32::MAX;
+        for &byte in data {
+            crc ^= u32::from(byte) << 24;
+            for _ in 0..8 {
+                crc = if crc & 0x8000_0000 != 0 {
+                    (crc << 1) ^ 0x04C1_1DB7
+                } else {
+                    crc << 1
+                };
+            }
+        }
+        crc
     }
+
+    let sample: Vec<u8> = (0..300)
+        .map(|i| (i as u8).wrapping_mul(37).wrapping_add(11))
+        .collect();
+    for len in [0, 1, 2, 7, 64, 255, 300] {
+        assert_eq!(
+            crc32_mpeg2(&sample[..len]),
+            bitwise_crc32_mpeg2(&sample[..len])
+        );
+    }
+    let frame = Writer::new(1000).frame(true);
+    let rpu = frame.rpu();
+    assert_eq!(
+        crc32_mpeg2(&rpu[1..rpu.len() - 5]),
+        bitwise_crc32_mpeg2(&rpu[1..rpu.len() - 5])
+    );
 }

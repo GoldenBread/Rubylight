@@ -2,7 +2,9 @@
 
 use super::*;
 
-pub(super) unsafe extern "C" fn create(table: *mut NV_ENCODE_API_FUNCTION_LIST) -> NVENCSTATUS {
+pub(in crate::nvenc) unsafe extern "C" fn create(
+    table: *mut NV_ENCODE_API_FUNCTION_LIST,
+) -> NVENCSTATUS {
     // SAFETY: `Session::open_version` passes its live, exclusive function table.
     let table = unsafe { &mut *table };
     assert_eq!(table.version, version(table.version).structure(2, false));
@@ -349,7 +351,12 @@ unsafe extern "C" fn encode(raw: *mut c_void, parameters: *mut NV_ENC_PIC_PARAMS
     // SAFETY: `raw` is a live handle that `open` boxed and `destroy` has not freed.
     assert_eq!(p.version, unsafe { handle(raw) }.picture());
     if p.encodePicFlags & _NV_ENC_PIC_FLAGS_NV_ENC_PIC_FLAG_EOS != 0 {
-        state(|d| d.calls.push("eos"));
+        // SAFETY: The parameters are plain old data; this copy outlives the call.
+        let eos = unsafe { std::ptr::read(p) };
+        state(|d| {
+            d.eos_pictures.push(eos);
+            d.calls.push("eos");
+        });
         return SUCCESS;
     }
     // SAFETY: `raw` is a live handle that `open` boxed and `destroy` has not freed.

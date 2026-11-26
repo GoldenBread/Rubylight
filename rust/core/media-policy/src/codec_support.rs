@@ -237,31 +237,45 @@ pub enum Outcome {
     Failed(String),
 }
 
+/// Why a codec is unavailable on this host.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Cause {
+    /// Turned off in host settings (`hevc_mode` / `av1_mode`).
+    Disabled,
+    /// Encoder probe failed to open or produce a frame.
+    Failed,
+}
+
 /// A codec the host does not advertise, with the reason shown to the user.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Unavailable {
     pub codec: Codec,
+    pub cause: Cause,
     pub reason: String,
 }
 
 /// The reason `codec` is not advertised, given the probe `outcome` on
 /// `adapter`. None when it is available.
 pub fn explain(adapter: &str, codec: Codec, outcome: &Outcome) -> Option<Unavailable> {
-    let reason = match outcome {
+    let (cause, reason) = match outcome {
         Outcome::Available => return None,
-        Outcome::Disabled => format!(
-            "{} is turned off in the host settings (HEVC/AV1 mode).",
-            codec.label()
+        Outcome::Disabled => (
+            Cause::Disabled,
+            format!(
+                "{} is turned off in the host settings (HEVC/AV1 mode).",
+                codec.label()
+            ),
         ),
         // AMD's table says nothing about 4:4:4, which VCN never encodes: the
         // encoder's own words say why (NVENC's capability or AMF's 4:2:0).
-        Outcome::Failed(error) if codec.yuv444 => {
-            format!("{} is not available: {}", codec.label(), error.trim())
-        }
+        Outcome::Failed(error) if codec.yuv444 => (
+            Cause::Failed,
+            format!("{} is not available: {}", codec.label(), error.trim()),
+        ),
         Outcome::Failed(error) => {
             let engine = engine(adapter);
             let driver = error.trim();
-            match expected(engine, codec) {
+            let text = match expected(engine, codec) {
                 Some(false) => format!(
                     "{} encoding is not available on this GPU: {} has no {} encoder in AMD's multimedia table. Driver: {driver}",
                     codec.label(),
@@ -286,10 +300,15 @@ pub fn explain(adapter: &str, codec: Codec, outcome: &Outcome) -> Option<Unavail
                         format!(" on {adapter}")
                     },
                 ),
-            }
+            };
+            (Cause::Failed, text)
         }
     };
-    Some(Unavailable { codec, reason })
+    Some(Unavailable {
+        codec,
+        cause,
+        reason,
+    })
 }
 
 /// The unavailable codecs for a full probe pass, in `Codec::ALL` order.
@@ -307,7 +326,7 @@ pub fn explain_all(adapter: &str, outcomes: &[(Codec, Outcome)]) -> Vec<Unavaila
 pub fn warning(missing: &[Unavailable]) -> Option<String> {
     let failed: Vec<&Unavailable> = missing
         .iter()
-        .filter(|m| !m.codec.yuv444 && !m.reason.contains("turned off in the host settings"))
+        .filter(|m| !m.codec.yuv444 && m.cause != Cause::Disabled)
         .collect();
     if failed.is_empty() {
         return None;

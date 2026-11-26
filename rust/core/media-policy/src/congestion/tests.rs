@@ -680,3 +680,41 @@ fn client_clock_underflow_and_backward_jumps_do_not_overflow_or_stall_eviction()
     assert!(cc.acked_bps().is_some());
     assert!(cc.sent_bps().is_some());
 }
+
+#[test]
+fn congestion_running_sums_match_full_window_scan() {
+    let mut cc = Congestion::new(1_000_000, 100_000_000);
+    for i in 0..40u64 {
+        let now_us = (i + 1) * 50_000;
+        let pkt = [
+            PacketResult {
+                sent_us: now_us.saturating_sub(2_000),
+                arrival_us: Some(now_us),
+                wire_bytes: 1_200,
+            },
+            PacketResult {
+                sent_us: now_us.saturating_sub(1_000),
+                arrival_us: if i % 5 == 0 { None } else { Some(now_us + 500) },
+                wire_bytes: 900,
+            },
+        ];
+        cc.on_feedback(
+            now_us,
+            Feedback {
+                packets: &pkt,
+                stride: 1,
+                late: 1,
+                skipped: 0,
+            },
+            16,
+        );
+        let expected_received: u64 = cc.acked.iter().map(|s| s.received).sum();
+        let expected_sent: u64 = cc.acked.iter().map(|s| s.sent).sum();
+        let expected_packets: u64 = cc.losses.iter().map(|s| s.1).sum();
+        let expected_lost: u64 = cc.losses.iter().map(|s| s.2).sum();
+        assert_eq!(cc.acked_received_sum, u128::from(expected_received));
+        assert_eq!(cc.acked_sent_sum, u128::from(expected_sent));
+        assert_eq!(cc.losses_packets_sum, expected_packets);
+        assert_eq!(cc.losses_lost_sum, expected_lost);
+    }
+}

@@ -301,17 +301,36 @@ fn secret(h: &Shared, certificate: &str) -> Result<[u8; 32]> {
         return Ok(secret);
     }
     let secret: [u8; 32] = traverse::crypto::random();
-    let mut stored = false;
-    for client in paired.clients.iter_mut().filter(matching) {
-        client
-            .extra
-            .insert(SECRET_FIELD.to_owned(), Value::String(hex::encode(secret)));
-        stored = true;
+    let encoded = Value::String(hex::encode(secret));
+    let mut previous = Vec::new();
+    for (idx, client) in paired.clients.iter_mut().enumerate() {
+        if client.cert.trim() == certificate.trim() {
+            previous.push((
+                idx,
+                client
+                    .extra
+                    .insert(SECRET_FIELD.to_owned(), encoded.clone()),
+            ));
+        }
     }
-    anyhow::ensure!(stored, "the device is not paired");
-    paired
+    anyhow::ensure!(!previous.is_empty(), "the device is not paired");
+    if let Err(error) = paired
         .save(&h.paired_path)
-        .context("the internet play secret could not be saved")?;
+        .context("the internet play secret could not be saved")
+    {
+        for (idx, prior) in previous {
+            let extra = &mut paired.clients[idx].extra;
+            match prior {
+                Some(value) => {
+                    extra.insert(SECRET_FIELD.to_owned(), value);
+                }
+                None => {
+                    extra.remove(SECRET_FIELD);
+                }
+            }
+        }
+        return Err(error);
+    }
     drop(paired);
     if let Some(service) = service() {
         service.set_devices(devices(h));

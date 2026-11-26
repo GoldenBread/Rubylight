@@ -186,7 +186,19 @@ fn main() {
         });
     }
     if !system::elevated() {
-        std::process::exit(system::relaunch_elevated().unwrap_or(1));
+        let code = match system::relaunch_elevated() {
+            Ok(code) => code,
+            Err(error) => {
+                if !args.quiet {
+                    ui::message_box(
+                        TITLE,
+                        &format!("Could not start Rubylight Setup as administrator: {error:#}"),
+                    );
+                }
+                1
+            }
+        };
+        std::process::exit(code);
     }
     if args.repair_drivers {
         // Run as SYSTEM, whose %TEMP% nobody looks in: log with the host once
@@ -260,7 +272,11 @@ fn main() {
                             &mut notes,
                         );
                     })?;
-                    usbip::remember(&install::profile(), usbip_driver)?;
+                    if let Err(error) = usbip::remember(&install::profile(), usbip_driver) {
+                        notes.push(format!(
+                            "The USB audio and haptics driver choice could not be saved: {error:#}"
+                        ));
+                    }
                     // Hosts updated from the console keep the names Windows
                     // shows from their first install; bring them up to date.
                     if let Err(error) = install::refresh_service_name() {

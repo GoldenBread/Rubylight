@@ -8,20 +8,24 @@ import { tick } from 'svelte';
  */
 export const MOVED: Readonly<Record<string, string>> = { '/maintenance': '/help' };
 
-/** A console address with a moved page's path replaced; any other address as it is. */
+/** A console address with trailing slashes trimmed and moved paths replaced. */
 export function canonical(to: string): string {
   const end = to.search(/[?#]/);
   const path = end === -1 ? to : to.slice(0, end);
-  const moved = MOVED[path];
-  return moved ? moved + (end === -1 ? '' : to.slice(end)) : to;
+  const trimmed = path.length > 1 ? path.replace(/\/+$/, '') : path;
+  const moved = MOVED[trimmed] ?? trimmed;
+  return moved !== path ? moved + (end === -1 ? '' : to.slice(end)) : to;
 }
 
 let index = typeof history === 'undefined' ? 0 : (history.state?.rubylightIndex ?? 0);
-if (typeof history !== 'undefined') {
+if (typeof history !== 'undefined' && typeof location !== 'undefined') {
   history.replaceState({ ...history.state, rubylightIndex: index }, '', canonical(location.pathname + location.search + location.hash));
 }
 
-export const route = $state({ path: location.pathname, search: location.search });
+export const route = $state({
+  path: typeof location === 'undefined' ? '/' : location.pathname,
+  search: typeof location === 'undefined' ? '' : location.search,
+});
 
 /** Asked before leaving the page in the app (e.g. unsaved changes). */
 type Guard = (to: string) => boolean | Promise<boolean>;
@@ -80,7 +84,7 @@ async function ask(to: string, popped: boolean): Promise<Answer> {
   return leave ? 'leave' : 'stay';
 }
 
-window.addEventListener('popstate', () => {
+if (typeof window !== 'undefined') window.addEventListener('popstate', () => {
   const at = indexOf();
   if (restoring !== null) {
     const expected = restoring;

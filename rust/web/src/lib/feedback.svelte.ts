@@ -34,16 +34,18 @@ export interface Confirmation {
 export const dialog = $state<{ current: Confirmation | null }>({ current: null });
 
 export function confirm(options: { title: string; message: string; confirm?: string; danger?: boolean }): Promise<boolean> {
+  dialog.current?.resolve(false);
   return new Promise((resolve) => {
-    dialog.current = {
+    const entry: NonNullable<typeof dialog.current> = {
       title: options.title,
       message: options.message,
       confirm: options.confirm ?? 'Continue',
       danger: options.danger ?? false,
       resolve: (value) => {
-        dialog.current = null;
+        if (dialog.current === entry) dialog.current = null;
         resolve(value);
       },
     };
+    dialog.current = entry;
   });
 }

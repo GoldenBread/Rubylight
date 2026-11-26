@@ -484,10 +484,15 @@ impl Slots {
                 }
                 id
             }
-            Input::Arrival { id, .. }
-            | Input::ControllerTouch { id, .. }
+            Input::Arrival { id, .. } => id,
+            Input::ControllerTouch { id, .. }
             | Input::Motion { id, .. }
-            | Input::Battery { id, .. } => id,
+            | Input::Battery { id, .. } => {
+                let slot = self.find(session, id)?;
+                return self.pads[slot]
+                    .apply(input, motion_us)
+                    .then_some(slot as u8);
+            }
             _ => return None,
         };
         let slot = match self.find(session, id) {

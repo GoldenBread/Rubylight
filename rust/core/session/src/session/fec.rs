@@ -1,6 +1,17 @@
 //! Per-session adaptive and statistical FEC configuration, feedback handling, and sizing.
 use super::*;
 
+#[derive(Clone, Copy)]
+pub(super) struct WholePayloadCache {
+    revision: u64,
+    ceiling: usize,
+    slice: usize,
+    minimum: usize,
+    fresh: bool,
+    settled: bool,
+    limit: usize,
+}
+
 impl<P, A> Session<P, A> {
     pub fn record_fec_status(&self, payload: &[u8]) {
         let last_sent = self
@@ -79,6 +90,8 @@ impl<P, A> Session<P, A> {
         *client = None;
         self.client_fec_on.store(false, Ordering::Release);
         self.fec_split_on.store(false, Ordering::Release);
+        *self.last_fec_report_at.lock().unwrap() = None;
+        self.fec_revision.fetch_add(1, Ordering::Release);
         if self.config.codec == 3 || choice == FecChoice::Host {
             drop(client);
             return self.configure_fec(adaptive, configured);
@@ -96,6 +109,7 @@ impl<P, A> Session<P, A> {
                     ),
                 );
                 self.client_fec_on.store(true, Ordering::Release);
+                self.fec_revision.fetch_add(1, Ordering::Release);
                 fallback
             }
         };
@@ -158,6 +172,8 @@ impl<P, A> Session<P, A> {
         if let Some(estimate) = estimate {
             fec.install(estimate);
         }
+        *self.last_fec_report_at.lock().unwrap() = Some(now);
+        self.fec_revision.fetch_add(1, Ordering::Release);
         let percent = fec.percent(now, self.typical_fec_shards());
         self.fec_percent.store(percent as u32, Ordering::Release);
         drop(client);
@@ -221,17 +237,67 @@ impl<P, A> Session<P, A> {
         let slice = self.config.packet_size.saturating_sub(16).max(1);
         let minimum = self.config.min_fec;
         let ceiling = self.adaptive_fec.lock().unwrap().ceiling();
+        let rev = self.fec_revision.load(Ordering::Acquire);
+        let last_at = *self.last_fec_report_at.lock().unwrap();
+        let fresh = last_at.is_some_and(|at| {
+            now.saturating_duration_since(at)
+                <= butterpollo_media_policy::statistical_fec::FEEDBACK_TIMEOUT
+        });
+        let settled = last_at.is_some_and(|at| {
+            now.saturating_duration_since(at) >= butterpollo_media_policy::statistical_fec::WINDOW
+        });
+        if let Some(cached) = *self.whole_payload_cache.lock().unwrap()
+            && cached.revision == rev
+            && cached.ceiling == ceiling
+            && cached.slice == slice
+            && cached.minimum == minimum
+            && cached.fresh == fresh
+            && cached.settled == settled
+        {
+            return Some(cached.limit);
+        }
         let client = self.client_fec.lock().unwrap();
         let fec = client.as_ref()?;
-        let shards = (1..=4 * 255)
-            .rev()
-            .find(|&shards| {
-                let percent = fec.percent(now, shards).max(ceiling);
-                butterpollo_media_policy::packet::conventional_fec(shards, percent, minimum).1
-                    >= percent
-            })
-            .unwrap_or(1);
-        Some((shards * slice).saturating_sub(8))
+        let rev = self.fec_revision.load(Ordering::Acquire);
+        // If loss is unset, zero, or timed out, percent(now, shards) is constant across
+        // shard counts, so read it once and release the lock before searching.
+        let loss = fec.loss();
+        let shards = if !fresh || loss.is_none_or(|l| l <= 0.0) {
+            let percent = fec.percent(now, 1).max(ceiling);
+            drop(client);
+            let upper = ((4 * 255) * 100 / (100 + percent)).clamp(1, 4 * 255);
+            (1..=upper)
+                .rev()
+                .find(|&shards| {
+                    butterpollo_media_policy::packet::conventional_fec(shards, percent, minimum).1
+                        >= percent
+                })
+                .unwrap_or(1)
+        } else {
+            let min_pct = fec.floor().max(ceiling);
+            let upper = ((4 * 255) * 100 / (100 + min_pct)).clamp(1, 4 * 255);
+            let found = (1..=upper)
+                .rev()
+                .find(|&shards| {
+                    let percent = fec.percent(now, shards).max(ceiling);
+                    butterpollo_media_policy::packet::conventional_fec(shards, percent, minimum).1
+                        >= percent
+                })
+                .unwrap_or(1);
+            drop(client);
+            found
+        };
+        let limit = (shards * slice).saturating_sub(8);
+        *self.whole_payload_cache.lock().unwrap() = Some(WholePayloadCache {
+            revision: rev,
+            ceiling,
+            slice,
+            minimum,
+            fresh,
+            settled,
+            limit,
+        });
+        Some(limit)
     }
     /// The FEC percentage to budget a recovery frame's parity with before it
     /// is encoded: [`Self::video_fec_percent`] for an average frame.

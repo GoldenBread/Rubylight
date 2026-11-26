@@ -145,6 +145,7 @@ impl Gamepads {
             .ok_or_else(|| anyhow::anyhow!("controller {id} is not plugged in"))
     }
     pub(in crate::input) fn refresh(&mut self) -> Result<()> {
+        let attached = self.finish_attaches();
         let keepalive = self.backend.refresh();
         let mut updates = Vec::new();
         for (id, (event, back)) in &mut self.states {
@@ -172,9 +173,14 @@ impl Gamepads {
                 last_error = Some(error);
             }
         }
-        match last_error {
+        let back = match last_error {
             Some(error) => Err(error),
             None => keepalive,
+        };
+        match back {
+            Err(error) if gamepad_backend::driver_lost(&error) => Err(error),
+            Err(error) => attached.and(Err(error)),
+            Ok(()) => attached,
         }
     }
     /// Controllers whose client is asked for motion again, with their

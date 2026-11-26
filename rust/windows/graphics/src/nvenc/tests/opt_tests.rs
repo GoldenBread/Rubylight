@@ -366,3 +366,68 @@ fn dynamic_headroom_reserves_capacity_for_hdr_metadata_splicing() -> Result<()> 
     assert_clean();
     Ok(())
 }
+
+#[test]
+fn vbv_ceiling_recomputes_from_tuning_without_ratcheting_across_bitrate_dips() -> Result<()> {
+    reset();
+    let mut encoder = session(&Negotiated::default(), ApiVersion(13, 0))?;
+    let initial_ceiling = encoder.vbv_ceiling;
+    assert!(initial_ceiling > 0);
+    assert_eq!(encoder.config.rcParams.vbvBufferSize, initial_ceiling);
+
+    // Dip far enough that the VBV would clamp to MIN_VBV_BITS (65536 bits). Scaling the clamped
+    // ceiling back up used to ratchet the ceiling ~40x higher when bitrate recovered.
+    encoder.bitrate(100)?;
+    assert_eq!(encoder.vbv_ceiling, MIN_VBV_BITS as u32);
+    assert_eq!(encoder.config.rcParams.vbvBufferSize, MIN_VBV_BITS as u32);
+
+    encoder.bitrate(20_000)?;
+    assert_eq!(encoder.vbv_ceiling, initial_ceiling);
+    assert_eq!(encoder.config.rcParams.vbvBufferSize, initial_ceiling);
+    assert_eq!(encoder.config.rcParams.vbvInitialDelay, initial_ceiling);
+
+    // With custom headroom (`nvenc_vbv_increase = 400`), recovery also stays anchored to `Tuning`.
+    drop(encoder);
+    reset();
+    let mut wide = session_with(
+        &Negotiated::default(),
+        ApiVersion(13, 0),
+        "nvenc_vbv_increase = 400\n",
+    )?;
+    let wide_ceiling = wide.vbv_ceiling;
+    wide.bitrate(200)?;
+    assert!(wide.vbv_ceiling < wide_ceiling);
+    wide.bitrate(20_000)?;
+    assert_eq!(wide.vbv_ceiling, wide_ceiling);
+    assert_eq!(wide.config.rcParams.vbvBufferSize, wide_ceiling);
+
+    drop(wide);
+    assert_clean();
+    Ok(())
+}
+
+#[test]
+fn async_teardown_sends_eos_with_registered_completion_event() -> Result<()> {
+    reset();
+    state(|d| d.asynchronous = true);
+    let mut encoder = session(&Negotiated::default(), ApiVersion(13, 0))?;
+    let slot = input(&mut encoder, 77)?;
+    encoder.submit(slot, None, true, Instant::now())?;
+    encoder.close();
+    state(|d| {
+        let eos = d
+            .eos_pictures
+            .last()
+            .expect("EOS submitted on async teardown with pending work");
+        assert_ne!(
+            eos.encodePicFlags & _NV_ENC_PIC_FLAGS_NV_ENC_PIC_FLAG_EOS,
+            0
+        );
+        assert!(
+            !eos.completionEvent.is_null(),
+            "async EOS must pass a non-null registered completionEvent"
+        );
+    });
+    assert_clean();
+    Ok(())
+}

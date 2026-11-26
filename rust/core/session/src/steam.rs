@@ -26,11 +26,67 @@ pub use collections::{Collections, LastCollections, MAX_FAILED_COLLECTION_READS,
 pub use launch::{Launch, LibraryApp, game_executable, library_app, valve_anti_cheat};
 pub use sync::{
     FALLBACK_IMAGE, Settings, app_id_of, canonical_uuid, game_of, id_names, importable,
-    is_excluded, launch_command, launched_through_steam, reconcile, select,
+    is_excluded, launch_command, launched_through_steam, reconcile, reconcile_checked, select,
 };
 pub use tracker::{Process, Tracked, Tracker};
 use vdf::appinfo_entries;
 pub use vdf::{Vdf, appinfo};
+
+/// Outcome of scanning configured Steam roots, preserving which libraries and
+/// manifests could not be read so uninstalled-game cleanup skips them.
+#[derive(Clone, Debug, Default)]
+pub struct Discovery {
+    pub games: Vec<Game>,
+    pub readable_libraries: Vec<PathBuf>,
+    pub unreadable_libraries: Vec<PathBuf>,
+    pub unreadable_apps: BTreeSet<u32>,
+    pub incomplete: bool,
+}
+
+impl Discovery {
+    /// Whether removing `app` during `reconcile_checked` is safe (its library
+    /// and manifest were read completely).
+    pub fn allows_removal(&self, app: &serde_json::Value, appid: Option<u32>) -> bool {
+        if let Some(id) = appid
+            && self.unreadable_apps.contains(&id)
+        {
+            return false;
+        }
+        let install_dir = app
+            .get("steam-install-dir")
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .unwrap_or("");
+        if !install_dir.is_empty() {
+            if self
+                .unreadable_libraries
+                .iter()
+                .any(|lib| dir_in_library(install_dir, lib))
+            {
+                return false;
+            }
+            if self
+                .readable_libraries
+                .iter()
+                .any(|lib| dir_in_library(install_dir, lib))
+            {
+                return true;
+            }
+        }
+        !self.incomplete && self.unreadable_libraries.is_empty() && self.unreadable_apps.is_empty()
+    }
+}
+
+fn dir_in_library(install_dir: &str, steamapps: &Path) -> bool {
+    let norm = |s: &str| {
+        s.replace('/', "\\")
+            .trim_end_matches('\\')
+            .to_ascii_lowercase()
+    };
+    let dir = norm(install_dir);
+    let prefix = format!("{}\\common\\", norm(&steamapps.to_string_lossy()));
+    dir.starts_with(&prefix)
+}
 
 /// An installed (or recently played) Steam app.
 #[derive(Clone, Debug, Default, Serialize)]
@@ -76,32 +132,62 @@ pub fn steamapps(root: &Path) -> Option<PathBuf> {
 /// Every installed app in the libraries of `roots` (Steam installations),
 /// with play history, names and types from the app cache, and artwork.
 pub fn discover(roots: &[PathBuf]) -> Vec<Game> {
-    let roots = &only_on_this_pc(roots);
-    let libraries = libraries(roots);
+    discover_checked(roots).games
+}
+
+/// Like [`discover`], while recording any unreadable Steam roots, library
+/// folders, or manifests so sync never deletes apps on unreachable drives.
+pub fn discover_checked(roots: &[PathBuf]) -> Discovery {
+    let mut discovery = Discovery::default();
+    let local_roots = only_on_this_pc(roots);
+    if local_roots.is_empty() {
+        discovery.incomplete = true;
+        return discovery;
+    }
+    let libraries = libraries_checked(&local_roots, &mut discovery);
     let mut games: BTreeMap<u32, Game> = BTreeMap::new();
     for steamapps in &libraries {
-        for manifest in manifests(steamapps) {
-            let Some((appid, state, install_dir)) = installed(steamapps, &manifest) else {
-                continue;
-            };
-            if games.contains_key(&appid) {
-                continue;
+        let Some(manifests) = manifests_checked(steamapps) else {
+            discovery.incomplete = true;
+            add_unique_path(&mut discovery.unreadable_libraries, steamapps.clone());
+            continue;
+        };
+        let mut library_clean = true;
+        for manifest in manifests {
+            match installed_checked(steamapps, &manifest) {
+                ManifestOutcome::App(appid, state, install_dir) => {
+                    if games.contains_key(&appid) {
+                        continue;
+                    }
+                    games.insert(
+                        appid,
+                        Game {
+                            appid,
+                            name: state.get("name").and_then(Vdf::text).unwrap_or("").into(),
+                            app_type: state.get("type").and_then(Vdf::text).unwrap_or("").into(),
+                            install_dir,
+                            library_path: steamapps.parent().unwrap_or(steamapps).to_owned(),
+                            installed: true,
+                            ..Default::default()
+                        },
+                    );
+                }
+                ManifestOutcome::Unreadable(appid) => {
+                    library_clean = false;
+                    discovery.incomplete = true;
+                    if let Some(id) = appid {
+                        discovery.unreadable_apps.insert(id);
+                    }
+                    add_unique_path(&mut discovery.unreadable_libraries, steamapps.clone());
+                }
+                ManifestOutcome::NotInstalled => {}
             }
-            games.insert(
-                appid,
-                Game {
-                    appid,
-                    name: state.get("name").and_then(Vdf::text).unwrap_or("").into(),
-                    app_type: state.get("type").and_then(Vdf::text).unwrap_or("").into(),
-                    install_dir,
-                    library_path: steamapps.parent().unwrap_or(steamapps).to_owned(),
-                    installed: true,
-                    ..Default::default()
-                },
-            );
+        }
+        if library_clean {
+            add_unique_path(&mut discovery.readable_libraries, steamapps.clone());
         }
     }
-    let steam_roots: Vec<&PathBuf> = roots
+    let steam_roots: Vec<&PathBuf> = local_roots
         .iter()
         .filter(|r| r.join("userdata").is_dir())
         .collect();
@@ -124,12 +210,13 @@ pub fn discover(roots: &[PathBuf]) -> Vec<Game> {
         }
     }
     for game in games.values_mut() {
-        let (portrait, header, icon) = artwork(game.appid, &game.library_path, roots);
+        let (portrait, header, icon) = artwork(game.appid, &game.library_path, &local_roots);
         game.portrait_path = portrait;
         game.header_path = header;
         game.icon_path = icon;
     }
-    games.into_values().filter(|g| !g.name.is_empty()).collect()
+    discovery.games = games.into_values().filter(|g| !g.name.is_empty()).collect();
+    discovery
 }
 /// The names and types [`appinfo`] reads for `wanted`, by app.
 type AppNames = BTreeMap<u32, (String, String)>;
@@ -140,10 +227,15 @@ type AppNamesKey = (PathBuf, u64, std::time::SystemTime, BTreeSet<u32>);
 static APP_NAMES: std::sync::Mutex<Option<(AppNamesKey, AppNames)>> = std::sync::Mutex::new(None);
 /// The names and types of `wanted` in the app cache at `path`, `None` when it cannot be read. The
 /// file is read again only when its size, its time or `wanted` changed since the last read.
+const MAX_APPINFO_BYTES: u64 = 256 * 1024 * 1024;
+
 fn app_names(path: &Path, wanted: &BTreeSet<u32>) -> Option<AppNames> {
     let stamp = std::fs::metadata(path)
         .ok()
         .and_then(|m| Some((m.len(), m.modified().ok()?)));
+    if stamp.is_some_and(|(size, _)| size > MAX_APPINFO_BYTES) {
+        return None;
+    }
     let key = stamp.map(|(size, modified)| (path.to_owned(), size, modified, wanted.clone()));
     if let Some(key) = &key
         && let Some((last, found)) = &*APP_NAMES.lock().unwrap_or_else(|e| e.into_inner())
@@ -234,34 +326,29 @@ fn only_on_this_pc(roots: &[PathBuf]) -> Vec<PathBuf> {
 /// time moved. Only the paths are cached: whether a folder is there is checked on every call, as
 /// a drive can appear after the file was read. A read that fails is not cached.
 static VDF_LIBRARIES: LazyLock<StampCache<Vec<String>>> = LazyLock::new(Default::default);
-/// The libraries a `steamapps` folder's `libraryfolders.vdf` lists, as [`libraries`] reads them:
-/// on this PC's drives, the path from old files' values included.
-fn vdf_libraries(apps: &Path) -> Vec<PathBuf> {
+/// Reads `libraryfolders.vdf` using the `(len, modified)` cache when metadata is available.
+fn vdf_listed_cached(apps: &Path) -> std::io::Result<Vec<String>> {
     let file = apps.join("libraryfolders.vdf");
     let stamp = std::fs::metadata(&file)
         .ok()
         .and_then(|metadata| Some((metadata.len(), metadata.modified().ok()?)));
-    let Some(stamp) = stamp else {
-        // No file to cache by: read it, as before.
-        return read_capped(&file)
-            .ok()
-            .map(|text| existing_libraries(&vdf_listed_paths(&text)))
-            .unwrap_or_default();
-    };
-    let mut read = VDF_LIBRARIES.lock().unwrap_or_else(PoisonError::into_inner);
-    if let Some((last, listed)) = read.get(apps)
-        && *last == stamp
-    {
-        return existing_libraries(listed);
+    if let Some(stamp) = stamp {
+        let read = VDF_LIBRARIES.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some((last, listed)) = read.get(apps)
+            && *last == stamp
+        {
+            return Ok(listed.clone());
+        }
+        drop(read);
+        let text = read_capped(&file)?;
+        let listed = vdf_listed_paths(&text);
+        VDF_LIBRARIES
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(apps.to_owned(), (stamp, listed.clone()));
+        return Ok(listed);
     }
-    let Some(text) = read_capped(&file).ok() else {
-        // Unreadable now, so not cached: the next check reads it again.
-        return vec![];
-    };
-    let listed = vdf_listed_paths(&text);
-    let libraries = existing_libraries(&listed);
-    read.insert(apps.to_owned(), (stamp, listed));
-    libraries
+    Ok(vdf_listed_paths(&read_capped(&file)?))
 }
 /// The library paths the text of `libraryfolders.vdf` lists on this PC's drives. Old files give
 /// the path as the value itself.
@@ -276,28 +363,63 @@ fn vdf_listed_paths(text: &str) -> Vec<String> {
         .map(str::to_owned)
         .collect()
 }
-/// The `steamapps` folders of the listed library paths that exist now.
-fn existing_libraries(paths: &[String]) -> Vec<PathBuf> {
-    paths
-        .iter()
-        .filter_map(|path| steamapps(Path::new(path)))
-        .collect()
+fn add_unique_path(list: &mut Vec<PathBuf>, path: PathBuf) {
+    if !list.iter().any(|known| same_path(known, &path)) {
+        list.push(path);
+    }
 }
+
+fn expected_steamapps(path: &Path) -> PathBuf {
+    let named = path
+        .file_name()
+        .is_some_and(|name| name.eq_ignore_ascii_case("steamapps"));
+    if named || path.join("libraryfolders.vdf").is_file() {
+        path.to_path_buf()
+    } else {
+        path.join("steamapps")
+    }
+}
+
 /// The `steamapps` folders of every library of `roots` on this PC's drives.
 fn libraries(roots: &[PathBuf]) -> Vec<PathBuf> {
+    let mut dummy = Discovery::default();
+    libraries_checked(roots, &mut dummy)
+}
+
+fn libraries_checked(roots: &[PathBuf], discovery: &mut Discovery) -> Vec<PathBuf> {
     let mut libraries: Vec<PathBuf> = vec![];
-    let add = |path: PathBuf, libraries: &mut Vec<PathBuf>| {
-        if !libraries.iter().any(|known| same_path(known, &path)) {
-            libraries.push(path);
-        }
-    };
     for root in roots.iter().filter(|root| on_this_pc(root)) {
         let Some(apps) = steamapps(root) else {
+            discovery.incomplete = true;
+            add_unique_path(
+                &mut discovery.unreadable_libraries,
+                expected_steamapps(root),
+            );
             continue;
         };
-        add(apps.clone(), &mut libraries);
-        for library in vdf_libraries(&apps) {
-            add(library, &mut libraries);
+        add_unique_path(&mut libraries, apps.clone());
+        match vdf_listed_cached(&apps) {
+            Ok(listed) => {
+                for raw in listed {
+                    let candidate = Path::new(&raw);
+                    if !on_this_pc(candidate) {
+                        continue;
+                    }
+                    if let Some(lib) = steamapps(candidate) {
+                        add_unique_path(&mut libraries, lib);
+                    } else {
+                        discovery.incomplete = true;
+                        add_unique_path(
+                            &mut discovery.unreadable_libraries,
+                            expected_steamapps(candidate),
+                        );
+                    }
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => {
+                discovery.incomplete = true;
+            }
         }
     }
     libraries
@@ -309,22 +431,23 @@ fn libraries(roots: &[PathBuf]) -> Vec<PathBuf> {
 static MANIFESTS: LazyLock<TimeCache<Vec<PathBuf>>> = LazyLock::new(Default::default);
 /// The `appmanifest_*.acf` files of a `steamapps` folder, in name order.
 fn manifests(steamapps: &Path) -> Vec<PathBuf> {
+    manifests_checked(steamapps).unwrap_or_default()
+}
+
+fn manifests_checked(steamapps: &Path) -> Option<Vec<PathBuf>> {
     let modified = std::fs::metadata(steamapps)
         .ok()
         .and_then(|m| m.modified().ok());
     let Some(modified) = modified else {
-        return manifest_names(steamapps).unwrap_or_default();
+        return manifest_names(steamapps);
     };
     let mut read = MANIFESTS.lock().unwrap_or_else(PoisonError::into_inner);
     if let Some((last, names)) = read.get(steamapps)
         && *last == modified
     {
-        return names.clone();
+        return Some(names.clone());
     }
-    let Some(names) = manifest_names(steamapps) else {
-        // Unreadable now, so not cached: the next check reads it again.
-        return vec![];
-    };
+    let names = manifest_names(steamapps)?;
     // A folder changed within the clock's granularity may change again with the same time, so its
     // names are cached only once that time is a moment old.
     let settled = std::time::SystemTime::now()
@@ -333,41 +456,105 @@ fn manifests(steamapps: &Path) -> Vec<PathBuf> {
     if settled {
         read.insert(steamapps.to_owned(), (modified, names.clone()));
     }
-    names
+    Some(names)
 }
 
 /// How old a `steamapps` folder's time must be before its manifest names are cached.
 const MANIFESTS_SETTLE: std::time::Duration = std::time::Duration::from_secs(2);
-/// The folder's manifest names, `None` when they cannot be read.
+/// The folder's manifest names, `None` when they cannot be read completely.
 fn manifest_names(steamapps: &Path) -> Option<Vec<PathBuf>> {
     let entries = std::fs::read_dir(steamapps).ok()?;
-    let mut manifests: Vec<_> = entries
-        .filter_map(|entry| entry.ok().map(|e| e.path()))
-        .filter(|path| {
-            path.file_name()
-                .and_then(|n| n.to_str())
-                .is_some_and(|name| {
-                    let name = name.to_ascii_lowercase();
-                    name.starts_with("appmanifest_") && name.ends_with(".acf")
-                })
-        })
-        .collect();
+    let mut manifests = Vec::new();
+    for entry in entries {
+        let entry = entry.ok()?;
+        let path = entry.path();
+        if path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|name| {
+                let name = name.to_ascii_lowercase();
+                name.starts_with("appmanifest_") && name.ends_with(".acf")
+            })
+        {
+            manifests.push(path);
+        }
+    }
     manifests.sort();
     Some(manifests)
 }
+
+enum ManifestOutcome {
+    App(u32, Vdf, PathBuf),
+    NotInstalled,
+    Unreadable(Option<u32>),
+}
+
+fn manifest_appid_from_name(manifest: &Path) -> Option<u32> {
+    let stem = manifest.file_stem()?.to_str()?;
+    stem.to_ascii_lowercase()
+        .strip_prefix("appmanifest_")?
+        .parse::<u32>()
+        .ok()
+        .filter(|id| *id > 0)
+}
+
+/// Validate `installdir` is a single safe directory name under `steamapps/common`
+/// on a local PC drive without path traversal or network escapes.
+fn safe_install_dir(steamapps: &Path, folder: &str) -> Option<PathBuf> {
+    let trimmed = folder.trim();
+    if trimmed.is_empty()
+        || trimmed == "."
+        || trimmed == ".."
+        || trimmed.contains(['/', '\\', ':', '\0'])
+    {
+        return None;
+    }
+    let common = steamapps.join("common");
+    let install_dir = common.join(trimmed);
+    if !on_this_pc(&install_dir) || !install_dir.is_dir() {
+        return None;
+    }
+    if let Ok(canon_install) = std::fs::canonicalize(&install_dir)
+        && !on_this_pc(&canon_install)
+    {
+        return None;
+    }
+    Some(install_dir)
+}
+
 /// A manifest's app, its `AppState` and its install folder, when the folder
-/// is there.
+/// is there and local to this PC.
 fn installed(steamapps: &Path, manifest: &Path) -> Option<(u32, Vdf, PathBuf)> {
-    let text = std::fs::read_to_string(manifest).ok()?;
-    let state = Vdf::parse(&text).get("AppState")?.clone();
-    let appid = state
+    match installed_checked(steamapps, manifest) {
+        ManifestOutcome::App(appid, state, dir) => Some((appid, state, dir)),
+        _ => None,
+    }
+}
+
+fn installed_checked(steamapps: &Path, manifest: &Path) -> ManifestOutcome {
+    let Ok(text) = read_capped(manifest) else {
+        return ManifestOutcome::Unreadable(manifest_appid_from_name(manifest));
+    };
+    let Some(state) = Vdf::parse(&text).get("AppState").cloned() else {
+        return if text.trim().is_empty() {
+            ManifestOutcome::Unreadable(manifest_appid_from_name(manifest))
+        } else {
+            ManifestOutcome::NotInstalled
+        };
+    };
+    let Some(appid) = state
         .get("appid")
         .and_then(Vdf::number)
         .and_then(|id| u32::try_from(id).ok())
-        .filter(|id| *id > 0)?;
+        .filter(|id| *id > 0)
+    else {
+        return ManifestOutcome::NotInstalled;
+    };
     let folder = state.get("installdir").and_then(Vdf::text).unwrap_or("");
-    let install_dir = steamapps.join("common").join(folder);
-    (!folder.is_empty() && install_dir.is_dir()).then_some((appid, state, install_dir))
+    match safe_install_dir(steamapps, folder) {
+        Some(install_dir) => ManifestOutcome::App(appid, state, install_dir),
+        None => ManifestOutcome::NotInstalled,
+    }
 }
 fn same_path(a: &Path, b: &Path) -> bool {
     a.to_string_lossy()

@@ -162,6 +162,7 @@ mod tests {
             shutdown_elapsed_ms: std::sync::atomic::AtomicU64::new(0),
             shutdown_done: AtomicBool::new(false),
             roam_seqs: Default::default(),
+            control_seqs: Default::default(),
         });
         let thread = SessionThread {
             m: &media,

@@ -20,7 +20,7 @@ use std::{
     sync::{Arc, atomic::Ordering},
     time::Instant,
 };
-use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
+use tokio::sync::mpsc::{Receiver, Sender, UnboundedReceiver, unbounded_channel};
 
 /// A session the actor started and has not reported as ended.
 pub(super) struct Live {
@@ -71,8 +71,8 @@ pub(super) struct Actor {
     pub(super) peer: SocketAddr,
     pub(super) local: IpAddr,
     pub(super) this_pc: bool,
-    pub(super) inbox: UnboundedReceiver<Command>,
-    pub(super) out: UnboundedSender<ServerMessage>,
+    pub(super) inbox: Receiver<Command>,
+    pub(super) out: Sender<ServerMessage>,
     pub(super) live: Option<Live>,
 }
 
@@ -131,7 +131,12 @@ impl Actor {
     }
 
     fn say(&self, message: ServerMessage) {
-        let _ = self.out.send(message);
+        if self.out.try_send(message).is_err() {
+            tracing::debug!(
+                client = %self.client_id,
+                "WebRTC signalling outbox full or closed"
+            );
+        }
     }
 
     fn refuse(&self, kind: &str, code: ErrorCode, message: impl Into<String>, host_op: bool) {
@@ -354,9 +359,9 @@ impl Actor {
         };
         let running = running_app(&self.h);
         let same = running == Some(checked.app_id);
-        // Replacing or taking over the running app must honor owner/remote-session/Continue Here
+        // Replacing or taking over a different running app must honor owner/remote-session/Continue Here
         // guards and WebRTC exclusivity before stopping any stream.
-        if nvhttp::terminate_refused(&self.h, &checked.client.uuid) {
+        if !same && nvhttp::terminate_refused(&self.h, &checked.client.uuid) {
             self.say(Self::not_the_owner(KIND));
             return Flow::Done;
         }

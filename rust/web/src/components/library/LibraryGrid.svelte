@@ -258,7 +258,7 @@
     <p class="muted none">No games match “{query.trim()}”.</p>
   {:else}
     <ul class="grid" aria-label="Games" {@attach sortable}>
-      {#each shown as app (app)}
+      {#each shown as app (app.uuid ?? app)}
         {@const isRunning = isRunningApp(status, app)}
         <li
           class="card"

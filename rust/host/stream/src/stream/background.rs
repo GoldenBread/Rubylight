@@ -78,14 +78,29 @@ fn run(h: &Shared, s: &Session, generation: Option<&str>, stop: &AtomicBool) {
     let mut moved_total = 0usize;
     while !stop.load(Ordering::Acquire) && !s.stopping() && !h.stop.load(Ordering::Acquire) {
         let output = s.output.read().unwrap().clone();
-        let processes = h
+        let matching = |app: &&crate::process::RunningApp| {
+            app.id == s.launch.app_id && Some(app.generation.as_str()) == generation
+        };
+        let processes = if h
             .current_app
             .lock()
             .unwrap()
             .as_ref()
-            .filter(|app| app.id == s.launch.app_id && Some(app.generation.as_str()) == generation)
-            .ok_or_else(|| anyhow::anyhow!("this stream has no matching launched game"))
-            .and_then(crate::process::RunningApp::window_processes);
+            .filter(matching)
+            .is_none()
+        {
+            Err(anyhow::anyhow!("this stream has no matching launched game"))
+        } else {
+            crate::process::session_processes().and_then(|all| {
+                h.current_app
+                    .lock()
+                    .unwrap()
+                    .as_ref()
+                    .filter(matching)
+                    .ok_or_else(|| anyhow::anyhow!("this stream has no matching launched game"))
+                    .and_then(|app| app.window_processes_in(&all))
+            })
+        };
         match (processes, target(&output)) {
             (Err(error), _) => {
                 s.launch.warnings.set(WARNING, format!("Background streaming cannot find the game's windows ({error:#}), so they stay where they open, usually on the PC's main monitor. Use a library entry that starts the game's executable, or a Steam or Playnite game."));

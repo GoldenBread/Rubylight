@@ -225,11 +225,20 @@ fn trusted_dir_only(folder: &Path) -> Result<()> {
 fn prepare_task_root(work: &Path) -> Result<()> {
     match std::fs::symlink_metadata(work) {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            create_restricted(work, false)
+            return create_restricted(work, false);
         }
-        Err(error) => Err(error.into()),
-        Ok(_) => trusted_tree(work, &[]),
+        Err(error) => return Err(error.into()),
+        Ok(_) => trusted_tree(work, &[])?,
     }
+    if let Ok(entries) = std::fs::read_dir(work) {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            if name.to_string_lossy().starts_with("ButterpolloSetup-") {
+                let _ = std::fs::remove_dir_all(entry.path());
+            }
+        }
+    }
+    Ok(())
 }
 /// Cryptographically random task identifier so local users cannot pre-create
 /// or guess task script / XML filenames.
@@ -298,14 +307,12 @@ fn run_as_system_in(
                 let text = std::fs::read(&log)
                     .map(|b| String::from_utf8_lossy(&b).into_owned())
                     .unwrap_or_default();
-                if let Some(index) = text.rfind("BUTTERPOLLO-EXIT=") {
-                    let code = text[index + 17..].trim().parse().unwrap_or(-1);
-                    let output = text[..index].to_owned();
+                if let Some((output, code)) = parse_completed_task_log(&text) {
                     if !output.trim().is_empty() {
                         line(output.trim_end());
                     }
                     line(format!("  exit code {code}"));
-                    return Ok((code, output));
+                    return Ok((code, output.to_owned()));
                 }
                 if Instant::now() >= deadline {
                     return Err(StillRunning {
@@ -324,8 +331,21 @@ fn run_as_system_in(
         );
         outcome
     })();
-    let _ = std::fs::remove_dir_all(&run_dir);
+    if !result
+        .as_ref()
+        .is_err_and(|error| error.is::<StillRunning>())
+    {
+        let _ = std::fs::remove_dir_all(&run_dir);
+    }
     result
+}
+
+fn parse_completed_task_log(text: &str) -> Option<(&str, i32)> {
+    let index = text.rfind("BUTTERPOLLO-EXIT=")?;
+    let after = &text[index + "BUTTERPOLLO-EXIT=".len()..];
+    let line_end = after.find('\n')?;
+    let code = after[..line_end].trim().parse::<i32>().ok()?;
+    Some((&text[..index], code))
 }
 /// The task file for schtasks /XML: UTF-16 with a byte order mark, as Task
 /// Scheduler exports tasks. schtasks refuses UTF-8 ("unable to switch the
@@ -440,9 +460,10 @@ pub fn relaunch_elevated() -> Result<i32> {
 
 /// End every process with this executable name (all sessions).
 pub fn kill(names: &[&str]) {
+    let taskkill = system32("taskkill.exe");
     for name in names {
         let _ = run(
-            "taskkill.exe",
+            &taskkill,
             &["/F", "/T", "/IM", name],
             Duration::from_secs(20),
         );
@@ -451,8 +472,9 @@ pub fn kill(names: &[&str]) {
 /// Whether a process with this executable name runs. A process list that
 /// cannot be read counts as running.
 pub fn process_running(name: &str) -> bool {
+    let tasklist = system32("tasklist.exe");
     run(
-        "tasklist.exe",
+        &tasklist,
         &["/NH", "/FO", "CSV", "/FI", &format!("IMAGENAME eq {name}")],
         Duration::from_secs(20),
     )

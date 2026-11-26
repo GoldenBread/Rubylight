@@ -113,21 +113,34 @@ fn is_shell_or_desktop(window: HWND) -> bool {
     }
 }
 fn process_path(pid: u32) -> Option<String> {
-    // SAFETY: the process handle is closed once after the query, and `count` is the capacity of
-    // `name` in UTF-16 units, updated to the length written.
+    // SAFETY: the process handle is closed once after the query, and `count` is updated to the UTF-16 length written.
     unsafe {
         let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
-        let mut name = [0; 32768];
-        let mut count = name.len() as u32;
-        let queried = QueryFullProcessImageNameW(
+        let mut stack = [0u16; 512];
+        let mut count = stack.len() as u32;
+        let result = match QueryFullProcessImageNameW(
             process,
             PROCESS_NAME_WIN32,
-            PWSTR(name.as_mut_ptr()),
+            PWSTR(stack.as_mut_ptr()),
             &mut count,
-        );
+        ) {
+            Ok(()) => Some(String::from_utf16_lossy(&stack[..count as usize])),
+            Err(e) if e.code() == ERROR_INSUFFICIENT_BUFFER.to_hresult() => {
+                let mut wide = vec![0u16; 32768];
+                count = wide.len() as u32;
+                QueryFullProcessImageNameW(
+                    process,
+                    PROCESS_NAME_WIN32,
+                    PWSTR(wide.as_mut_ptr()),
+                    &mut count,
+                )
+                .ok()
+                .map(|()| String::from_utf16_lossy(&wide[..count as usize]))
+            }
+            Err(_) => None,
+        };
         let _ = CloseHandle(process);
-        queried.ok()?;
-        Some(String::from_utf16_lossy(&name[..count as usize]))
+        result
     }
 }
 #[derive(Default)]
@@ -335,41 +348,47 @@ fn visible_executable(request: &Request) -> Option<(String, u32)> {
             }
             let mut pid = 0;
             GetWindowThreadProcessId(window, Some(&mut pid));
-            let exe = process_path(pid);
-            let basename = exe
-                .as_ref()
-                .and_then(|p| p.rsplit(['/', '\\']).next())
-                .unwrap_or("")
-                .to_ascii_lowercase();
             let mut class = [0; 256];
             let count = GetClassNameW(window, &mut class).max(0) as usize;
             let class = String::from_utf16_lossy(&class[..count]);
             let attributed = !scan.request.owned.is_empty();
             let belongs = attributed && scan.request.owned.contains(&pid);
-            let desktop = window == GetDesktopWindow()
-                || window == GetShellWindow()
-                || matches!(
-                    class.as_str(),
-                    "Progman"
-                        | "WorkerW"
-                        | "SHELLDLL_DefView"
-                        | "Shell_TrayWnd"
-                        | "Shell_SecondaryTrayWnd"
-                )
-                || matches!(
-                    basename.as_str(),
-                    "explorer.exe"
-                        | "startmenuexperiencehost.exe"
-                        | "searchhost.exe"
-                        | "searchapp.exe"
-                        | "shellexperiencehost.exe"
-                        | "textinputhost.exe"
-                        | "lockapp.exe"
-                        | "systemsettings.exe"
-                        | "applicationframehost.exe"
-                )
-                || (!attributed && exe.is_none());
             let fullscreen = fullscreen(rect, c, framed);
+            let passive = (ex & (WS_EX_LAYERED.0 | WS_EX_TOOLWINDOW.0)
+                == (WS_EX_LAYERED.0 | WS_EX_TOOLWINDOW.0))
+                || (!framed && (ex & (WS_EX_NOACTIVATE.0 | WS_EX_TRANSPARENT.0) != 0))
+                || (alpha_known
+                    && (flags.0 & LWA_COLORKEY.0 != 0
+                        || (flags.0 & LWA_ALPHA.0 != 0 && alpha < 255)));
+            if passive || (!opaque && attributed && belongs) {
+                return true.into();
+            }
+            let shell_win =
+                window == GetDesktopWindow() || window == GetShellWindow() || shell_class(&class);
+            let mut exe = None;
+            let desktop = shell_win || {
+                let loaded = process_path(pid);
+                let base = loaded
+                    .as_deref()
+                    .and_then(|p| p.rsplit(['/', '\\']).next())
+                    .unwrap_or("");
+                let is_shell_app = [
+                    "explorer.exe",
+                    "startmenuexperiencehost.exe",
+                    "searchhost.exe",
+                    "searchapp.exe",
+                    "shellexperiencehost.exe",
+                    "textinputhost.exe",
+                    "lockapp.exe",
+                    "systemsettings.exe",
+                    "applicationframehost.exe",
+                ]
+                .iter()
+                .any(|s| base.eq_ignore_ascii_case(s))
+                    || (!attributed && loaded.is_none());
+                exe = loaded;
+                is_shell_app
+            };
             let transient = desktop
                 && (matches!(
                     class.as_str(),
@@ -380,15 +399,7 @@ fn visible_executable(request: &Request) -> Option<(String, u32)> {
                         | "ForegroundStaging"
                 ) || (!fullscreen
                     && matches!(class.as_str(), "Shell_TrayWnd" | "Shell_SecondaryTrayWnd")));
-            let passive = !desktop
-                && !belongs
-                && ((!framed
-                    && (ex & (WS_EX_NOACTIVATE.0 | WS_EX_TRANSPARENT.0) != 0
-                        || ex & (WS_EX_LAYERED.0 | WS_EX_TOOLWINDOW.0)
-                            == (WS_EX_LAYERED.0 | WS_EX_TOOLWINDOW.0)))
-                    || (alpha_known
-                        && (flags.0 & LWA_COLORKEY.0 != 0
-                            || (flags.0 & LWA_ALPHA.0 != 0 && alpha < 255))));
+            let passive = !desktop && !belongs && passive;
             match decide(
                 &Evidence {
                     belongs,

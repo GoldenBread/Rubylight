@@ -364,3 +364,20 @@ fn player_lights_are_kept_for_the_host() {
     assert_eq!(reply.len(), 8);
     assert_eq!(pad.take_player_leds(), Some(1));
 }
+
+#[test]
+fn bulk_reply_queue_is_bounded_when_unread() {
+    let mut pad = Switch2Pro::new("X");
+    for seq in 0..200u8 {
+        let mut out = command(0x07, 0x01, &[]);
+        out[2] = seq;
+        assert!(pad.output(BULK_ENDPOINT, &out));
+    }
+    let mut seqs = Vec::new();
+    while let Some(chunk) = pad.transfer_in(BULK_ENDPOINT, 64) {
+        seqs.push(chunk[2]);
+    }
+    assert_eq!(seqs.len(), 64);
+    assert_eq!(*seqs.first().unwrap(), 200 - 64);
+    assert_eq!(*seqs.last().unwrap(), 199);
+}

@@ -12,12 +12,14 @@ use super::*;
 pub struct PortForward {
     task: tokio::task::JoinHandle<()>,
     stop: std::sync::Arc<tokio::sync::Notify>,
+    stop_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 impl PortForward {
     /// The host stops: after `h.stop` is set, this wakes the task, which takes its
     /// mappings down and ends.
     pub fn stop(&self) {
-        self.stop.notify_one();
+        self.stop_flag.store(true, Ordering::Release);
+        self.stop.notify_waiters();
     }
     /// Waits up to `wait` for the task to take its mappings down, then ends it.
     pub async fn finish(mut self, wait: Duration) {
@@ -43,6 +45,23 @@ pub(super) async fn until_renewal_or_stop(stop: &tokio::sync::Notify, renewal: I
     tokio::select! {
         () = stop.notified() => {}
         () = tokio::time::sleep(wait) => {}
+    }
+}
+
+/// Waits until [`PortForward::stop`] sets `stop_flag` or notifies `stopped`.
+pub(super) async fn wait_stop(
+    stop_flag: &std::sync::atomic::AtomicBool,
+    stopped: &tokio::sync::Notify,
+) {
+    loop {
+        if stop_flag.load(Ordering::Acquire) {
+            return;
+        }
+        let notified = stopped.notified();
+        if stop_flag.load(Ordering::Acquire) {
+            return;
+        }
+        notified.await;
     }
 }
 
@@ -150,17 +169,26 @@ pub fn port_forward(h: Shared, bind: IpAddr) -> Option<PortForward> {
         let description = format!("Butterpollo Rust {}", h.paired.read().unwrap().unique_id);
         let nonce_secret = h.identity.private_pem.clone();
         let stop = std::sync::Arc::new(tokio::sync::Notify::new());
+        let stop_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let stopped = stop.clone();
+        let stop_flag_loop = stop_flag.clone();
         let task = tokio::spawn(async move {
             tokio::select! {
-                () = stopped.notified() => {}
+                biased;
+                () = wait_stop(&stop_flag_loop, &stopped) => {}
                 _ = cleanup_guests(&record, bind, &description, nonce_secret.as_bytes()) => {}
             }
         });
-        return Some(PortForward { task, stop });
+        return Some(PortForward {
+            task,
+            stop,
+            stop_flag,
+        });
     }
     let stop = std::sync::Arc::new(tokio::sync::Notify::new());
+    let stop_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let stopped = stop.clone();
+    let stop_flag_loop = stop_flag.clone();
     let task = tokio::spawn(async move {
         let ports = config.ports().unwrap();
         let description = format!("Butterpollo Rust {}", h.paired.read().unwrap().unique_id);
@@ -176,6 +204,7 @@ pub fn port_forward(h: Shared, bind: IpAddr) -> Option<PortForward> {
         let cleanup = {
             let record = record.clone();
             let stopped = stopped.clone();
+            let stop_flag = stop_flag_loop.clone();
             let cleaning = cleaning.clone();
             let done = cleanup_done.clone();
             let description = description.clone();
@@ -183,7 +212,8 @@ pub fn port_forward(h: Shared, bind: IpAddr) -> Option<PortForward> {
             tokio::spawn(async move {
                 if cleaning.load(Ordering::Acquire) {
                     tokio::select! {
-                        () = stopped.notified() => {}
+                        biased;
+                        () = wait_stop(&stop_flag, &stopped) => {}
                         () = cleanup_guests(&record, bind, &description, secret.as_bytes()) => {}
                     }
                 }
@@ -194,7 +224,7 @@ pub fn port_forward(h: Shared, bind: IpAddr) -> Option<PortForward> {
         let mut next_search = Instant::now();
         let mut held = Held::default();
         let mut reported = Vec::new();
-        while !h.stop.load(Ordering::Acquire) {
+        while !h.stop.load(Ordering::Acquire) && !stop_flag_loop.load(Ordering::Acquire) {
             if Instant::now() >= next_search {
                 next_search = Instant::now() + RENEWAL;
                 // Read before the guests are asked: a request made during this round is
@@ -230,28 +260,36 @@ pub fn port_forward(h: Shared, bind: IpAddr) -> Option<PortForward> {
                         };
                     });
                 } else {
-                    renew(
-                        &mut held,
-                        bind,
-                        &stream,
-                        &guest,
-                        &wanted,
-                        &description,
-                        nonce_secret.as_bytes(),
-                        &mut reported,
-                        &record,
-                    )
-                    .await;
+                    tokio::select! {
+                        biased;
+                        () = wait_stop(&stop_flag_loop, &stopped) => break,
+                        () = renew(
+                            &mut held,
+                            bind,
+                            &stream,
+                            &guest,
+                            &wanted,
+                            &description,
+                            nonce_secret.as_bytes(),
+                            &mut reported,
+                            &record,
+                        ) => {}
+                    }
                     if !cleaning_now {
                         crate::internet_play::update_mapping(|status| status.guest_round = round);
                     }
                 }
+            }
+            if h.stop.load(Ordering::Acquire) || stop_flag_loop.load(Ordering::Acquire) {
+                break;
             }
             let wake_at = h
                 .guest_net
                 .next_expiry()
                 .map_or(next_search, |expiry| next_search.min(expiry));
             tokio::select! {
+                biased;
+                () = wait_stop(&stop_flag_loop, &stopped) => break,
                 () = until_renewal_or_stop(&stopped, wake_at) => {
                     if wake_at < next_search && Instant::now() >= wake_at {
                         next_search = Instant::now();
@@ -270,7 +308,11 @@ pub fn port_forward(h: Shared, bind: IpAddr) -> Option<PortForward> {
         let _ = cleanup.await;
         held.release(&description, &record).await;
     });
-    Some(PortForward { task, stop })
+    Some(PortForward {
+        task,
+        stop,
+        stop_flag,
+    })
 }
 
 /// One round of mapping `wanted` (the streaming ports `stream` and the guests' `guest`): UPnP
@@ -356,7 +398,6 @@ pub(super) async fn renew(
             on_trial,
         )
         .await;
-        *applied = outcome.held;
         if std::mem::take(&mut on_trial) {
             if outcome.answered {
                 tracing::info!("the UPnP router answers again");

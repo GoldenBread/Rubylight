@@ -627,3 +627,106 @@ fn unc_and_device_paths_are_rejected_before_opening_handles() {
         assert!(!available(remote), "{remote:?}");
     }
 }
+
+#[test]
+fn trust_check_accepts_program_files_and_validates_second_drive_roots() {
+    use butterpollo_session::neural::{ADMINISTRATORS, Security};
+    let admin = || Security {
+        link: false,
+        owner: ADMINISTRATORS[1].into(),
+        writers: vec![ADMINISTRATORS[0].into(), ADMINISTRATORS[1].into()],
+    };
+    let user_writable = Security {
+        link: false,
+        owner: "S-1-5-21-100-200-300-1001".into(),
+        writers: vec![
+            ADMINISTRATORS[0].into(),
+            ADMINISTRATORS[1].into(),
+            "S-1-5-11".into(),
+        ],
+    };
+
+    // System drive Program Files chain: every ancestor and RTSS root passes Admin-only check.
+    let c_drive = Path::new(r"C:\");
+    let c_pf = Path::new(r"C:\Program Files (x86)");
+    let c_rtss = Path::new(r"C:\Program Files (x86)\RivaTuner Statistics Server");
+    let (a, b, c) = (admin(), admin(), admin());
+    trust::check_chain(
+        c_rtss,
+        &[(c_drive, &a), (c_pf, &b), (c_rtss, &c)],
+        Some(b'C'),
+        TrustMode::AdministratorsOnly,
+    )
+    .unwrap();
+
+    // User-writable ancestor on system drive (outside Program Files) is still rejected.
+    let err = trust::check_chain(
+        Path::new(r"C:\Games\RTSS"),
+        &[
+            (c_drive, &a),
+            (Path::new(r"C:\Games"), &user_writable),
+            (Path::new(r"C:\Games\RTSS"), &c),
+        ],
+        Some(b'C'),
+        TrustMode::AdministratorsOnly,
+    )
+    .unwrap_err();
+    assert!(err.to_string().contains(r"C:\Games"), "{err:#}");
+
+    // Second drive: D:\ and D:\Apps may have user/Authenticated Users permissions, so an
+    // Admin-only RTSS folder and binaries on D:\ pass once links are ruled out.
+    let d_drive = Path::new(r"D:\");
+    let d_apps = Path::new(r"D:\Apps");
+    let d_rtss = Path::new(r"D:\Apps\RivaTuner Statistics Server");
+    trust::check_chain(
+        d_rtss,
+        &[
+            (d_drive, &user_writable),
+            (d_apps, &user_writable),
+            (d_rtss, &c),
+        ],
+        Some(b'C'),
+        TrustMode::AdministratorsOnly,
+    )
+    .unwrap();
+
+    // A reparse-point ancestor or user-writable RTSS root on the second drive is still rejected
+    // with a message naming the folder and offending account.
+    let link = Security {
+        link: true,
+        ..admin()
+    };
+    let err = trust::check_chain(
+        d_rtss,
+        &[(d_drive, &user_writable), (d_apps, &link), (d_rtss, &c)],
+        Some(b'C'),
+        TrustMode::AdministratorsOnly,
+    )
+    .unwrap_err();
+    assert!(err.to_string().contains("link"), "{err:#}");
+    let err = trust::check_chain(
+        d_rtss,
+        &[
+            (d_drive, &user_writable),
+            (d_apps, &user_writable),
+            (d_rtss, &user_writable),
+        ],
+        Some(b'C'),
+        TrustMode::AdministratorsOnly,
+    )
+    .unwrap_err();
+    let msg = err.to_string();
+    assert!(
+        msg.contains(r"D:\Apps\RivaTuner Statistics Server"),
+        "{msg}"
+    );
+    assert!(msg.contains("Program Files"), "{msg}");
+}
+
+#[test]
+fn empty_property_values_do_not_break_profile_parsing() {
+    let parsed = properties("[Framerate]\nLimit=\nLimitDenominator=\nSyncLimiter=2\n").unwrap();
+    assert_eq!(parsed["Limit"], None);
+    assert_eq!(parsed["LimitDenominator"], None);
+    assert_eq!(parsed["SyncLimiter"], Some(2));
+}

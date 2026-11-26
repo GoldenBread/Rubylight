@@ -34,33 +34,41 @@ pub fn apply_color(stream: &mut Negotiated, config: &Config) {
 pub const PACKED_DOLBY_VISION: &str = "Dolby Vision is off for packed 4:4:4 streams: the device unpacks the packed picture itself, so a Dolby Vision decoder would tone-map the packed layout instead of the picture. The stream carries static HDR10 instead";
 /// Why a native 4:4:4 stream never carries Dolby Vision.
 pub const NATIVE_444_DOLBY_VISION: &str = "Dolby Vision is off for YUV 4:4:4 streams: its profiles 8.1 and 8.4 are 4:2:0 only. The stream carries static HDR10 instead";
-/// Why a full-range stream never carries Dolby Vision.
-pub const FULL_RANGE_DOLBY_VISION: &str = "Dolby Vision is off for full-range streams: its RPU base-layer profiles assume limited-range video. The stream carries static HDR10 instead";
+/// Why a Dolby Vision stream is never full range: the RPUs of [`crate::dovi`]
+/// describe a limited-range base layer.
+pub const DOLBY_VISION_LIMITED_RANGE: &str = "Full color range is off for this Dolby Vision stream: its Dolby Vision metadata describes limited-range video. Turn off Dolby Vision (hdr_dolby_vision) to stream full-range HDR10";
 /// A packed 4:4:4 stream whose client picked Dolby Vision streams static
 /// HDR10, from the control channel: the client decodes the packed
 /// picture as plain sample data and unpacks it in its own shader, and the
 /// RPU would not survive the unpack. A native 4:4:4 stream (HEVC Rext) does
 /// the same: Dolby Vision profile 8 is HEVC Main10 4:2:0. A full-range
-/// stream likewise falls back to static HDR10 because the RPU metadata
-/// assumes limited-range video. The log and the session's warnings say so;
-/// any other stream clears the warning. Returns whether it dropped it.
+/// stream keeps Dolby Vision and gives up full range instead: the client
+/// opens its Dolby Vision decoder from its own ANNOUNCE, and a frame without
+/// an RPU takes an NVIDIA Shield's hardware composer down (nightjar#193).
+/// The log and the session's warnings say so; any other stream clears the
+/// warning. Returns whether it dropped Dolby Vision.
 pub fn packed_drops_dolby_vision(
     stream: &mut Negotiated,
     warnings: &(impl crate::WarningSink + ?Sized),
 ) -> bool {
-    let dropped = (stream.chroma_packing != 0 || stream.yuv444 || stream.full_range())
-        && stream.hdr_format & rubylight_protocol::hdr::DOLBY_VISION != 0;
+    let picked = stream.hdr_format & rubylight_protocol::hdr::DOLBY_VISION != 0;
+    let dropped = picked && (stream.chroma_packing != 0 || stream.yuv444);
     if dropped {
         let reason = if stream.yuv444 {
             NATIVE_444_DOLBY_VISION
-        } else if stream.chroma_packing != 0 {
-            PACKED_DOLBY_VISION
         } else {
-            FULL_RANGE_DOLBY_VISION
+            PACKED_DOLBY_VISION
         };
         tracing::warn!(hdr_format = stream.hdr_format, "{reason}");
         warnings.set("hdr_dolby_vision", reason);
         stream.hdr_format = 0;
+    } else if picked && stream.full_range() {
+        tracing::warn!(
+            hdr_format = stream.hdr_format,
+            "{DOLBY_VISION_LIMITED_RANGE}"
+        );
+        warnings.set("hdr_dolby_vision", DOLBY_VISION_LIMITED_RANGE);
+        stream.csc_mode &= !1;
     } else {
         warnings.clear("hdr_dolby_vision");
     }
@@ -220,6 +228,10 @@ fn encoder_share_kbps(stream: &Negotiated, ceiling: u64) -> u32 {
     share_breakdown(stream, ceiling).encoder_kbps
 }
 
+fn codec_runtime_cap_kbps(codec: u8) -> u32 {
+    if codec == 3 { 2_000_000 } else { 500_000 }
+}
+
 /// Explain the effective encoder bitrate and link-rate ceiling at stream start,
 /// matching the calculations in [`apply`] and [`crate::link_rate::LinkRate::new`].
 pub fn explain_bitrate(stream: &Negotiated, config: &Config, max_kbps: u32) -> BitrateBudget {
@@ -230,11 +242,7 @@ pub fn explain_bitrate(stream: &Negotiated, config: &Config, max_kbps: u32) -> B
         breakdown.encoder_kbps
     };
     breakdown.encoder_kbps = encoder_kbps;
-    let codec_cap = if stream.codec == 3 {
-        2_000_000
-    } else {
-        500_000
-    };
+    let codec_cap = codec_runtime_cap_kbps(stream.codec);
     let link_cap = if max_kbps > 0 { max_kbps } else { u32::MAX };
     breakdown.link_ceiling_kbps = encoder_kbps.min(codec_cap).min(link_cap);
     breakdown.ceiling_source = if link_cap < encoder_kbps && link_cap < codec_cap {
@@ -344,11 +352,19 @@ pub fn report_bitrate(
     }
 }
 
-/// The bitrate a client may set during a stream: `max_bitrate` caps it, and
-/// 500 Mbps keeps it inside the encoders' rate fields, as in Vibepollo.
+/// The bitrate a client may set during a stream when the caller does not
+/// differentiate codecs: `max_bitrate` caps it, and 500 Mbps keeps it inside
+/// H.264/HEVC/AV1 rate fields.
 pub fn runtime_bitrate_kbps(config: &Config, requested: u32) -> u32 {
+    runtime_bitrate_kbps_for(config, 0, requested)
+}
+
+/// The bitrate a client may set during a stream for `codec`: `max_bitrate`
+/// caps it, PyroWave allows up to 2 Gbps, and other codecs keep the 500 Mbps
+/// cap inside their encoders' rate fields.
+pub fn runtime_bitrate_kbps_for(config: &Config, codec: u8, requested: u32) -> u32 {
     let ceiling = config.integer("max_bitrate", 0);
-    let applied = requested.min(500_000);
+    let applied = requested.min(codec_runtime_cap_kbps(codec));
     if ceiling > 0 {
         applied.min(ceiling.min(i64::from(u32::MAX)) as u32)
     } else {

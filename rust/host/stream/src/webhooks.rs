@@ -175,6 +175,7 @@ pub struct Webhooks {
 impl Webhooks {
     pub fn new(policy: Policy) -> anyhow::Result<Self> {
         let client = reqwest::Client::builder()
+            .no_proxy()
             // A redirect could send the signed body somewhere else.
             .redirect(reqwest::redirect::Policy::none())
             .dns_resolver(Arc::new(Resolver))
@@ -583,7 +584,7 @@ impl Host {
                 return;
             }
             (
-                webhook::from_config(&config),
+                webhook::load_from_profile(&config, &self.directory),
                 crate::network::host_name(&config),
             )
         };

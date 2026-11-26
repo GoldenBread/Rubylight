@@ -64,14 +64,16 @@ function Protect-Catalog([string] $catalog) {
         $signature = Set-AuthenticodeSignature -LiteralPath $catalog -Certificate $signer -HashAlgorithm SHA256
         if ($signature.Status -notin 'Valid', 'UnknownError') { throw "signing the catalog failed: $($signature.StatusMessage)" }
         Add-Trust $signer 'Root', 'TrustedPublisher'
-    } finally {
-        Remove-Item "Cert:\LocalMachine\My\$($signer.Thumbprint)" -DeleteKey
-    }
-    if ((Get-AuthenticodeSignature -LiteralPath $catalog).Status -ne 'Valid') {
+        if ((Get-AuthenticodeSignature -LiteralPath $catalog).Status -ne 'Valid') {
+            throw 'the signed catalog does not verify'
+        }
+        $signer
+    } catch {
         Remove-Trust $signer.Thumbprint
-        throw 'the signed catalog does not verify'
+        throw
+    } finally {
+        Remove-Item "Cert:\LocalMachine\My\$($signer.Thumbprint)" -DeleteKey -ErrorAction SilentlyContinue
     }
-    $signer
 }
 function Get-Refusal {
     $policy = Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\CI\Policy' -ErrorAction SilentlyContinue
@@ -95,8 +97,11 @@ function Remove-Install($recorded) {
     }
     Remove-Item $state -ErrorAction SilentlyContinue
 }
+function Ensure-StateKey {
+    if (-not (Test-Path $state)) { New-Item $state -Force | Out-Null }
+}
 function Set-Problem([string] $text) {
-    New-Item $state -Force | Out-Null
+    Ensure-StateKey
     Set-ItemProperty $state Problem $text
 }
 $script:unsupported = $null
@@ -124,13 +129,18 @@ function Install-Package {
     foreach ($extension in 'inf', 'dll', 'cat') { Copy-Item -LiteralPath (Join-Path $Package "rubylight_vgamepad.$extension") $work }
     $signer = $null
     $publisherAdded = $recorded.PublisherAdded
+    $addedPublisherNow = $null
+    $backup = Join-Path $work 'backup'
+    $exportedBackup = $false
     $before = @(Get-Packages)
     $hadDevice = [bool](Get-Device)
+    $addRestart = $false
     try {
         if ($status -eq 'Valid') {
             $publisher = (Get-AuthenticodeSignature -LiteralPath (Join-Path $work 'rubylight_vgamepad.cat')).SignerCertificate
             if (-not (Test-Path "Cert:\LocalMachine\TrustedPublisher\$($publisher.Thumbprint)")) {
                 Add-Trust $publisher 'TrustedPublisher'
+                $addedPublisherNow = $publisher.Thumbprint
                 $publisherAdded = $publisher.Thumbprint
             }
         } else {
@@ -138,37 +148,49 @@ function Install-Package {
         }
         $inf = Join-Path $work 'rubylight_vgamepad.inf'
         Add-Package $inf
+        if ($LASTEXITCODE -eq 3010) { $addRestart = $true }
         if (-not (Get-Device)) {
             if (-not $NefConc) { throw "no $hardwareId device: pass -NefConc to create it" }
             Invoke-Checked $NefConc @('--create-device-node', '--class-name', 'System', '--class-guid', $classGuid, '--hardware-id', $hardwareId)
             Add-Package $inf
+            if ($LASTEXITCODE -eq 3010) { $addRestart = $true }
         }
         $hash = (Get-FileHash -LiteralPath $inf).Hash
         $ours = Get-Packages | Where-Object { (Get-FileHash -LiteralPath "$env:SystemRoot\INF\$_").Hash -eq $hash } | Select-Object -First 1
         if (-not $ours) { throw 'the package is missing from the driver store after pnputil added it' }
         if ((Get-CurrentPackage) -ne $ours) {
-            foreach ($other in @(Get-Packages | Where-Object { $_ -ne $ours })) {
-                Invoke-Restartable @('/delete-driver', $other, '/uninstall', '/force')
+            $others = @(Get-Packages | Where-Object { $_ -ne $ours })
+            if ($others.Count -gt 0) {
+                New-Item -ItemType Directory $backup -Force | Out-Null
+                foreach ($other in $others) {
+                    & pnputil /export-driver $other $backup | Out-Null
+                    if ($LASTEXITCODE -eq 0) { $exportedBackup = $true }
+                }
+                foreach ($other in $others) {
+                    Invoke-Restartable @('/delete-driver', $other, '/uninstall', '/force')
+                }
             }
             Add-Package $inf
-            if (-not $script:restart -and (Get-CurrentPackage) -ne $ours) { throw "the device uses $(Get-CurrentPackage), not $ours" }
+            if ($LASTEXITCODE -eq 3010) { $addRestart = $true }
+            if (-not $addRestart -and (Get-CurrentPackage) -ne $ours) { throw "the device uses $(Get-CurrentPackage), not $ours" }
         }
         $device = @(Get-Device)[0]
-        if (-not $script:restart -and $device -and $device.Status -ne 'OK' -and $device.Problem -notin 'CM_PROB_DISABLED', 'CM_PROB_DISABLED_SERVICE') {
+        if (-not $addRestart -and $device -and $device.Status -ne 'OK' -and $device.Problem -notin 'CM_PROB_DISABLED', 'CM_PROB_DISABLED_SERVICE') {
             & pnputil /restart-device $device.InstanceId | Out-Host
             if ($LASTEXITCODE -eq 3010) { $script:restart = $true }
             $device = @(Get-Device)[0]
         }
-        if (-not $script:restart -and $device -and $device.Status -ne 'OK' -and $device.Problem -notin 'CM_PROB_DISABLED', 'CM_PROB_DISABLED_SERVICE' -and $NefConc) {
+        if (-not $addRestart -and $device -and $device.Status -ne 'OK' -and $device.Problem -notin 'CM_PROB_DISABLED', 'CM_PROB_DISABLED_SERVICE' -and $NefConc) {
             Invoke-Restartable @('/remove-device', $device.InstanceId)
-            if (-not $script:restart) {
-                Invoke-Checked $NefConc @('--create-device-node', '--class-name', 'System', '--class-guid', $classGuid, '--hardware-id', $hardwareId)
-                Add-Package $inf
-            }
-            $device = @(Get-Device)[0]
+            # Always create the replacement device node even if /remove-device returned 3010;
+            # otherwise no device exists after the restart while Installed would be recorded.
+            Invoke-Checked $NefConc @('--create-device-node', '--class-name', 'System', '--class-guid', $classGuid, '--hardware-id', $hardwareId)
+            Add-Package $inf
+            $addRestart = ($LASTEXITCODE -eq 3010)
+            $device = @(Get-Device | Sort-Object { $_.Status -eq 'OK' } -Descending)[0]
         }
         $device | Format-List InstanceId, Status, Problem | Out-Host
-        if (-not $script:restart -and (-not $device -or $device.Status -ne 'OK')) {
+        if (-not $addRestart -and (-not $device -or $device.Status -ne 'OK')) {
             throw "Windows did not start the virtual gamepad driver ($($device.Status), problem $($device.Problem))"
         }
     } catch {
@@ -178,9 +200,17 @@ function Install-Package {
             foreach ($added in @(Get-Packages | Where-Object { $_ -notin $before })) {
                 pnputil /delete-driver $added /uninstall /force | Out-Null
             }
+            if ($exportedBackup -and -not (Get-Packages)) {
+                Get-ChildItem -LiteralPath $backup -Filter '*.inf' -Recurse | ForEach-Object {
+                    pnputil /add-driver $_.FullName /install | Out-Null
+                }
+            }
         } catch { Write-Host "rolling back the virtual gamepad driver install: $_" }
+        if ($addedPublisherNow) {
+            Get-Item "Cert:\LocalMachine\TrustedPublisher\$addedPublisherNow" -ErrorAction SilentlyContinue | Remove-Item
+        }
         if ($signer) { Remove-Trust $signer.Thumbprint }
-        if (-not $hadDevice) {
+        if (-not $hadDevice -or -not (Get-Packages) -or -not (Get-CurrentPackage)) {
             $reason = $failure.Exception
             while ($reason.InnerException) { $reason = $reason.InnerException }
             Set-Problem "Rubylight's virtual gamepad driver could not be installed ($($reason.Message -replace '\s+', ' ')), so controller input is ignored. Run the Rubylight installer again; its log has the details."
@@ -189,7 +219,7 @@ function Install-Package {
     } finally {
         Remove-Item -Recurse -Force $work
     }
-    New-Item $state -Force | Out-Null
+    Ensure-StateKey
     Set-ItemProperty $state Installed ((Get-Date).ToUniversalTime().ToString('o'))
     if ($signer) {
         Set-ItemProperty $state LocalSigner $signer.Thumbprint

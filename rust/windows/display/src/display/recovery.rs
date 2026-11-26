@@ -26,7 +26,7 @@ static POSITIONS: std::sync::Mutex<PositionChanges> =
     std::sync::Mutex::new(std::collections::BTreeMap::new());
 pub fn baseline_nodes() -> Result<Vec<butterpollo_media_policy::topology::Node>> {
     let mut nodes = Topology::query()?.nodes()?;
-    let changes = POSITIONS.lock().unwrap();
+    let changes = crate::lock_unpoisoned(&POSITIONS);
     for node in &mut nodes {
         if let Some((before, _)) = changes.get(&node.device_id) {
             node.desired_position = *before;
@@ -39,25 +39,33 @@ pub fn apply_layout(nodes: &[butterpollo_media_policy::topology::Node]) -> Resul
     let mut topology = Topology::query()?;
     let current = topology.nodes()?;
     let monitors = topology.monitors();
-    let mut changes = POSITIONS.lock().unwrap();
+    let mut moved = Vec::new();
+    let mut changes = crate::lock_unpoisoned(&POSITIONS);
     for node in nodes.iter().filter(|n| n.kind == Kind::Physical) {
         if let Some(old) = current.iter().find(|old| old.device_id == node.device_id) {
             let before = changes
                 .get(&node.device_id)
                 .map_or(old.desired_position, |(before, _)| *before);
             if before != node.desired_position {
-                let output = &monitors
+                let output = monitors
                     .iter()
                     .find(|m| m.device_id == node.device_id)
                     .context("display disappeared")?
-                    .display_name;
+                    .display_name
+                    .clone();
                 crate::display_recovery::position(
                     &node.device_id,
-                    output,
+                    &output,
                     before,
                     node.desired_position,
                 )?;
                 changes.insert(node.device_id.clone(), (before, node.desired_position));
+                moved.push((
+                    node.device_id.clone(),
+                    output,
+                    before,
+                    node.desired_position,
+                ));
             }
         }
     }
@@ -66,10 +74,29 @@ pub fn apply_layout(nodes: &[butterpollo_media_policy::topology::Node]) -> Resul
             .iter()
             .map(|n| (n.device_id.clone(), n.desired_position))
             .collect(),
-    )
+    )?;
+    // Re-read Windows' actual landed positions so snapped coordinates still match on restore.
+    if !moved.is_empty()
+        && let Ok(after) = Topology::query().and_then(|t| t.nodes())
+    {
+        for (id, output, before, requested) in moved {
+            if let Some(actual) = after.iter().find(|n| n.device_id == id)
+                && actual.desired_position != requested
+            {
+                let _ = crate::display_recovery::position(
+                    &id,
+                    &output,
+                    before,
+                    actual.desired_position,
+                );
+                changes.insert(id, (before, actual.desired_position));
+            }
+        }
+    }
+    Ok(())
 }
 pub fn restore_positions() -> Result<()> {
-    let mut changes = POSITIONS.lock().unwrap();
+    let mut changes = crate::lock_unpoisoned(&POSITIONS);
     if changes.is_empty() {
         return Ok(());
     }
@@ -112,7 +139,7 @@ static SETTINGS: std::sync::Mutex<std::collections::BTreeMap<String, Settings>> 
 /// The displays streams, paused game displays, launches being prepared and
 /// remote monitors hold now, by device id.
 pub fn leased_displays() -> Vec<String> {
-    SETTINGS.lock().unwrap().keys().cloned().collect()
+    crate::lock_unpoisoned(&SETTINGS).keys().cloned().collect()
 }
 /// Whether a stream may change a display's mode or HDR. Only its sole user
 /// may: a second stream keeps what the first one streams, whether or not
@@ -324,8 +351,12 @@ fn restore_settings(
     restored
 }
 /// Set the previous mode back if the display still has the one applied.
-fn restore_mode_rate(identity: &str, previous: Timing, applied: Timing) -> Result<()> {
-    let current_monitors = monitors()?;
+fn restore_mode_rate_with(
+    current_monitors: &[Monitor],
+    identity: &str,
+    previous: Timing,
+    applied: Timing,
+) -> Result<()> {
     let monitor = current_monitors
         .iter()
         .find(|m| m.device_id == identity)

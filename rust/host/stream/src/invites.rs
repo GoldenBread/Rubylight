@@ -264,9 +264,9 @@ pub fn remove(h: &Shared, uuid: &str) -> Result<bool> {
     if !known {
         return Ok(false);
     }
-    crate::nvhttp::end_device(h, uuid);
     h.unpair_with_network_history(Some(uuid))?;
     h.notify_webrtc_clients_changed();
+    crate::nvhttp::end_device(h, uuid);
     crate::nvhttp::release_device(h, uuid);
     crate::internet_play::refresh(h);
     Ok(true)
@@ -390,4 +390,48 @@ pub fn start(h: Shared) -> tokio::task::JoinHandle<()> {
             let _ = tokio::task::spawn_blocking(move || sweep(&host)).await;
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state::test_support::Fixture;
+    use butterpollo_session::session::Role;
+
+    #[test]
+    fn remove_unpairs_and_stops_session_and_in_progress_launch() {
+        let f = Fixture::new();
+        let mut guest = f.client(1 << 25);
+        guest.uuid = "invited-guest".into();
+        guest.extra.insert(
+            MARKER.into(),
+            InvitedGuest {
+                until: unix_now() + 3600,
+                permission: Permission::ControllerKeyboardMouse,
+            }
+            .marker(),
+        );
+        {
+            let mut paired = f.host.paired.write().unwrap();
+            paired.clients[0] = guest.clone();
+            paired.save(&f.host.paired_path).unwrap();
+        }
+        let session = f.session(guest.clone(), Role::Stream);
+        let transition = f.host.launch_transition.lock().unwrap();
+        let _started = f.host.launch_started(&guest.uuid);
+        let host = f.host.clone();
+        let uuid = guest.uuid.clone();
+        let removed = std::thread::spawn(move || remove(&host, &uuid).unwrap());
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while !f.host.launch_stopped() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(f.host.launch_stopped());
+        // Already unpaired before end_device finished waiting on the launch lock.
+        assert!(f.host.paired.read().unwrap().clients.is_empty());
+        drop(_started);
+        drop(transition);
+        assert!(removed.join().unwrap());
+        assert!(session.stopping());
+    }
 }

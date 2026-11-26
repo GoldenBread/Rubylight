@@ -21,6 +21,9 @@ use windows::{
     core::{IUnknown, Interface},
 };
 
+/// Predicate returning `true` once the external driver process owning a wait has exited.
+pub(crate) type DriverGoneCheck = Box<dyn Fn() -> bool + Send + Sync>;
+
 /// Resources whose last GPU access could not be proved complete. In particular,
 /// an ExecuteCommandLists followed by a failed Signal has no usable old fence
 /// value. A fresh tail marker covers that work too; if even that signal fails,
@@ -30,6 +33,10 @@ pub(crate) struct RetainedWork {
     pub(super) adapter: (u32, i32),
     pub(super) tail: Option<ID3D12Fence>,
     pub(crate) waits: Vec<(ID3D12Fence, u64)>,
+    /// External driver fences (`(fence, target, driver_gone)`) signaled from the host
+    /// ONLY once `driver_gone()` confirms the driver process exited.
+    pub(crate) driver_waits: Vec<(ID3D12Fence, u64, DriverGoneCheck)>,
+    pub(crate) skip_drop_wait: bool,
     objects: Vec<IUnknown>,
     pub(super) captures: Vec<crate::capture::GpuImage>,
 }
@@ -74,6 +81,8 @@ impl RetainedWork {
             adapter: (luid.LowPart, luid.HighPart),
             tail,
             waits: Vec::new(),
+            driver_waits: Vec::new(),
+            skip_drop_wait: false,
             objects: Vec::new(),
             captures: Vec::new(),
         };
@@ -103,10 +112,24 @@ impl RetainedWork {
         }
     }
 
-    fn complete(&self) -> bool {
-        if !self.tail_complete() {
-            return false;
+    fn resolve_dead_drivers(&self) {
+        let device_lost = crate::device_loss::DeviceLost::d3d12(&self.device).is_some();
+        for (fence, target, driver_gone) in &self.driver_waits {
+            if *target == 0 {
+                continue;
+            }
+            // SAFETY: `fence` is retained by this bundle.
+            let done = unsafe { completed_value(fence.GetCompletedValue()) }
+                .is_ok_and(|value| value >= *target);
+            if should_signal_dead_driver(done, driver_gone(), device_lost) {
+                // SAFETY: `driver_gone()` confirmed the external driver process has exited, so it
+                // can never signal or access resources on this fence again.
+                let _ = unsafe { fence.Signal(*target) };
+            }
         }
+    }
+
+    fn external_complete(&self) -> bool {
         if crate::device_loss::DeviceLost::d3d12(&self.device).is_some() {
             return true;
         }
@@ -115,22 +138,37 @@ impl RetainedWork {
         unsafe {
             self.waits.iter().all(|(fence, value)| {
                 completed_value(fence.GetCompletedValue()).is_ok_and(|done| done >= *value)
+            }) && self.driver_waits.iter().all(|(fence, value, _)| {
+                *value == 0
+                    || completed_value(fence.GetCompletedValue()).is_ok_and(|done| done >= *value)
             })
         }
     }
 
+    fn complete(&self) -> bool {
+        self.resolve_dead_drivers();
+        self.tail_complete() && self.external_complete()
+    }
+
     pub(crate) fn finish(self, compute: &Compute) {
-        if should_wait_tail(
-            self.complete(),
-            compute.is_stuck(),
-            has_retained(self.adapter),
-        ) {
+        if !self.skip_drop_wait
+            && should_wait_tail(
+                self.complete(),
+                compute.is_stuck(),
+                has_retained(self.adapter),
+            )
+        {
             let deadline = Instant::now() + Duration::from_secs(2);
             if let Some(fence) = &self.tail {
                 let _ = wait_fence_until(fence, 1, deadline);
             }
             for (fence, value) in &self.waits {
                 if *value > 0 {
+                    let _ = wait_fence_until(fence, *value, deadline);
+                }
+            }
+            for (fence, value, driver_gone) in &self.driver_waits {
+                if *value > 0 && !driver_gone() {
                     let _ = wait_fence_until(fence, *value, deadline);
                 }
             }
@@ -167,21 +205,43 @@ fn finish_decision(tail_complete: bool, all_complete: bool) -> FinishDecision {
     }
 }
 
+pub(super) fn should_signal_dead_driver(done: bool, driver_gone: bool, device_lost: bool) -> bool {
+    !done && !device_lost && driver_gone
+}
+
+fn take_completed_locked(retained: &mut Vec<RetainedWork>) -> Vec<RetainedWork> {
+    let mut complete = Vec::new();
+    let mut index = 0;
+    while index < retained.len() {
+        if retained[index].complete() {
+            complete.push(retained.swap_remove(index));
+        } else {
+            index += 1;
+        }
+    }
+    complete
+}
+
+/// Release any retained GPU resources whose fences have completed or whose
+/// external driver process has exited since teardown.
+pub(crate) fn drain_retained() {
+    let complete = {
+        let mut retained = RETAINED.lock().unwrap();
+        if retained.is_empty() {
+            return;
+        }
+        take_completed_locked(&mut retained)
+    };
+    drop(complete);
+}
+
 /// Do not accumulate a fresh set of video-memory allocations on every retry
 /// behind a permanently hung queue. Existing users have bounded pools; no new
 /// compute generation is admitted on this adapter until its retained work ends.
 pub(super) fn allow_compute_generation(luid: LUID) -> Result<()> {
     let (complete, blocked) = {
         let mut retained = RETAINED.lock().unwrap();
-        let mut complete = Vec::new();
-        let mut index = 0;
-        while index < retained.len() {
-            if retained[index].complete() {
-                complete.push(retained.swap_remove(index));
-            } else {
-                index += 1;
-            }
-        }
+        let complete = take_completed_locked(&mut retained);
         let blocked = retained
             .iter()
             .any(|work| work.adapter == (luid.LowPart, luid.HighPart));
@@ -199,7 +259,7 @@ pub(super) fn allow_compute_generation(luid: LUID) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{FinishDecision, finish_decision, should_wait_tail};
+    use super::{FinishDecision, finish_decision, should_signal_dead_driver, should_wait_tail};
 
     #[test]
     fn retaining_on_an_already_stuck_adapter_skips_redundant_tail_waits() {
@@ -244,5 +304,20 @@ mod tests {
                 retain: true,
             }
         );
+    }
+
+    #[test]
+    fn host_only_signals_driver_fence_after_confirming_driver_exited() {
+        for done in [false, true] {
+            for driver_gone in [false, true] {
+                for device_lost in [false, true] {
+                    assert_eq!(
+                        should_signal_dead_driver(done, driver_gone, device_lost),
+                        !done && driver_gone && !device_lost,
+                        "done={done} driver_gone={driver_gone} device_lost={device_lost}"
+                    );
+                }
+            }
+        }
     }
 }

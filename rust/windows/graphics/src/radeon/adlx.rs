@@ -267,6 +267,37 @@ pub fn gpus() -> Result<Vec<super::control::GpuInfo>> {
         .collect())
 }
 
+/// Extract the 16-bit PCI device id from a Windows PnP string such as
+/// `PCI\VEN_1002&DEV_744C&...`.
+pub(crate) fn pci_device_id_from_pnp(pnp: &str) -> Option<u32> {
+    let upper = pnp.to_ascii_uppercase();
+    let rest = upper.split("DEV_").nth(1)?;
+    let hex: String = rest.chars().take_while(|c| c.is_ascii_hexdigit()).collect();
+    (!hex.is_empty()).then(|| u32::from_str_radix(&hex, 16).ok())?
+}
+
+/// Hardware identities (PnP string and PCI device ID) for the AMD GPUs ADLX lists.
+pub fn gpu_identities() -> Result<Vec<super::control::GpuIdentity>> {
+    let session = Session::open()?;
+    Ok(session
+        .gpus
+        .iter()
+        .map(|(id, gpu)| {
+            // SAFETY: `gpu` is an IADLXGPU.
+            let gpu_table = unsafe { gpu.vtable::<GpuVt>() };
+            let pnp_id = get_text(gpu, gpu_table.pnp_string)
+                .map(|s| s.trim_start_matches(r"\\?\").replace('#', r"\"))
+                .filter(|s| !s.is_empty());
+            let device_id = pnp_id.as_deref().and_then(pci_device_id_from_pnp);
+            super::control::GpuIdentity {
+                id: *id,
+                pnp_id,
+                device_id,
+            }
+        })
+        .collect())
+}
+
 /// AMD Software's version (`26.10.1`) as ADLX reports it
 /// (`IADLXGPU2::AMDSoftwareVersion`), from the first GPU that has one; never
 /// the driver's own version. None when no GPU reports it.
@@ -296,6 +327,9 @@ impl RadeonBackend for AdlxBackend {
             .gpu(gpu)
             .map_err(|e| BackendError(format!("{e:#}")))?;
         write_setting(&session.ctx(gpu), id, value).map_err(BackendError)
+    }
+    fn gpu_identities(&mut self) -> Vec<super::control::GpuIdentity> {
+        gpu_identities().unwrap_or_default()
     }
 }
 

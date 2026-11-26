@@ -26,8 +26,9 @@
   let query = $state('');
   let current = $state<{ id: number; n: number } | null>(null);
 
-  // Read position in the file, and an unfinished last line.
+  // Read position in the file, header fingerprint, and an unfinished last line.
   let offset = -1;
+  let head = '';
   let carry = '';
 
   const visible = $derived(filter === 'all' ? lines : lines.filter((line) => passes(line, filter)));
@@ -86,13 +87,16 @@
     if (paused) return;
     const fresh = offset < 0;
     try {
-      const chunk = fresh ? await api.logs.read(-1, TAIL_BYTES) : await api.logs.read(offset);
+      const chunk = fresh ? await api.logs.read(-1, TAIL_BYTES) : await api.logs.read(offset, 256 * 1024, head);
       let text = chunk.text;
       let base = lines;
       if (fresh || chunk.reset) {
         base = [];
         carry = '';
+        head = chunk.head ?? '';
         if (startsMidFile(chunk)) text = text.slice(text.indexOf('\n') + 1);
+      } else if (chunk.head) {
+        head = chunk.head;
       }
       const parts = (carry + text).split('\n');
       carry = parts.pop() ?? '';

@@ -152,6 +152,7 @@ const QUICK: Limits = Limits {
     per_peer: 2,
     header: Duration::from_millis(300),
     body_idle: Duration::from_millis(300),
+    write_idle: Duration::from_millis(300),
 };
 /// A plain listener with `limits`, answering `/` and echoing the length
 /// of a `/upload` body.
@@ -279,4 +280,44 @@ fn the_caps_count_per_address_and_in_total() {
     assert!(admission.admit(b).is_some());
     drop((second, other));
     assert!(admission.peers.lock().unwrap().is_empty());
+}
+
+#[test]
+fn ipv6_admission_counts_per_64_prefix() {
+    let admission = Admission::new(QUICK);
+    let p1: IpAddr = "2001:db8:1:2::10".parse().unwrap();
+    let p2: IpAddr = "2001:db8:1:2::20".parse().unwrap();
+    let p3: IpAddr = "2001:db8:1:2::30".parse().unwrap();
+    let _g1 = admission.admit(p1).unwrap();
+    let _g2 = admission.admit(p2).unwrap();
+    assert!(
+        admission.admit(p3).is_none(),
+        "rotating IIDs in the same /64 must hit per_peer limit"
+    );
+}
+
+#[tokio::test]
+async fn timed_write_fails_with_timed_out_when_writer_stalls() {
+    use tokio::io::AsyncWriteExt;
+
+    struct PendingWriter;
+    impl AsyncWrite for PendingWriter {
+        fn poll_write(
+            self: Pin<&mut Self>,
+            _cx: &mut Context<'_>,
+            _buf: &[u8],
+        ) -> Poll<std::io::Result<usize>> {
+            Poll::Pending
+        }
+        fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+            Poll::Pending
+        }
+        fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+            Poll::Pending
+        }
+    }
+
+    let mut timed = TimedWrite::new(PendingWriter, Duration::from_millis(40));
+    let err = timed.write(b"hello").await.unwrap_err();
+    assert_eq!(err.kind(), std::io::ErrorKind::TimedOut);
 }

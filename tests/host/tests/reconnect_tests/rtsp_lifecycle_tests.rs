@@ -107,11 +107,15 @@ async fn a_session_change_before_play_rejects_only_the_pending_attempt() -> Resu
     h.fixture
         .session_disconnected
         .store(true, Ordering::Release);
-    let error = h.rtsp(&pending, 2, "PLAY", "").await.unwrap_err();
-    assert!(
-        error.to_string().contains("disconnected or changing"),
-        "{error:#}"
-    );
+    let error = h
+        .rtsp(&pending, 2, "PLAY", "")
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(error.starts_with("RTSP/1.0 400"), "{error}");
+    assert!(!error.contains("disconnected or changing"), "{error}");
+    let failure = h.h.last_failure(&pending.client.uuid).unwrap_or_default();
+    assert!(failure.contains("disconnected or changing"), "{failure}");
     // This test keeps an extra launch identity clone; real RTSP snapshots
     // deliberately do not own its preparation. Release the test's clone too.
     drop(pending);
@@ -287,7 +291,11 @@ async fn malformed_rtsp_requests_receive_an_authenticated_error_response() -> Re
             .unwrap_err()
             .to_string();
         assert!(response.starts_with("RTSP/1.0 400"), "{response}");
-        assert!(response.contains(message), "{response}");
+        if !message.is_empty() {
+            assert!(!response.contains(message), "{response}");
+            let failure = h.h.last_failure(&launch.client.uuid).unwrap_or_default();
+            assert!(failure.contains(message), "{failure}");
+        }
     }
     let canceled = h.h.sessions.lock().unwrap().request_stop(Some(&launch.id));
     drop(canceled);

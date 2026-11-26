@@ -59,16 +59,24 @@ fn files(folder: &Path, errors: &mut Vec<String>) -> Vec<PathBuf> {
         }
     }
 }
+/// Whether `path` sits on a local drive of this PC (never touching network shares as SYSTEM).
+pub(super) fn on_this_pc(path: &Path) -> bool {
+    butterpollo_session::nucleus::generic::on_this_pc(&path.to_string_lossy()).is_some()
+}
 fn add(result: Result<Option<Game>>, games: &mut Vec<Game>, errors: &mut Vec<String>) {
     match result {
         Ok(Some(mut game)) => {
-            if !Path::new(&game.install_dir).is_dir() {
+            let install_dir = Path::new(&game.install_dir);
+            if game.source != Source::Local && !on_this_pc(install_dir) {
+                return;
+            }
+            if !install_dir.is_dir() {
                 return;
             }
             if game.cover.is_none() {
                 game.cover = ["cover.png", "cover.jpg", "folder.jpg"]
                     .iter()
-                    .map(|file| Path::new(&game.install_dir).join(file))
+                    .map(|file| install_dir.join(file))
                     .find(|file| file.is_file());
             }
             games.push(game);

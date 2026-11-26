@@ -36,6 +36,9 @@ pub struct Still {
     pixels: Vec<(u8, f32)>,
     /// Per pixel: whether it or a neighbour stands still (a pixel on a HUD's rim is part HUD).
     mask: Vec<bool>,
+    /// Number of pixels standing still within each pixel's 3x3 neighbourhood,
+    /// avoiding full-frame rebuilds when only a handful of pixels flip.
+    counts: Vec<u8>,
     marked: usize,
 }
 
@@ -53,6 +56,8 @@ impl Still {
                 .extend(prev.luma.iter().map(|value| (*value, 0.0)));
             self.mask.clear();
             self.mask.resize(w * h, false);
+            self.counts.clear();
+            self.counts.resize(w * h, 0);
             self.marked = 0;
         }
         let (x_edges, y_edges) = (edges(w), edges(h));
@@ -99,22 +104,29 @@ impl Still {
                                 *should += step.clamp(-most, most);
                             }
                         }
-                        changed |= stood != (should.abs() >= STILL_TOTAL);
-                    }
-                }
-            }
-        }
-        if changed {
-            self.mask.fill(false);
-            self.marked = 0;
-            for y in 0..h {
-                for x in 0..w {
-                    if self.pixels[y * w + x].1.abs() >= STILL_TOTAL {
-                        self.marked += 1;
-                        for row in y.saturating_sub(1)..=(y + 1).min(h - 1) {
-                            let row = row * w;
-                            self.mask[row + x.saturating_sub(1)..=row + (x + 1).min(w - 1)]
-                                .fill(true);
+                        let now_stood = should.abs() >= STILL_TOTAL;
+                        if stood != now_stood {
+                            changed = true;
+                            if now_stood {
+                                self.marked += 1;
+                            } else {
+                                self.marked -= 1;
+                            }
+                            let x_start = x.saturating_sub(1);
+                            let x_end = (x + 1).min(w - 1);
+                            for ny in y.saturating_sub(1)..=(y + 1).min(h - 1) {
+                                let base = ny * w;
+                                for nx in x_start..=x_end {
+                                    let idx = base + nx;
+                                    if now_stood {
+                                        self.counts[idx] += 1;
+                                        self.mask[idx] = true;
+                                    } else {
+                                        self.counts[idx] -= 1;
+                                        self.mask[idx] = self.counts[idx] > 0;
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -145,4 +157,68 @@ fn sample(t: &Thumbnail, x: f32, y: f32) -> Option<f32> {
     let top = t.at(x0, y0) * (1.0 - fx) + t.at(x1, y0) * fx;
     let bottom = t.at(x0, y1) * (1.0 - fx) + t.at(x1, y1) * fx;
     Some(top * (1.0 - fy) + bottom * fy)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn gradient_frame(w: usize, h: usize, frame: usize, flip_a: bool, flip_b: bool) -> Thumbnail {
+        let mut luma = Vec::with_capacity(w * h);
+        for y in 0..h {
+            for x in 0..w {
+                let is_a = (x, y) == (10, 10);
+                let is_b = (x, y) == (12, 10);
+                let val = if (is_a && !flip_a) || (is_b && !flip_b) {
+                    (x * 6) as u8
+                } else {
+                    ((x * 6 + frame * 15) % 240) as u8
+                };
+                luma.push(val);
+            }
+        }
+        Thumbnail {
+            width: w,
+            height: h,
+            luma,
+            at_us: frame as u64 * 16_000,
+        }
+    }
+
+    #[test]
+    fn incremental_counts_track_overlapping_grow_and_shrink() {
+        let (w, h) = (32, 32);
+        let prev = gradient_frame(w, h, 0, false, false);
+        let motion = Motion::uniform(4.0, 0.0, 1.0);
+        let mut still = Still::default();
+
+        for step in 1..=4 {
+            let cur = gradient_frame(w, h, step, false, false);
+            let changed = still.observe(&prev, &cur, &motion);
+            assert_eq!(changed, step == 4);
+        }
+
+        assert_eq!(still.marked, 2);
+        let mask = still.mask().expect("two pixels stood still");
+        assert_eq!(still.counts[10 * w + 11], 2);
+        assert!(mask[10 * w + 9] && mask[10 * w + 11] && mask[10 * w + 13]);
+
+        // Un-marking (10, 10) decrements its 3x3 neighborhood while keeping the
+        // overlap at (11, 10) active for (12, 10).
+        let cur = gradient_frame(w, h, 5, true, false);
+        assert!(still.observe(&prev, &cur, &motion));
+        assert_eq!(still.marked, 1);
+        let mask = still.mask().expect("(12, 10) remains still");
+        assert!(!mask[10 * w + 9]);
+        assert_eq!(still.counts[10 * w + 11], 1);
+        assert!(mask[10 * w + 11] && mask[10 * w + 13]);
+
+        // Un-marking (12, 10) clears all counts and disables the mask.
+        let cur = gradient_frame(w, h, 6, true, true);
+        assert!(still.observe(&prev, &cur, &motion));
+        assert_eq!(still.marked, 0);
+        assert!(still.mask().is_none());
+        assert!(still.counts.iter().all(|&c| c == 0));
+        assert!(still.mask.iter().all(|&m| !m));
+    }
 }

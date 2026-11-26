@@ -8,7 +8,10 @@ use std::{
 };
 use windows::{
     Win32::{
-        Foundation::{ERROR_INSUFFICIENT_BUFFER, ERROR_SERVICE_MARKED_FOR_DELETE},
+        Foundation::{
+            ERROR_INSUFFICIENT_BUFFER, ERROR_SERVICE_ALREADY_RUNNING,
+            ERROR_SERVICE_MARKED_FOR_DELETE,
+        },
         System::{Registry::HKEY_LOCAL_MACHINE, Services::*},
     },
     core::{PCWSTR, PWSTR},
@@ -65,7 +68,7 @@ pub fn service_running(name: &str) -> bool {
         .and_then(|service| service_state(&service))
         .is_some_and(|state| state != SERVICE_STOPPED && state != SERVICE_STOP_PENDING)
 }
-/// Stop the service if it is running and wait for it (35 s, then fail).
+/// Stop the service if it is running and wait for it (up to 90 s, then fail).
 pub fn stop_service(name: &str) -> Result<()> {
     let Some(service) = open_service(name) else {
         return Ok(());
@@ -79,10 +82,20 @@ pub fn stop_service(name: &str) -> Result<()> {
     unsafe {
         let _ = ControlService(service.0, SERVICE_CONTROL_STOP, &mut status);
     }
-    let deadline = Instant::now() + Duration::from_secs(35);
+    let deadline = Instant::now() + Duration::from_secs(90);
+    let mut last_stop = Instant::now();
     while Instant::now() < deadline {
-        if service_state(&service) == Some(SERVICE_STOPPED) {
-            return Ok(());
+        match service_state(&service) {
+            Some(SERVICE_STOPPED) => return Ok(()),
+            Some(SERVICE_RUNNING) if last_stop.elapsed() >= Duration::from_secs(5) => {
+                // Re-send stop if the first control signal raced service startup.
+                // SAFETY: `service` is a live handle and `status` is a valid out-pointer.
+                unsafe {
+                    let _ = ControlService(service.0, SERVICE_CONTROL_STOP, &mut status);
+                }
+                last_stop = Instant::now();
+            }
+            _ => {}
         }
         std::thread::sleep(Duration::from_millis(250));
     }
@@ -109,7 +122,11 @@ pub fn start_service(name: &str) -> Result<()> {
     let service = open_service(name).with_context(|| format!("the {name} service is missing"))?;
     line(format!("starting service {name}"));
     // SAFETY: `service` is a live handle; no start arguments are passed.
-    unsafe { StartServiceW(service.0, None) }.with_context(|| format!("starting {name}"))
+    match unsafe { StartServiceW(service.0, None) } {
+        Ok(()) => Ok(()),
+        Err(error) if error.code() == ERROR_SERVICE_ALREADY_RUNNING.to_hresult() => Ok(()),
+        Err(error) => Err(error).with_context(|| format!("starting {name}")),
+    }
 }
 pub fn delete_service(name: &str) -> Result<()> {
     let Some(service) = open_service(name) else {

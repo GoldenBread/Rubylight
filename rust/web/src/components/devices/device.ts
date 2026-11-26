@@ -370,7 +370,7 @@ export function toDraft(client: Client): Draft {
     if (other[key] != null) storedCouch[key] = other[key];
     delete other[key];
   }
-  const storedGamepad = other.gamepad;
+  const storedGamepad = other.gamepad ?? undefined;
   delete other.gamepad;
   // A null is no value: sent back, it would delete the host's own for this device's streams.
   const storedLtrFrames = other.amd_ltr_frames ?? undefined;

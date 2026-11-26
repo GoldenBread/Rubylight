@@ -555,7 +555,14 @@ fn several_profile_entries_fail_at_once() {
     let mut runner = runner(1, &screen, &probe, t0);
     label(&screen);
     label(&screen);
-    assert_eq!(runner.step(t0), Some(End::Failed("two labels".into())));
+    for _ in 1..FAILED_PASSES {
+        assert_eq!(runner.step(t0), None);
+    }
+    let end = runner.step(t0);
+    assert!(
+        matches!(&end, Some(End::Failed(why)) if why.contains("two labels")),
+        "{end:?}"
+    );
 }
 
 #[test]

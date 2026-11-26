@@ -83,6 +83,9 @@ impl WireBudget {
         // rounding, minimum parity, encryption and IP framing all count.
         let video = total_bps.saturating_sub(self.audio_bps) * 9 / 10;
         let (mut lo, mut hi) = (1, ceiling.max(1));
+        if self.video_bps(hi, fec, period) <= video {
+            return hi;
+        }
         while lo < hi {
             let mid = lo + (hi - lo).div_ceil(2);
             if self.video_bps(mid, fec, period) <= video {
@@ -127,6 +130,9 @@ impl WireBudget {
         };
         if !fits(ceiling) {
             return None;
+        }
+        if fits(1) {
+            return Some(1);
         }
         let (mut lo, mut hi) = (1, ceiling);
         while lo < hi {

@@ -12,7 +12,7 @@ pub fn peak_luminance(selection: &str) -> Result<Option<u32>> {
     type Peaks = BTreeMap<String, (std::time::Instant, Option<u32>)>;
     static PEAKS: std::sync::OnceLock<Mutex<Peaks>> = std::sync::OnceLock::new();
     let cache = PEAKS.get_or_init(Mutex::default);
-    if let Some((at, peak)) = cache.lock().unwrap().get(selection)
+    if let Some((at, peak)) = crate::lock_unpoisoned(cache).get(selection)
         && at.elapsed() < std::time::Duration::from_secs(30)
     {
         return Ok(*peak);
@@ -32,7 +32,7 @@ pub fn peak_luminance(selection: &str) -> Result<Option<u32>> {
         &mut bytes,
     )?;
     let peak = mhc2_peak(&bytes);
-    let mut cache = cache.lock().unwrap();
+    let mut cache = crate::lock_unpoisoned(cache);
     if cache.len() >= 128 {
         cache.clear();
     }

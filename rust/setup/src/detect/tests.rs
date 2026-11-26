@@ -377,3 +377,37 @@ fn the_summary_promises_settings_only_when_there_are_some() {
             .contains("Its settings, paired devices, apps and drivers are kept.")
     );
 }
+
+#[test]
+fn non_msi_vibepollo_and_vibeshine_become_legacy_and_hkcu_drops_uninstall_commands() {
+    use windows::Win32::System::Registry::HKEY_CURRENT_USER;
+    let mut found = Found::default();
+    let vibepollo_nsis = Product {
+        key: "Vibepollo".into(),
+        name: "Vibepollo".into(),
+        version: "1.9.0".into(),
+        location: Some(PathBuf::from(r"C:\Program Files\Vibepollo")),
+        uninstall: Some(r#""C:\Program Files\Vibepollo\Uninstall.exe""#.into()),
+        quiet_uninstall: None,
+        msi: false,
+        root: HKEY_LOCAL_MACHINE,
+    };
+    let vibeshine_hkcu = Product {
+        key: "Vibeshine".into(),
+        name: "Vibeshine".into(),
+        version: "0.9.0".into(),
+        location: Some(PathBuf::from(r"C:\Users\alice\Vibeshine")),
+        uninstall: Some(r"C:\Users\alice\evil.exe".into()),
+        quiet_uninstall: Some(r"C:\Users\alice\evil.exe /S".into()),
+        msi: false,
+        root: HKEY_CURRENT_USER,
+    };
+    classify_product(&mut found, "Vibepollo", vibepollo_nsis);
+    classify_product(&mut found, "Vibeshine", vibeshine_hkcu);
+    finalize_vibepollo_entries(&mut found);
+    assert!(found.vibepollo_entries.is_empty());
+    assert_eq!(found.legacy.len(), 2);
+    assert!(found.legacy[0].uninstall.is_some());
+    assert_eq!(found.legacy[1].uninstall, None);
+    assert_eq!(found.legacy[1].quiet_uninstall, None);
+}

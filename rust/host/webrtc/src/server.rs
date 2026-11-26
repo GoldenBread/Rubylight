@@ -52,6 +52,8 @@ mod pairing;
 
 use connection::connection;
 #[cfg(test)]
+use connection::send_within;
+#[cfg(test)]
 use connection::{Authenticated, Connection, client_line_is_loud};
 #[cfg(test)]
 use pairing::{Pairing, name_problem};
@@ -103,10 +105,12 @@ impl Default for Limits {
 /// connection.
 pub struct Running {
     tasks: Vec<JoinHandle<()>>,
+    stop: tokio::sync::watch::Sender<bool>,
 }
 
 impl Drop for Running {
     fn drop(&mut self) {
+        let _ = self.stop.send(true);
         for task in &self.tasks {
             task.abort();
         }
@@ -147,6 +151,18 @@ pub fn start_with(
     discovery_port: u16,
     media: Option<Arc<Media>>,
     limits: Limits,
+) -> Option<Running> {
+    start_with_cap(h, bind, port, discovery_port, media, limits, MAX_SOCKETS)
+}
+
+fn start_with_cap(
+    h: Shared,
+    bind: IpAddr,
+    port: u16,
+    discovery_port: u16,
+    media: Option<Arc<Media>>,
+    limits: Limits,
+    max_sockets: usize,
 ) -> Option<Running> {
     let runtime = crate::WebRtcRuntime::install(&h, media.clone());
     let clients = runtime.clients;
@@ -195,8 +211,17 @@ pub fn start_with(
     status.discovery = discovery_address;
     clients.set_status(status);
     tracing::info!(%signalling, discovery = ?discovery_address, "WebRTC server listening (unencrypted ws://, local network only)");
-    tasks.push(tokio::spawn(accept(h, clients, listener, media, limits)));
-    Some(Running { tasks })
+    let (stop, stopped) = tokio::sync::watch::channel(false);
+    tasks.push(tokio::spawn(accept(
+        h,
+        clients,
+        listener,
+        media,
+        limits,
+        max_sockets,
+        stopped,
+    )));
+    Some(Running { tasks, stop })
 }
 
 #[derive(Clone)]
@@ -205,6 +230,7 @@ struct Context {
     clients: Arc<Registry>,
     limits: Limits,
     media: Option<Arc<Media>>,
+    stopped: tokio::sync::watch::Receiver<bool>,
 }
 
 /// Where a connection came from and arrived at.
@@ -232,14 +258,17 @@ async fn accept(
     listener: tokio::net::TcpListener,
     media: Option<Arc<Media>>,
     limits: Limits,
+    max_sockets: usize,
+    stopped: tokio::sync::watch::Receiver<bool>,
 ) {
     let router = Router::new().fallback(get(upgrade)).with_state(Context {
         h,
         clients,
         limits,
         media,
+        stopped,
     });
-    let sockets = Arc::new(tokio::sync::Semaphore::new(MAX_SOCKETS));
+    let sockets = Arc::new(tokio::sync::Semaphore::new(max_sockets));
     let mut refused = Throttle::new();
     loop {
         let (socket, address) = network::accept(&listener).await;
@@ -256,14 +285,17 @@ async fn accept(
             continue;
         };
         let local = SocketAddr::new(local.ip().to_canonical(), local.port());
-        // Whether the browser is on this PC is read from its request, in `upgrade`.
-        let router = router.clone().layer(Extension(Peer {
-            address,
-            local,
-            this_pc: false,
-        }));
+        // Keep the connection slot permit in request extensions so it passes into `on_upgrade`
+        // and spans the WebSocket lifetime rather than dropping at HTTP 101 completion.
+        let router = router
+            .clone()
+            .layer(Extension(Arc::new(permit)))
+            .layer(Extension(Peer {
+                address,
+                local,
+                this_pc: false,
+            }));
         tokio::spawn(async move {
-            let _permit = permit;
             // HTTP/1 only: the WebSocket upgrade needs it, and the version
             // sniffing of the auto builder would wait on a silent peer.
             let mut builder = Builder::new(TokioExecutor::new()).http1_only();
@@ -291,6 +323,7 @@ async fn accept(
 async fn upgrade(
     State(context): State<Context>,
     Extension(peer): Extension<Peer>,
+    Extension(permit): Extension<Arc<tokio::sync::OwnedSemaphorePermit>>,
     headers: axum::http::HeaderMap,
     socket: WebSocketUpgrade,
 ) -> Response {
@@ -301,7 +334,8 @@ async fn upgrade(
     socket
         .max_message_size(MAX_MESSAGE)
         .max_frame_size(MAX_MESSAGE)
-        .on_upgrade(move |socket| {
+        .on_upgrade(move |socket| async move {
+            let _permit = permit;
             connection(
                 context.h,
                 context.clients,
@@ -309,8 +343,11 @@ async fn upgrade(
                 context.media,
                 peer,
                 None,
+                None,
+                Some(context.stopped),
                 socket,
             )
+            .await;
         })
 }
 
@@ -377,6 +414,8 @@ impl Console {
                     media,
                     peer,
                     Some((sign_in, every)),
+                    None,
+                    None,
                     socket,
                 )
             })
@@ -399,6 +438,7 @@ impl Console {
         }
         let media = self.media.clone();
         let clients = crate::WebRtcRuntime::for_host(&h).clients;
+        let every = self.signed_in_check;
         let peer = Peer {
             address: SocketAddr::new(peer.ip().to_canonical(), peer.port()),
             local: SocketAddr::new(local.ip().to_canonical(), local.port()),
@@ -409,7 +449,17 @@ impl Console {
             .max_message_size(MAX_MESSAGE)
             .max_frame_size(MAX_MESSAGE)
             .on_upgrade(move |socket| {
-                connection(h, clients, Limits::default(), media, peer, None, socket)
+                connection(
+                    h,
+                    clients,
+                    Limits::default(),
+                    media,
+                    peer,
+                    None,
+                    Some(every),
+                    None,
+                    socket,
+                )
             })
     }
 }
@@ -476,16 +526,19 @@ fn capabilities(h: &Host) -> (ServerMessage, (EncoderProbe, FrameRateOffer)) {
 fn app_list(h: &Host) -> Vec<AppEntry> {
     let running = h.current_app.lock().unwrap().as_ref().map(|app| app.id);
     let assets = h.assets.parent().unwrap_or(&h.assets).to_owned();
-    h.apps
+    let apps: Vec<_> = h
+        .apps
         .read()
         .unwrap()
         .iter()
-        .map(|app| AppEntry {
-            id: app.id().to_string(),
-            title: app.name.clone(),
-            artwork_available: std::fs::metadata(catalog::artwork(app, &assets))
-                .is_ok_and(|m| m.len() <= MAX_ARTWORK),
-            running: running == Some(app.id()),
+        .map(|app| (app.id(), app.name.clone(), catalog::artwork(app, &assets)))
+        .collect();
+    apps.into_iter()
+        .map(|(id, title, path)| AppEntry {
+            id: id.to_string(),
+            title,
+            artwork_available: std::fs::metadata(path).is_ok_and(|m| m.len() <= MAX_ARTWORK),
+            running: running == Some(id),
         })
         .collect()
 }

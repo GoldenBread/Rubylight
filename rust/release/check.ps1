@@ -63,7 +63,8 @@ if (Test-Path $Settings) { . $Settings }
 $python = if ($env:BUTTERPOLLO_TEST_PYTHON) { $env:BUTTERPOLLO_TEST_PYTHON } else { 'python' }
 $tools = $PSScriptRoot
 $checkout = (Resolve-Path "$PSScriptRoot\..\..").Path
-if (-not $Version) { $Version = gh release list -R $repo --exclude-drafts --limit 1 --json tagName --jq '.[0].tagName' }
+if (-not $Version) { $Version = gh release list -R $repo --exclude-drafts --exclude-pre-releases --limit 1 --json tagName --jq '.[0].tagName' }
+if (-not $Version) { throw 'no published full release found' }
 $tag = $Version
 $Version = $Version -replace '^v', ''
 # The layout elevated-task.ps1 expects: <Work>\<version>\release\...

@@ -468,11 +468,16 @@ impl Tuning {
     pub fn slice_mode(&self, slices: u32, api: ApiVersion, split: u32) -> bool {
         slices > 1 || split == SPLIT_DISABLED || !api.modern_depth()
     }
-    pub fn vbv(&self, bitrate_kbps: u32, rate_millihz: u32) -> u32 {
-        (u64::from(bitrate_kbps) * 1_000_000 * u64::from(100 + self.vbv_increase)
+    /// Recompute the one-frame VBV ceiling in bits from bitrate, frame rate and
+    /// configured headroom (`vbv_increase` percent).
+    pub fn vbv_bits(bitrate_kbps: u32, rate_millihz: u32, vbv_increase: u32) -> u32 {
+        (u64::from(bitrate_kbps) * 1_000_000 * u64::from(100 + vbv_increase)
             / u64::from(rate_millihz.max(1))
             / 100)
             .min(u64::from(u32::MAX)) as u32
+    }
+    pub fn vbv(&self, bitrate_kbps: u32, rate_millihz: u32) -> u32 {
+        Self::vbv_bits(bitrate_kbps, rate_millihz, self.vbv_increase)
     }
 }
 

@@ -5,6 +5,9 @@ use super::*;
 /// The journal's file name inside the profile (config) directory.
 pub const JOURNAL_FILE: &str = "radeon-journal.json";
 
+/// Raw driver `(key, optional value)` pairs captured before applying a setting.
+pub type RawSettingKeys = Vec<(u32, Option<u32>)>;
+
 /// What `Controller` needs from the driver.
 pub trait RadeonBackend {
     /// All settings of one GPU, freshly read from the driver.
@@ -23,6 +26,32 @@ pub trait RadeonBackend {
     fn gpus(&mut self) -> Result<Vec<GpuInfo>, BackendError> {
         super::super::adlx::gpus().map_err(|e| BackendError(format!("{e:#}")))
     }
+    /// Hardware identities (PnP / PCI IDs) corresponding to `gpus()`, when available.
+    fn gpu_identities(&mut self) -> Vec<GpuIdentity> {
+        Vec::new()
+    }
+    /// Snapshot raw driver key state before applying `id`, so restore can restore absent
+    /// keys (via deletion), companion keys, or raw out-of-UI values faithfully.
+    fn snapshot_keys(
+        &mut self,
+        _gpu: i32,
+        _id: &str,
+    ) -> Result<Option<RawSettingKeys>, BackendError> {
+        Ok(None)
+    }
+    /// Restore using journaled raw driver state when supported. Returns `Ok(true)` if
+    /// restored and verified directly, or `Ok(false)` to use `write` + `read_value`.
+    fn restore_raw(&mut self, _entry: &Entry) -> Result<bool, BackendError> {
+        Ok(false)
+    }
+}
+
+/// Hardware identity for a GPU returned by [`RadeonBackend::gpus`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GpuIdentity {
+    pub id: i32,
+    pub pnp_id: Option<String>,
+    pub device_id: Option<u32>,
 }
 
 /// One AMD GPU as ADLX names it.
@@ -119,8 +148,32 @@ pub struct Entry {
     /// entries of other users alone. Empty (a journal from before this field) matches nobody.
     #[serde(default)]
     pub user: String,
+    /// Optional raw driver keys `(key_id, original_value)` captured before mutation.
+    /// `None` in an item means the key was not stored in the profile and must be deleted on restore.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub raw: Option<Vec<(u32, Option<u32>)>>,
 }
 impl Entry {
+    pub(super) fn new(
+        user: String,
+        gpu: i32,
+        id: String,
+        session: String,
+        original: Value,
+        written: Value,
+        side_effect: bool,
+    ) -> Self {
+        Self {
+            gpu,
+            id,
+            session,
+            original,
+            written,
+            side_effect,
+            user,
+            raw: None,
+        }
+    }
     /// The entry for this setting of this user's.
     pub(super) fn is(&self, user: &str, gpu: i32, id: &str) -> bool {
         self.user == user && self.gpu == gpu && self.id == id

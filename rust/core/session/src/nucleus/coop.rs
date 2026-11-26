@@ -158,6 +158,7 @@ pub struct Session {
     /// Nucleus' GUID of the game.
     pub game: String,
     pub title: String,
+    owner: String,
     pub slots: Vec<Slot>,
     pub phase: Phase,
     kicked: BTreeSet<String>,
@@ -208,6 +209,7 @@ impl Session {
             kind,
             game: game.into(),
             title: title.into(),
+            owner: owner.0.into(),
             slots,
             phase: Phase::Starting,
             kicked: BTreeSet::new(),
@@ -226,13 +228,13 @@ impl Session {
     }
 
     /// Take a slot, or return to the device's own. `permitted` is the
-    /// device's Join co-op permission; only the session's owner (the first
-    /// slot) needs none to return, so taking the permission away also keeps a
-    /// joined player from coming back. A device without it learns nothing of
-    /// the session, not even its title.
+    /// device's Join co-op permission; only the session's owner needs none to
+    /// return, so taking the permission away also keeps a joined player from
+    /// coming back. A device without it learns nothing of the session, not even
+    /// its title.
     pub fn join(&mut self, device: &str, name: &str, permitted: bool) -> Result<Joined, Refused> {
         let seated = self.slot_of(device);
-        if !permitted && seated != Some(0) {
+        if !permitted && device != self.owner {
             return Err(Refused::NotPermitted);
         }
         let title = self.title.clone();

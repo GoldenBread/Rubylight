@@ -308,16 +308,70 @@ fn read(root: HKEY, view: REG_SAM_FLAGS, key: &str) -> Option<Product> {
         registry_string_view(root, &path, "DisplayIcon", view).as_deref(),
         uninstall.as_deref(),
     );
+    let quiet_uninstall = if root == HKEY_CURRENT_USER {
+        None
+    } else {
+        registry_string_view(root, &path, "QuietUninstallString", view)
+    };
+    let uninstall = if root == HKEY_CURRENT_USER {
+        None
+    } else {
+        uninstall
+    };
     Some(Product {
         key: key.to_owned(),
         name: name.trim().to_owned(),
         version: registry_string_view(root, &path, "DisplayVersion", view).unwrap_or_default(),
         location,
         uninstall,
-        quiet_uninstall: registry_string_view(root, &path, "QuietUninstallString", view),
+        quiet_uninstall,
         msi: registry_dword(root, &path, "WindowsInstaller", view) == Some(1),
         root,
     })
+}
+
+pub(crate) fn classify_product(found: &mut Found, key: &str, mut product: Product) {
+    if product.root == HKEY_CURRENT_USER {
+        product.uninstall = None;
+        product.quiet_uninstall = None;
+    }
+    let name = product.name.to_ascii_lowercase();
+    if key.eq_ignore_ascii_case("Butterpollo") && product.root == HKEY_LOCAL_MACHINE {
+        found.butterpollo = Some(product);
+        return;
+    }
+    if !matches!(
+        name.as_str(),
+        "vibepollo" | "vibeshine" | "apollo" | "sunshine"
+    ) {
+        return;
+    }
+    if product.product_code().is_some() {
+        found.packages.push(product);
+    } else if name == "vibepollo" || name == "vibeshine" {
+        found.vibepollo_entries.push(product);
+    } else if !found
+        .legacy
+        .iter()
+        .any(|p| p.root == product.root && p.name.eq_ignore_ascii_case(&product.name))
+    {
+        found.legacy.push(product);
+    }
+}
+
+pub(crate) fn finalize_vibepollo_entries(found: &mut Found) {
+    for entry in std::mem::take(&mut found.vibepollo_entries) {
+        let has_msi = found.packages.iter().any(|package| {
+            package.root == entry.root && package.name.eq_ignore_ascii_case(&entry.name)
+        });
+        if has_msi {
+            found.vibepollo_entries.push(entry);
+        } else if !found.legacy.iter().any(|existing| {
+            existing.root == entry.root && existing.name.eq_ignore_ascii_case(&entry.name)
+        }) {
+            found.legacy.push(entry);
+        }
+    }
 }
 
 pub fn scan() -> Found {
@@ -331,21 +385,7 @@ pub fn scan() -> Found {
             let Some(product) = read(root, view, &key) else {
                 continue;
             };
-            let name = product.name.to_ascii_lowercase();
-            if key.eq_ignore_ascii_case("Butterpollo") && root == HKEY_LOCAL_MACHINE {
-                found.butterpollo = Some(product);
-            } else if !matches!(
-                name.as_str(),
-                "vibepollo" | "vibeshine" | "apollo" | "sunshine"
-            ) {
-                continue;
-            } else if product.product_code().is_some() {
-                found.packages.push(product);
-            } else if name == "vibepollo" || name == "vibeshine" {
-                found.vibepollo_entries.push(product);
-            } else if !found.legacy.iter().any(|p| p.name == product.name) {
-                found.legacy.push(product);
-            }
+            classify_product(&mut found, &key, product);
         }
     }
     // The hidden MSI entry has no location; take it from Vibepollo's entry.
@@ -370,6 +410,7 @@ pub fn scan() -> Found {
             package.location = location.clone();
         }
     }
+    finalize_vibepollo_entries(&mut found);
     for product in found.vibepollo_entries.iter_mut().chain(&mut found.legacy) {
         if product.location.is_none() {
             product.location = service.clone();

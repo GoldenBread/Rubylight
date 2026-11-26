@@ -35,6 +35,14 @@ fn a_portrait_steam_does_not_have_is_asked_for_less_often() {
     assert_eq!(portrait_retry_after(u32::MAX), Duration::from_secs(86_400));
 }
 
+fn sync_games(host: &Shared, settings: &Settings, games: &[Game]) -> Result<Outcome> {
+    let discovery = steam::Discovery {
+        games: games.to_vec(),
+        ..Default::default()
+    };
+    sync_catalog(host, settings, &discovery)
+}
+
 #[test]
 fn steam_sync_stands_aside_while_playnite_syncs_the_library() {
     let f = Fixture::new();
@@ -48,12 +56,16 @@ fn steam_sync_stands_aside_while_playnite_syncs_the_library() {
     }];
     let settings = Settings::from_config(&Config::parse("steam_enabled=true").unwrap());
     let before = f.host.apps.read().unwrap().len();
-    let aside = sync_beside(&f.host, &settings, &games, true).unwrap();
+    let discovery = steam::Discovery {
+        games: games.to_vec(),
+        ..Default::default()
+    };
+    let aside = sync_beside(&f.host, &settings, &discovery, true).unwrap();
     assert!(!aside.changed);
     assert_eq!((aside.games, aside.importable), (1, 1));
     assert_eq!(f.host.apps.read().unwrap().len(), before);
     assert!(
-        sync_beside(&f.host, &settings, &games, false)
+        sync_beside(&f.host, &settings, &discovery, false)
             .unwrap()
             .changed
     );
@@ -75,7 +87,7 @@ fn steam_sync_converts_local_covers_persists_apps_and_is_idempotent() {
         &Config::parse("steam_enabled=true\nsteam_sync_all_installed=true").unwrap(),
     );
     let original = f.host.apps.read().unwrap().len();
-    let first = sync_catalog(&f.host, &settings, &games).unwrap();
+    let first = sync_games(&f.host, &settings, &games).unwrap();
     assert!(first.changed);
     assert_eq!((first.games, first.importable), (1, 1));
     let saved = butterpollo_session::state::load_json(&f.host.apps_path, json!({})).unwrap();
@@ -92,13 +104,13 @@ fn steam_sync_converts_local_covers_persists_apps_and_is_idempotent() {
         butterpollo_win_graphics::image::dimensions(png).unwrap(),
         (600, 900)
     );
-    assert!(!sync_catalog(&f.host, &settings, &games).unwrap().changed);
+    assert!(!sync_games(&f.host, &settings, &games).unwrap().changed);
     assert_eq!(
         butterpollo_session::state::load_json(&f.host.apps_path, json!({})).unwrap(),
         saved
     );
     settings.exclusions.push(("570".into(), String::new()));
-    assert!(sync_catalog(&f.host, &settings, &games).unwrap().changed);
+    assert!(sync_games(&f.host, &settings, &games).unwrap().changed);
     assert_eq!(f.host.apps.read().unwrap().len(), original);
 }
 
@@ -115,7 +127,7 @@ fn a_deleted_steam_game_stays_out_of_the_sync_until_add_games_brings_it_back() {
         ..Default::default()
     }];
     let settings = Settings::from_config(&Config::parse("steam_sync_all_installed=true").unwrap());
-    assert!(sync_catalog(&f.host, &settings, &games).unwrap().changed);
+    assert!(sync_games(&f.host, &settings, &games).unwrap().changed);
     let dota = |h: &Shared| {
         h.apps
             .read()
@@ -137,7 +149,7 @@ fn a_deleted_steam_game_stays_out_of_the_sync_until_add_games_brings_it_back() {
         f.host.app_document.read().unwrap()["launcher-dismissed"],
         json!(["steam:570"])
     );
-    assert!(!sync_catalog(&f.host, &settings, &games).unwrap().changed);
+    assert!(!sync_games(&f.host, &settings, &games).unwrap().changed);
     assert!(dota(&f.host).is_none());
     // "Add games" brings it back as the user's app and lifts the deletion.
     let game = library::Game::new(
@@ -162,7 +174,7 @@ fn a_deleted_steam_game_stays_out_of_the_sync_until_add_games_brings_it_back() {
         json!([])
     );
     // The sync keeps the game once, as the user's: it only fills in the missing cover.
-    assert!(sync_catalog(&f.host, &settings, &games).unwrap().changed);
+    assert!(sync_games(&f.host, &settings, &games).unwrap().changed);
     let app = dota(&f.host).unwrap();
     assert!(
         app["image-path"]
@@ -180,7 +192,73 @@ fn a_deleted_steam_game_stays_out_of_the_sync_until_add_games_brings_it_back() {
         .filter(|app| steam::game_of(&serde_json::to_value(app).unwrap()) == Some(570))
         .count();
     assert_eq!(copies, 1);
-    assert!(!sync_catalog(&f.host, &settings, &games).unwrap().changed);
+    assert!(!sync_games(&f.host, &settings, &games).unwrap().changed);
+}
+
+#[test]
+fn unreadable_steam_library_preserves_previously_synced_apps() {
+    let f = Fixture::new();
+    let missing_library = f.host.directory.join("MissingDrive");
+    let present_library = f.host.directory.join("PresentDrive");
+    let cover = portrait(&f);
+    let games = [
+        Game {
+            appid: 570,
+            name: "Dota 2".into(),
+            app_type: "Game".into(),
+            installed: true,
+            install_dir: missing_library.join("steamapps/common/Dota 2"),
+            library_path: missing_library.clone(),
+            portrait_path: Some(cover.clone()),
+            ..Default::default()
+        },
+        Game {
+            appid: 730,
+            name: "CS2".into(),
+            app_type: "Game".into(),
+            installed: true,
+            install_dir: present_library.join("steamapps/common/CS2"),
+            library_path: present_library.clone(),
+            portrait_path: Some(cover),
+            ..Default::default()
+        },
+    ];
+    let settings = Settings::from_config(
+        &Config::parse(
+            "steam_enabled=true\nsteam_sync_all_installed=true\nsteam_remove_uninstalled=true",
+        )
+        .unwrap(),
+    );
+    assert!(sync_games(&f.host, &settings, &games).unwrap().changed);
+    assert_eq!(
+        f.host
+            .apps
+            .read()
+            .unwrap()
+            .iter()
+            .filter(|a| steam::game_of(&serde_json::to_value(a).unwrap()).is_some())
+            .count(),
+        2
+    );
+
+    // MissingDrive is unreadable while PresentDrive is empty (CS2 uninstalled).
+    let partial = steam::Discovery {
+        games: Vec::new(),
+        readable_libraries: vec![present_library.join("steamapps")],
+        unreadable_libraries: vec![missing_library.join("steamapps")],
+        incomplete: true,
+        ..Default::default()
+    };
+    assert!(sync_catalog(&f.host, &settings, &partial).unwrap().changed);
+    let synced: Vec<u32> = f
+        .host
+        .apps
+        .read()
+        .unwrap()
+        .iter()
+        .filter_map(|a| steam::game_of(&serde_json::to_value(a).unwrap()))
+        .collect();
+    assert_eq!(synced, vec![570]);
 }
 
 #[test]

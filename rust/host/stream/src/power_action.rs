@@ -221,6 +221,22 @@ pub fn busy_beside_gate(h: &Shared) -> Option<Busy> {
     if let Some(app) = h.current_app.lock().unwrap().as_ref() {
         return Some(Busy::App(app.name.clone()));
     }
+    if let Some(coop) = h
+        .nucleus
+        .sessions()
+        .into_iter()
+        .find(|l| !l.session.ended())
+    {
+        let name = h
+            .apps
+            .read()
+            .unwrap()
+            .iter()
+            .find(|a| a.id() == coop.app_id)
+            .map(|a| a.name.clone())
+            .unwrap_or_else(|| "Nucleus Co-op".to_owned());
+        return Some(Busy::App(name));
+    }
     if ending || !h.monitors.lock().unwrap().is_empty() {
         return Some(Busy::Ending);
     }

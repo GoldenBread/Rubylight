@@ -193,12 +193,20 @@ fn failed_limiter_audio_activation_and_layout_restores_stay_pending() -> Result<
         },
     );
     // The endpoint is missing and the VDD is tearing down: nothing is lost.
-    assert!(restored_all(&mut kept, |e| &mut e.audio, Err(anyhow::anyhow!("gone"))).is_err());
+    assert!(
+        restored_all(
+            &mut kept,
+            false,
+            |e| &mut e.audio,
+            Err(anyhow::anyhow!("gone"))
+        )
+        .is_err()
+    );
     let pending = kept.entries.get_mut("tv").unwrap();
     assert!(restored(&mut pending.activation, Err(anyhow::anyhow!("busy"))).is_err());
     assert!(restored(&mut pending.baseline, Err(anyhow::anyhow!("busy"))).is_err());
     // The limiter came back: every entry drops its flag.
-    restored_all(&mut kept, |e| &mut e.external, Ok(()))?;
+    restored_all(&mut kept, false, |e| &mut e.external, Ok(()))?;
     assert!(!kept.entries["monitor"].pending());
     let reloaded: Journal = serde_json::from_slice(&serde_json::to_vec(&kept)?)?;
     let tv = &reloaded.entries["tv"];
@@ -451,4 +459,59 @@ fn recover_pending_skips_when_current_process_owns_a_live_journal() {
 
     let ran = recover_pending_at(&path, |_| panic!("must not recover live host journal")).unwrap();
     assert!(!ran);
+}
+
+#[test]
+fn unreadable_display_recovery_journal_is_quarantined_cleanly() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("display-recovery.json");
+    std::fs::write(&path, b"{not valid json")?;
+
+    let outcome = initialize_in(&path, |_| {
+        unreachable!("corrupt journal must not run recover")
+    })?;
+    assert!(outcome.is_some());
+    assert!(!path.exists());
+    assert!(dir.path().join("display-recovery.corrupt.json").exists());
+    assert!(!has_pending());
+    Ok(())
+}
+
+#[test]
+fn pending_leftover_entries_remain_recoverable_when_journal_marked_stale() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("display-recovery.json");
+    let pid = std::process::id();
+    let mixed = Journal {
+        pid,
+        started: identity(pid)?.unwrap(),
+        entries: BTreeMap::from([
+            (
+                "tv".into(),
+                Entry {
+                    hdr: Some((false, true)),
+                    stale: true,
+                    ..Default::default()
+                },
+            ),
+            (
+                "monitor".into(),
+                Entry {
+                    hdr: Some((false, true)),
+                    stale: false,
+                    ..Default::default()
+                },
+            ),
+        ]),
+    };
+    butterpollo_session::state::write_json(&path, &mixed)?;
+
+    let mut ran = false;
+    let recovered = recover_pending_at(&path, |_| {
+        ran = true;
+        Ok(())
+    })?;
+    assert!(recovered);
+    assert!(ran);
+    Ok(())
 }

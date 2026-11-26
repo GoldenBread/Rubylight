@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import Button from '../Button.svelte';
   import Icon from '../Icon.svelte';
   import { api, type GameSettingsStatus } from '../../lib/api';
@@ -49,7 +50,7 @@
     void reload;
     status = null;
     failure = '';
-    if (!uuid || !settingsFilePaths(draft.settingsFiles.map((row) => row.value)).length) return;
+    if (!uuid || !untrack(() => settingsFilePaths(draft.settingsFiles.map((row) => row.value))).length) return;
     let current = true;
     api.gameSettings
       .status(uuid)

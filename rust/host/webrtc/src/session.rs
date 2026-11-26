@@ -35,7 +35,7 @@ use std::{
     },
     time::{Duration, Instant},
 };
-use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
+use tokio::sync::mpsc::{self, UnboundedSender, channel};
 
 mod actor;
 mod live;
@@ -363,12 +363,20 @@ pub enum Command {
     Answer { session_id: u64, sdp: String },
 }
 
+pub(crate) const COMMAND_CAP: usize = 64;
+
 /// The connection's end of its session actor. Dropping it ends the actor and stops its session.
-pub struct Commands(UnboundedSender<Command>);
+pub struct Commands(mpsc::Sender<Command>);
 
 impl Commands {
     pub fn send(&self, command: Command) -> bool {
-        self.0.send(command).is_ok()
+        self.0.try_send(command).is_ok()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_channel(cap: usize) -> (Self, mpsc::Receiver<Command>) {
+        let (tx, rx) = channel(cap);
+        (Self(tx), rx)
     }
 }
 
@@ -382,9 +390,9 @@ pub fn spawn(
     peer: SocketAddr,
     local: IpAddr,
     this_pc: bool,
-    out: UnboundedSender<ServerMessage>,
+    out: mpsc::Sender<ServerMessage>,
 ) -> Commands {
-    let (commands, inbox) = unbounded_channel();
+    let (commands, inbox) = channel(COMMAND_CAP);
     let actor = actor::Actor {
         h,
         media,

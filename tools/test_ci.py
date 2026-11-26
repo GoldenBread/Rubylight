@@ -1,4 +1,4 @@
-import contextlib, io, json, pathlib, shlex, sys, tomllib, unittest
+import contextlib, http.server, io, json, os, pathlib, shlex, shutil, subprocess, sys, tempfile, threading, tomllib, unittest
 from unittest import mock
 
 import yaml
@@ -339,7 +339,10 @@ class NightjarPlayWorkflow(unittest.TestCase):
         self.assertEqual(set(call_inputs), {'tag', 'check_only', 'track'})
         self.assertTrue(call_inputs['tag']['required'])
         upload_if = play['jobs']['upload']['if']
-        self.assertIn("github.event_name == 'workflow_call'", upload_if)
+        self.assertNotIn("github.event_name == 'workflow_call'", upload_if)
+        self.assertIn("github.workflow == 'Google Play'", upload_if)
+        self.assertIn("!github.event.release.prerelease", upload_if)
+        self.assertIn("!contains(inputs.tag, '-')", upload_if)
         self.assertIn("'-rc.'", upload_if)
 
         release_job = release['jobs']['release']
@@ -350,6 +353,231 @@ class NightjarPlayWorkflow(unittest.TestCase):
         self.assertEqual(play_job['needs'], ['preflight', 'release'])
         self.assertIn("needs.release.outputs.published == 'true'", play_job['if'])
         self.assertIn("!contains(needs.preflight.outputs.version, '-')", play_job['if'])
+
+
+class MirrorAndReleaseWorkflows(unittest.TestCase):
+    def test_mirror_gate_watches_nextest_and_returns_from_function(self):
+        mirror = yaml.safe_load((ci.ROOT / '.github/workflows/nightjar-mirror.yml').read_text(encoding='utf-8'))
+        gate = next(s['run'] for s in mirror['jobs']['mirror']['steps'] if s.get('id') == 'gate')
+        android = gate[gate.index('check nightjar-android.yml'):gate.index('check nightjar-macos.yml')]
+        macos = gate[gate.index('check nightjar-macos.yml'):]
+        self.assertIn('.config/nextest.toml', android)
+        self.assertIn('.config/nextest.toml', macos)
+        body = gate[gate.index('check()'):gate.index('check nightjar-android.yml')]
+        self.assertNotIn('exit 0', body)
+        self.assertIn('return 1', body)
+
+    def test_desktop_media_paths_and_dry_run_signing_environment(self):
+        release_text = (ci.ROOT / 'client/.github/workflows/release.yml').read_text(encoding='utf-8')
+        agents_text = (ci.ROOT / 'client/AGENTS.md').read_text(encoding='utf-8')
+        self.assertNotIn('protocol/desktop/ffmpeg-decode-only.sh', release_text)
+        self.assertIn('protocol/desktop-media/ffmpeg-decode-only.sh', release_text)
+        self.assertNotIn('protocol/desktop/src/metal/generate.py', agents_text)
+        self.assertIn('protocol/desktop-media/src/metal/generate.py', agents_text)
+        release = yaml.safe_load(release_text)
+        sign_win = release['jobs']['sign-windows']
+        self.assertIn("refs/heads/main", sign_win['environment'])
+        self.assertIn("refs/tags/v", sign_win['environment'])
+        self.assertIn("refs/heads/main", sign_win['env']['SIGN'])
+
+    def test_rc_workflow_deletes_draft_and_tag_on_dispatch_failure_and_keeps_scripts_synced(self):
+        rc_wf = yaml.safe_load((ci.ROOT / 'client/.github/workflows/rc.yml').read_text(encoding='utf-8'))
+        last_step = rc_wf['jobs']['rc']['steps'][-1]['run']
+        self.assertIn('gh release create', last_step)
+        self.assertIn('gh workflow run release.yml', last_step)
+        self.assertLess(last_step.index('gh workflow run release.yml'), last_step.rindex('refs/tags/$TAG'))
+        self.assertEqual(
+            (ci.ROOT / '.github/scripts/rc.mjs').read_bytes(),
+            (ci.ROOT / 'client/.github/scripts/rc.mjs').read_bytes(),
+        )
+
+
+def _git(cwd, *args):
+    env = dict(os.environ, GIT_AUTHOR_NAME='t', GIT_AUTHOR_EMAIL='t@t',
+               GIT_COMMITTER_NAME='t', GIT_COMMITTER_EMAIL='t@t',
+               GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1')
+    out = subprocess.run(['git', '-C', str(cwd), *args], env=env, capture_output=True, text=True)
+    if out.returncode:
+        raise AssertionError(f'git {args}: {out.stderr}')
+    return out.stdout.strip()
+
+
+class NightjarAutomationScripts(unittest.TestCase):
+    def test_rc_prune_removes_superseded_failed_draft_and_keeps_full_release(self):
+        requests = []
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                requests.append(('GET', self.path))
+                if self.path.startswith('/repos/o/r/releases'):
+                    data = [
+                        {'id': 1, 'tag_name': 'v6.4.1', 'draft': False, 'prerelease': False, 'created_at': '2026-11-01T00:00:00Z'},
+                        {'id': 2, 'tag_name': 'v6.4.2-rc.10', 'draft': False, 'prerelease': True, 'created_at': '2026-11-10T00:00:00Z'},
+                        # Failed draft created after rc.10 whose version key sorts below rc.10.
+                        {'id': 3, 'tag_name': 'v6.4.2-rc.9', 'draft': True, 'prerelease': True, 'created_at': '2026-11-11T00:00:00Z'},
+                    ]
+                    raw = json.dumps(data).encode()
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/json')
+                    self.send_header('Content-Length', str(len(raw)))
+                    self.end_headers()
+                    self.wfile.write(raw)
+                    return
+                self.send_response(404)
+                self.end_headers()
+
+            def do_DELETE(self):
+                requests.append(('DELETE', self.path))
+                self.send_response(204)
+                self.end_headers()
+
+            def log_message(self, *_args):
+                pass
+
+        srv = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+        self.addCleanup(srv.server_close)
+        self.addCleanup(srv.shutdown)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        env = dict(os.environ, GITHUB_API_URL=f'http://127.0.0.1:{srv.server_address[1]}',
+                   GITHUB_REPOSITORY='o/r', GITHUB_TOKEN='tok')
+        res = subprocess.run(['node', str(ci.ROOT / 'client/.github/scripts/rc.mjs'), 'prune'],
+                             capture_output=True, text=True, env=env, timeout=20)
+        self.assertEqual(res.returncode, 0, res.stderr)
+        deletes = [p for m, p in requests if m == 'DELETE']
+        self.assertEqual(deletes, ['/repos/o/r/releases/3', '/repos/o/r/git/refs/tags/v6.4.2-rc.9'])
+
+    def test_device_results_writes_data_branch_never_main_and_comments_on_failure(self):
+        comments = []
+        patches = []
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def _json(self, code, payload=None):
+                raw = b'' if payload is None else json.dumps(payload).encode()
+                self.send_response(code)
+                if payload is not None:
+                    self.send_header('Content-Type', 'application/json')
+                    self.send_header('Content-Length', str(len(raw)))
+                self.end_headers()
+                if payload is not None:
+                    self.wfile.write(raw)
+
+            def do_GET(self):
+                if '/comments' in self.path:
+                    return self._json(200, comments)
+                self._json(404, {})
+
+            def do_POST(self):
+                length = int(self.headers.get('Content-Length', '0'))
+                body = json.loads(self.rfile.read(length))
+                if self.path.endswith('/comments'):
+                    entry = {'id': len(comments) + 1, 'user': {'login': 'github-actions[bot]'}, 'body': body['body']}
+                    comments.append(entry)
+                    return self._json(201, entry)
+                self._json(404, {})
+
+            def do_PATCH(self):
+                length = int(self.headers.get('Content-Length', '0'))
+                body = json.loads(self.rfile.read(length))
+                patches.append((self.path, body))
+                self._json(200, {})
+
+            def log_message(self, *_args):
+                pass
+
+        srv = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+        self.addCleanup(srv.server_close)
+        self.addCleanup(srv.shutdown)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            origin = root / 'origin.git'
+            origin.mkdir()
+            _git(origin, 'init', '-q', '--bare', '-b', 'main')
+            seed = root / 'seed'
+            seed.mkdir()
+            _git(seed, 'init', '-q', '-b', 'main')
+            (seed / 'site/data').mkdir(parents=True)
+            (seed / 'docs').mkdir(parents=True)
+            shutil.copyfile(ci.ROOT / 'client/site/data/device-results.json', seed / 'site/data/device-results.json')
+            shutil.copyfile(ci.ROOT / 'client/docs/devices.md', seed / 'docs/devices.md')
+            _git(seed, 'add', '-A')
+            _git(seed, 'commit', '-q', '-m', 'seed main')
+            _git(seed, 'remote', 'add', 'origin', str(origin))
+            _git(seed, 'push', '-q', 'origin', 'main')
+            main_before = _git(origin, 'rev-parse', 'refs/heads/main')
+
+            pages = root / 'pages'
+            pages.mkdir()
+            _git(pages, 'init', '-q', '-b', 'gh-pages')
+            (pages / 'index.html').write_text('ok\n', encoding='utf-8')
+            _git(pages, 'add', '-A')
+            _git(pages, 'commit', '-q', '-m', 'seed pages')
+            _git(pages, 'remote', 'add', 'origin', str(origin))
+            _git(pages, 'push', '-q', 'origin', 'gh-pages')
+
+            work = root / 'work'
+            _git(root, 'clone', '-q', str(origin), 'work')
+
+            sample = json.loads((ci.ROOT / 'client/site/data/device-results.json').read_text(encoding='utf-8'))['entries'][0]['results']
+            fresh_results = json.loads(json.dumps(sample))
+            fresh_results['model'] = 'Pixel Test Device'
+            fresh_results['host'] = 'Synthetic Host'
+            fresh_results['decoderBenchmark']['results'][0]['decoder'] = 'c2.test.synth.dec'
+            issue_body = '\n'.join([
+                '### Device', 'Pixel Test Device',
+                '### Results text', '```json', json.dumps(fresh_results), '```',
+                '### Stream on this device (optional)', '_No response_',
+                '### Publishing', '- [x] OK',
+            ])
+            event = root / 'event.json'
+            event.write_text(json.dumps({
+                'issue': {'number': 99, 'state': 'open', 'labels': [{'name': 'device-results'}], 'body': issue_body}
+            }), encoding='utf-8')
+
+            env = dict(os.environ,
+                       GITHUB_API_URL=f'http://127.0.0.1:{srv.server_address[1]}',
+                       GITHUB_SERVER_URL='https://github.com',
+                       GITHUB_REPOSITORY='o/r', GITHUB_RUN_ID='777', GITHUB_TOKEN='tok',
+                       RUNNER_TEMP=str(root / 'rtmp'))
+            (root / 'rtmp').mkdir()
+            script = str(ci.ROOT / 'client/.github/scripts/device-results-issue.mjs')
+            ok = subprocess.run(['node', script, '--event', str(event), '--today', '2026-11-25'],
+                                cwd=str(work), env=env, capture_output=True, text=True, timeout=30)
+            self.assertEqual(ok.returncode, 0, ok.stdout + ok.stderr)
+            # main stayed untouched while device-results branch & gh-pages were updated.
+            self.assertEqual(_git(origin, 'rev-parse', 'refs/heads/main'), main_before)
+            data_tip = _git(origin, 'rev-parse', 'refs/heads/device-results')
+            self.assertNotEqual(data_tip, main_before)
+            self.assertIn('Pixel Test Device', _git(origin, 'show', f'{data_tip}:site/data/device-results.json'))
+            self.assertIn('Pixel Test Device', _git(origin, 'show', 'gh-pages:data/device-results.json'))
+            self.assertEqual(len(comments), 1)
+            self.assertIn('<!-- device-results-bot -->', comments[0]['body'])
+            self.assertTrue(any(p[0].endswith('/issues/99') and p[1]['state'] == 'closed' for p in patches))
+
+            # Now test unexpected push/pages failure posts an explanatory failure comment.
+            _git(origin, 'branch', '-D', 'gh-pages')
+            fail_results = json.loads(json.dumps(fresh_results))
+            fail_results['model'] = 'Pixel Fail Case'
+            fail_results['decoderBenchmark']['results'][0]['medianDecodeMs'] = 3.7
+            fail_body = '\n'.join([
+                '### Device', 'Pixel Fail Case',
+                '### Results text', '```json', json.dumps(fail_results), '```',
+                '### Stream on this device (optional)', '_No response_',
+                '### Publishing', '- [x] OK',
+            ])
+            event2 = root / 'event2.json'
+            event2.write_text(json.dumps({
+                'issue': {'number': 100, 'state': 'open', 'labels': [{'name': 'device-results'}],
+                          'body': fail_body}
+            }), encoding='utf-8')
+            comments.clear()
+            fail = subprocess.run(['node', script, '--event', str(event2), '--today', '2026-11-25'],
+                                  cwd=str(work), env=env, capture_output=True, text=True, timeout=30)
+            self.assertNotEqual(fail.returncode, 0)
+            self.assertEqual(len(comments), 1)
+            self.assertIn('<!-- device-results-bot -->', comments[0]['body'])
+            self.assertIn('/actions/runs/777', comments[0]['body'])
 
 
 if __name__ == '__main__':

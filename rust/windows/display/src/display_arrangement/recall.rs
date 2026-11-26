@@ -38,7 +38,7 @@ pub(super) fn forget_saved_layout(before: &Snapshot, target: &str, saves: bool) 
         connected,
         |ids| {
             crate::display::end_trace::phase("entry, displays on");
-            Topology::set_active_preferred(ids, &before.sources, primary)
+            Topology::set_active_preferred(ids, &before.sources, &before.rotation, primary)
         },
         || Ok(Snapshot::capture()?.nodes),
         |layout| {
@@ -163,7 +163,7 @@ pub fn undo_recall_for_remote_monitor(before: &Snapshot, output: &str) -> Result
     // Before the lock: stopping a watch holds the watcher across a wait for a thread that
     // wants this one.
     let settling = wake_watch_settling();
-    let state = state().lock().unwrap();
+    let state = crate::lock_unpoisoned(state());
     let pending = if state.users == 0 && settling {
         crate::display_recovery::pending_arrangement()?
     } else {

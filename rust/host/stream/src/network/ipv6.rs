@@ -102,6 +102,11 @@ async fn soap(
         .cloned()
         .context("IPv6 UPnP response action mismatch")
 }
+pub(super) struct Renewed {
+    pub(super) opened: usize,
+    pub(super) error: Option<anyhow::Error>,
+}
+
 pub(super) struct Firewall {
     client: Client,
     url: Url,
@@ -131,7 +136,7 @@ impl Firewall {
     pub(super) fn local(&self) -> Ipv6Addr {
         self.local
     }
-    pub(super) async fn renew(&mut self, mappings: &[Mapping]) -> Result<()> {
+    pub(super) async fn renew(&mut self, mappings: &[Mapping]) -> Renewed {
         // Pinholes no longer wanted (the browser guests' once their links are gone) close now
         // rather than at the end of their lease.
         let now = Instant::now();
@@ -152,39 +157,57 @@ impl Firewall {
             }
         }
         self.leases = kept;
+        let mut opened = 0;
+        let mut last_error = None;
         for &mapping in mappings {
             // Re-adding the tuple renews its lease and returns its current ID;
             // this also recovers safely after a router reboot or lease expiry.
-            let response = soap(
-                &self.client,
-                &self.url,
-                "AddPinhole",
-                &[
-                    ("RemoteHost", String::new()),
-                    ("RemotePort", "0".into()),
-                    ("InternalClient", self.local.to_string()),
-                    ("InternalPort", mapping.port.to_string()),
-                    (
-                        "Protocol",
-                        if mapping.protocol == Protocol::TCP {
-                            "6"
-                        } else {
-                            "17"
-                        }
-                        .into(),
-                    ),
-                    ("LeaseTime", "120".into()),
-                ],
-            )
-            .await?;
-            let id: u16 = child(&response, "UniqueID")
-                .context("IPv6 pinhole ID missing")?
-                .parse()?;
-            self.leases.retain(|(old, _, _)| *old != mapping);
-            self.leases
-                .push((mapping, id, Instant::now() + Duration::from_secs(120)));
+            let added = async {
+                let response = soap(
+                    &self.client,
+                    &self.url,
+                    "AddPinhole",
+                    &[
+                        ("RemoteHost", String::new()),
+                        ("RemotePort", "0".into()),
+                        ("InternalClient", self.local.to_string()),
+                        ("InternalPort", mapping.port.to_string()),
+                        (
+                            "Protocol",
+                            if mapping.protocol == Protocol::TCP {
+                                "6"
+                            } else {
+                                "17"
+                            }
+                            .into(),
+                        ),
+                        ("LeaseTime", "120".into()),
+                    ],
+                )
+                .await?;
+                let id: u16 = child(&response, "UniqueID")
+                    .context("IPv6 pinhole ID missing")?
+                    .parse()?;
+                anyhow::Ok(id)
+            }
+            .await;
+            match added {
+                Ok(id) => {
+                    opened += 1;
+                    self.leases.retain(|(old, _, _)| *old != mapping);
+                    self.leases
+                        .push((mapping, id, Instant::now() + Duration::from_secs(120)));
+                }
+                Err(error) => {
+                    tracing::debug!(port = mapping.port, protocol = ?mapping.protocol, %error, "IPv6 pinhole refused or unavailable");
+                    last_error = Some(error);
+                }
+            }
         }
-        Ok(())
+        Renewed {
+            opened,
+            error: last_error,
+        }
     }
     pub(super) async fn close(&mut self) -> Result<()> {
         let mut error = None;
@@ -403,19 +426,81 @@ mod tests {
         let mut firewall = Firewall::from_location(client, url.clone(), Ipv6Addr::LOCALHOST)
             .await
             .unwrap();
-        let mappings = [Mapping {
-            protocol: Protocol::UDP,
-            port: 48132,
-        }];
-        firewall.renew(&mappings).await.unwrap();
-        firewall.renew(&mappings).await.unwrap();
+        let mappings = [
+            Mapping {
+                protocol: Protocol::UDP,
+                port: 48132,
+            },
+            Mapping {
+                protocol: Protocol::UDP,
+                port: 48133,
+            },
+        ];
+        let first = firewall.renew(&mappings).await;
+        assert_eq!(first.opened, 2);
+        assert!(first.error.is_none());
+        let second = firewall.renew(&mappings).await;
+        assert_eq!(second.opened, 2);
+        assert!(second.error.is_none());
         // No longer wanted (a guest link is gone): its pinhole closes now, and close has
         // nothing left to delete.
-        firewall.renew(&[]).await.unwrap();
+        let cleared = firewall.renew(&[]).await;
+        assert_eq!(cleared.opened, 0);
+        assert!(cleared.error.is_none());
         assert!(firewall.leases.is_empty());
         firewall.close().await.unwrap();
-        assert_eq!(calls.lock().unwrap().len(), 4);
-        assert!(calls.lock().unwrap()[3].contains("DeletePinhole"));
+        assert_eq!(calls.lock().unwrap().len(), 7);
+        assert!(calls.lock().unwrap()[5].contains("DeletePinhole"));
+        server.abort();
+
+        // One refused AddPinhole leaves the other pinhole leased and reported.
+        async fn partial_handler(headers: HeaderMap, body: String) -> String {
+            let action = headers["SOAPAction"]
+                .to_str()
+                .unwrap()
+                .trim_matches('"')
+                .split('#')
+                .nth(1)
+                .unwrap();
+            let value = match action {
+                "GetFirewallStatus" => {
+                    "<FirewallEnabled>1</FirewallEnabled><InboundPinholeAllowed>1</InboundPinholeAllowed>"
+                }
+                "AddPinhole" if body.contains("<InternalPort>48132</InternalPort>") => {
+                    "<UPnPError><errorCode>706</errorCode><errorDescription>Refused</errorDescription></UPnPError>"
+                }
+                "AddPinhole" => "<UniqueID>88</UniqueID>",
+                "DeletePinhole" => "",
+                _ => panic!("unexpected action {action}"),
+            };
+            format!(
+                "<s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\"><s:Body><u:{action}Response xmlns:u=\"{SERVICE}\">{value}</u:{action}Response></s:Body></s:Envelope>"
+            )
+        }
+        let listener = tokio::net::TcpListener::bind("[::1]:0").await.unwrap();
+        let partial_url = Url::parse(&format!(
+            "http://{}/root.xml",
+            listener.local_addr().unwrap()
+        ))
+        .unwrap();
+        let router = Router::new()
+            .route("/root.xml", get(descriptor))
+            .route("/firewall", axum::routing::post(partial_handler));
+        let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        let client = Client::builder()
+            .no_proxy()
+            .timeout(Duration::from_secs(3))
+            .build()
+            .unwrap();
+        let mut partial_fw = Firewall::from_location(client, partial_url, Ipv6Addr::LOCALHOST)
+            .await
+            .unwrap();
+        let outcome = partial_fw.renew(&mappings).await;
+        assert_eq!(outcome.opened, 1);
+        assert!(outcome.error.is_some());
+        assert_eq!(partial_fw.leases.len(), 1);
+        assert_eq!(partial_fw.leases[0].0.port, 48133);
+        partial_fw.close().await.unwrap();
         server.abort();
         let foreign = format!(
             "<root><service><serviceType>{SERVICE}</serviceType><controlURL>http://example.invalid/control</controlURL></service></root>"

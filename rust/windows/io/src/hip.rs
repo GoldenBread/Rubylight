@@ -55,15 +55,23 @@ pub fn gpus() -> Result<Vec<Gpu>> {
         // SAFETY: The buffer is zeroed, 8-aligned and larger than hipDeviceProp_tR0600.
         let status = unsafe { properties(buffer.0.as_mut_ptr().cast(), device) };
         if status != 0 {
-            bail!("the AMD compute runtime cannot describe GPU {device} (HIP error {status})");
+            tracing::warn!(
+                device,
+                status,
+                "skipping GPU whose properties the AMD compute runtime cannot read"
+            );
+            continue;
         }
         let mut units = 0;
         // SAFETY: `units` is a live, writable int and `device` is below the count.
         let status = unsafe { attribute(&mut units, MULTIPROCESSOR_COUNT, device) };
         if status != 0 {
-            bail!(
-                "the AMD compute runtime cannot count GPU {device}'s compute units (HIP error {status})"
+            tracing::warn!(
+                device,
+                status,
+                "skipping GPU whose compute unit count the AMD compute runtime cannot read"
             );
+            continue;
         }
         let text = |at: usize| {
             CStr::from_bytes_until_nul(&buffer.0[at..at + 256])
@@ -77,7 +85,12 @@ pub fn gpus() -> Result<Vec<Gpu>> {
             .unwrap_or_default()
             .to_owned();
         if !arch.starts_with("gfx") {
-            bail!("the AMD compute runtime reports no architecture for GPU {device}");
+            tracing::warn!(
+                device,
+                arch,
+                "skipping GPU without a gfx architecture from the AMD compute runtime"
+            );
+            continue;
         }
         let units = units.max(0) as u32;
         let luid = u64::from_le_bytes(buffer.0[LUID_AT..LUID_AT + 8].try_into()?);

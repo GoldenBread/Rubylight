@@ -349,6 +349,11 @@ impl GpuPool {
                     handoff.forget(texture);
                 }
             }
+            if let Some(Some(signal)) = &self.d3d11_signal {
+                for texture in &self.textures {
+                    signal.forget(texture);
+                }
+            }
             self.textures.clear();
             self.shape = shape;
         }
@@ -525,12 +530,7 @@ impl GpuPool {
                             // Never hand a `SHARED_NTHANDLE` texture with `ready: None` to
                             // downstream D3D12 compute readers: downgrade to a non-shared
                             // D3D11 pool and re-copy into a plain texture instead.
-                            tracing::warn!(
-                                "shared D3D11 fence unavailable; downgrading capture pool to non-shared D3D11 textures"
-                            );
-                            self.shared = false;
-                            self.d3d11_signal = None;
-                            self.textures.clear();
+                            self.downgrade_shared_d3d11();
                             return self.copy(gpu, source, crop);
                         }
                     } else {
@@ -547,6 +547,19 @@ impl GpuPool {
                 ready,
             )))
         }
+    }
+
+    fn downgrade_shared_d3d11(&mut self) {
+        tracing::warn!(
+            "shared D3D11 fence unavailable; downgrading capture pool to non-shared D3D11 textures"
+        );
+        self.warnings.set(
+            "capture_compute",
+            "Shared D3D11 fence unavailable; copying on the graphics queue. A busy game can delay capture; lower GPU load or update the graphics driver.",
+        );
+        self.shared = false;
+        self.d3d11_signal = None;
+        self.textures.clear();
     }
 
     /// Signal the shared D3D11->D3D12 fence after a D3D11 copy into a shared
@@ -748,5 +761,34 @@ mod shared_signal_tests {
         let ready = resolve_shared_signal(&mut slot, |_| Err::<u32, _>("retired"), || None);
         assert_eq!(ready, None);
         assert_eq!(slot, None);
+    }
+
+    #[test]
+    fn shared_d3d11_downgrade_sets_capture_compute_warning() {
+        use std::sync::{Arc, Mutex};
+        #[derive(Default)]
+        struct Sink(Mutex<Vec<(String, String)>>);
+        impl butterpollo_media_policy::WarningSink for Sink {
+            fn set(&self, key: &str, text: &str) {
+                self.0
+                    .lock()
+                    .unwrap()
+                    .push((key.to_string(), text.to_string()));
+            }
+            fn clear(&self, _key: &str) {}
+        }
+        let sink = Arc::new(Sink::default());
+        let mut pool = super::GpuPool {
+            warnings: sink.clone(),
+            shared: true,
+            ..Default::default()
+        };
+        pool.downgrade_shared_d3d11();
+        assert!(!pool.shared);
+        assert!(pool.d3d11_signal.is_none());
+        let recorded = sink.0.lock().unwrap();
+        assert_eq!(recorded.len(), 1);
+        assert_eq!(recorded[0].0, "capture_compute");
+        assert!(recorded[0].1.contains("Shared D3D11 fence unavailable"));
     }
 }

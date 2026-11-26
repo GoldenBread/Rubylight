@@ -108,6 +108,80 @@ impl ConnectionEnd {
 /// A connection's stream as hyper sees it, above any TLS: counts what hyper
 /// wrote and flushed for its [`ConnectionEnd`]. Over TLS, a flush wrote
 /// every record to the socket.
+struct TimedWrite<S> {
+    inner: S,
+    idle: Duration,
+    waiting: Option<Pin<Box<tokio::time::Sleep>>>,
+}
+impl<S> TimedWrite<S> {
+    fn new(inner: S, idle: Duration) -> Self {
+        Self {
+            inner,
+            idle,
+            waiting: None,
+        }
+    }
+
+    fn poll_timed<T>(
+        &mut self,
+        cx: &mut Context<'_>,
+        poll: impl FnOnce(Pin<&mut S>, &mut Context<'_>) -> Poll<std::io::Result<T>>,
+    ) -> Poll<std::io::Result<T>>
+    where
+        S: Unpin,
+    {
+        if let Poll::Ready(res) = poll(Pin::new(&mut self.inner), cx) {
+            self.waiting = None;
+            return Poll::Ready(res);
+        }
+        let idle = self.idle;
+        let waiting = self
+            .waiting
+            .get_or_insert_with(|| Box::pin(tokio::time::sleep(idle)));
+        if waiting.as_mut().poll(cx).is_ready() {
+            return Poll::Ready(Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                format!("the socket stalled writing for {idle:?}"),
+            )));
+        }
+        Poll::Pending
+    }
+}
+impl<S: AsyncRead + Unpin> AsyncRead for TimedWrite<S> {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.inner).poll_read(cx, buf)
+    }
+}
+impl<S: AsyncWrite + Unpin> AsyncWrite for TimedWrite<S> {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        self.poll_timed(cx, |inner, cx| inner.poll_write(cx, buf))
+    }
+    fn poll_write_vectored(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        bufs: &[std::io::IoSlice<'_>],
+    ) -> Poll<std::io::Result<usize>> {
+        self.poll_timed(cx, |inner, cx| inner.poll_write_vectored(cx, bufs))
+    }
+    fn is_write_vectored(&self) -> bool {
+        self.inner.is_write_vectored()
+    }
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        self.poll_timed(cx, |inner, cx| inner.poll_flush(cx))
+    }
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        self.poll_timed(cx, |inner, cx| inner.poll_shutdown(cx))
+    }
+}
+
 struct Delivery<S> {
     inner: S,
     end: ConnectionEnd,
@@ -283,6 +357,8 @@ pub(crate) struct Limits {
     /// A request body that sends nothing for this long fails its request; a
     /// body that keeps sending, however long, never does ([`IdleBody`]).
     pub body_idle: Duration,
+    /// A response write or flush must make progress within this.
+    pub write_idle: Duration,
 }
 impl Limits {
     pub(crate) const LISTENER: Self = Self {
@@ -290,6 +366,7 @@ impl Limits {
         per_peer: 64,
         header: Duration::from_secs(10),
         body_idle: Duration::from_secs(60),
+        write_idle: Duration::from_secs(30),
     };
 }
 pub async fn serve(
@@ -354,7 +431,7 @@ impl Admission {
     /// it may.
     fn admit(&self, peer: IpAddr) -> Option<Admitted> {
         let permit = self.connections.clone().try_acquire_owned().ok()?;
-        let peer = peer.to_canonical();
+        let peer = crate::network::peer_group(peer.to_canonical());
         let mut peers = self.peers.lock().unwrap();
         let held = peers.entry(peer).or_default();
         if *held >= self.per_peer {
@@ -512,10 +589,13 @@ async fn serve_connection_with<S>(
                 .layer(Extension(end.clone())),
             bodies,
         ));
-        let stream = Delivery {
-            inner: stream,
-            end: end.clone(),
-        };
+        let stream = TimedWrite::new(
+            Delivery {
+                inner: stream,
+                end: end.clone(),
+            },
+            limits.write_idle,
+        );
         builder
             .serve_connection(TokioIo::new(stream), service)
             .with_upgrades()
@@ -533,10 +613,13 @@ async fn serve_connection_with<S>(
                 .layer(Extension(end.clone())),
             bodies,
         ));
-        let socket = Delivery {
-            inner: socket,
-            end: end.clone(),
-        };
+        let socket = TimedWrite::new(
+            Delivery {
+                inner: socket,
+                end: end.clone(),
+            },
+            limits.write_idle,
+        );
         builder
             .serve_connection(TokioIo::new(socket), service)
             .with_upgrades()

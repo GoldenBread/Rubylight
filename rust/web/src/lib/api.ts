@@ -141,21 +141,25 @@ export async function sessionCsrfToken(): Promise<string> {
   return token;
 }
 
-// One refresh at a time: the host rotates the refresh token, so a second
-// request with the old one would fail and sign the user out.
+// One refresh at a time across calls and tabs: the host rotates the refresh token
+// (with a short grace period), so concurrent refreshes would otherwise race and sign out.
 let refreshing: Promise<boolean> | null = null;
 function refreshSession(): Promise<boolean> {
   refreshing ??= (async () => {
-    const { response, text } = await exchange('/api/auth/refresh', { method: 'POST' }, REQUEST_TIMEOUT_MS);
-    if (!response.ok) return false;
-    let body: IssuedSession;
-    try {
-      body = JSON.parse(text) as IssuedSession;
-    } catch {
-      return false;
-    }
-    csrfToken = body.csrf_token;
-    return true;
+    const run = async (): Promise<boolean> => {
+      const { response, text } = await exchange('/api/auth/refresh', { method: 'POST' }, REQUEST_TIMEOUT_MS);
+      if (!response.ok) return false;
+      let body: IssuedSession;
+      try {
+        body = JSON.parse(text) as IssuedSession;
+      } catch {
+        return false;
+      }
+      csrfToken = body.csrf_token;
+      return true;
+    };
+    const locks = typeof navigator !== 'undefined' ? navigator.locks : undefined;
+    return locks ? locks.request('rubylight-auth-refresh', run) : run();
   })().finally(() => {
     refreshing = null;
   });
@@ -506,7 +510,8 @@ export const api = {
   },
   logs: {
     /** Bytes after `offset`, at most `max`; offset -1 means the last `max` bytes. */
-    read: (offset: number, max = 256 * 1024) => get<LogChunk>(`/api/logs/tail?offset=${offset}&max=${max}`),
+    read: (offset: number, max = 256 * 1024, head?: string) =>
+      get<LogChunk>(`/api/logs/tail?offset=${offset}&max=${max}${head ? `&head=${encodeURIComponent(head)}` : ''}`),
     /** Known failures in the log's last 8 MiB, explained by the host's local rules. */
     analysis: () => get<LogAnalysis>('/api/logs/analysis'),
     downloadUrl: '/api/logs/export',

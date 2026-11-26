@@ -66,13 +66,15 @@ jobs:
             if [ "$run" != "completed success" ]; then
               echo "::notice::$workflow on ${need:0:10}: ${run:-no run yet}; nothing is mirrored until it passes"
               echo "skip=true" >> "$GITHUB_OUTPUT"
-              exit 0
+              return 1
             fi
           }
-          check nightjar-android.yml client ':!client/*.md' ':!client/docs' ':!client/fastlane' ':!client/store-assets' \
-            ':!client/LICENSE.txt' ':!client/.github' .github/workflows/nightjar-android.yml
-          check nightjar-macos.yml client/protocol client/scripts client/app/build.gradle client/app/src/main/assets \
-            client/app/src/main/res .github/workflows/nightjar-macos.yml
+          if ! check nightjar-android.yml client ':!client/*.md' ':!client/docs' ':!client/fastlane' ':!client/store-assets' \
+            ':!client/LICENSE.txt' ':!client/.github' .config/nextest.toml .github/workflows/nightjar-android.yml || \
+             ! check nightjar-macos.yml client/protocol client/scripts client/app/build.gradle client/app/src/main/assets \
+            client/app/src/main/res .config/nextest.toml .github/workflows/nightjar-macos.yml; then
+            exit 0
+          fi
       - if: steps.gate.outputs.skip != 'true'
         id: app
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510

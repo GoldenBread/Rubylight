@@ -258,3 +258,36 @@ fn installed_records_keep_unicode_paths_and_local_artwork() {
     );
     assert_eq!(games.len(), 1);
 }
+
+#[test]
+fn non_local_network_share_paths_are_rejected_without_filesystem_probing() {
+    let share = Path::new(r"\\127.0.0.1\share\Games\Example");
+    assert!(!super::on_this_pc(share));
+    assert!(!super::on_this_pc(Path::new(r"\\server\library")));
+    assert!(super::on_this_pc(Path::new(r"C:\Games\Example")));
+
+    // `add` drops launcher entries pointing at UNC shares before calling `.is_dir()`.
+    let mut games = vec![];
+    let mut errors = vec![];
+    let mut epic: serde_json::Value = serde_json::from_slice(include_bytes!(
+        "../../../../core/session/src/library/fixtures/epic.item"
+    ))
+    .unwrap();
+    epic["InstallLocation"] = serde_json::json!(r"\\127.0.0.1\share\Games\Epic");
+    add(
+        library::epic(&serde_json::to_vec(&epic).unwrap()),
+        &mut games,
+        &mut errors,
+    );
+    assert!(games.is_empty());
+    assert!(errors.is_empty());
+
+    // GOG registry scan skips UNC paths before reading info files.
+    let mut gog_rec = BTreeMap::new();
+    gog_rec.insert("gameID".into(), "42".into());
+    gog_rec.insert("gameName".into(), "Share Game".into());
+    gog_rec.insert("path".into(), r"\\127.0.0.1\share\Games\GOG".into());
+    gog_rec.insert("exe".into(), r"\\127.0.0.1\share\Games\GOG\game.exe".into());
+    gog_registered(&[gog_rec], &mut games, &mut errors);
+    assert!(games.is_empty());
+}

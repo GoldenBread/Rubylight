@@ -253,7 +253,9 @@ impl Encoder {
                 "PyroWave encode queue priority"
             );
             if !(s.api.device_confirm_interop_support)(s.device) {
-                bail!("Vulkan device cannot import D3D11 textures and fences");
+                tracing::info!(
+                    "PyroWave broad SDK interop check returned false; proceeding to direct D3D11_TEXTURE and D3D12_FENCE import"
+                );
             }
             if let Err(error) = check((s.api.device_set_queue_type)(
                 s.device,
@@ -454,6 +456,7 @@ impl Drop for Encoder {
             retain_pending(&mut self.completion);
             std::mem::forget(std::mem::take(&mut self.slots));
             retain_pending(&mut self.compute);
+            std::mem::forget(self.output_event.take());
             std::mem::forget(self.api.clone());
             std::mem::forget(self.d3d.clone());
             return;

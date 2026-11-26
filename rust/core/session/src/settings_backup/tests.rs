@@ -90,13 +90,18 @@ fn settings_backup_with_secrets_carries_pairing_identity_and_sign_in() {
             "covers/u1.png",
             CERTIFICATE,
             KEY,
+            crate::webhook::SECRETS_FILE,
             "game-settings/phone/game.json",
             CONFIG,
             PAIRED,
         ]
     );
     assert_eq!(archive.config().get("api_token", ""), "tokval");
-    assert!(archive.config().text().contains("old-a"));
+    assert!(!archive.config().text().contains("old-a"));
+    assert_eq!(
+        archive.json(crate::webhook::SECRETS_FILE).unwrap()["secrets"]["https://example.invalid/a"],
+        "old-a"
+    );
 }
 
 /// Rewrites an archive with `change` applied to its files and manifest,
@@ -266,9 +271,11 @@ fn settings_backup_restore_without_secrets_keeps_this_pcs_identity_and_secrets()
     // This PC's own API token and webhook secret stay; a webhook it did not
     // have gets a fresh one.
     assert_eq!(config.get("api_token", ""), "tokval");
-    let hooks: Value = serde_json::from_str(config.get("webhooks", "")).unwrap();
-    assert_eq!(hooks[0]["secret"], "old-a");
-    assert_eq!(hooks[1]["secret"], "fresh-1");
+    assert!(!config.get("webhooks", "").contains("old-a"));
+    assert!(!config.get("webhooks", "").contains("fresh-1"));
+    let stored_secrets = crate::webhook::load_secrets(&crate::webhook::secrets_path(root)).unwrap();
+    assert_eq!(stored_secrets["https://example.invalid/a"], "old-a");
+    assert_eq!(stored_secrets["https://example.invalid/b"], "fresh-1");
     let paired: Value = serde_json::from_slice(&std::fs::read(root.join(PAIRED)).unwrap()).unwrap();
     let devices = &paired["root"]["named_devices"];
     assert_eq!(devices[0]["name"], "Phone");
@@ -522,4 +529,82 @@ fn settings_backup_restore_with_secrets_replaces_stale_separate_credentials_file
             .expect("restored custom credentials");
     assert!(loaded_custom.verifies("source_user", "sourcepass123"));
     assert!(!loaded_custom.verifies("old_user", "oldpassword1"));
+}
+
+#[test]
+fn settings_backup_round_trips_nested_covers_and_merges_single_file_credentials() {
+    use crate::state::{Credentials, ProfileFiles};
+
+    let source = profile();
+    write(&source.path().join("covers/sub/nested.png"), "nested-png");
+    let src_creds = Credentials::new("merged_user".into(), "mergedpass123").unwrap();
+    crate::state::write_json(&source.path().join(CREDENTIALS_FILE), &src_creds).unwrap();
+    let bytes = backup(source.path(), true);
+    let archive = read(Cursor::new(&bytes)).unwrap();
+    assert_eq!(archive.files["covers/sub/nested.png"], b"nested-png");
+
+    let target = profile();
+    write(
+        &target.path().join(CONFIG),
+        &format!("credentials_file = {PAIRED}\n"),
+    );
+    apply(&archive, target.path(), String::new).unwrap();
+    assert_eq!(
+        std::fs::read(target.path().join("covers/sub/nested.png")).unwrap(),
+        b"nested-png"
+    );
+    let cfg = Config::load(&target.path().join(CONFIG)).unwrap();
+    let files = ProfileFiles::new(&cfg, target.path());
+    assert_eq!(files.credentials, files.paired);
+    let loaded = Credentials::load(&files.credentials)
+        .unwrap()
+        .expect("credentials merged into paired file");
+    assert!(loaded.verifies("merged_user", "mergedpass123"));
+}
+
+#[test]
+fn settings_backup_apply_rolls_back_all_written_files_on_failure() {
+    let source = profile();
+    write(
+        &source.path().join(CONFIG),
+        "sunshine_name = Changed\nport = 47989\n",
+    );
+    write(
+        &source.path().join(APPS),
+        r#"{"apps":[{"uuid":"new","name":"NewApp"}],"env":{}}"#,
+    );
+    write(&source.path().join("covers/new_cover.png"), "new-bytes");
+    let archive = read(Cursor::new(backup(source.path(), true))).unwrap();
+
+    let target = profile();
+    let root = target.path();
+    let orig_config = std::fs::read(root.join(CONFIG)).unwrap();
+    let orig_apps = std::fs::read(root.join(APPS)).unwrap();
+    // Place a directory at `credentials/cakey.pem` so atomic rename fails mid-restore.
+    std::fs::remove_file(root.join(KEY)).unwrap();
+    std::fs::create_dir_all(root.join(KEY)).unwrap();
+
+    assert!(apply(&archive, root, String::new).is_err());
+    assert_eq!(std::fs::read(root.join(CONFIG)).unwrap(), orig_config);
+    assert_eq!(std::fs::read(root.join(APPS)).unwrap(), orig_apps);
+    assert!(!root.join("covers/new_cover.png").exists());
+}
+
+#[test]
+fn settings_backup_verify_rejects_bad_archive_and_staged_claim_clears_staged_file() {
+    let source = profile();
+    let bytes = backup(source.path(), false);
+    assert!(verify(Cursor::new(&bytes)).is_ok());
+    assert!(verify(Cursor::new(b"bad-zip")).is_err());
+
+    // Simulate a leftover applying marker alongside a newly staged restore.
+    let target = profile();
+    let backups = target.path().join(BACKUPS);
+    std::fs::create_dir_all(&backups).unwrap();
+    std::fs::write(backups.join("restore-applying.zip"), b"stale").unwrap();
+    std::fs::write(backups.join(STAGED), &bytes).unwrap();
+    assert!(apply_staged(target.path(), String::new).unwrap());
+    assert!(!backups.join(STAGED).exists());
+    assert!(!backups.join("restore-applying.zip").exists());
+    assert!(!apply_staged(target.path(), String::new).unwrap());
 }

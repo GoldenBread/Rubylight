@@ -201,6 +201,7 @@ fn restore_journals_the_temporary_switch_before_it_writes() {
         original: Value::Int(140),
         written: Value::Int(150),
         side_effect: false,
+        raw: None,
     });
     journal.save(&c.journal).unwrap();
     let report = c.restore(Scope::All).unwrap();
@@ -236,6 +237,7 @@ fn a_failed_restore_through_the_feature_leaves_the_temporary_entries() {
         original: Value::Int(140),
         written: Value::Int(150),
         side_effect: false,
+        raw: None,
     });
     journal.save(&c.journal).unwrap();
     let report = c.restore(Scope::All).unwrap();
@@ -411,6 +413,7 @@ fn some_entry() -> Entry {
         original: Value::Int(140),
         written: Value::Int(150),
         side_effect: false,
+        raw: None,
     }
 }
 
@@ -556,6 +559,7 @@ fn failed_temporary_toggle_revert_is_not_masked_by_pass_two() {
         original: Value::Int(140),
         written: Value::Int(150),
         side_effect: false,
+        raw: None,
     });
     journal.save(&c.journal).unwrap();
 
@@ -592,6 +596,7 @@ fn failed_temporary_toggle_revert_is_not_masked_by_pass_two() {
         original: Value::Int(140),
         written: Value::Int(150),
         side_effect: false,
+        raw: None,
     });
     journal.save(&c.journal).unwrap();
 

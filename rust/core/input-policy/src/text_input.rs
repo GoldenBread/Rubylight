@@ -125,7 +125,12 @@ pub fn classify(element: &FocusedElement) -> Option<Field> {
         InputType::Url
     } else if role == "searchbox" || named(&["search", "suche"]) {
         InputType::Search
-    } else if named(&["phone", "telefon"]) {
+    } else if contains_phone_hint(&[
+        &element.name,
+        &element.aria_role,
+        &element.class_name,
+        &element.localized_type,
+    ]) {
         InputType::Phone
     } else {
         InputType::Text
@@ -141,6 +146,44 @@ pub fn classify(element: &FocusedElement) -> Option<Field> {
         no_autocapitalize: exact,
         enter_action: input_type != InputType::Multiline,
     })
+}
+
+fn contains_phone_hint(hints: &[&str]) -> bool {
+    for raw in hints {
+        let mut start = 0;
+        let mut prev_lower = false;
+        for (idx, ch) in raw.char_indices() {
+            if !ch.is_alphanumeric() {
+                if start < idx && is_phone_word(&raw[start..idx]) {
+                    return true;
+                }
+                start = idx + ch.len_utf8();
+                prev_lower = false;
+            } else {
+                if prev_lower && ch.is_uppercase() && start < idx {
+                    if is_phone_word(&raw[start..idx]) {
+                        return true;
+                    }
+                    start = idx;
+                }
+                prev_lower = ch.is_lowercase();
+            }
+        }
+        if start < raw.len() && is_phone_word(&raw[start..]) {
+            return true;
+        }
+    }
+    false
+}
+
+fn is_phone_word(word: &str) -> bool {
+    let lower = word.to_lowercase();
+    lower.starts_with("phone")
+        || matches!(
+            lower.as_str(),
+            "telephone" | "telephones" | "cellphone" | "cellphones"
+        )
+        || lower.starts_with("telefon")
 }
 
 /// Whether a focus event for `element` leaves the focus where it was, so the watcher reports

@@ -5,9 +5,43 @@ use butterpollo_crypto::crypto;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, HashMap},
     path::{Path, PathBuf},
+    sync::{Mutex, OnceLock},
+    time::SystemTime,
 };
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct CoverStamp {
+    len: u64,
+    modified: Option<SystemTime>,
+}
+
+fn cover_hash(path: &Path) -> Option<String> {
+    static CACHE: OnceLock<Mutex<HashMap<PathBuf, (CoverStamp, String)>>> = OnceLock::new();
+    let meta = std::fs::metadata(path).ok()?;
+    if !meta.is_file() || meta.len() > 16 * 1024 * 1024 {
+        return None;
+    }
+    let stamp = CoverStamp {
+        len: meta.len(),
+        modified: meta.modified().ok(),
+    };
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Some((cached_stamp, cached_hash)) = cache.lock().unwrap().get(path)
+        && *cached_stamp == stamp
+    {
+        return Some(cached_hash.clone());
+    }
+    let bytes = std::fs::read(path).ok()?;
+    let digest = hex::encode(crypto::hash(&bytes));
+    let mut guard = cache.lock().unwrap();
+    if guard.len() >= 4096 {
+        guard.clear();
+    }
+    guard.insert(path.to_path_buf(), (stamp, digest.clone()));
+    Some(digest)
+}
 
 #[derive(Clone, Default, Serialize, Deserialize)]
 struct AliasState {
@@ -124,9 +158,7 @@ pub fn assign(apps: &mut [App], document: &mut Value, assets: &Path) -> Result<(
         let hash = if path == assets.join("box.png") {
             None
         } else {
-            std::fs::read(&path)
-                .ok()
-                .map(|b| hex::encode(crypto::hash(&b)))
+            cover_hash(&path)
         };
         let legacy = if uuid.is_empty() {
             format!("{}{}", app.name, hash.clone().unwrap_or_default())

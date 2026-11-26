@@ -669,3 +669,53 @@ fn switch2_bulk_queue_drains_immediately_while_hid_endpoint_stays_periodic() {
         (2, 0, &[0x03, 0x01, 0x00, 0x0a][..])
     );
 }
+
+#[test]
+fn unlink_non_iso_or_one_iso_endpoint_preserves_other_iso_pacing() {
+    use super::server::unlink_transfer;
+    use super::{IsoTransfer, Link, Transfer};
+
+    let now = Instant::now();
+    let due_ep1_a = now + Duration::from_millis(10);
+    let due_ep1_b = now + Duration::from_millis(20);
+    let due_ep2 = now + Duration::from_millis(50);
+
+    let iso = |seqnum, endpoint, due| IsoTransfer {
+        seqnum,
+        endpoint,
+        input: true,
+        length: 0,
+        packets: Vec::new(),
+        data: Vec::new(),
+        due,
+        start_frame: 0,
+    };
+
+    let mut link = Link::default();
+    link.held.push(Transfer {
+        seqnum: 5,
+        endpoint: 3,
+        length: 8,
+    });
+    link.iso.push_back(iso(10, 1, due_ep1_a));
+    link.iso.push_back(iso(11, 1, due_ep1_b));
+    link.iso.push_back(iso(20, 2, due_ep2));
+    link.iso_next[1] = Some(due_ep1_b);
+    link.iso_next[2] = Some(due_ep2);
+
+    // Unlinking a non-ISO interrupt transfer or missing seqnum must leave ISO deadlines untouched.
+    assert!(!unlink_transfer(&mut link, 999));
+    assert!(unlink_transfer(&mut link, 5));
+    assert_eq!(link.iso_next[1], Some(due_ep1_b));
+    assert_eq!(link.iso_next[2], Some(due_ep2));
+
+    // Unlinking one ISO transfer on endpoint 1 recomputes only endpoint 1's deadline.
+    assert!(unlink_transfer(&mut link, 11));
+    assert_eq!(link.iso_next[1], Some(due_ep1_a));
+    assert_eq!(link.iso_next[2], Some(due_ep2));
+
+    // Unlinking the last ISO transfer on endpoint 1 clears endpoint 1 without disturbing endpoint 2.
+    assert!(unlink_transfer(&mut link, 10));
+    assert_eq!(link.iso_next[1], None);
+    assert_eq!(link.iso_next[2], Some(due_ep2));
+}

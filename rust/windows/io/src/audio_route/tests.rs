@@ -486,3 +486,33 @@ fn saved_defaults_restore_attempts_every_playback_and_recording_role_despite_err
         ]
     );
 }
+
+#[test]
+fn set_channels_refuses_to_alter_unclaimed_sink_format() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let stereo_orig = virtual_format(2, Sample::Pcm16, false);
+    let policy = FakeFormatPolicy::new(stereo_orig.clone(), 8);
+    let initial_journal = Journal {
+        applied: "{virtual}".into(),
+        format: None,
+        ..Journal::default()
+    };
+    save(dir.path(), &initial_journal)?;
+    let mut active = Some(Active {
+        directory: dir.path().to_path_buf(),
+        sink: "{virtual}".into(),
+        virtual_sink: true,
+        users: 1,
+        channels: BTreeMap::from([(1, 2)]),
+    });
+    let err = set_channels_with(&mut active, 1, "{virtual}", dir.path(), 8, &policy, |_| {
+        Ok(())
+    })
+    .unwrap_err();
+    assert!(err.to_string().contains("not claimed"), "{err}");
+    assert!(policy.set_calls.borrow().is_empty());
+    assert_eq!(policy.format("{virtual}")?, stereo_orig);
+    let saved: Journal = serde_json::from_slice(&std::fs::read(path(dir.path()))?)?;
+    assert!(saved.format.is_none());
+    Ok(())
+}

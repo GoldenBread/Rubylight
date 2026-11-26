@@ -2,7 +2,7 @@
 
 python tools/build_lock.py [--timeout SECONDS] -- <command> [arguments ...]
 python tools/build_lock.py --lane cargo|gradle|web -- <command> [arguments ...]
-python tools/build_lock.py --status | --drain | --prune [--min-free-gb N] [--pool DIR]
+python tools/build_lock.py --status | --drain | --prune [--all | --min-free-gb N] [--pool DIR]
 
 BUILD-LOCK is exclusive: rust\\build.ps1, the release checks and this wrapper
 without --lane take it, then wait until every lane is idle. A lane is one
@@ -105,10 +105,9 @@ def gradle_lane(directory=None):
 def total_memory_gb():
     if os.name == 'nt':
         class Status(ctypes.Structure):
-            _fields_ = [('length', ctypes.c_ulong), ('load', ctypes.c_ulong), ('total', ctypes.c_ulonglong),
-                        ('avail', ctypes.c_ulonglong), ('page_total', ctypes.c_ulonglong),
-                        ('page_avail', ctypes.c_ulonglong), ('virtual_total', ctypes.c_ulonglong),
-                        ('virtual_avail', ctypes.c_ulonglong), ('extended', ctypes.c_ulonglong)]
+            _fields_ = [(n, ctypes.c_ulong if n in ('length', 'load') else ctypes.c_ulonglong) for n in
+                        ('length', 'load', 'total', 'avail', 'page_total', 'page_avail',
+                         'virtual_total', 'virtual_avail', 'extended')]
         status = Status(length=ctypes.sizeof(Status))
         if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
             return status.total / 2 ** 30
@@ -151,8 +150,7 @@ def priority_alive(text, written=None):
             return True
     from ctypes import wintypes
     kernel = ctypes.WinDLL('kernel32', use_last_error=True)
-    kernel.OpenProcess.restype = wintypes.HANDLE
-    kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel.OpenProcess.restype, kernel.OpenProcess.argtypes = wintypes.HANDLE, [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
     kernel.CloseHandle.argtypes = [wintypes.HANDLE]
     kernel.GetProcessTimes.argtypes = [wintypes.HANDLE, *([ctypes.POINTER(wintypes.FILETIME)] * 4)]
     handle = kernel.OpenProcess(0x1000, False, pid)
@@ -230,10 +228,9 @@ def end_children_with_me():
     from ctypes import wintypes
 
     class Basic(ctypes.Structure):
-        _fields_ = [('per_process_time', ctypes.c_int64), ('per_job_time', ctypes.c_int64),
-                    ('flags', wintypes.DWORD), ('min_ws', ctypes.c_size_t), ('max_ws', ctypes.c_size_t),
-                    ('active', wintypes.DWORD), ('affinity', ctypes.c_size_t), ('priority', wintypes.DWORD),
-                    ('scheduling', wintypes.DWORD)]
+        _fields_ = [('per_process_time', ctypes.c_int64), ('per_job_time', ctypes.c_int64), ('flags', wintypes.DWORD),
+                    ('min_ws', ctypes.c_size_t), ('max_ws', ctypes.c_size_t), ('active', wintypes.DWORD),
+                    ('affinity', ctypes.c_size_t), ('priority', wintypes.DWORD), ('scheduling', wintypes.DWORD)]
 
     class Counters(ctypes.Structure):
         _fields_ = [(name, ctypes.c_uint64) for name in ('r', 'w', 'o', 'rb', 'wb', 'ob')]
@@ -243,8 +240,7 @@ def end_children_with_me():
                     ('job_memory', ctypes.c_size_t), ('peak_process', ctypes.c_size_t), ('peak_job', ctypes.c_size_t)]
 
     kernel = ctypes.WinDLL('kernel32', use_last_error=True)
-    kernel.CreateJobObjectW.restype = wintypes.HANDLE
-    kernel.CreateJobObjectW.argtypes = [wintypes.LPVOID, wintypes.LPCWSTR]
+    kernel.CreateJobObjectW.restype, kernel.CreateJobObjectW.argtypes = wintypes.HANDLE, [wintypes.LPVOID, wintypes.LPCWSTR]
     kernel.SetInformationJobObject.argtypes = [wintypes.HANDLE, ctypes.c_int, wintypes.LPVOID, wintypes.DWORD]
     kernel.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
     kernel.GetCurrentProcess.restype = wintypes.HANDLE
@@ -286,15 +282,14 @@ def environ_copy():
 def own_exclusive(path):
     """This process tree holds BUILD-LOCK at path (a parent took it)."""
     inherited = os.environ.get(OWNER_ENV)
-    return bool(inherited) and os.environ.get(PATH_ENV) == str(path) and read(path) == inherited
+    return bool(inherited) and os.environ.get(PATH_ENV) == str(path) and peek(path) == inherited
 
 
 if os.name == 'nt':
     from ctypes import wintypes
     _kernel = ctypes.WinDLL('kernel32', use_last_error=True)
     _kernel.CreateFileW.restype = wintypes.HANDLE
-    _kernel.CreateFileW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID,
-                                    wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
+    _kernel.CreateFileW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID, wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
     _kernel.CloseHandle.argtypes = [wintypes.HANDLE]
     _INVALID = wintypes.HANDLE(-1).value
 
@@ -379,6 +374,34 @@ class HandleSlot:
         return peek(self.holder_path) or str(self.path)
 
 
+def _claim_file(path, label):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open('x', encoding='utf-8') as out:
+        start = process_start()
+        text = f'{label} {now()} pid={os.getpid()}' + (f' start={start}' if start else '') + f' token={uuid.uuid4().hex}'
+        out.write(text)
+    # Python's Windows read handle denies deletion. Older age-based
+    # waiters cannot remove this lease during a long live build.
+    return text, path.open('rb')
+
+
+def _release_file(path, text, raise_changed=False):
+    # A changed owner is never deleted, even after command failure.
+    for attempt in range(20):
+        try:
+            if read(path) != text:
+                if raise_changed:
+                    raise RuntimeError(f'BUILD-LOCK ownership changed: {path}; left alone')
+                print(f'{path} ownership changed; left alone', file=sys.stderr)
+            else:
+                path.unlink()
+            return
+        except PermissionError:
+            if attempt == 19:
+                raise
+            time.sleep(.05)
+
+
 class FileSlot:
     """A BUILD-LOCK-style lease (the Gradle lane), for callers of build_lock.py --lock-directory."""
 
@@ -390,32 +413,18 @@ class FileSlot:
     def try_take(self, label):
         if own_exclusive(self.path):
             return True
-        self.path.parent.mkdir(parents=True, exist_ok=True)
         try:
-            with self.path.open('x', encoding='utf-8') as out:
-                start = process_start()
-                self.text = f'{label} {now()} pid={os.getpid()}' + (f' start={start}' if start else '') + \
-                    f' token={uuid.uuid4().hex}'
-                out.write(self.text)
+            self.text, self.guard = _claim_file(self.path, label)
+            return True
         except FileExistsError:
             return False
-        self.guard = self.path.open('rb')
-        return True
 
     def release(self):
         if self.guard is None:
             return
         self.guard.close()
         self.guard = None
-        for attempt in range(20):
-            try:
-                if read(self.path) != self.text:
-                    print(f'{self.path} ownership changed; left alone', file=sys.stderr)
-                else:
-                    self.path.unlink()
-                return
-            except PermissionError:
-                time.sleep(.05)
+        _release_file(self.path, self.text)
 
     def busy(self):
         """Held by a live owner. A file whose owner is gone is never removed here, as with
@@ -470,43 +479,62 @@ def _min_free_gb(value=None):
         return DEFAULT_MIN_FREE_GB
 
 
-def prune_pool(pool=None, min_free_gb=None, all_idle=False, directory=None, keep=None, say=None):
+def _slot_mtime(pool, name, target):
+    for probe in (pool / f'{name}.owner', pool / f'{name}.holder', target):
+        try:
+            return probe.stat().st_mtime
+        except OSError:
+            pass
+    return 0.0
+
+
+def _rmtree_reported(target, notify, errors):
+    errs = []
+    def on_err(_f, p, ei):
+        exc = ei[1] if isinstance(ei, tuple) else ei
+        if not isinstance(exc, FileNotFoundError):
+            errs.append(f'{p}: {exc}')
+    shutil.rmtree(target, **({'onexc' if sys.version_info >= (3, 12) else 'onerror': on_err}))
+    if not target.exists() and not errs:
+        return True
+    msg = f'failed to prune idle target slot {target}: {"; ".join(errs) or "directory still exists"}'
+    notify(msg)
+    if errors is not None:
+        errors.append(msg)
+    return False
+
+
+def prune_pool(pool=None, min_free_gb=None, all_idle=False, directory=None, keep=None, say=None, errors=None):
     """Remove idle target-pool slots oldest-first until free space meets the floor (or all idle when all_idle)."""
-    pool = pathlib.Path(pool).resolve() if pool else pool_directory(directory)
-    if not pool.is_dir():
-        return []
-    floor = 0
-    if not all_idle:
-        threshold = _min_free_gb(min_free_gb)
-        floor = int(threshold * (2 ** 30))
-        if threshold <= 0 or shutil.disk_usage(pool).free >= floor:
+    notify = say or (lambda msg: print(msg, file=sys.stderr))
+    if directory is not None:
+        build = lock_directory(directory) / 'BUILD-LOCK'
+        holder = None if own_exclusive(build) else peek(build)
+        if holder is not None:
+            msg = f'target pool: skipped prune; BUILD-LOCK held: {holder}'
+            notify(msg)
+            if errors is not None:
+                errors.append(msg)
             return []
-    keep_paths = {pathlib.Path(k).resolve()
-                  for k in (() if keep is None else ([keep] if isinstance(keep, (str, os.PathLike)) else keep))}
+    pool = pathlib.Path(pool).resolve() if pool else pool_directory(directory)
+    floor = 0 if all_idle else int(_min_free_gb(min_free_gb) * (2 ** 30))
+    if not pool.is_dir() or (not all_idle and (floor <= 0 or shutil.disk_usage(pool).free >= floor)):
+        return []
+    keep_raw = () if keep is None else ([keep] if isinstance(keep, (str, os.PathLike)) else keep)
+    keep_paths = {pathlib.Path(k).resolve() for k in keep_raw}
     names = ({str(n) for n in range(1, HOST_SLOTS + 1)} | {f'client-{n}' for n in range(1, CLIENT_SLOTS + 1)}
              | {p.stem for p in pool.glob('*.lock')})
-    candidates = []
-    for name in names:
-        target, lock_path = pool / name, pool / f'{name}.lock'
-        if not target.is_dir() or target.resolve() in keep_paths or lock_path.resolve() in keep_paths:
-            continue
-        mtime = 0.0
-        for probe in (pool / f'{name}.owner', pool / f'{name}.holder', target):
-            try:
-                mtime = probe.stat().st_mtime
-                break
-            except OSError:
-                continue
-        candidates.append((mtime, name, target, lock_path))
-    candidates.sort()
+    candidates = sorted(
+        (_slot_mtime(pool, n, pool / n), n, pool / n, pool / f'{n}.lock') for n in names
+        if (pool / n).is_dir() and (pool / n).resolve() not in keep_paths and (pool / f'{n}.lock').resolve() not in keep_paths
+    )
     pruned = []
     for _, name, target, lock_path in candidates:
         slot = HandleSlot(lock_path)
         if not slot.try_take('prune'):
             continue
         try:
-            shutil.rmtree(target, ignore_errors=True)
-            if not target.exists():
+            if _rmtree_reported(target, notify, errors):
                 (pool / f'{name}.owner').unlink(missing_ok=True)
                 pruned.append(target)
                 if say:
@@ -578,9 +606,15 @@ class StageLease:
 
     def _release(self):
         self._release_lanes()
+        err = None
         for slot in self.taken.values():
-            slot.release()
+            try:
+                slot.release()
+            except OSError as exc:
+                err = err or exc
         self.taken = {}
+        if err:
+            raise err
 
     def __enter__(self):
         try:
@@ -661,21 +695,14 @@ class BuildLock:
         start = time.monotonic()
         deadline, last = start + self.timeout, None
         while True:
-            priority = read(self.path.with_name('PRIORITY'))
+            priority = peek(self.path.with_name('PRIORITY'))
             holder = f'release priority: {priority}' if priority and priority_alive(priority) else None
             if holder is None:
                 try:
-                    with self.path.open('x', encoding='utf-8') as out:
-                        started = process_start()
-                        self.text = f'{self.label} {now()} pid={os.getpid()}' + \
-                            (f' start={started}' if started else '') + f' token={uuid.uuid4().hex}'
-                        out.write(self.text)
-                    # Python's Windows read handle denies deletion. Older age-based
-                    # waiters cannot remove this lease during a long live build.
-                    self.guard = self.path.open('rb')
+                    self.text, self.guard = _claim_file(self.path, self.label)
                     break
                 except FileExistsError:
-                    holder = read(self.path) or '(owner is writing BUILD-LOCK)'
+                    holder = peek(self.path) or '(owner is writing BUILD-LOCK)'
             if holder != last:
                 print(f'BUILD-LOCK waiting: {holder}', flush=True)
                 last = holder
@@ -700,23 +727,10 @@ class BuildLock:
         self.guard.close()
         self.guard = None
         try:
-            # A changed owner is never deleted, even after command failure.
-            for attempt in range(20):
-                try:
-                    if read(self.path) != self.text:
-                        raise RuntimeError(f'BUILD-LOCK ownership changed: {self.path}; left alone')
-                    self.path.unlink()
-                    break
-                except PermissionError:
-                    if attempt == 19:
-                        raise
-                    time.sleep(.05)
+            _release_file(self.path, self.text, raise_changed=True)
         finally:
             for name, value in self.previous.items():
-                if value is None:
-                    os.environ.pop(name, None)
-                else:
-                    os.environ[name] = value
+                os.environ.pop(name, None) if value is None else os.environ.__setitem__(name, value)
             self.previous = {}
 
 
@@ -729,14 +743,12 @@ LANE_GROUPS = {
 
 def status(directory=None):
     directory = lock_directory(directory)
-    lines = [f'BUILD-LOCK: {read(directory / "BUILD-LOCK") or "free"}']
-    priority = read(directory / 'PRIORITY')
+    lines = [f'BUILD-LOCK: {peek(directory / "BUILD-LOCK") or "free"}']
+    priority = peek(directory / 'PRIORITY')
     if priority:
         lines.append(f'PRIORITY: {priority} ({"live" if priority_alive(priority) else "gone"})')
     lines.append(f'Cargo slots on this machine: {cargo_slots()}; target pool: {pool_directory(directory)}')
-    for lane in all_lanes(directory):
-        lines.append(f'{lane.path}: {lane.holder() if lane.busy() else "free"}')
-    return '\n'.join(lines)
+    return '\n'.join(lines + [f'{l.path}: {l.holder() if l.busy() else "free"}' for l in all_lanes(directory)])
 
 
 def builds_without_target_dir(cargo_args):
@@ -765,43 +777,38 @@ def main(argv=None):
     parser.add_argument('--drain', action='store_true',
                         help='wait until no stage lane is held (for an owner of BUILD-LOCK, as check_streams.ps1)')
     parser.add_argument('--prune', action='store_true', help='remove idle target-pool slot directories')
+    parser.add_argument('--all', action='store_true', help='with --prune, remove all idle slots')
     parser.add_argument('--min-free-gb', type=float, help='with --prune, keep at least N GB free')
     parser.add_argument('--pool', help='target pool directory for --prune')
     parser.add_argument('command', nargs=argparse.REMAINDER)
     args = parser.parse_args(argv)
     command = args.command[1:] if args.command[:1] == ['--'] else args.command
-    if args.timeout < 0:
-        parser.error('the timeout must be nonnegative')
-    if args.min_free_gb is not None and args.min_free_gb < 0:
-        parser.error('min-free-gb must be nonnegative')
+    if args.timeout < 0 or (args.min_free_gb is not None and args.min_free_gb < 0):
+        parser.error('timeout and --min-free-gb must be nonnegative')
+    if args.all and args.min_free_gb is not None:
+        parser.error('--all cannot be combined with --min-free-gb')
     if args.status:
         print(status(args.lock_directory))
         return 0
-    if args.drain:
-        try:
-            drain(args.lock_directory, args.timeout)
-            return 0
-        except TimeoutError as error:
-            print(str(error), file=sys.stderr)
-            return 1
     if args.prune:
-        if not prune_pool(args.pool, args.min_free_gb, args.min_free_gb is None, args.lock_directory, say=print):
+        failed = []
+        say_cli = lambda m: print(m, file=sys.stderr if m.startswith(('failed', 'target pool: skipped')) else sys.stdout)
+        if not prune_pool(args.pool, args.min_free_gb, args.all, lock_directory(args.lock_directory), say=say_cli, errors=failed) and not failed:
             print('target pool: nothing to prune')
-        return 0
-    if not command:
+        return 1 if failed else 0
+    if not args.drain and not command:
         parser.error('provide a command after --')
     if args.lane == 'cargo' and pathlib.Path(command[0]).stem.lower() == 'cargo' and not os.environ.get('CARGO_TARGET_DIR') \
             and builds_without_target_dir(command[1:]):
         print('build_lock: no CARGO_TARGET_DIR, so this builds into a private target/; '
               'use `python tools/dev.py cargo -- ...` for a warm pool slot', file=sys.stderr)
     try:
-        if args.lane:
-            lease = StageLease(LANE_GROUPS[args.lane](args.lock_directory), args.lock_directory, args.label, args.timeout)
-        else:
-            lease = BuildLock(args.lock_directory, args.label, args.timeout)
+        if args.drain:
+            drain(args.lock_directory, args.timeout)
+            return 0
+        lease = StageLease(LANE_GROUPS[args.lane](args.lock_directory), args.lock_directory, args.label, args.timeout) if args.lane else BuildLock(args.lock_directory, args.label, args.timeout)
         with lease:
-            child = subprocess.Popen(command)
-            return wait_child(child)
+            return wait_child(subprocess.Popen(command))
     except (OSError, RuntimeError) as error:
         print(str(error), file=sys.stderr)
         return 1

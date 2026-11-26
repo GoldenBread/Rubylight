@@ -102,6 +102,8 @@ struct Driver {
     maps: Vec<Option<Vec<i8>>>,
     /// Each picture submission's parameters, as passed.
     pictures: Vec<NV_ENC_PIC_PARAMS>,
+    /// Each EOS submission's parameters, as passed.
+    eos_pictures: Vec<NV_ENC_PIC_PARAMS>,
     hold_event: bool,
     reconfigure_count: usize,
     lock_do_not_wait: Vec<u32>,
@@ -274,7 +276,7 @@ fn state_codec(driver: &Driver) -> u8 {
 mod d3d12_444;
 mod d3d12_focus_tests;
 mod d3d12_teardown;
-mod fake_driver;
+pub(super) mod fake_driver;
 mod hdr_tests;
 mod lifecycle_tests;
 mod native_tests;

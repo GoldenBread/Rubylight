@@ -86,7 +86,12 @@ mod tests {
         let export = ["ADLX", "Terminate"].concat();
         for (name, source) in [
             ("telemetry", include_str!("telemetry.rs")),
-            ("radeon", include_str!("radeon/adlx.rs")),
+            ("radeon/adlx", include_str!("radeon/adlx.rs")),
+            ("radeon/adlx/read", include_str!("radeon/adlx/read.rs")),
+            ("radeon/adlx/write", include_str!("radeon/adlx/write.rs")),
+            ("radeon/adlx/vtable", include_str!("radeon/adlx/vtable.rs")),
+            ("radeon/helper", include_str!("radeon/helper.rs")),
+            ("radeon/owner", include_str!("radeon/owner.rs")),
         ] {
             assert!(
                 !source.contains(&format!("b\"{export}")),

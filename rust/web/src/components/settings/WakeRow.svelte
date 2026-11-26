@@ -78,6 +78,7 @@
         // The network drops while an adapter restarts: ask again.
       }
     }
+    if (alive) notify('Wake changes are still running on this PC. Open Wake details to check them.', 'danger');
   }
 
   onMount(() => void load());

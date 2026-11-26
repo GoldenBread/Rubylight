@@ -128,12 +128,10 @@ pub(super) fn media_loop(
             // Reset before draining: whatever is queued after the drain sets it again, so the
             // wait below returns at once instead of sleeping on it.
             shared.wake.reset()?;
-            loop {
-                match rx.try_recv() {
-                    Ok(Command::Stop) | Err(mpsc::TryRecvError::Disconnected) => return Ok(()),
-                    Ok(command) => handle_command(&mut engine, &shared, command),
-                    Err(mpsc::TryRecvError::Empty) => break,
-                }
+            if !drain_commands(&rx, &shared, |command| {
+                handle_command(&mut engine, &shared, command)
+            }) {
+                return Ok(());
             }
             let timeout = engine.advance(Instant::now())?;
             // The frame's size first: it sets the pace its own packets are sent at.
@@ -362,4 +360,31 @@ pub(super) fn send_due(
     }
     // The sent datagrams' buffers go now, not with the next batch.
     batch.packets.clear();
+}
+
+pub(super) const MAX_COMMANDS_PER_PASS: usize = 64;
+
+/// Drain at most [`MAX_COMMANDS_PER_PASS`] commands in one worker tick so pacing/recv keep running.
+/// Returns `false` when `Command::Stop` or sender disconnect ends the loop.
+pub(super) fn drain_commands(
+    rx: &mpsc::Receiver<Command>,
+    shared: &Shared,
+    mut handle: impl FnMut(Command),
+) -> bool {
+    let mut capped = true;
+    for _ in 0..MAX_COMMANDS_PER_PASS {
+        match rx.try_recv() {
+            Ok(Command::Stop) | Err(mpsc::TryRecvError::Disconnected) => return false,
+            Ok(command) => handle(command),
+            Err(mpsc::TryRecvError::Empty) => {
+                capped = false;
+                break;
+            }
+        }
+    }
+    if capped {
+        // Keep the wake signal armed so remaining commands run immediately on the next pass.
+        shared.notify();
+    }
+    true
 }

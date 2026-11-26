@@ -247,3 +247,19 @@ fn excessive_unique_downs_are_capped_and_tracked_fingers_still_lift() {
     );
     assert_eq!(feed.at(450, UP, 99, 0.5, 0.5), [button(LEFT, false)]);
 }
+
+#[test]
+fn releasing_one_finger_after_two_finger_gesture_does_not_move_cursor() {
+    let mut feed = Feed::new(settings(TouchMode::Trackpad, 100, true));
+    feed.at(0, DOWN, 0, 0.2, 0.2);
+    feed.at(5, DOWN, 1, 0.3, 0.3);
+    // Lifting one finger leaves the remaining finger still tracked (`most == 2`),
+    // so moving it must not emit cursor movement until all fingers lift.
+    feed.at(10, UP, 1, 0.3, 0.3);
+    assert!(feed.at(20, MOVE, 0, 0.5, 0.5).is_empty());
+    feed.at(30, UP, 0, 0.5, 0.5);
+
+    // After lifting all fingers, single-finger movement resumes normally.
+    feed.at(100, DOWN, 2, 0.2, 0.2);
+    assert!(!feed.at(110, MOVE, 2, 0.4, 0.4).is_empty());
+}

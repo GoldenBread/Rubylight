@@ -45,7 +45,17 @@ fn copy_optional(
     files: &mut usize,
     total: &mut u64,
 ) -> Result<bool> {
-    let metadata = source.symlink_metadata()?;
+    let metadata = match source.symlink_metadata() {
+        Ok(metadata) => metadata,
+        Err(error) => {
+            tracing::warn!(
+                file = %source.display(),
+                error = %error,
+                "profile file not imported"
+            );
+            return Ok(false);
+        }
+    };
     let reason = if linked(&metadata) {
         "it is a link"
     } else if metadata.len() > FILE_LIMIT {
@@ -53,8 +63,17 @@ fn copy_optional(
     } else if *files >= 10000 || total.saturating_add(metadata.len()) > 512 * 1024 * 1024 {
         "the import is limited to 10,000 files and 512 MiB"
     } else {
-        copy_file(source, destination, files, total)?;
-        return Ok(true);
+        match copy_file(source, destination, files, total) {
+            Ok(()) => return Ok(true),
+            Err(error) => {
+                tracing::warn!(
+                    file = %source.display(),
+                    error = %format!("{error:#}"),
+                    "profile file not imported"
+                );
+                return Ok(false);
+            }
+        }
     };
     tracing::warn!(file = %source.display(), reason, "profile file not imported");
     Ok(false)
@@ -77,9 +96,28 @@ fn copy_tree(
     root: bool,
 ) -> Result<()> {
     std::fs::create_dir_all(destination)?;
-    for entry in std::fs::read_dir(source)? {
-        let entry = entry?;
-        let metadata = entry.path().symlink_metadata()?;
+    let entries = match std::fs::read_dir(source) {
+        Ok(entries) => entries,
+        Err(error) => {
+            tracing::warn!(folder = %source.display(), %error, "profile folder not imported");
+            return Ok(());
+        }
+    };
+    for entry in entries {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) => {
+                tracing::warn!(folder = %source.display(), %error, "profile entry not imported");
+                continue;
+            }
+        };
+        let metadata = match entry.path().symlink_metadata() {
+            Ok(metadata) => metadata,
+            Err(error) => {
+                tracing::warn!(file = %entry.path().display(), %error, "profile entry not imported");
+                continue;
+            }
+        };
         if linked(&metadata) || metadata.is_file() {
             copy_optional(
                 &entry.path(),

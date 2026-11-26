@@ -27,6 +27,9 @@ pub struct Monitor {
 
 impl Monitor {
     pub fn matches(&self, hint: &str) -> bool {
+        if hint.is_empty() {
+            return false;
+        }
         [
             &self.device_id,
             &self.monitor_device_path,

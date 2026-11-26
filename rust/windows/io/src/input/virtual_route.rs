@@ -143,8 +143,6 @@ impl Injector {
             };
             if applied {
                 sent += 1;
-            } else {
-                return sent;
             }
             start = i + 1;
         }

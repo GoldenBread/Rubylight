@@ -16,12 +16,15 @@ pub(super) fn restored<T>(pending: &mut Option<T>, result: Result<()>) -> Result
 /// frame limiter or the audio route.
 pub(super) fn restored_all(
     kept: &mut Journal,
+    stale_only: bool,
     flag: fn(&mut Entry) -> &mut bool,
     result: Result<()>,
 ) -> Result<()> {
     result?;
     for entry in kept.entries.values_mut() {
-        *flag(entry) = false;
+        if !stale_only || entry.stale {
+            *flag(entry) = false;
+        }
     }
     Ok(())
 }
@@ -44,6 +47,8 @@ fn recover_inline(path: &Path) -> Result<()> {
         return Ok(());
     }
     let journal: Journal = serde_json::from_slice(&std::fs::read(path)?)?;
+    let current_pid = std::process::id();
+    let stale_only = journal.pid == current_pid;
     let directory = path.parent().context("journal directory missing")?;
     let mut failures = Vec::new();
     let mut step = |what: &str, result: Result<()>| {
@@ -52,31 +57,62 @@ fn recover_inline(path: &Path) -> Result<()> {
         }
     };
     let mut kept = Journal {
+        pid: if stale_only { current_pid } else { 0 },
+        started: if stale_only { journal.started } else { 0 },
         entries: journal
             .entries
             .iter()
-            .map(|(id, entry)| (id.clone(), entry.display_settings()))
+            .map(|(id, entry)| {
+                if stale_only && !entry.stale {
+                    (id.clone(), entry.clone())
+                } else {
+                    let mut copied = entry.display_settings();
+                    copied.stale = entry.stale;
+                    (id.clone(), copied)
+                }
+            })
             .collect(),
-        ..Default::default()
     };
-    if journal.entries.values().any(|e| e.external) {
+    if journal
+        .entries
+        .values()
+        .any(|e| (!stale_only || e.stale) && e.external)
+    {
         step(
             "frame limiter",
-            restored_all(&mut kept, |e| &mut e.external, hooks::limiter(directory)),
+            restored_all(
+                &mut kept,
+                stale_only,
+                |e| &mut e.external,
+                hooks::limiter(directory),
+            ),
         );
     }
-    if journal.entries.values().any(|e| e.audio) {
+    if journal
+        .entries
+        .values()
+        .any(|e| (!stale_only || e.stale) && e.audio)
+    {
         step(
             "audio routing",
-            restored_all(&mut kept, |e| &mut e.audio, hooks::audio(directory)),
+            restored_all(
+                &mut kept,
+                stale_only,
+                |e| &mut e.audio,
+                hooks::audio(directory),
+            ),
         );
     }
     let mut pending_arrangements = BTreeMap::new();
-    for (id, entry) in &journal.entries {
+    for (id, entry) in journal
+        .entries
+        .iter()
+        .filter(|(_, e)| !stale_only || e.stale)
+    {
         if let Some((before, applied)) = &entry.arrangement {
             let result = crate::display_arrangement::restore_arrangement(before, applied);
             if result.is_err() {
-                pending_arrangements.insert(id.clone(), entry.arrangement.clone());
+                pending_arrangements.insert(id.clone(), (entry.arrangement.clone(), entry.stale));
             }
             step("display arrangement", result);
         }
@@ -85,17 +121,27 @@ fn recover_inline(path: &Path) -> Result<()> {
         step("display list", Err(error));
         Vec::new()
     });
-    for (id, arrangement) in pending_arrangements {
-        kept.entries.entry(id).or_default().arrangement = arrangement;
+    for (id, (arrangement, stale)) in pending_arrangements {
+        let kept_entry = kept.entries.entry(id).or_default();
+        kept_entry.arrangement = arrangement;
+        kept_entry.stale = stale;
     }
-    for entry in kept.entries.values_mut().filter(|entry| entry.microphone) {
+    for entry in kept
+        .entries
+        .values_mut()
+        .filter(|entry| (!stale_only || entry.stale) && entry.microphone)
+    {
         let result = hooks::microphone(directory);
         // An unplugged original microphone must remain recoverable after a
         // later restart, just like a display that is temporarily unavailable.
         entry.microphone = result.is_err();
         step("microphone routing", result);
     }
-    for (id, entry) in &journal.entries {
+    for (id, entry) in journal
+        .entries
+        .iter()
+        .filter(|(_, e)| !stale_only || e.stale)
+    {
         let Some(m) = monitors.iter().find(|m| &m.device_id == id) else {
             // Each setting is restored later only if the display still has
             // the value the stream applied.
@@ -235,6 +281,7 @@ fn recover_inline(path: &Path) -> Result<()> {
             let positions = journal
                 .entries
                 .iter()
+                .filter(|(_, entry)| !stale_only || entry.stale)
                 .filter_map(|(id, entry)| {
                     let (before, applied) = entry.position?;
                     nodes
@@ -247,14 +294,19 @@ fn recover_inline(path: &Path) -> Result<()> {
                 topology.set_positions(&positions)?;
             }
             for (id, pending) in &mut kept.entries {
-                if nodes.iter().any(|node| &node.device_id == id) {
+                if (!stale_only || pending.stale) && nodes.iter().any(|node| &node.device_id == id)
+                {
                     pending.position = None;
                 }
             }
             Ok(())
         })(),
     );
-    for (id, entry) in &journal.entries {
+    for (id, entry) in journal
+        .entries
+        .iter()
+        .filter(|(_, e)| !stale_only || e.stale)
+    {
         let pending = kept.entries.get_mut(id).expect("copied display entry");
         if let Some((before, applied)) = &entry.activation {
             step(
@@ -277,9 +329,15 @@ fn recover_inline(path: &Path) -> Result<()> {
             );
         }
     }
-    // Keep a valid document so interrupted reads never see partial JSON. The
-    // kept entries have no owner until the next host records a change.
+    // Keep a valid document so interrupted reads never see partial JSON. Non-stale
+    // entries keep this host's PID/start token; un-recovered crash entries have
+    // no live lease when `stale_only` is false.
     kept.entries.retain(|_, entry| entry.pending());
+    if !stale_only {
+        for entry in kept.entries.values_mut() {
+            entry.stale = false;
+        }
+    }
     butterpollo_session::state::write_json(path, &kept)?;
     if !failures.is_empty() {
         bail!("display recovery incomplete: {}", failures.join("; "));

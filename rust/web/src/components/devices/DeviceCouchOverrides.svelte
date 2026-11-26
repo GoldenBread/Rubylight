@@ -64,7 +64,7 @@
   <Field
     label="Controller chord hold"
     id="{uid}-couch-hold"
-    hint="How long the chord is held before the menu opens, 300 to 3000 ms. Leave it empty to use the host's 1000."
+    hint="How long the chord is held before the menu opens, 300 to 3000 ms. Leave it empty to use the host setting."
     error={holdInvalid ? 'Enter a whole number from 300 to 3000, or leave it empty.' : undefined}
   >
     <input
@@ -80,7 +80,7 @@
   <Field
     label="Corner hold"
     id="{uid}-couch-corner"
-    hint="How long a touch, pen or mouse button holds the top-left corner before the menu opens, 500 to 3000 ms. Leave it empty to use the host's 1500."
+    hint="How long a touch, pen or mouse button holds the top-left corner before the menu opens, 500 to 3000 ms. Leave it empty to use the host setting."
     error={cornerInvalid ? 'Enter a whole number from 500 to 3000, or leave it empty.' : undefined}
   >
     <input

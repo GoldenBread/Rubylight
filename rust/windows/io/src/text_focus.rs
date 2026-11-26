@@ -174,6 +174,7 @@ struct Ended<'a>(&'a Control);
 
 impl Drop for Ended<'_> {
     fn drop(&mut self) {
+        self.0.state().thread = 0;
         let mut lingering = LINGERING.lock().unwrap_or_else(PoisonError::into_inner);
         self.0.ended.store(true, Ordering::SeqCst);
         if self.0.detached.load(Ordering::SeqCst) {

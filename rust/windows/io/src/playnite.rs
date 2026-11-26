@@ -5,25 +5,32 @@ use anyhow::{Context, Result, bail};
 use std::{
     fs::File,
     io::{Read, Write},
-    os::windows::{fs::OpenOptionsExt, io::AsRawHandle},
+    os::windows::{
+        fs::OpenOptionsExt,
+        io::{AsRawHandle, FromRawHandle, OwnedHandle},
+    },
     path::{Path, PathBuf},
     sync::{
-        Arc, Mutex,
+        Arc,
         atomic::{AtomicBool, Ordering},
         mpsc,
     },
     time::{Duration, Instant},
 };
 use windows::Win32::{
-    Foundation::HANDLE,
-    Storage::FileSystem::SECURITY_IDENTIFICATION,
+    Foundation::{ERROR_IO_PENDING, HANDLE, WAIT_OBJECT_0},
+    Storage::FileSystem::{FILE_FLAG_OVERLAPPED, ReadFile, SECURITY_IDENTIFICATION, WriteFile},
     System::{
+        IO::{CancelIoEx, GetOverlappedResult, OVERLAPPED},
         Pipes::{GetNamedPipeServerSessionId, PeekNamedPipe, WaitNamedPipeW},
         Registry::{HKEY_LOCAL_MACHINE, HKEY_USERS},
         RemoteDesktop::ProcessIdToSessionId,
-        Threading::GetCurrentProcessId,
+        Threading::{CreateEventW, GetCurrentProcessId, WaitForSingleObject},
     },
 };
+
+const MAX_PENDING_BYTES: usize = 4 * 1024 * 1024;
+const PIPE_WRITE_TIMEOUT: Duration = Duration::from_secs(2);
 
 use crate::steam::registry_string;
 
@@ -238,7 +245,7 @@ fn available(file: &File) -> Result<u32> {
     unsafe { PeekNamedPipe(handle(file), None, 0, None, Some(&mut count), None)? };
     Ok(count)
 }
-fn open(name: &str, wait: Duration) -> Result<File> {
+fn open_with_flags(name: &str, wait: Duration, extra_flags: u32) -> Result<File> {
     let deadline = Instant::now() + wait;
     loop {
         match std::fs::OpenOptions::new()
@@ -246,6 +253,7 @@ fn open(name: &str, wait: Duration) -> Result<File> {
             .write(true)
             // A connector in our session must not borrow the host's token.
             .security_qos_flags(SECURITY_IDENTIFICATION.0)
+            .custom_flags(extra_flags)
             .open(name)
         {
             Ok(file) => return Ok(file),
@@ -265,9 +273,66 @@ fn open(name: &str, wait: Duration) -> Result<File> {
         }
     }
 }
+fn open(name: &str, wait: Duration) -> Result<File> {
+    open_with_flags(name, wait, 0)
+}
+fn pipe_event() -> Result<OwnedHandle> {
+    // SAFETY: CreateEventW returns a fresh manual-reset event handle owned only by this value.
+    unsafe {
+        Ok(OwnedHandle::from_raw_handle(
+            CreateEventW(None, true, false, None)?.0,
+        ))
+    }
+}
+fn overlapped_read(file: &File, buf: &mut [u8]) -> Result<usize> {
+    let event = pipe_event()?;
+    let mut ov = OVERLAPPED {
+        hEvent: HANDLE(event.as_raw_handle()),
+        ..Default::default()
+    };
+    let mut read = 0;
+    // SAFETY: `buf`, `ov`, and `event` remain valid until `GetOverlappedResult(..., true)` returns.
+    unsafe {
+        if let Err(error) = ReadFile(handle(file), Some(buf), None, Some(&mut ov))
+            && error.code() != ERROR_IO_PENDING.to_hresult()
+        {
+            return Err(error.into());
+        }
+        GetOverlappedResult(handle(file), &ov, &mut read, true)?;
+    }
+    Ok(read as usize)
+}
+fn overlapped_write(file: &File, data: &[u8], timeout: Duration) -> Result<()> {
+    let event = pipe_event()?;
+    let mut ov = OVERLAPPED {
+        hEvent: HANDLE(event.as_raw_handle()),
+        ..Default::default()
+    };
+    let mut written = 0;
+    // SAFETY: `data`, `ov`, and `event` live past `GetOverlappedResult(..., true)`, which waits
+    // for any `CancelIoEx` completion before returning.
+    unsafe {
+        if let Err(error) = WriteFile(handle(file), Some(data), None, Some(&mut ov))
+            && error.code() != ERROR_IO_PENDING.to_hresult()
+        {
+            return Err(error.into());
+        }
+        let ms = u32::try_from(timeout.as_millis()).unwrap_or(u32::MAX - 1);
+        if WaitForSingleObject(HANDLE(event.as_raw_handle()), ms) != WAIT_OBJECT_0 {
+            let _ = CancelIoEx(handle(file), Some(&ov));
+            let _ = GetOverlappedResult(handle(file), &ov, &mut written, true);
+            bail!("writing to the Playnite data pipe timed out");
+        }
+        GetOverlappedResult(handle(file), &ov, &mut written, true)?;
+    }
+    if written as usize != data.len() {
+        bail!("incomplete write to the Playnite data pipe");
+    }
+    Ok(())
+}
 /// A connection to the plugin: newline-separated JSON both ways.
 pub struct Pipe {
-    file: Arc<Mutex<File>>,
+    file: Arc<File>,
     pub lines: mpsc::Receiver<String>,
     stop: Arc<AtomicBool>,
     reader: Option<std::thread::JoinHandle<()>>,
@@ -312,11 +377,15 @@ impl Pipe {
         control
             .write_all(&[2])
             .context("acknowledging the Playnite pipe handshake")?;
-        let file = open(&format!(r"\\.\pipe\{name}"), Duration::from_secs(5))
-            .context("connecting to the Playnite private pipe")?;
+        let file = open_with_flags(
+            &format!(r"\\.\pipe\{name}"),
+            Duration::from_secs(5),
+            FILE_FLAG_OVERLAPPED.0,
+        )
+        .context("connecting to the Playnite private pipe")?;
         check_session(&file, current).context("checking the Playnite private pipe session")?;
         drop(control);
-        let file = Arc::new(Mutex::new(file));
+        let file = Arc::new(file);
         let (sender, lines) = mpsc::channel();
         let stop = Arc::new(AtomicBool::new(false));
         let reader = {
@@ -326,21 +395,27 @@ impl Pipe {
                 .spawn(move || {
                     let mut pending = Vec::new();
                     while !stop.load(Ordering::Acquire) {
-                        let read = {
-                            let mut file = file.lock().unwrap();
-                            match available(&file) {
-                                Ok(0) => Ok(0),
-                                Ok(count) => {
-                                    let mut chunk = vec![0; count.min(1 << 20) as usize];
-                                    file.read(&mut chunk)
-                                        .inspect(|&n| pending.extend_from_slice(&chunk[..n]))
-                                        .map_err(anyhow::Error::from)
-                                }
-                                Err(error) => Err(error),
+                        let read = match available(&file) {
+                            Ok(0) => Ok(0),
+                            Ok(count) => {
+                                let mut chunk = vec![0; count.min(1 << 20) as usize];
+                                overlapped_read(&file, &mut chunk).inspect(|&n| {
+                                    if pending.len() + n <= MAX_PENDING_BYTES {
+                                        pending.extend_from_slice(&chunk[..n]);
+                                    }
+                                })
                             }
+                            Err(error) => Err(error),
                         };
                         match read {
                             Ok(0) => std::thread::sleep(Duration::from_millis(30)),
+                            Ok(n) if pending.len() + n > MAX_PENDING_BYTES => {
+                                tracing::warn!(
+                                    limit = MAX_PENDING_BYTES,
+                                    "Playnite data pipe line exceeded maximum size; closing"
+                                );
+                                return;
+                            }
                             Ok(_) => {
                                 while let Some(end) = pending.iter().position(|b| *b == b'\n') {
                                     let line: Vec<u8> = pending.drain(..=end).collect();
@@ -374,16 +449,14 @@ impl Pipe {
     pub fn send(&self, message: &serde_json::Value) -> Result<()> {
         let mut line = serde_json::to_vec(message)?;
         line.push(b'\n');
-        let mut file = self.file.lock().unwrap();
-        file.write_all(&line)
-            .context("writing to the Playnite data pipe")?;
-        file.flush().context("flushing the Playnite data pipe")?;
-        Ok(())
+        overlapped_write(&self.file, &line, PIPE_WRITE_TIMEOUT)
     }
 }
 impl Drop for Pipe {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Release);
+        // SAFETY: `self.file` stays live across CancelIoEx, unblocking any pending overlapped I/O.
+        let _ = unsafe { CancelIoEx(handle(&self.file), None) };
         if let Some(reader) = self.reader.take() {
             let _ = reader.join();
         }

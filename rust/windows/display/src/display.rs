@@ -7,7 +7,7 @@ use std::{
     time::{Duration, Instant},
 };
 use windows::{
-    Win32::{Devices::Display::*, Foundation::*, Graphics::Gdi::*, System::IO::DeviceIoControl},
+    Win32::{Devices::Display::*, Foundation::*, Graphics::Gdi::*},
     core::{GUID, PCWSTR},
 };
 
@@ -35,6 +35,7 @@ pub use recovery::{
     leased_displays, restore_positions, stream_display_rotation,
 };
 pub(crate) use recovery::{restore_was_refused, rotation, set_rotation};
+pub(crate) use topology::basic_monitors;
 pub use topology::{
     Monitor, Topology, active_device_ids, active_displays, edid_refresh, monitors, shown_primary,
 };

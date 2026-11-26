@@ -292,6 +292,9 @@ impl Engine {
                         }
                         self.frame_wire_bytes =
                             self.frame_wire_bytes.max(self.emitting_frame_bytes);
+                        if data[1] & 0x80 != 0 {
+                            self.emitting_rtp_ts = None;
+                        }
                     }
                     self.outgoing.push_back(Outgoing {
                         destination: t.destination,

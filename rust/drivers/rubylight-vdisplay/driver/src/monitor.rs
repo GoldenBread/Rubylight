@@ -69,6 +69,8 @@ pub struct Monitor {
     arrival: OnceLock<Arrival>,
     state: AtomicU8,
     modes: Mutex<Vec<Mode>>,
+    /// Serializes optimistic mode updates so an older failed update cannot clobber a newer one.
+    mode_gen: AtomicU64,
     /// The live swap-chain worker; dropping it joins the thread.
     swap: Mutex<Option<SwapChainProcessor>>,
     /// The frame ring the host handed over, shared with the worker that has it open.
@@ -112,6 +114,7 @@ impl Monitor {
             arrival: OnceLock::new(),
             state: AtomicU8::new(CREATING),
             modes: Mutex::new(modes),
+            mode_gen: AtomicU64::new(0),
             swap: Mutex::new(None),
             ring: Mutex::new(None),
             ring_gen: AtomicU64::new(0),
@@ -186,16 +189,13 @@ impl Monitor {
     /// Install a frame ring and wake the worker. `Err(ring)` once torn down; otherwise the
     /// ring it replaced, to drop with no lock held.
     #[allow(clippy::result_large_err)]
-    pub fn set_ring(
-        &self,
-        ring: Arc<RingHandles>,
-    ) -> Result<Option<Arc<RingHandles>>, Arc<RingHandles>> {
+    pub fn set_ring(&self, ring: RingHandles) -> Result<Option<Arc<RingHandles>>, RingHandles> {
         let displaced = {
             let mut slot = lock(&self.ring);
             if self.gone.load(Ordering::SeqCst) {
                 return Err(ring);
             }
-            let displaced = slot.replace(ring);
+            let displaced = slot.replace(Arc::new(ring));
             self.ring_gen.fetch_add(1, Ordering::AcqRel);
             self.stats.ring_open.store(false, Ordering::Release);
             displaced
@@ -261,17 +261,18 @@ impl Monitor {
         self.ring_handoff.exit_worker(worker_id);
     }
 
-    fn wait_ring_cleared(&self, generation: u32, cleared_seq: u64) {
-        if !self
+    fn wait_ring_cleared(&self, generation: u32, cleared_seq: u64) -> bool {
+        let cleared = self
             .ring_handoff
-            .wait_cleared(cleared_seq, RING_CLEAR_WAIT_BUDGET)
-        {
+            .wait_cleared(cleared_seq, RING_CLEAR_WAIT_BUDGET);
+        if !cleared {
             dbglog!(
                 "[rlvd] frame ring {generation} clear wait timed out after {} ms (target={})",
                 RING_CLEAR_WAIT_BUDGET.as_millis(),
                 self.target_id()
             );
         }
+        cleared
     }
 
     /// The `IOCTL_QUERY_MONITOR` reply.
@@ -280,7 +281,10 @@ impl Monitor {
         if self.arrived() {
             flags |= control::MONITOR_ARRIVED;
         }
-        if lock(&self.swap).is_some() {
+        if lock(&self.swap)
+            .as_ref()
+            .is_some_and(SwapChainProcessor::is_running)
+        {
             flags |= control::MONITOR_SWAP_CHAIN;
         }
         let ring_generation = lock(&self.ring).as_ref().map_or(0, |r| r.generation);
@@ -580,8 +584,9 @@ pub fn update_monitor_modes(
     let Some(_ddi) = m.ddi() else {
         return crate::STATUS_NOT_FOUND;
     };
-    let (old_modes, new_modes) = {
+    let (old_modes, new_modes, epoch) = {
         let mut list = lock(&m.modes);
+        let epoch = m.mode_gen.fetch_add(1, Ordering::AcqRel).wrapping_add(1);
         let new_modes = modes::advertised_modes(
             Mode {
                 width,
@@ -590,7 +595,11 @@ pub fn update_monitor_modes(
             },
             &list,
         );
-        (core::mem::replace(&mut *list, new_modes.clone()), new_modes)
+        (
+            core::mem::replace(&mut *list, new_modes.clone()),
+            new_modes,
+            epoch,
+        )
     };
     let mut targets: Vec<iddcx::IDDCX_TARGET_MODE2> = flatten(&new_modes)
         .map(|item| target_mode2(item.width, item.height, item.refresh_mhz))
@@ -607,7 +616,10 @@ pub fn update_monitor_modes(
         "[rlvd] IddCxMonitorUpdateModes2(session={session_id:#x}, {width}x{height}@{refresh_mhz}mHz) -> {st:#x}"
     );
     if !wdk_iddcx::nt_success(st) {
-        *lock(&m.modes) = old_modes;
+        let mut list = lock(&m.modes);
+        if m.mode_gen.load(Ordering::Acquire) == epoch {
+            *list = old_modes;
+        }
         return st;
     }
     crate::STATUS_SUCCESS
@@ -660,80 +672,40 @@ pub fn alive(owner: u32, session_id: u64) -> bool {
 }
 
 /// Drop `owner`'s ring for `session_id` and wait until the swap-chain worker has drained
-/// GPU reads and released it. True if there was one.
-pub fn clear_frame_ring(owner: u32, session_id: u64) -> bool {
+/// GPU reads and released it.
+pub fn clear_frame_ring(owner: u32, session_id: u64) -> NTSTATUS {
     let Some(monitor) = find_session(owner, session_id) else {
-        return false;
+        return crate::STATUS_NOT_FOUND;
     };
     let Some((ring, seq)) = monitor.take_ring_with_seq() else {
-        return false;
+        return crate::STATUS_NOT_FOUND;
     };
     let generation = ring.generation;
     drop(ring);
-    monitor.wait_ring_cleared(generation, seq);
-    true
+    if monitor.wait_ring_cleared(generation, seq) {
+        crate::STATUS_SUCCESS
+    } else {
+        crate::STATUS_IO_TIMEOUT
+    }
 }
 
 /// Drop `owner`'s ring for `session_id` if it is still the ring of `generation`, and wait
 /// until the swap-chain worker has drained GPU reads and released it.
-pub fn clear_frame_ring_generation(owner: u32, session_id: u64, generation: u32) -> bool {
+pub fn clear_frame_ring_generation(owner: u32, session_id: u64, generation: u32) -> NTSTATUS {
     let Some(monitor) = find_session(owner, session_id) else {
-        return false;
+        return crate::STATUS_NOT_FOUND;
     };
     let Some((ring, seq)) = monitor.take_ring_generation_with_seq(generation) else {
-        return false;
+        return crate::STATUS_NOT_FOUND;
     };
     drop(ring);
-    monitor.wait_ring_cleared(generation, seq);
-    true
+    if monitor.wait_ring_cleared(generation, seq) {
+        crate::STATUS_SUCCESS
+    } else {
+        crate::STATUS_IO_TIMEOUT
+    }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::sync::Barrier;
-    use std::thread;
-
-    #[test]
-    fn dekker_ddi_guard_and_teardown_never_overlap() {
-        for _ in 0..200 {
-            let monitor = Arc::new(Monitor::pending(1, 1, 100, Vec::new()));
-            let in_ddi = Arc::new(AtomicU32::new(0));
-            let departed = Arc::new(AtomicBool::new(false));
-            let start = Arc::new(Barrier::new(3));
-
-            let mut callers = Vec::new();
-            for _ in 0..2 {
-                let m = monitor.clone();
-                let in_ddi = in_ddi.clone();
-                let departed = departed.clone();
-                let start = start.clone();
-                callers.push(thread::spawn(move || {
-                    start.wait();
-                    for _ in 0..50 {
-                        let Some(_guard) = m.ddi() else {
-                            break;
-                        };
-                        in_ddi.fetch_add(1, Ordering::SeqCst);
-                        assert!(
-                            !departed.load(Ordering::SeqCst),
-                            "DDI entered after teardown/departure"
-                        );
-                        thread::yield_now();
-                        in_ddi.fetch_sub(1, Ordering::SeqCst);
-                    }
-                }));
-            }
-
-            start.wait();
-            monitor.teardown();
-            departed.store(true, Ordering::SeqCst);
-            assert_eq!(in_ddi.load(Ordering::SeqCst), 0);
-            assert!(monitor.ddi().is_none());
-
-            for handle in callers {
-                handle.join().unwrap();
-            }
-        }
-    }
-}
+#[path = "monitor_tests.rs"]
+mod tests;

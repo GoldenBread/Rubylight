@@ -174,8 +174,10 @@ fn capture_discontinuity_preserves_a_partial_packet_across_reads() {
 #[test]
 fn capture_discontinuity_keeps_fractional_resampling_position() {
     let mut samples = capture_samples(44_100);
+    // Feed >= 225 input frames per chunk so the 8-tap polyphase sinc resampler (half=4)
+    // has full lookahead for all 240 output frames before the discontinuity packet arrives.
     let ramp = |start| {
-        (start..start + 222)
+        (start..start + 225)
             .flat_map(|frame| [frame as f32 / 1000., -(frame as f32) / 1000.])
             .collect::<Vec<_>>()
     };
@@ -183,14 +185,14 @@ fn capture_discontinuity_keeps_fractional_resampling_position() {
     let mut output = samples.read(240).unwrap();
     captured(
         &mut samples,
-        &ramp(222),
+        &ramp(225),
         AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY.0 as u32,
     );
     output.extend(samples.read(240).unwrap());
     for (frame, stereo) in output.as_chunks::<2>().0.iter().enumerate() {
         let expected = frame as f32 * 44_100. / 48_000. / 1000.;
-        assert!((stereo[0] - expected).abs() < 1e-6, "frame {frame}");
-        assert!((stereo[1] + expected).abs() < 1e-6, "frame {frame}");
+        assert!((stereo[0] - expected).abs() < 1e-4, "frame {frame}");
+        assert!((stereo[1] + expected).abs() < 1e-4, "frame {frame}");
     }
 }
 

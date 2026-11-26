@@ -685,3 +685,33 @@ fn paired_probes_authenticate_udp_packets_and_transfer_the_advertised_bytes() {
         Err(HttpError::CertificateMismatch)
     ));
 }
+
+#[test]
+fn host_and_client_generated_pairing_certificates_verify_mutually() {
+    let client = ClientIdentity::generate().unwrap();
+    let host_id = crypto::Identity::generate().unwrap();
+
+    // Host crate's Pairing/crypto verifier accepts Nightjar ClientIdentity::generate() cert.
+    crypto::verify_pairing_certificate(client.certificate_pem()).unwrap();
+
+    // Client crate's HostClient pairing accepts Rubylight host's crypto::Identity::generate() cert
+    // (including HTTPS pinning and encrypted handshake verification).
+    let host = start_test_host();
+    let client_id = Arc::new(client);
+    let http = HostClient::new("127.0.0.1", host.http_port, client_id)
+        .unwrap()
+        .with_device_name("Nightjar test");
+    let info = http.server_info(false).unwrap();
+    let outcome = http.pair(&info, PIN).unwrap();
+    assert!(
+        matches!(outcome, PairResult::Paired { .. }),
+        "mutual host/client generated certs must pair: {outcome:?}"
+    );
+    // Also confirm direct host cert PEM parses & verifies cleanly on the client side via HostClient::with_server_certificate_pem.
+    let verified_client = HostClient::new("127.0.0.1", host.http_port, client_identity())
+        .unwrap()
+        .with_https_port(host.https_port)
+        .with_server_certificate_pem(&host_id.certificate)
+        .unwrap();
+    drop(verified_client);
+}

@@ -167,7 +167,7 @@ struct OverlayKey {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct MetaKey {
+pub(super) struct MetaKey {
     source: (u32, u32, Pixel),
     origin: u64,
     ready: Option<(usize, u64)>,
@@ -239,47 +239,54 @@ impl PartialEq for RepeatKey {
 impl Eq for RepeatKey {}
 
 impl RepeatKey {
-    pub(super) fn new(
+    pub(super) fn meta_for(
         image: &GpuImage,
         luminance: [f32; 2],
         overlay: Option<&Overlay>,
         kbps: u32,
-    ) -> Self {
+    ) -> MetaKey {
+        MetaKey::from_inputs(image, luminance, overlay, kbps)
+    }
+
+    pub(super) fn with_meta(image: &GpuImage, overlay: Option<&Overlay>, meta: MetaKey) -> Self {
         Self {
             source_texture: image.texture.clone(),
             _cursor_pixels: image.cursor.as_ref().map(|c| c.pixels.clone()),
             _overlay_rgba: overlay.map(|o| o.rgba.clone()),
-            meta: MetaKey::from_inputs(image, luminance, overlay, kbps),
+            meta,
         }
     }
 
-    pub(super) fn matches(
-        &self,
-        image: &GpuImage,
-        luminance: [f32; 2],
-        overlay: Option<&Overlay>,
-        kbps: u32,
-    ) -> bool {
-        Arc::ptr_eq(&self.source_texture, &image.texture)
-            && self.meta == MetaKey::from_inputs(image, luminance, overlay, kbps)
+    pub(super) fn matches_meta(&self, image: &GpuImage, meta: &MetaKey) -> bool {
+        Arc::ptr_eq(&self.source_texture, &image.texture) && &self.meta == meta
     }
 }
 
-struct CachedFrame {
-    key: RepeatKey,
+struct CachedFrame<K = RepeatKey> {
+    key: K,
     bytes: Vec<u8>,
     sdk_seq: u8,
     seq_offsets: Vec<usize>,
 }
 
 /// Per-encoder repeat-frame cache and persistent 3-bit sequence offset.
-#[derive(Default)]
-pub(super) struct RepeatCache {
-    cached: Option<CachedFrame>,
+pub(super) struct RepeatCacheCore<K = RepeatKey> {
+    cached: Option<CachedFrame<K>>,
     seq_offset: u8,
 }
 
-impl RepeatCache {
+impl<K> Default for RepeatCacheCore<K> {
+    fn default() -> Self {
+        Self {
+            cached: None,
+            seq_offset: 0,
+        }
+    }
+}
+
+pub(super) type RepeatCache = RepeatCacheCore<RepeatKey>;
+
+impl<K> RepeatCacheCore<K> {
     /// Drop the cached frame while preserving `seq_offset` so subsequent SDK
     /// frames continue monotonically from the last emitted sequence number.
     pub(super) fn clear(&mut self) {
@@ -292,12 +299,7 @@ impl RepeatCache {
 
     /// Store the flat wire bytes emitted for a repeat frame whose raw SDK
     /// bitstream was shifted by `flight_seq_offset`.
-    pub(super) fn store(
-        &mut self,
-        key: RepeatKey,
-        bytes: Vec<u8>,
-        flight_seq_offset: u8,
-    ) -> Result<()> {
+    pub(super) fn store(&mut self, key: K, bytes: Vec<u8>, flight_seq_offset: u8) -> Result<()> {
         let (wire_seq, seq_offsets) = scan_sequence_offsets(&bytes)?;
         let sdk_seq = (wire_seq + 8 - (flight_seq_offset & 7)) & 7;
         self.cached = Some(CachedFrame {
@@ -309,31 +311,19 @@ impl RepeatCache {
         Ok(())
     }
 
-    pub(super) fn matches(
-        &self,
-        image: &GpuImage,
-        luminance: [f32; 2],
-        overlay: Option<&Overlay>,
-        kbps: u32,
-        limit: usize,
-    ) -> bool {
-        self.cached.as_ref().is_some_and(|cached| {
-            cached.bytes.len() <= limit && cached.key.matches(image, luminance, overlay, kbps)
-        })
+    fn matches_with(&self, limit: usize, predicate: impl FnOnce(&K) -> bool) -> bool {
+        self.cached
+            .as_ref()
+            .is_some_and(|cached| cached.bytes.len() <= limit && predicate(&cached.key))
     }
 
-    /// Emit a sequence-patched copy of the cached frame if the inputs match and
-    /// the cached wire length fits `limit`.
-    pub(super) fn try_hit(
+    fn try_hit_with(
         &mut self,
-        image: &GpuImage,
-        luminance: [f32; 2],
-        overlay: Option<&Overlay>,
-        kbps: u32,
         limit: usize,
+        predicate: impl FnOnce(&K) -> bool,
     ) -> Option<Vec<u8>> {
         let cached = self.cached.as_ref()?;
-        if cached.bytes.len() > limit || !cached.key.matches(image, luminance, overlay, kbps) {
+        if cached.bytes.len() > limit || !predicate(&cached.key) {
             return None;
         }
         self.seq_offset = (self.seq_offset + 1) & 7;
@@ -343,6 +333,36 @@ impl RepeatCache {
             out[offset] = patch_byte(out[offset], target_seq);
         }
         Some(out)
+    }
+}
+
+#[cfg(test)]
+impl<K: PartialEq> RepeatCacheCore<K> {
+    pub(super) fn matches_key(&self, key: &K, limit: usize) -> bool {
+        self.matches_with(limit, |cached| cached == key)
+    }
+
+    /// Emit a sequence-patched copy of the cached frame if `key` matches and
+    /// the cached wire length fits `limit`.
+    pub(super) fn try_hit_key(&mut self, key: &K, limit: usize) -> Option<Vec<u8>> {
+        self.try_hit_with(limit, |cached| cached == key)
+    }
+}
+
+impl RepeatCache {
+    pub(super) fn matches_meta(&self, image: &GpuImage, meta: &MetaKey, limit: usize) -> bool {
+        self.matches_with(limit, |key| key.matches_meta(image, meta))
+    }
+
+    /// Emit a sequence-patched copy of the cached frame if the precomputed key metadata matches
+    /// and the cached wire length fits `limit`.
+    pub(super) fn try_hit_meta(
+        &mut self,
+        image: &GpuImage,
+        meta: &MetaKey,
+        limit: usize,
+    ) -> Option<Vec<u8>> {
+        self.try_hit_with(limit, |key| key.matches_meta(image, meta))
     }
 }
 
@@ -434,42 +454,44 @@ mod tests {
     }
 
     #[test]
-    fn simulated_repeat_hits_and_fresh_resume_preserve_monotonic_sequence() -> Result<()> {
-        // Simulate SDK producing sdk_seq = 0, 1, ..., interspersed with cached repeats.
+    fn repeat_cache_hits_and_fresh_resume_preserve_monotonic_sequence() -> Result<()> {
+        let mut cache: RepeatCacheCore<u32> = RepeatCacheCore::default();
         let mut sdk_seq = 0u8;
-        let mut seq_offset = 0u8;
         let mut emitted = Vec::new();
+        let limit = 1_000_000;
 
-        // Frame 0: fresh SDK encode
+        // Frame 0: fresh SDK encode (not cached yet)
         let mut f0 = make_frame(sdk_seq, 320, 180, 2, None);
         sdk_seq = (sdk_seq + 1) & 7;
-        shift_sequence(&mut f0, seq_offset)?;
+        shift_sequence(&mut f0, cache.seq_offset())?;
         emitted.push(scan_sequence_offsets(&f0)?.0);
 
-        // Frame 1: repeat #1 (SDK encode + cache)
+        // Frame 1: repeat #1 (SDK encode at flight_seq_offset + store into RepeatCacheCore)
+        let flight_offset = cache.seq_offset();
         let mut f1 = make_frame(sdk_seq, 320, 180, 2, Some(1));
         sdk_seq = (sdk_seq + 1) & 7;
-        shift_sequence(&mut f1, seq_offset)?;
-        let (wire_seq, offsets) = scan_sequence_offsets(&f1)?;
-        let cached_sdk_seq = (wire_seq + 8 - (seq_offset & 7)) & 7;
-        emitted.push(wire_seq);
+        shift_sequence(&mut f1, flight_offset)?;
+        emitted.push(scan_sequence_offsets(&f1)?.0);
+        cache.store(42, f1, flight_offset)?;
+        assert!(cache.matches_key(&42, limit));
 
-        // Frames 2..=10: 9 consecutive cached repeat hits (wraps across 7 -> 0!)
+        // Frames 2..=10: 9 consecutive cached repeat hits through RepeatCacheCore::try_hit_key
         for _ in 0..9 {
-            seq_offset = (seq_offset + 1) & 7;
-            let target = (cached_sdk_seq + seq_offset) & 7;
-            let mut copy = f1.clone();
-            for &at in &offsets {
-                copy[at] = patch_byte(copy[at], target);
-            }
-            emitted.push(scan_sequence_offsets(&copy)?.0);
+            let hit = cache
+                .try_hit_key(&42, limit)
+                .expect("cached key must hit cleanly within limit");
+            emitted.push(scan_sequence_offsets(&hit)?.0);
         }
 
-        // Frames 11..=13: fresh SDK encodes resume monotonically
+        // Different key misses; clearing cache preserves seq_offset for subsequent fresh frames.
+        assert!(cache.try_hit_key(&99, limit).is_none());
+        cache.clear();
+
+        // Frames 11..=13: fresh SDK encodes resume monotonically using preserved cache.seq_offset()
         for _ in 0..3 {
             let mut fresh = make_frame(sdk_seq, 320, 180, 2, None);
             sdk_seq = (sdk_seq + 1) & 7;
-            shift_sequence(&mut fresh, seq_offset)?;
+            shift_sequence(&mut fresh, cache.seq_offset())?;
             emitted.push(scan_sequence_offsets(&fresh)?.0);
         }
 

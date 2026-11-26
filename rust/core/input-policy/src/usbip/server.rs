@@ -78,6 +78,32 @@ fn read_full<D: Device>(
     Ok(())
 }
 
+/// Cancels queued transfers matching `victim`, updating only an unlinked ISO
+/// transfer's endpoint schedule so other endpoints keep their pacing deadlines.
+pub(super) fn unlink_transfer(link: &mut Link, victim: u32) -> bool {
+    let before = link.pending.len() + link.held.len() + link.iso.len();
+    let unlinked_iso_ep = link
+        .iso
+        .iter()
+        .find(|t| t.seqnum == victim)
+        .map(|t| usize::from(t.endpoint));
+    link.pending.retain(|t| t.seqnum != victim);
+    link.held.retain(|t| t.seqnum != victim);
+    link.iso.retain(|t| t.seqnum != victim);
+    if let Some(endpoint) = unlinked_iso_ep
+        && endpoint < 16
+    {
+        link.iso_next[endpoint] = link
+            .iso
+            .iter()
+            .rev()
+            .find(|t| usize::from(t.endpoint) == endpoint)
+            .map(|t| t.due);
+    }
+    // A transfer already completed is not cancelled.
+    link.pending.len() + link.held.len() + link.iso.len() != before
+}
+
 fn serve<D: Device>(shared: &Shared<D>, stream: TcpStream) -> io::Result<()> {
     // Accepted sockets may inherit the nonblocking listener's mode.
     stream.set_nonblocking(false)?;
@@ -307,20 +333,7 @@ fn serve<D: Device>(shared: &Shared<D>, stream: TcpStream) -> io::Result<()> {
                 let victim = be32(&h, 20);
                 let reply = {
                     let mut link = shared.link.lock().unwrap();
-                    let before = link.pending.len() + link.held.len() + link.iso.len();
-                    link.pending.retain(|t| t.seqnum != victim);
-                    link.held.retain(|t| t.seqnum != victim);
-                    link.iso.retain(|t| t.seqnum != victim);
-                    for endpoint in 0..16 {
-                        link.iso_next[endpoint] = link
-                            .iso
-                            .iter()
-                            .rev()
-                            .find(|t| usize::from(t.endpoint) == endpoint)
-                            .map(|t| t.due);
-                    }
-                    // A transfer already completed is not cancelled: status 0.
-                    let found = link.pending.len() + link.held.len() + link.iso.len() != before;
+                    let found = unlink_transfer(&mut link, victim);
                     let status = if found { ECONNRESET } else { 0 };
                     ret(RET_UNLINK, seqnum, status, None, 0)
                 };

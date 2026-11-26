@@ -71,7 +71,7 @@
       {draft}
       key="absolute-left-release-delay"
       label="Touch and pen click delay"
-      hint="How long a tap on a touch screen or a pen holds its left-button release back, in milliseconds: 0 to 1000. Raise it if a game misses taps or reads them as a drag; leave it empty to use the host's 10."
+      hint="How long a tap on a touch screen or a pen holds its left-button release back, in milliseconds: 0 to 1000. Raise it if a game misses taps or reads them as a drag; leave it empty to use the host setting."
       placeholder="10"
       unit="ms"
     />

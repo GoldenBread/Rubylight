@@ -269,9 +269,14 @@ fn the_watch_sends_only_the_pcs_new_copies() {
     fake.copy("copied on the PC");
     let frame = watch.poll().unwrap().unwrap();
     assert_eq!(
-        (frame.kind, frame.token, frame.payload.as_slice()),
-        (KIND_TEXT, 2, &b"copied on the PC"[..])
+        (frame.kind, frame.payload.as_slice()),
+        (KIND_TEXT, &b"copied on the PC"[..])
     );
+    assert_ne!(frame.token, 2, "frame token must be salted per watch");
+    fake.copy("second copy on the PC");
+    let second = watch.poll().unwrap().unwrap();
+    assert_ne!(second.token, 3);
+    assert_ne!(second.token, frame.token);
     assert_eq!(watch.poll().unwrap(), None);
     // The device's copy goes on the clipboard and is not sent back.
     watch.write(Item::Text("from the device".into())).unwrap();
@@ -380,4 +385,78 @@ fn a_copy_put_after_the_loops_look_is_taken_on_the_next_one() {
     assert!(sync.queued());
     assert_eq!(sync.take(now, || false), None);
     assert!(!sync.queued(), "the refused copy was dropped");
+}
+
+#[test]
+fn last_is_cleared_when_clipboard_changes_to_unsynced_content() {
+    let fake = Fake::default();
+    let mut watch = Watch::new(
+        fake.clone(),
+        Allowed {
+            write: true,
+            read: true,
+            png: None,
+        },
+    );
+    fake.copy("repeat me");
+    let first = watch.poll().unwrap().unwrap();
+    assert_eq!(first.payload, b"repeat me");
+    // Clipboard changes to an image while images are disabled -> unsynced Ok(None).
+    fake.write_png(b"png-data").unwrap();
+    assert_eq!(watch.poll().unwrap(), None);
+    // Copying the same text again on the PC must be delivered now.
+    fake.copy("repeat me");
+    let second = watch.poll().unwrap().unwrap();
+    assert_eq!(second.payload, b"repeat me");
+
+    // Same when clipboard changes to an oversized copy (Err(Large)).
+    fake.copy(&"x".repeat(MAX_PAYLOAD_BYTES + 1));
+    assert!(watch.poll().unwrap_err().downcast_ref::<Large>().is_some());
+    fake.copy("repeat me");
+    let third = watch.poll().unwrap().unwrap();
+    assert_eq!(third.payload, b"repeat me");
+}
+
+#[test]
+fn transient_clipboard_read_failure_does_not_skip_sequence() {
+    #[derive(Clone, Default)]
+    struct FlakyClipboard {
+        inner: Fake,
+        fail_read: Arc<AtomicBool>,
+    }
+    impl Clipboard for FlakyClipboard {
+        fn sequence(&self) -> u32 {
+            self.inner.sequence()
+        }
+        fn read(&self) -> Result<String> {
+            if self.fail_read.swap(false, Ordering::AcqRel) {
+                anyhow::bail!("clipboard busy");
+            }
+            self.inner.read()
+        }
+        fn write(&self, text: &str) -> Result<()> {
+            self.inner.write(text)
+        }
+        fn read_png(&self, max_bytes: usize) -> Result<Option<Vec<u8>>> {
+            self.inner.read_png(max_bytes)
+        }
+        fn write_png(&self, png: &[u8]) -> Result<()> {
+            self.inner.write_png(png)
+        }
+    }
+
+    let clip = FlakyClipboard::default();
+    let mut watch = Watch::new(
+        clip.clone(),
+        Allowed {
+            write: true,
+            read: true,
+            png: None,
+        },
+    );
+    clip.fail_read.store(true, Ordering::Release);
+    clip.inner.copy("retry me");
+    assert!(watch.poll().is_err());
+    let retried = watch.poll().unwrap().unwrap();
+    assert_eq!(retried.payload, b"retry me");
 }

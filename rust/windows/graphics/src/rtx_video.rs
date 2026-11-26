@@ -338,9 +338,9 @@ struct HdrPasses {
     /// Cached render target views for pooled FP16 textures rendered into directly.
     pooled_targets: Vec<(usize, u32, u32, ID3D11RenderTargetView)>,
 }
-/// A picture's view, with the texture, size and format it was made for.
+/// A picture's view, with the live upstream capture texture, size and format it was made for.
 struct Original {
-    texture: usize,
+    weak: std::sync::Weak<ID3D11Texture2D>,
     width: u32,
     height: u32,
     pixel: Pixel,
@@ -394,19 +394,14 @@ impl HdrPasses {
         device: &Device,
         image: &GpuImage,
     ) -> Result<ID3D11ShaderResourceView> {
-        let key = (
-            image.texture.as_raw() as usize,
-            image.width,
-            image.height,
-            image.pixel,
-        );
+        // Evict SRVs whose upstream pool textures were dropped (e.g. pool replaced at the
+        // same resolution) so dead capture textures do not stay pinned in VRAM.
+        self.originals.retain(|o| o.weak.strong_count() > 0);
+        let ptr = std::sync::Arc::as_ptr(&image.texture);
         if let Some(found) = self.originals.iter().find(|original| {
-            (
-                original.texture,
-                original.width,
-                original.height,
-                original.pixel,
-            ) == key
+            std::ptr::eq(original.weak.as_ptr(), ptr)
+                && (original.width, original.height, original.pixel)
+                    == (image.width, image.height, image.pixel)
         }) {
             return Ok(found.view.clone());
         }
@@ -417,10 +412,10 @@ impl HdrPasses {
             self.originals.clear();
         }
         self.originals.push(Original {
-            texture: key.0,
-            width: key.1,
-            height: key.2,
-            pixel: key.3,
+            weak: std::sync::Arc::downgrade(&image.texture),
+            width: image.width,
+            height: image.height,
+            pixel: image.pixel,
             view: created.clone(),
         });
         Ok(created)

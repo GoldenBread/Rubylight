@@ -69,6 +69,7 @@ const ADD_REFUSED_LONG: Duration = Duration::from_secs(60);
 #[derive(Default)]
 struct AddLog {
     refused_since: Option<Instant>,
+    retry_since: Option<Instant>,
     warned_long: bool,
     warned_with_taskbar: bool,
     added_once: bool,
@@ -95,22 +96,28 @@ impl AddLog {
             self.warned_with_taskbar = true;
         }
     }
-    /// If retries gave up before any taskbar existed, allow a fresh retry window
-    /// once Explorer broadcasts `TaskbarCreated`.
+    /// Allow a fresh retry window once Explorer broadcasts `TaskbarCreated`.
     fn on_taskbar_created(&mut self) {
+        self.retry_since = None;
         if self.warned_long && !self.warned_with_taskbar {
             self.refused_since = None;
             self.warned_long = false;
         }
     }
+    fn gave_up(&self, now: Instant) -> bool {
+        self.retry_since
+            .is_some_and(|since| now.saturating_duration_since(since) >= ADD_REFUSED_LONG)
+    }
     fn attempt(&mut self, added: bool, now: Instant) -> Option<AddReport> {
         if added {
+            self.retry_since = None;
             let refused = self.refused_since.take().map(|since| now - since);
             self.warned_long = false;
             self.warned_with_taskbar = false;
             let first = !std::mem::replace(&mut self.added_once, true);
             return (first || refused.is_some()).then_some(AddReport::Added(refused));
         }
+        self.retry_since.get_or_insert(now);
         match self.refused_since {
             None => {
                 self.refused_since = Some(now);
@@ -185,7 +192,7 @@ unsafe fn add_icon(state: &mut State, on_taskbar: bool) -> AddOutcome {
     }
     if added {
         AddOutcome::Added
-    } else if state.added.warned_long {
+    } else if state.added.gave_up(Instant::now()) {
         AddOutcome::GiveUp
     } else {
         AddOutcome::Retry

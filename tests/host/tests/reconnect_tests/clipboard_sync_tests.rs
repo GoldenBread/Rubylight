@@ -101,12 +101,29 @@ async fn copies_travel_both_ways_after_the_first_frame() -> Result<()> {
         !client.clipboard.lock().unwrap().is_empty()
     })
     .await;
+    let seq1 = FAKE.sequence();
     let sent = Frame::decode(&client.clipboard.lock().unwrap()[0].1).expect("a valid frame");
     assert_eq!(
         (sent.kind, sent.payload.as_slice()),
         (KIND_TEXT, &b"from the PC"[..])
     );
-    assert_eq!(sent.token, FAKE.sequence());
+    let salt = sent.token ^ seq1;
+    assert_ne!(salt, 0);
+
+    client.clipboard.lock().unwrap().clear();
+    FAKE.copy("from the PC again");
+    until("the PC's second copy arrives", WAIT, || {
+        !client.clipboard.lock().unwrap().is_empty()
+    })
+    .await;
+    let seq2 = FAKE.sequence();
+    let sent2 = Frame::decode(&client.clipboard.lock().unwrap()[0].1).expect("a valid frame");
+    assert_eq!(
+        (sent2.kind, sent2.payload.as_slice()),
+        (KIND_TEXT, &b"from the PC again"[..])
+    );
+    assert_ne!(sent2.token, sent.token);
+    assert_eq!(sent2.token ^ seq2, salt);
     h.end(&session, client).await?;
     h.finish().await
 }

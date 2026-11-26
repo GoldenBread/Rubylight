@@ -301,6 +301,14 @@ impl Routes {
         if self.routed.values().all(Option::is_some) {
             self.failed = None;
         }
+        if !self
+            .routed
+            .values()
+            .flatten()
+            .any(|route| route.users_device().is_some())
+        {
+            s.launch.warnings.clear("audio_game_device");
+        }
         self.ticks += 1;
         let check = self.ticks.is_multiple_of(PLACE_CHECK);
         let elsewhere = if check {

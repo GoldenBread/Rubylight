@@ -165,6 +165,8 @@ pub struct Filter {
     masked: Held,
     masking: bool,
     nav_pads: [NavPad; 16],
+    /// Accumulated vertical scroll toward one 120-unit menu detent.
+    scroll_y: i32,
     repeat: Option<(u16, Nav, Instant)>,
     refused_reported: bool,
     /// The pads the game knows: the `active` mask of the last controller
@@ -187,6 +189,7 @@ impl Filter {
             masked: Held::default(),
             masking: false,
             nav_pads: [NavPad::default(); 16],
+            scroll_y: 0,
             repeat: None,
             refused_reported: false,
             active: 0,
@@ -268,6 +271,7 @@ impl Filter {
                 ..NavPad::default()
             };
         }
+        self.scroll_y = 0;
         self.repeat = None;
     }
     fn closed(&mut self, out: &mut Outcome) {
@@ -277,6 +281,7 @@ impl Filter {
         self.masking = !self.masked.is_empty();
         self.pads.cancel();
         self.corner.cancel();
+        self.scroll_y = 0;
         self.repeat = None;
     }
     fn request_open(&mut self, out: &mut Outcome) -> bool {
@@ -437,7 +442,22 @@ impl Filter {
             Input::Scroll {
                 amount,
                 horizontal: false,
-            } if amount != 0 => out.nav.push(if amount > 0 { Nav::Up } else { Nav::Down }),
+            } if amount != 0 => {
+                const SCROLL_STEP: i32 = 120;
+                let amount = i32::from(amount);
+                if self.scroll_y != 0 && self.scroll_y.signum() != amount.signum() {
+                    self.scroll_y = 0;
+                }
+                self.scroll_y = self.scroll_y.saturating_add(amount);
+                while self.scroll_y >= SCROLL_STEP {
+                    self.scroll_y -= SCROLL_STEP;
+                    out.nav.push(Nav::Up);
+                }
+                while self.scroll_y <= -SCROLL_STEP {
+                    self.scroll_y += SCROLL_STEP;
+                    out.nav.push(Nav::Down);
+                }
+            }
             Input::Touch {
                 event: TOUCH_DOWN,
                 x,

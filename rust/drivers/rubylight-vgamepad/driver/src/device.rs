@@ -193,9 +193,9 @@ impl DeviceContext {
     /// Submit `pkt_ptr` to VHF outside `state_lock`, then release `submits_in_flight` and notify waiters.
     pub fn finish_submit(&self, pending: PendingSubmit, pkt_ptr: *mut HID_XFER_PACKET) {
         // SAFETY: `pending.vhf` stays live until `submits_in_flight` drops to zero; `pkt_ptr` stays valid while ready == false.
-        let _ = unsafe { vhf::submit_read_report(pending.vhf as VHFHANDLE, pkt_ptr) };
+        let st = unsafe { vhf::submit_read_report(pending.vhf as VHFHANDLE, pkt_ptr) };
         let mut state = self.state_lock.lock().unwrap();
-        state.submit_finish(pending.controller_id);
+        state.submit_finish(pending.controller_id, nt_success(st));
         if state.slots[pending.controller_id as usize].submits_in_flight == 0 {
             self.submits_cv.notify_all();
         }
@@ -646,30 +646,24 @@ impl DeviceContext {
             request.complete(st);
             return;
         }
-        let req = match read_exact(
+        let res = read_exact(
             &request,
             ControllerIdRequest::WIRE_SIZE,
             ControllerIdRequest::from_bytes,
-        ) {
-            Ok(r) => r,
-            Err(st) => {
-                request.complete(st);
-                return;
-            }
-        };
-        let res = {
-            let mut state = self.state_lock.lock().unwrap();
-            state.poll_feedback(owner, &req)
-        };
+        )
+        .and_then(|req| {
+            self.state_lock
+                .lock()
+                .unwrap()
+                .poll_feedback(owner, &req)
+                .map_err(|ds| ds.ntstatus())
+        });
         match res {
-            Ok(ev) => {
-                let bytes: [u8; FeedbackEvent::WIRE_SIZE] = ev.to_bytes();
-                match request.copy_to_output(&bytes) {
-                    Ok(written) => request.complete_with_info(STATUS_SUCCESS, written),
-                    Err(st) => request.complete(st),
-                }
-            }
-            Err(ds) => request.complete(ds.ntstatus()),
+            Ok(ev) => match request.copy_to_output(&ev.to_bytes()) {
+                Ok(written) => request.complete_with_info(STATUS_SUCCESS, written),
+                Err(st) => request.complete(st),
+            },
+            Err(st) => request.complete(st),
         }
     }
 
@@ -746,20 +740,18 @@ impl DeviceContext {
     }
 
     fn ioctl_set_sc_attributes(&self, request: Request, owner: OwnerToken) {
-        let req = match read_exact(
+        let status = match read_exact(
             &request,
             SteamControllerAttributesRequest::WIRE_SIZE,
             SteamControllerAttributesRequest::from_bytes,
         ) {
-            Ok(r) => r,
-            Err(st) => {
-                request.complete(st);
-                return;
-            }
-        };
-        let status = {
-            let mut state = self.state_lock.lock().unwrap();
-            state.set_sc_attributes(owner, &req).ntstatus()
+            Ok(req) => self
+                .state_lock
+                .lock()
+                .unwrap()
+                .set_sc_attributes(owner, &req)
+                .ntstatus(),
+            Err(st) => st,
         };
         request.complete(status);
     }

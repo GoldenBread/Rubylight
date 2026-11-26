@@ -242,11 +242,10 @@ fn queue_audio_followed(
         capture,
         position,
     };
-    let submitted = queue_audio(shared, tx, copy(data.clone()));
     for (_, feed) in followers.iter() {
         feed.submit_audio(copy(data.clone()));
     }
-    submitted
+    queue_audio(shared, tx, copy(data))
 }
 
 /// Never blocks. A full queue drops the frame and requests an IDR, and until a keyframe goes

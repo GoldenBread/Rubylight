@@ -1,9 +1,9 @@
 //! Settings backup and restore: one ZIP archive with the host's settings
-//! (`sunshine.conf`, which holds the webhooks too), the app list, covers, app
+//! (`sunshine.conf`, which holds webhook URLs/events without secrets), the app list, covers, app
 //! aliases, each device's own settings and the game settings files kept per
 //! device. Pairing identity and credentials (this PC's certificate and key,
 //! the paired devices' certificates, the console sign-in, API tokens and the
-//! webhook secrets) go in only when the user chooses so: they are secrets.
+//! webhook secrets under `credentials/webhook_secrets.json`) go in only when the user chooses so: they are secrets.
 //!
 //! The idea and the tray's export, import and restore follow Foundation
 //! Sunshine v2025.1011.143611 (AlkaidLab/foundation-sunshine#248, GPL-3.0);
@@ -125,22 +125,16 @@ pub fn secret_key(key: &str) -> bool {
 }
 
 /// The configuration as text, without its secrets when `secrets` is false:
-/// secret keys are left out and each webhook's secret is emptied.
+/// secret keys are left out and webhook inline secrets are always stripped.
 fn config_text(config: &Config, secrets: bool) -> String {
-    if secrets {
-        return config.text();
-    }
     let mut values = config.values.clone();
-    values.retain(|key, _| !secret_key(key));
+    if !secrets {
+        values.retain(|key, _| !secret_key(key));
+    }
     if let Some(hooks) = values.get_mut("webhooks")
-        && let Ok(Value::Array(mut list)) = serde_json::from_str::<Value>(hooks)
+        && let Some((stripped, _)) = crate::webhook::split_json_secrets(hooks)
     {
-        for hook in &mut list {
-            if let Some(object) = hook.as_object_mut() {
-                object.insert("secret".into(), Value::String(String::new()));
-            }
-        }
-        *hooks = Value::Array(list).to_string();
+        *hooks = stripped;
     }
     Config { values }.text()
 }
@@ -202,12 +196,19 @@ fn device_settings(paired: &Value) -> Value {
 
 /// The files of `folder` and below, as archive paths under `prefix`.
 fn folder_files(folder: &Path, prefix: &str, out: &mut Vec<(String, PathBuf)>) -> Result<()> {
-    let Ok(entries) = std::fs::read_dir(folder) else {
-        return Ok(());
+    let entries = match std::fs::read_dir(folder) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => {
+            return Err(error).with_context(|| format!("{} could not be read", folder.display()));
+        }
     };
     for entry in entries {
-        let entry = entry?;
+        let entry = entry.with_context(|| format!("reading {}", folder.display()))?;
         let kind = entry.file_type()?;
+        if kind.is_symlink() {
+            continue;
+        }
         let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
             continue;
         };
@@ -219,6 +220,13 @@ fn folder_files(folder: &Path, prefix: &str, out: &mut Vec<(String, PathBuf)>) -
         if kind.is_dir() {
             folder_files(&entry.path(), &path, out)?;
         } else if kind.is_file() {
+            let len = entry.metadata()?.len();
+            if len > MAX_ENTRY {
+                bail!(
+                    "{path} is too large for a settings backup (over {} MiB)",
+                    MAX_ENTRY >> 20
+                );
+            }
             out.push((path, entry.path()));
         }
     }
@@ -342,6 +350,25 @@ pub fn export<W: Write + Seek>(
                 contents.push((name.into(), bytes));
             }
         }
+        // Carry webhook secrets cleanly inside `credentials/webhook_secrets.json`, merging any
+        // unmigrated inline secrets from `sunshine.conf`.
+        if let Some((_, inline)) = config
+            .values
+            .get("webhooks")
+            .and_then(|raw| crate::webhook::split_json_secrets(raw))
+            && !inline.is_empty()
+        {
+            let mut merged =
+                crate::webhook::load_secrets(&crate::webhook::secrets_path(directory))?;
+            for (url, secret) in inline {
+                merged.entry(url).or_insert(secret);
+            }
+            folders.retain(|(listed, _)| listed != crate::webhook::SECRETS_FILE);
+            contents.push((
+                crate::webhook::SECRETS_FILE.into(),
+                crate::webhook::encode_secrets(&merged)?,
+            ));
+        }
     } else if let Some(bytes) = paired {
         let document: Value =
             serde_json::from_slice(&bytes).context("the paired devices file is not JSON")?;
@@ -354,6 +381,20 @@ pub fn export<W: Write + Seek>(
         let bytes = std::fs::read(&path)
             .with_context(|| format!("{} could not be read", path.display()))?;
         contents.push((name, bytes));
+    }
+    if contents.len() > MAX_FILES {
+        bail!("the backup holds more than {MAX_FILES} files");
+    }
+    let mut total_size = 0u64;
+    for (name, bytes) in &contents {
+        let len = bytes.len() as u64;
+        if len > MAX_ENTRY {
+            bail!("{name} is too large for a settings backup");
+        }
+        total_size = total_size.saturating_add(len);
+        if total_size > MAX_ARCHIVE {
+            bail!("the backup exceeds {} MiB", MAX_ARCHIVE >> 20);
+        }
     }
     use zip::write::SimpleFileOptions;
     let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
@@ -400,9 +441,9 @@ fn allowed(path: &str) -> Option<bool> {
         CONFIG | APPS | ALIASES | DEVICES => Some(false),
         PAIRED | CREDENTIALS_FILE => Some(true),
         _ => {
-            let (top, rest) = path.split_once('/')?;
+            let (top, _rest) = path.split_once('/')?;
             match top {
-                COVERS if !rest.contains('/') => Some(false),
+                COVERS => Some(false),
                 GAME_SETTINGS => Some(false),
                 CREDENTIALS_DIR => Some(true),
                 _ => None,
@@ -515,12 +556,21 @@ pub fn read<R: Read + Seek>(reader: R) -> Result<Archive> {
         (DEVICES, "the archive's devices.json"),
         (PAIRED, "the archive's sunshine_state.json"),
         (CREDENTIALS_FILE, "the archive's sunshine_credentials.json"),
+        (
+            crate::webhook::SECRETS_FILE,
+            "the archive's webhook_secrets.json",
+        ),
     ] {
         if let Some(bytes) = files.get(name) {
             json_object(bytes, what)?;
         }
     }
     Ok(Archive { manifest, files })
+}
+
+/// Checks a written archive is readable and matches [`read`]'s checks.
+pub fn verify<R: Read + Seek>(reader: R) -> Result<Manifest> {
+    read(reader).map(|archive| archive.manifest)
 }
 
 impl Archive {

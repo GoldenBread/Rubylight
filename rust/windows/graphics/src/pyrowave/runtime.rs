@@ -71,7 +71,7 @@ impl CompletionWait {
         // SAFETY: Both entry points use the generated Vulkan ABI. The loader and
         // PyroWave device outlive every call through this function pointer.
         unsafe {
-            let loader = libloading::Library::new("vulkan-1.dll")?;
+            let loader = crate::telemetry::system_library("vulkan-1.dll")?;
             let get = loader.get::<p::PFN_vkGetDeviceProcAddr>(b"vkGetDeviceProcAddr\0")?;
             let mut vk_device = ptr::null_mut();
             (api.device_get_vk_device_handles)(

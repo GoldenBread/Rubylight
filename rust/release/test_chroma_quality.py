@@ -1,10 +1,13 @@
 # Local measurement tool tests: they need numpy and pillow, which CI does not install.
 # Run: python -m unittest discover -s rust/release -p test_chroma_quality.py
 import io, pathlib, shutil, tempfile, unittest
-import numpy as np
-from PIL import Image
-import chroma_fixtures as fixtures
-import chroma_quality as quality
+try:
+    import numpy as np
+    from PIL import Image
+    import chroma_fixtures as fixtures
+    import chroma_quality as quality
+except ModuleNotFoundError as exc:
+    raise unittest.SkipTest(f'requires optional dependency ({exc.name})')
 
 
 def planes(rng, width, height, maximum):

@@ -25,7 +25,7 @@ mod webhooks;
 mod webrtc_routes;
 
 #[cfg(test)]
-use auth::SignIns;
+use auth::{BASIC_CACHE, BasicCache, SignIns};
 pub(crate) use auth::{access, authenticated, cookie, refresh_browser};
 use auth::{basic_auth_cross_site, origin_allowed, token_authenticated};
 use axum::{
@@ -234,6 +234,7 @@ async fn guard(State(h): State<Shared>, mut request: Request, next: Next) -> Res
                 .get::<Connection>()
                 .map(|c| c.peer.ip()),
         )
+        .await
     {
         return error(StatusCode::UNAUTHORIZED, "authentication required");
     }
@@ -434,13 +435,20 @@ pub(crate) async fn api(
         return logs::export_crash(&h).await;
     }
     if method == Method::GET && path == "/api/logs/tail" {
-        return logs::tail(&h, &uri);
+        let h = h.clone();
+        return tokio::task::spawn_blocking(move || logs::tail(&h, &uri))
+            .await
+            .unwrap_or_else(|e| error(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()));
     }
     if method == Method::GET && path == "/api/logs/analysis" {
         return logs::analysis(&h).await;
     }
     if method == Method::GET && matches!(path, "/api/logs" | "/api/logs/export") {
-        return logs::export(&h, path);
+        let h = h.clone();
+        let path = path.to_owned();
+        return tokio::task::spawn_blocking(move || logs::export(&h, &path))
+            .await
+            .unwrap_or_else(|e| error(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()));
     }
     if method == Method::GET
         && ((path.starts_with("/api/apps/") && path.ends_with("/cover"))
@@ -449,10 +457,10 @@ pub(crate) async fn api(
         return apps::cover(&h, path, &headers).await;
     }
     if path == "/api/auth/status" {
-        return auth::status(&h, &headers, &connection);
+        return auth::status(&h, &headers, &connection).await;
     }
     if path == "/api/auth/login" {
-        return auth::login(&h, &method, &headers, &connection, &data);
+        return auth::login(&h, &method, &headers, &connection, &data).await;
     }
     if path == "/api/auth/refresh" {
         return auth::refresh(&h, &method, &headers, &connection, &data);

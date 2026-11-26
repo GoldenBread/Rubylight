@@ -427,3 +427,13 @@ export function currentOf(setting: RadeonSetting | undefined): number | null {
   const value = setting?.value;
   return whole(value) ? clampTo(setting, value) : null;
 }
+
+/** Starting FPS cap when enabling a number limit: driver value when positive, else 60 clamped above zero. */
+export function defaultFrameCap(setting: RadeonSetting | undefined): number {
+  const current = currentOf(setting);
+  if (current !== null && current > 0) return current;
+  const range = setting?.range;
+  const min = Math.max(1, range?.min ?? 1);
+  const max = Math.max(min, range?.max ?? 1000);
+  return Math.min(max, Math.max(min, 60));
+}

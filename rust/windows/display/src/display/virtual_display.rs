@@ -39,6 +39,7 @@ pub struct VirtualDisplay {
     driver: Control,
     pub name: String,
     id: u64,
+    registration: u64,
     /// Recovery checks and renewal have separate clocks: a paused owner of a
     /// shared display must not postpone another owner's active recovery.
     pub(super) last_feed: Instant,
@@ -95,7 +96,16 @@ impl VirtualDisplay {
         // removal completes or its heartbeat expires. Keep the same identity.
         let (result, startup_protection) = retry_busy(
             || {
-                let protection = hotplug::Protection::capture()?;
+                let protection = match hotplug::Protection::capture() {
+                    Ok(protection) => protection,
+                    Err(error) => {
+                        tracing::warn!(
+                            error = %format!("{error:#}"),
+                            "could not snapshot monitor names for virtual hotplug protection; continuing with empty baseline"
+                        );
+                        hotplug::Protection::empty()
+                    }
+                };
                 let result = driver.add_bytes(&rubylight_vdd::add_request(
                     id,
                     (width, height, fps),
@@ -109,6 +119,7 @@ impl VirtualDisplay {
             driver,
             name: String::new(),
             id,
+            registration: 0,
             last_feed: Instant::now(),
             last_renew: Instant::now(),
             mode: (width, height, fps),
@@ -132,10 +143,11 @@ impl VirtualDisplay {
         Ok(display)
     }
     /// The display path the driver's create reply names.
-    fn identity(&self, result: &[u8]) -> Result<(LUID, u32)> {
+    fn identity(&mut self, result: &[u8]) -> Result<(LUID, u32)> {
         let reply = rubylight_vdisplay_proto::control::AddReply::decode(result)
             .map_err(|e| anyhow::anyhow!("invalid display driver reply: {e}"))?;
-        rubylight_vdd::register(rubylight_vdd::Owned {
+        let previous = self.registration;
+        self.registration = rubylight_vdd::register(rubylight_vdd::Owned {
             session_id: self.id,
             adapter: (reply.adapter_luid_low, reply.adapter_luid_high),
             target: reply.target_id,
@@ -143,6 +155,7 @@ impl VirtualDisplay {
             listed: None,
             registration: 0, // Assigned by register after this successful ADD.
         });
+        rubylight_vdd::unregister_registration(previous);
         Ok((
             LUID {
                 LowPart: reply.adapter_luid_low,
@@ -315,14 +328,26 @@ impl VirtualDisplay {
     fn check_hotplug(&mut self, stage: &str) -> Result<()> {
         if let Some(protection) = &self.startup_protection {
             if let Err(error) = protection.check(self.hotplug_monitor()?, stage) {
-                // Keeping another display off is a courtesy; a stream that
-                // cannot start is worse than one that leaves it on.
-                tracing::warn!(
-                    error = format!("{error:#}"),
-                    stage,
-                    "could not keep inactive displays off; streaming without startup protection"
-                );
-                self.startup_protection = None;
+                if stage == "created"
+                    && error
+                        .to_string()
+                        .contains("display layout changed during virtual hotplug protection")
+                {
+                    tracing::debug!(
+                        error = %format!("{error:#}"),
+                        stage,
+                        "virtual hotplug protection deferred through concurrent startup transition"
+                    );
+                } else {
+                    // Keeping another display off is a courtesy; a stream that
+                    // cannot start is worse than one that leaves it on.
+                    tracing::warn!(
+                        error = format!("{error:#}"),
+                        stage,
+                        "could not keep inactive displays off; streaming without startup protection"
+                    );
+                    self.startup_protection = None;
+                }
             }
             self.refresh_name()?;
         }
@@ -573,7 +598,16 @@ impl VirtualDisplay {
         self.driver = Control::open_recovering()?;
         // A restarted driver has forgotten the render adapter.
         apply_render_adapter(&self.driver, &self.options);
-        let protection = hotplug::Protection::capture()?;
+        let protection = match hotplug::Protection::capture() {
+            Ok(protection) => protection,
+            Err(error) => {
+                tracing::warn!(
+                    error = %format!("{error:#}"),
+                    "could not snapshot monitor names during virtual display recovery; continuing with empty baseline"
+                );
+                hotplug::Protection::empty()
+            }
+        };
         let response = self.driver.add_bytes(&rubylight_vdd::add_request(
             self.id,
             self.mode,
@@ -583,12 +617,15 @@ impl VirtualDisplay {
         let previous_offered = std::mem::replace(&mut self.offered, vec![self.mode]);
         let previous_protection = self.startup_protection.replace(protection);
         let previous_route = self.driver_route;
+        let previous_registration = self.registration;
         let previous_switched_on = self.switched_on;
         if let Err(error) = self.resolve(&response) {
             DisplayProvider::remove(&self.driver, self.id);
+            rubylight_vdd::unregister_registration(self.registration);
             self.offered = previous_offered;
             self.startup_protection = previous_protection;
             self.driver_route = previous_route;
+            self.registration = previous_registration;
             self.switched_on = previous_switched_on;
             return Err(error);
         }
@@ -603,6 +640,7 @@ impl VirtualDisplay {
 impl Drop for VirtualDisplay {
     fn drop(&mut self) {
         DisplayProvider::remove(&self.driver, self.id);
+        rubylight_vdd::unregister_registration(self.registration);
     }
 }
 

@@ -165,6 +165,10 @@ pub struct Session<P = (), A = ()> {
         std::sync::Mutex<Option<butterpollo_media_policy::statistical_fec::StatisticalFec>>,
     /// Whether `client_fec` is set: frames skip its lock otherwise.
     client_fec_on: AtomicBool,
+    /// Bumped whenever `client_fec` changes so whole-payload sizing caches outside the lock.
+    fec_revision: AtomicU64,
+    last_fec_report_at: std::sync::Mutex<Option<Instant>>,
+    whole_payload_cache: std::sync::Mutex<Option<fec::WholePayloadCache>>,
     /// Whether the encoder's bitrate leaves room for the client-chosen FEC
     /// share in `fec_split`, latched at the last fence; see [`Self::encoder_bitrate`].
     fec_split_on: AtomicBool,
@@ -307,6 +311,9 @@ impl<P, A> Session<P, A> {
             adaptive_fec: Default::default(),
             client_fec: Default::default(),
             client_fec_on: AtomicBool::new(false),
+            fec_revision: AtomicU64::new(1),
+            last_fec_report_at: Default::default(),
+            whole_payload_cache: Default::default(),
             fec_split_on: AtomicBool::new(false),
             fec_split: AtomicU32::new(0),
             fec_split_launch: AtomicU32::new(launch_share),

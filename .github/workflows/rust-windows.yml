@@ -8,7 +8,7 @@ on:
     branches: [main, 'wip/**']
     # A release tag publishes the GitHub release (tag and publish below).
     # GitHub ignores paths for tag pushes, so a tag always runs.
-    tags: ['v[2-9].*']
+    tags: ['v[0-9]*']
     # Changes to docs and Markdown alone don't run CI; a release of such a
     # commit builds it in the windows job. The host builds Nightjar's protocol
     # crate from client/protocol by path.
@@ -62,6 +62,17 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           python3 rust/release/notes.py "$tag" --out "$RUNNER_TEMP/body.md"
+      - name: Check main CI
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          bad=$(gh run list -R "$GITHUB_REPOSITORY" --workflow rust-windows.yml --branch main --commit "$GITHUB_SHA" \
+            --event push --limit 1 --json databaseId,status,conclusion \
+            --jq '.[0] | select(.status == "completed" and (.conclusion == "failure" or .conclusion == "timed_out" or .conclusion == "startup_failure" or .conclusion == "action_required")) | "\(.databaseId) (\(.conclusion))"')
+          if [ -n "$bad" ]; then
+            echo "::error::main CI run $bad failed on $GITHUB_SHA; refusing to release a failed commit"
+            exit 1
+          fi
       - id: built
         env:
           GH_TOKEN: ${{ github.token }}
@@ -205,19 +216,7 @@ jobs:
           node --test "*.test.mjs"
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
       - name: Check release notes tooling
-        run: |
-          python -m unittest discover -s rust/release -p test_release.py -v
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          python -m unittest discover -s rust/release -p test_gpu_hang.py -v
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          python -m unittest discover -s rust/release -p test_user_idle.py -v
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          python -m unittest discover -s rust/release -p test_e2e_result.py -v
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          python -m unittest discover -s rust/release -p test_timing_report.py -v
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          python -m unittest discover -s rust/release -p test_cadence_matrix.py -v
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+        run: python -m unittest discover -s rust/release -p "test_*.py" -v
       # Nothing from these jobs ships, so a signed release's tests and
       # clippy use the cache too.
       - uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae
@@ -334,7 +333,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh api "repos/$env:GITHUB_REPOSITORY/releases?per_page=100" > "$env:RUNNER_TEMP\releases.json"
+          gh api --paginate --slurp "repos/$env:GITHUB_REPOSITORY/releases?per_page=100" `
+            --jq '[.[][] | select((.prerelease | not) or (.assets | any(.name | test("-windows-x64\\.zip$"))))]' > "$env:RUNNER_TEMP\releases.json"
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           "BUTTERPOLLO_RELEASES_JSON=$env:RUNNER_TEMP\releases.json" >> $env:GITHUB_ENV
       - name: Build and package Rust

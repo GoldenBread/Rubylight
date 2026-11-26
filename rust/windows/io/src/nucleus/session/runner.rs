@@ -10,6 +10,7 @@ use butterpollo_session::audio_scope::Identity;
 use butterpollo_session::nucleus::coop::{self, End, Phase};
 use butterpollo_session::nucleus::profile::TITLE;
 use std::collections::BTreeSet;
+use std::ops::ControlFlow;
 use std::os::windows::io::OwnedHandle;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, mpsc};
@@ -134,9 +135,9 @@ impl Runner {
         // click could start the game again.
         if !self.clicked
             && self.progress.1 == 0
-            && let Some(end) = self.click(&job, now)
+            && let ControlFlow::Break(end) = self.click(&job, now)
         {
-            return Some(end);
+            return end;
         }
         let sizes = self.shared.sizes.lock().unwrap().clone();
         let pass = match self.keeper.pass(self.desktop.as_mut(), &job, &sizes) {
@@ -307,21 +308,25 @@ impl Runner {
 
     /// Load the host's profile: Nucleus shows Play then, or starts the game
     /// by itself for a profile that plays by itself.
-    fn click(&mut self, job: &BTreeSet<u32>, now: Instant) -> Option<End> {
+    fn click(&mut self, job: &BTreeSet<u32>, now: Instant) -> ControlFlow<Option<End>> {
         let label = match self.desktop.label(job, TITLE) {
             Ok(Some(label)) => label,
             Ok(None) => {
                 self.look(job);
-                return None;
+                return ControlFlow::Continue(());
             }
-            Err(error) => return Some(End::Failed(format!("{error:#}"))),
+            Err(error) => {
+                return ControlFlow::Break(
+                    self.failed_pass(error.context("looking for Nucleus Co-op's profile list")),
+                );
+            }
         };
         let listed = *self.listed_at.get_or_insert(now);
         if now < listed + self.settle {
-            return None;
+            return ControlFlow::Continue(());
         }
         self.press(job, label, now);
-        None
+        ControlFlow::Continue(())
     }
 
     /// Click the profile's entry in Nucleus' list.

@@ -572,3 +572,18 @@ fn disabling_hdr_updates_effective_config_info_and_hdr_control_payload() {
     assert_eq!(effective.color_matrix(), 1);
     assert_eq!(initial_meta.wire(session.hdr_active())[0], 0);
 }
+
+#[test]
+fn latest_needs_release_clears_when_generation_released() -> anyhow::Result<()> {
+    let latest = super::super::capture::Latest::<u8>::new();
+    latest.publish_captured(Arc::new(1), std::time::Instant::now())?;
+    let consumer = latest.subscribe(std::sync::Weak::new())?;
+    assert!(!latest.needs_release(&consumer));
+    latest.begin_recovery()?;
+    assert!(latest.needs_release(&consumer));
+    assert!(!latest.consumers_released());
+    latest.release_generation(&consumer);
+    assert!(!latest.needs_release(&consumer));
+    assert!(latest.consumers_released());
+    Ok(())
+}

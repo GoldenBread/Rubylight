@@ -96,6 +96,8 @@ impl Keeper {
         self.moves.retain(|window, _| live.contains(window));
         for candidate in candidates {
             let Some(to) = placement(candidate.rect, candidate.monitor, target) else {
+                self.moves
+                    .remove(&(candidate.window.0 as isize, candidate.pid));
                 continue;
             };
             pass.pending += 1;

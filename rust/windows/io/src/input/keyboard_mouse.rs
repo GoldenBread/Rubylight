@@ -15,17 +15,13 @@ impl Injector {
     }
     /// Send the pass's keyboard and mouse input, and record the presses
     /// Windows took. A refused press is not held.
-    pub(super) fn flush(&mut self) {
+    pub(super) fn flush_locked(&mut self, _order: &std::sync::MutexGuard<'_, ()>) {
         if self.pending.inputs.is_empty() {
             return;
         }
-        let (sent, refused) = {
-            let _order = SEND_ORDER.lock().unwrap();
-            let sent = self.deliver(&self.pending.inputs);
-            let refused = (sent < self.pending.inputs.len())
-                .then(|| std::io::Error::last_os_error().to_string());
-            (sent, refused)
-        };
+        let sent = self.deliver(&self.pending.inputs);
+        let refused =
+            (sent < self.pending.inputs.len()).then(|| std::io::Error::last_os_error().to_string());
         self.pending.inputs.clear();
         let mut events = std::mem::take(&mut self.pending.events);
         for (end, press) in events.drain(..) {
@@ -291,6 +287,7 @@ impl Injector {
             always_send_scancodes,
         )
     }
+    #[cfg(test)]
     pub(super) fn held(
         &self,
         keyboard: bool,
@@ -299,9 +296,18 @@ impl Injector {
         owned: bool,
         input: INPUT,
     ) -> Result<()> {
-        // Decided under HELD, sent after it is released: SEND_ORDER keeps the send
-        // ahead of any later update's.
-        let _order = SEND_ORDER.lock().unwrap();
+        let order = SEND_ORDER.lock().unwrap();
+        self.held_locked(&order, keyboard, id, down, owned, input)
+    }
+    pub(super) fn held_locked(
+        &self,
+        _order: &std::sync::MutexGuard<'_, ()>,
+        keyboard: bool,
+        id: u32,
+        down: bool,
+        owned: bool,
+        input: INPUT,
+    ) -> Result<()> {
         let mut send = None;
         Self::update_held(
             &mut HELD.lock().unwrap(),
@@ -341,7 +347,16 @@ impl Injector {
         })
     }
     pub(super) fn release_owned(&self, keyboard: bool, id: u32, input: INPUT) -> Result<()> {
-        let _order = SEND_ORDER.lock().unwrap();
+        let order = SEND_ORDER.lock().unwrap();
+        self.release_owned_locked(&order, keyboard, id, input)
+    }
+    pub(super) fn release_owned_locked(
+        &self,
+        _order: &std::sync::MutexGuard<'_, ()>,
+        keyboard: bool,
+        id: u32,
+        input: INPUT,
+    ) -> Result<()> {
         Self::release_held(&mut HELD.lock().unwrap(), (keyboard, id), input, |inputs| {
             self.send(inputs)
         })

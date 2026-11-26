@@ -68,28 +68,49 @@ fn upgrades_repair_legacy_profile_ownership_and_preserve_settings() -> Result<()
     Ok(())
 }
 #[test]
-fn credentials_are_locked_again_when_resetting_the_profile_fails() -> Result<()> {
-    // The reset makes the credentials inherit the profile's read access
-    // for users; a file it cannot reset must not leave them that way.
+fn credentials_and_backups_are_restricted_directly_without_resetting_to_users_read() -> Result<()> {
     let temp = tempfile::tempdir()?;
     let profile = temp.path().join("Butterpollo").join("config");
-    let mut restricted = Vec::new();
+    let restricted = std::cell::RefCell::new(Vec::new());
+    let inherited = std::cell::RefCell::new(Vec::new());
     let error = secure_profile_with(
         &profile,
         |folder, users_read| {
-            restricted.push((folder.to_owned(), users_read));
+            assert!(
+                inherited.borrow().is_empty(),
+                "private folders must be locked before any inherit pass"
+            );
+            restricted
+                .borrow_mut()
+                .push((folder.to_owned(), users_read));
             Ok(())
         },
-        |_| bail!("resetting permissions failed (5)"),
+        |folder| {
+            inherited.borrow_mut().push(folder.to_owned());
+            if folder == profile {
+                bail!("resetting permissions failed (5)");
+            }
+            Ok(())
+        },
     )
     .unwrap_err();
     assert!(format!("{error:#}").contains("resetting permissions failed"));
     assert_eq!(
-        restricted,
+        *restricted.borrow(),
         [
             (temp.path().join("Butterpollo"), true),
+            (profile.clone(), true),
             (profile.join("credentials"), false),
             (profile.join("backups"), false),
+        ]
+    );
+    assert_eq!(
+        *inherited.borrow(),
+        [
+            profile.join("credentials"),
+            profile.join("backups"),
+            profile.clone(),
+            temp.path().join("Butterpollo"),
         ]
     );
     Ok(())
@@ -334,7 +355,11 @@ fn a_legacy_repair_that_failed_partway_is_finished_by_the_next_run() -> Result<(
     let error = secure_profile_with(
         &profile,
         |folder, users_read| {
-            system::restrict_except(folder, users_read, std::slice::from_ref(&nucleus))
+            if std::fs::symlink_metadata(folder).is_err() {
+                system::create_restricted(folder, users_read)
+            } else {
+                system::restrict_except(folder, users_read, std::slice::from_ref(&nucleus))
+            }
         },
         |_| bail!("resetting permissions failed (5)"),
     )

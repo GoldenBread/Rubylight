@@ -98,6 +98,7 @@ impl Encoder {
                     self.frame_bytes = 0;
                 }
                 self.release_vpe_kept(stale.pts);
+                self.references.disable();
             }
             match unreturned_notice(self.probe, stale.map(|s| s.pts)) {
                 Unreturned::Warning(message) => self.warnings.event(

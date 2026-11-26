@@ -41,11 +41,13 @@ def anchor(version):
     return '#new-in-' + label(version).replace('.', '')
 
 
+writes = []
+
 cargo = root / 'Cargo.toml'
 text = cargo.read_text(encoding='utf-8')
 old = re.search(r'(?m)^version = "([^"]+)"', text)[1]
 assert old != new, f'already {new}'
-cargo.write_text(text.replace(f'version = "{old}"', f'version = "{new}"', 1), encoding='utf-8', newline='')
+writes.append((cargo, text.replace(f'version = "{old}"', f'version = "{new}"', 1)))
 
 # Cargo.lock: only the workspace's own crates carry the workspace version.
 workspace_members = tomllib.loads(text)['workspace']['members']
@@ -56,10 +58,10 @@ members = {
     if pkg.get('version') == {'workspace': True}
 }
 lock = root / 'Cargo.lock'
-text, count = re.subn(r'(?m)^(name = "(?:%s)"\nversion = )"%s"$' % ('|'.join(map(re.escape, members)), re.escape(old)),
-                      lambda m: f'{m[1]}"{new}"', lock.read_text(encoding='utf-8'))
+lock_text, count = re.subn(r'(?m)^(name = "(?:%s)"\nversion = )"%s"$' % ('|'.join(map(re.escape, members)), re.escape(old)),
+                           lambda m: f'{m[1]}"{new}"', lock.read_text(encoding='utf-8'))
 assert count == len(members), f'updated {count} of {len(members)} workspace crates in Cargo.lock'
-lock.write_text(text, encoding='utf-8', newline='')
+writes.append((lock, lock_text))
 
 short = re.compile(r'(?<![\w.])%s(?![\w])' % re.escape(label(old)))
 # Only the short labels that name the release to download: a sentence about
@@ -67,22 +69,22 @@ short = re.compile(r'(?<![\w.])%s(?![\w])' % re.escape(label(old)))
 current = re.compile(rf'(?<=Download )(?:{VERSION}|rc\.\d+)(?![\w])|(?<=For )(?:{VERSION}|rc\.\d+)(?=,)')
 for name in ('README.md', 'docs/README.md', 'docs/getting-started.md', 'rust/README.md'):
     path = root / name
-    text = path.read_text(encoding='utf-8')
-    text = re.sub(r'(\[(?:Download [^]]+|release)\]\(https://github.com/RamazanKara/Rubylight/releases/tag/)[^)]+\)',
-                  lambda m: f'{m[1]}v{new})', text)
+    doc = path.read_text(encoding='utf-8')
+    doc = re.sub(r'(\[(?:Download [^]]+|release)\]\(https://github.com/RamazanKara/Rubylight/releases/tag/)[^)]+\)',
+                 lambda m: f'{m[1]}v{new})', doc)
     # Releases since rc.30 are named Rubylight; earlier ones Butterpollo.
     for setup in ('butterpollo-setup', 'rubylight-setup'):
-        text = re.sub(rf'{setup}-{VERSION}\.exe', f'rubylight-setup-{new}.exe', text)
+        doc = re.sub(rf'{setup}-{VERSION}\.exe', f'rubylight-setup-{new}.exe', doc)
     for package in ('butterpollo-rust', 'rubylight'):
-        text = re.sub(rf'{package}-{VERSION}-windows-x64\.zip', f'rubylight-{new}-windows-x64.zip', text)
-    text = text.replace(f'The workspace version is **{old}**', f'The workspace version is **{new}**')
-    path.write_text(current.sub(label(new), text), encoding='utf-8', newline='')
+        doc = re.sub(rf'{package}-{VERSION}-windows-x64\.zip', f'rubylight-{new}-windows-x64.zip', doc)
+    doc = doc.replace(f'The workspace version is **{old}**', f'The workspace version is **{new}**')
+    writes.append((path, current.sub(label(new), doc)))
 
 for name in ('package.json', 'package-lock.json'):
     path = root / 'rust/web' / name
-    text = re.sub(r'("version": )"[^"]+"', lambda m: f'{m[1]}"{new}"',
-                  path.read_text(encoding='utf-8'), count=2 if name == 'package-lock.json' else 1)
-    path.write_text(text, encoding='utf-8', newline='')
+    pkg = re.sub(r'("version": )"[^"]+"', lambda m: f'{m[1]}"{new}"',
+                 path.read_text(encoding='utf-8'), count=2 if name == 'package-lock.json' else 1)
+    writes.append((path, pkg))
 
 notes = root / 'rust/RELEASE_NOTES.md'
 lines = fragments.merge(notes.read_text(encoding='utf-8').split('\n'), bullets)
@@ -110,12 +112,15 @@ if f'## New in {label(new)}' not in lines:
     body = args.notes.read_text(encoding='utf-8').strip().split('\n') if args.notes else []
     body = (pending + [''] + body) if pending and body else (pending or body or ['- '])
     lines[at:at] = [f'## New in {label(new)}', '', *body, '']
-text = '\n'.join(lines)
+notes_text = '\n'.join(lines)
 for setup in ('butterpollo-setup', 'rubylight-setup'):
-    text = text.replace(f'{setup}-{old}.exe` installs', f'rubylight-setup-{new}.exe` installs')
+    notes_text = notes_text.replace(f'{setup}-{old}.exe` installs', f'rubylight-setup-{new}.exe` installs')
 for package in ('butterpollo-rust', 'rubylight'):
-    text = text.replace(f'{package}-{old}-windows-x64.zip`', f'rubylight-{new}-windows-x64.zip`')
-notes.write_text(text, encoding='utf-8', newline='')
+    notes_text = notes_text.replace(f'{package}-{old}-windows-x64.zip`', f'rubylight-{new}-windows-x64.zip`')
+writes.append((notes, notes_text))
+
+for path, content in writes:
+    path.write_text(content, encoding='utf-8', newline='')
 for path in fragment_files:
     path.unlink()
 if fragment_files:

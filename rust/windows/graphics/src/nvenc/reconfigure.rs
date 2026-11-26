@@ -107,6 +107,12 @@ impl Session {
         }
         let before = self.config.rcParams.averageBitRate;
         let after = bitrate * 1000;
+        let ceiling = if self.vbv_ceiling > 0 {
+            Tuning::vbv_bits(bitrate, self.stream.fps_millihz(), self.vbv_increase)
+                .max(MIN_VBV_BITS as u32)
+        } else {
+            0
+        };
         let scale = |bits: u32| {
             if bits > 0 && before > 0 {
                 (u64::from(after) * u64::from(bits) / u64::from(before))
@@ -115,8 +121,11 @@ impl Session {
                 bits
             }
         };
-        let scaled_vbv = scale(self.config.rcParams.vbvBufferSize);
-        let ceiling = scale(self.vbv_ceiling);
+        let scaled_vbv = if ceiling > 0 {
+            scale(self.config.rcParams.vbvBufferSize).min(ceiling)
+        } else {
+            scale(self.config.rcParams.vbvBufferSize)
+        };
         let capped_vbv = (with_cap && ceiling > 0 && self.dynamic_bitrate)
             .then(|| {
                 self.frame_cap_target.map(|bytes| {
@@ -230,16 +239,43 @@ impl Session {
                 .iter()
                 .any(|p| p.frame > last && (p.idr || p.cut_limit.is_some()))
         {
+            self.rfi_fallbacks += 1;
+            tracing::debug!(
+                first,
+                last,
+                fallbacks = self.rfi_fallbacks,
+                "NVENC RFI span crosses keyframe; falling back to IDR"
+            );
             return Ok(false);
         }
+        let started = Instant::now();
         self.drain()?;
+        let drain_ms = started.elapsed().as_secs_f64() * 1e3;
         let _guard = self.guard()?;
         match self
             .references
             .plan(first, last, self.retained, self.invalidation)
         {
-            Recovery::AlreadyApplied => Ok(true),
-            Recovery::Idr => Ok(false),
+            Recovery::AlreadyApplied => {
+                tracing::debug!(
+                    first,
+                    last,
+                    drain_ms,
+                    "NVENC RFI drain completed; invalidation already covered"
+                );
+                Ok(true)
+            }
+            Recovery::Idr => {
+                self.rfi_fallbacks += 1;
+                tracing::debug!(
+                    first,
+                    last,
+                    drain_ms,
+                    fallbacks = self.rfi_fallbacks,
+                    "NVENC RFI drain finished; falling back to IDR"
+                );
+                Ok(false)
+            }
             Recovery::Invalidate { first, last } => {
                 for frame in first..=last {
                     self.check(
@@ -252,6 +288,12 @@ impl Session {
                     )?;
                 }
                 self.references.applied(first, last);
+                tracing::debug!(
+                    first,
+                    last,
+                    drain_ms,
+                    "NVENC RFI invalidated reference frames"
+                );
                 Ok(true)
             }
         }

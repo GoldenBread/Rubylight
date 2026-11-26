@@ -257,10 +257,19 @@ fn same_library(a: &Path, b: &Path) -> bool {
 
 /// For an .exe below `<library>\steamapps\common\<folder>`, on this PC's
 /// drives: that `steamapps` folder, `<folder>`, and the .exe's path below
-/// it. Lexically resolves `.` and `..` segments so traversal inside a Steam
-/// library (such as `win64\..\win64\cs2.exe`) still resolves to its app.
+/// it. Tries the path lexically first so a game folder moved elsewhere and
+/// linked back into `steamapps\common` (`mklink /J`) still resolves to its
+/// Steam app, then falls back to `canonicalize` for an alias pointing into a
+/// Steam library.
 pub(super) fn library_folder(exe: &Path) -> Option<(PathBuf, String, String)> {
-    let local = crate::nucleus::generic::on_this_pc(&exe.to_string_lossy())?;
+    library_folder_lexical(exe).or_else(|| {
+        let canonical = std::fs::canonicalize(exe).ok()?;
+        library_folder_lexical(&canonical)
+    })
+}
+
+fn library_folder_lexical(source: &Path) -> Option<(PathBuf, String, String)> {
+    let local = crate::nucleus::generic::on_this_pc(&source.to_string_lossy())?;
     let mut raw = local.split('\\');
     let root = raw.next()?;
     let bytes = root.as_bytes();
@@ -284,9 +293,21 @@ pub(super) fn library_folder(exe: &Path) -> Option<(PathBuf, String, String)> {
     let at = (1..parts.len().saturating_sub(3))
         .rev()
         .find(|&at| is(at, "steamapps") && is(at + 1, "common"))?;
+    let library = PathBuf::from(parts[..=at].join("\\"));
+    let game_folder = &parts[at + 2];
+    if let Ok(common_real) = std::fs::canonicalize(library.join("common").join(game_folder))
+        && crate::nucleus::generic::on_this_pc(&common_real.to_string_lossy()).is_none()
+    {
+        return None;
+    }
+    if let Ok(exe_real) = std::fs::canonicalize(source)
+        && crate::nucleus::generic::on_this_pc(&exe_real.to_string_lossy()).is_none()
+    {
+        return None;
+    }
     Some((
-        PathBuf::from(parts[..=at].join("\\")),
-        parts[at + 2].to_string(),
+        library,
+        (*game_folder).to_string(),
         parts[at + 3..].join("\\"),
     ))
 }

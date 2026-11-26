@@ -253,14 +253,22 @@ pub(super) async fn play_page(
     uri: axum::http::Uri,
 ) -> Response {
     let root = h.assets.join("play");
-    if !root.join("index.html").is_file() {
-        return error(
-            StatusCode::NOT_FOUND,
-            "the play page is not installed on this host",
-        );
-    }
-    let path = uri.path().strip_prefix("/play").unwrap_or_default();
-    app_file(&root, &method, path, GUEST_POLICY)
+    let path = uri
+        .path()
+        .strip_prefix("/play")
+        .unwrap_or_default()
+        .to_owned();
+    tokio::task::spawn_blocking(move || {
+        if !root.join("index.html").is_file() {
+            return error(
+                StatusCode::NOT_FOUND,
+                "the play page is not installed on this host",
+            );
+        }
+        app_file(&root, &method, &path, GUEST_POLICY)
+    })
+    .await
+    .unwrap_or_else(|e| error(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()))
 }
 
 /// `GET /play/signal`: the play page's socket, protocol v2 as on `webrtc_port`. It needs the
@@ -318,14 +326,22 @@ pub(super) async fn guest_page(
     uri: axum::http::Uri,
 ) -> Response {
     let root = h.assets.join("guest");
-    if !root.join("index.html").is_file() {
-        return error(
-            StatusCode::NOT_FOUND,
-            "the guest page is not installed on this host",
-        );
-    }
-    let path = uri.path().strip_prefix("/guest").unwrap_or_default();
-    app_file(&root, &method, path, GUEST_POLICY)
+    let path = uri
+        .path()
+        .strip_prefix("/guest")
+        .unwrap_or_default()
+        .to_owned();
+    tokio::task::spawn_blocking(move || {
+        if !root.join("index.html").is_file() {
+            return error(
+                StatusCode::NOT_FOUND,
+                "the guest page is not installed on this host",
+            );
+        }
+        app_file(&root, &method, &path, GUEST_POLICY)
+    })
+    .await
+    .unwrap_or_else(|e| error(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()))
 }
 
 /// The console's own response headers (`guard`), for the guest routes, which it does not
@@ -358,8 +374,18 @@ pub(super) async fn site(
     headers: HeaderMap,
 ) -> Response {
     let root = state.0.assets.clone();
-    if root.join("index.html").is_file() {
-        return app_file(&root, &method, uri.path(), APP_POLICY);
+    let check_method = method.clone();
+    let check_path = uri.path().to_owned();
+    let served = tokio::task::spawn_blocking(move || {
+        root.join("index.html")
+            .is_file()
+            .then(|| app_file(&root, &check_method, &check_path, APP_POLICY))
+    })
+    .await
+    .ok()
+    .flatten();
+    if let Some(response) = served {
+        return response;
     }
     crate::console::page(state, connection, method, uri, headers).await
 }

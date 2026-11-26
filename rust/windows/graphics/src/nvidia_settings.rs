@@ -17,7 +17,7 @@
 //! it could not put back.
 
 use crate::radeon::{
-    BackendError, GpuInfo, RadeonBackend,
+    BackendError, Entry, GpuInfo, RadeonBackend, RawSettingKeys,
     model::{ChoiceOption, Kind, Range, Setting, State, Value, Writable},
 };
 use anyhow::Result;
@@ -80,12 +80,90 @@ const LOW_LATENCY: &[((u32, u32, u32), &str)] =
 
 /// The DWORD settings of the DRS global profile.
 pub trait Store {
-    /// The stored value, None when the global profile does not store the key.
+    /// The stored value, None when the global profile does not store the key (or only inherits it).
     fn get(&mut self, id: u32) -> Result<Option<u32>>;
+    /// The value stored directly in the global profile itself (`own == true`), None when absent/inherited.
+    fn get_own(&mut self, id: u32) -> Result<Option<u32>> {
+        self.get(id)
+    }
     fn set(&mut self, id: u32, value: u32) -> Result<()>;
+    fn delete(&mut self, id: u32) -> Result<()>;
     fn save(&mut self) -> Result<()>;
     /// The driver version, 57186 for 571.86.
     fn driver(&mut self) -> Option<u32>;
+}
+
+fn keys_for(id: &str) -> &'static [u32] {
+    match id {
+        "nvidia_low_latency.mode" => &[PRERENDERLIMIT, ULL_CPL_STATE, ULL_ENABLED],
+        "nvidia_frame_rate_limit.fps" => &[FRL_FPS],
+        "nvidia_vsync.mode" => &[VSYNCMODE],
+        "nvidia_power.mode" => &[PREFERRED_PSTATE],
+        "nvidia_texture_filtering.quality" => &[QUALITY_ENHANCEMENTS],
+        "nvidia_anisotropic_filtering.mode" => &[ANISO_MODE_SELECTOR, ANISO_MODE_LEVEL],
+        "nvidia_smooth_motion.enabled" => &[SMOOTH_MOTION, SMOOTH_MOTION_APIS],
+        _ => &[],
+    }
+}
+
+/// Snapshot raw profile-own presence of every DRS key belonging to `id` before modification.
+pub(crate) fn snapshot_keys(
+    store: &mut impl Store,
+    id: &str,
+) -> Result<Option<RawSettingKeys>, BackendError> {
+    let fail = |e: anyhow::Error| BackendError(format!("{e:#}"));
+    let keys = keys_for(id);
+    if keys.is_empty() {
+        return Ok(None);
+    }
+    let mut out = Vec::with_capacity(keys.len());
+    for &key in keys {
+        out.push((key, store.get_own(key).map_err(fail)?));
+    }
+    Ok(Some(out))
+}
+
+/// Restore journaled raw DRS key presence/values (including deleting absent keys or restoring
+/// FRL values above `0x3FF`).
+pub(crate) fn restore_raw_keys(
+    store: &mut impl Store,
+    entry: &Entry,
+) -> Result<bool, BackendError> {
+    let fail = |e: anyhow::Error| BackendError(format!("{e:#}"));
+    if let Some(keys) = &entry.raw {
+        for &(key, original) in keys {
+            match original {
+                Some(raw) => store.set(key, raw).map_err(fail)?,
+                None => store.delete(key).map_err(fail)?,
+            }
+        }
+        store.save().map_err(fail)?;
+        for &(key, expected) in keys {
+            let actual = store.get_own(key).map_err(fail)?;
+            if actual != expected {
+                return Err(BackendError(format!(
+                    "key {key:#x}: wrote {expected:?} and the driver reads back {actual:?}"
+                )));
+            }
+        }
+        return Ok(true);
+    }
+    // Legacy journal entries without `raw` may still carry an original frame limit above 0x3FF.
+    if entry.id == "nvidia_frame_rate_limit.fps"
+        && let Value::Int(fps) = entry.original
+        && let Ok(raw) = u32::try_from(fps)
+    {
+        store.set(FRL_FPS, raw).map_err(fail)?;
+        store.save().map_err(fail)?;
+        let actual = store.get(FRL_FPS).map_err(fail)?;
+        if actual != Some(raw) {
+            return Err(BackendError(format!(
+                "wrote {raw} and the driver reads back {actual:?}"
+            )));
+        }
+        return Ok(true);
+    }
+    Ok(false)
 }
 
 fn value(store: &mut impl Store, id: u32) -> Result<u32> {
@@ -354,9 +432,21 @@ impl Store for Global {
         use crate::nvidia_profile::Drs;
         Ok(self.api.setting(self.profile, id)?.map(|v| v.value))
     }
+    fn get_own(&mut self, id: u32) -> Result<Option<u32>> {
+        use crate::nvidia_profile::Drs;
+        Ok(self
+            .api
+            .setting(self.profile, id)?
+            .filter(|v| v.own)
+            .map(|v| v.value))
+    }
     fn set(&mut self, id: u32, value: u32) -> Result<()> {
         use crate::nvidia_profile::Drs;
         self.api.set_setting(self.profile, id, value)
+    }
+    fn delete(&mut self, id: u32) -> Result<()> {
+        use crate::nvidia_profile::Drs;
+        self.api.delete_setting(self.profile, id)
     }
     fn save(&mut self) -> Result<()> {
         use crate::nvidia_profile::Drs;
@@ -394,8 +484,33 @@ impl RadeonBackend for NvidiaBackend {
     fn write(&mut self, _gpu: i32, id: &str, value: &Value) -> Result<(), BackendError> {
         write(&mut Global::open()?, id, value)
     }
+    fn snapshot_keys(
+        &mut self,
+        _gpu: i32,
+        id: &str,
+    ) -> Result<Option<RawSettingKeys>, BackendError> {
+        snapshot_keys(&mut Global::open()?, id)
+    }
+    fn restore_raw(&mut self, entry: &Entry) -> Result<bool, BackendError> {
+        restore_raw_keys(&mut Global::open()?, entry)
+    }
     fn gpus(&mut self) -> Result<Vec<GpuInfo>, BackendError> {
         nvidia_gpus()
+    }
+    fn gpu_identities(&mut self) -> Vec<crate::radeon::control::GpuIdentity> {
+        crate::capture::gpus()
+            .map(|gpus| {
+                gpus.into_iter()
+                    .filter(|gpu| butterpollo_media_policy::encoder_gpu::is_nvidia(gpu.vendor))
+                    .enumerate()
+                    .map(|(index, gpu)| crate::radeon::control::GpuIdentity {
+                        id: index as i32,
+                        pnp_id: gpu.pnp_id,
+                        device_id: Some(gpu.device),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 }
 

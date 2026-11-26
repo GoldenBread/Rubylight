@@ -5,7 +5,7 @@
 //! passed (`docs/wake-and-audio-design.md`, A.3). Fast Startup is left alone:
 //! only the console offers to turn it off.
 use crate::net_adapter::{self, MEDIUM_WIFI, PhysicalAdapter};
-use anyhow::{Context, Result, bail};
+use anyhow::{Result, bail};
 use std::{path::Path, time::Duration};
 
 const CHOICE: &str = "wake-on-lan.json";
@@ -26,16 +26,12 @@ pub fn selected(profile: &Path, explicit: Option<bool>) -> bool {
 }
 
 pub fn remember(profile: &Path, enabled: bool) -> Result<()> {
-    std::fs::create_dir_all(profile)?;
-    std::fs::write(
-        profile.join(CHOICE),
-        if enabled {
-            br#"{"enabled":true}"#.as_slice()
-        } else {
-            br#"{"enabled":false}"#.as_slice()
-        },
+    crate::usbip::remember_choice(
+        profile,
+        CHOICE,
+        enabled,
+        "saving the Wake-on-LAN installer choice",
     )
-    .context("saving the Wake-on-LAN installer choice")
 }
 
 /// After an update, with `explicit` from `--wake-on-lan`/`--no-wake-on-lan`:

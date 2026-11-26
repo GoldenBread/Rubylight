@@ -32,20 +32,23 @@ impl OtpMisses {
     /// Wrong answers from all addresses before the PIN is spent.
     pub const TOTAL: u8 = 32;
     pub fn refuses(&self, peer: std::net::IpAddr) -> bool {
+        let key = crate::network::peer_group(peer);
         self.by_peer
-            .get(&peer)
+            .get(&key)
             .is_some_and(|misses| *misses >= Self::PER_PEER)
     }
     /// Counts a wrong answer from `peer`; false once the PIN is spent.
     pub fn miss(&mut self, peer: std::net::IpAddr) -> bool {
-        *self.by_peer.entry(peer).or_default() += 1;
+        let key = crate::network::peer_group(peer);
+        *self.by_peer.entry(key).or_default() += 1;
         self.total += 1;
         self.total < Self::TOTAL
     }
     /// Wrong answers from `peer` so far.
     #[cfg(any(test, feature = "test-support"))]
     pub fn count(&self, peer: std::net::IpAddr) -> u8 {
-        self.by_peer.get(&peer).copied().unwrap_or(0)
+        let key = crate::network::peer_group(peer);
+        self.by_peer.get(&key).copied().unwrap_or(0)
     }
 }
 
@@ -206,4 +209,27 @@ pub fn pairing_ended_notice(address: std::net::IpAddr) -> (String, String) {
             pairing_source(address)
         ),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn otp_misses_are_counted_per_ipv6_64_prefix() {
+        let mut misses = OtpMisses::default();
+        let addr1: std::net::IpAddr = "2001:db8:abcd:0001::1".parse().unwrap();
+        let addr2: std::net::IpAddr = "2001:db8:abcd:0001::2".parse().unwrap();
+        let other_prefix: std::net::IpAddr = "2001:db8:abcd:0002::1".parse().unwrap();
+
+        for _ in 0..OtpMisses::PER_PEER {
+            assert!(misses.miss(addr1));
+        }
+        assert!(misses.refuses(addr1));
+        assert!(
+            misses.refuses(addr2),
+            "sibling IID in same /64 must share refusal cap"
+        );
+        assert!(!misses.refuses(other_prefix));
+    }
 }

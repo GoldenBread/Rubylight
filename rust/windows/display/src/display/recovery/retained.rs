@@ -26,7 +26,7 @@ impl Retained {
             .fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
     }
     pub fn capture_target(&self) -> (String, u64) {
-        self.guard.lock().unwrap().as_ref().map_or_else(
+        crate::lock_unpoisoned(&self.guard).as_ref().map_or_else(
             || (self.output.clone(), 0),
             |guard| (guard.output.clone(), guard.generation),
         )
@@ -120,7 +120,7 @@ impl Retained {
                     // desktop while it is locked.
                     crate::desktop::keep_on_input_desktop();
                     let (result, restoring) = {
-                        let mut guard = worker_guard.lock().unwrap();
+                        let mut guard = crate::lock_unpoisoned(&worker_guard);
                         let result = guard.as_mut().map(Guard::feed).transpose();
                         let restoring = guard.as_ref().is_some_and(|guard| guard.restore_pending);
                         (result, restoring)
@@ -148,7 +148,8 @@ impl Retained {
                                 pending = false;
                                 // Applying the layout can recall a saved mode.
                                 if applied.is_some()
-                                    && let Some(guard) = worker_guard.lock().unwrap().as_ref()
+                                    && let Some(guard) =
+                                        crate::lock_unpoisoned(&worker_guard).as_ref()
                                 {
                                     guard.apply_virtual_mode("after layout recovery");
                                 }
@@ -197,6 +198,6 @@ impl Drop for Retained {
             }
             let _ = worker.join();
         }
-        self.guard.lock().unwrap().take();
+        crate::lock_unpoisoned(&self.guard).take();
     }
 }

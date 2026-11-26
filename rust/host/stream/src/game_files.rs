@@ -370,7 +370,22 @@ pub fn check(app: &App) -> anyhow::Result<()> {
 
 /// Whether two paths name one file: targets are resolved to verbatim (`\\?\`) paths, swapped
 /// files are written plainly, maybe with short or linked folder names.
+fn is_local_disk_path(path: &Path) -> bool {
+    match path.components().next() {
+        Some(std::path::Component::Prefix(prefix)) => matches!(
+            prefix.kind(),
+            std::path::Prefix::Disk(_) | std::path::Prefix::VerbatimDisk(_)
+        ),
+        _ => !path.has_root(),
+    }
+}
+
+/// Do two paths name the same file? A user path may not exist yet, and save
+/// files are written plainly, maybe with short or linked folder names.
 fn same_file(a: &Path, b: &Path) -> bool {
+    if !is_local_disk_path(a) || !is_local_disk_path(b) {
+        return false;
+    }
     let normal = |path: &Path| {
         let path = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_owned());
         let path = path
@@ -666,5 +681,19 @@ mod tests {
             json!([f.host.directory.join("other.ini").display().to_string()]),
         );
         check(&app).unwrap();
+    }
+
+    #[test]
+    fn same_file_rejects_unc_paths_without_network_resolution() {
+        let f = Fixture::new();
+        let local = f.host.directory.join("local.ini");
+        assert!(!same_file(
+            Path::new(r"\\nonexistent.invalid\share\save.ini"),
+            &local
+        ));
+        assert!(!same_file(
+            Path::new(r"\\nonexistent.invalid\share\save.ini"),
+            Path::new(r"\\nonexistent.invalid\share\save.ini")
+        ));
     }
 }

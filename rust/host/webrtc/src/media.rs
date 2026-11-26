@@ -31,8 +31,9 @@ use engine::is_media_rtp;
 use handle::{Command, Counters, Shared};
 #[cfg(test)]
 use worker::{
-    RECV_ERROR_BACKOFF, RECV_ERRORS_BEFORE_BACKOFF, enforce_backlog, handle_command,
-    note_channel_send, receive_loop, recv_error_backoff, send_due, start_threads,
+    MAX_COMMANDS_PER_PASS, RECV_ERROR_BACKOFF, RECV_ERRORS_BEFORE_BACKOFF, drain_commands,
+    enforce_backlog, handle_command, note_channel_send, receive_loop, recv_error_backoff, send_due,
+    start_threads,
 };
 
 /// Socket send buffer: a 4K keyframe is a few hundred KB sent in one pacing pass.

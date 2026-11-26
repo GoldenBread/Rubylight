@@ -239,7 +239,9 @@ a=x-nv-audio.surround.channelMask:185919
             .unwrap_err()
             .to_string();
         assert!(response.starts_with("RTSP/1.0 400"), "{response}");
-        assert!(response.contains(message), "{response}");
+        assert!(!response.contains(message), "{response}");
+        let failure = h.h.last_failure(&launch.client.uuid).unwrap_or_default();
+        assert!(failure.contains(message), "{failure}");
     }
     let (session, client) = h.play(&launch).await?;
     assert_eq!(
@@ -269,7 +271,9 @@ async fn hlg_on_pyrowave_is_offered_and_sends_the_hdr_mode_message() -> Result<(
         .unwrap_err()
         .to_string();
     assert!(response.starts_with("RTSP/1.0 400"), "{response}");
-    assert!(response.contains("(HLG) needs HEVC or AV1"), "{response}");
+    assert!(!response.contains("(HLG) needs HEVC or AV1"), "{response}");
+    let failure = h.h.last_failure(&launch.client.uuid).unwrap_or_default();
+    assert!(failure.contains("(HLG) needs HEVC or AV1"), "{failure}");
     h.h.codecs
         .store(0x1 | 0x100 | 0x200 | 0x0200_0000, Ordering::Release);
     let describe = h.rtsp(&launch, 12, "DESCRIBE", "").await?;
@@ -351,7 +355,9 @@ async fn a_passthrough_probe_that_cannot_run_is_answered_with_an_error() -> Resu
                 response.starts_with("RTSP/1.0 500 Internal Server Error"),
                 "{method}: {response}"
             );
-            assert!(response.contains(message), "{method}: {response}");
+            assert!(!response.contains(message), "{method}: {response}");
+            let failure = h.h.last_failure(&launch.client.uuid).unwrap_or_default();
+            assert!(failure.contains(message), "{method}: {failure}");
         }
         flag.store(false, Ordering::Release);
     }
@@ -391,7 +397,9 @@ async fn a_default_host_streams_the_pcm_a_client_picks_and_refuses_dolby_without
             .unwrap_err()
             .to_string();
         assert!(response.starts_with("RTSP/1.0 400"), "{response}");
-        assert!(response.contains("was not offered"), "{response}");
+        assert!(!response.contains("was not offered"), "{response}");
+        let failure = h.h.last_failure(&launch.client.uuid).unwrap_or_default();
+        assert!(failure.contains("was not offered"), "{failure}");
     }
     let (session, client) = h
         .play_announcing(&launch, 0, "a=x-rl-audio.codec:2\r\n")

@@ -426,7 +426,9 @@ async fn serverinfo_offers_sleep_fields_to_paired_https_clients_only() {
         serverinfo_response(
             &f.host,
             &f.connection(true),
+            &axum::http::HeaderMap::new(),
             &config,
+            None,
             Some(client),
             false,
             "00:00:00:00:00:00".into(),
@@ -607,7 +609,9 @@ async fn virtual_display_advertisement_matches_configuration_and_codecs() {
         let root = document(serverinfo_response(
             &f.host,
             &f.connection(true),
+            &axum::http::HeaderMap::new(),
             &config,
+            None,
             None,
             windows_11,
             String::new(),

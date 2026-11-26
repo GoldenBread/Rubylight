@@ -325,30 +325,61 @@ pub(super) fn import_error(output: &str) -> Option<String> {
 /// let each user write in their own.
 pub(super) fn secure_profile(profile: &Path) -> Result<()> {
     let root = profile.parent().context("profile has no parent")?;
-    let opaque = [nucleus_user_root(root)];
+    let nucleus = nucleus_user_root(root);
+    let credentials = profile.join("credentials");
+    let backups = profile.join("backups");
+    let root_opaque = [nucleus, profile.to_path_buf()];
+    let profile_opaque = [credentials, backups];
+    let opaque_for = |folder: &Path| -> &[PathBuf] {
+        if folder == root {
+            &root_opaque
+        } else if folder == profile {
+            &profile_opaque
+        } else {
+            &[]
+        }
+    };
     secure_profile_with(
         profile,
-        |folder, users_read| system::restrict_except(folder, users_read, &opaque),
-        |root| system::inherit_contents(root, &opaque),
+        |folder, users_read| {
+            if std::fs::symlink_metadata(folder).is_err() {
+                system::create_restricted(folder, users_read)
+            } else {
+                system::restrict_except(folder, users_read, opaque_for(folder))
+            }
+        },
+        |folder| system::inherit_contents(folder, opaque_for(folder)),
     )
 }
 pub(super) fn secure_profile_with(
     profile: &Path,
     mut restrict: impl FnMut(&Path, bool) -> Result<()>,
-    inherit: impl FnOnce(&Path) -> Result<()>,
+    mut inherit: impl FnMut(&Path) -> Result<()>,
 ) -> Result<()> {
     let root = profile.parent().context("profile has no parent")?;
     std::fs::create_dir_all(root)?;
     restrict(root, true)?;
-    std::fs::create_dir_all(profile.join("credentials"))?;
-    std::fs::create_dir_all(profile.join("backups"))?;
-    // The reset reaches the credentials and backups as well. Lock them down again even
-    // when it fails partway (a file the host renames meanwhile), or the
-    // host's private key or secret backups stay readable by users until the host restarts.
-    let reset = inherit(root);
-    let credentials = restrict(&profile.join("credentials"), false);
-    let backups = restrict(&profile.join("backups"), false);
-    reset.and(credentials).and(backups)
+    restrict(profile, true)?;
+    let credentials = profile.join("credentials");
+    let backups = profile.join("backups");
+    // Lock private folders directly without ever resetting their ACLs to
+    // inherit users' read access from `profile` or `root`.
+    restrict(&credentials, false)?;
+    restrict(&backups, false)?;
+    let mut result = Ok(());
+    for folder in [
+        &credentials,
+        &backups,
+        &profile.to_path_buf(),
+        &root.to_path_buf(),
+    ] {
+        if let Err(error) = inherit(folder)
+            && result.is_ok()
+        {
+            result = Err(error);
+        }
+    }
+    result
 }
 /// The name of the root the host makes for the console's certificate
 /// (`butterpollo_crypto::crypto::CONSOLE_ROOT_NAME`). certutil's `-delstore`

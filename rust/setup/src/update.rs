@@ -132,11 +132,16 @@ pub fn run(
             } else {
                 "recovery_failed"
             };
-            write_record(
+            if let Err(record_error) = write_record(
                 &result,
                 &json!({"version":env!("CARGO_PKG_VERSION"),"phase":phase,"error":message,
                         "backup":backup,"install":install}),
-            )?;
+            ) {
+                line(format!(
+                    "the update outcome could not be written: {record_error:#}"
+                ));
+                bail!("{message}. Recording the outcome also failed: {record_error:#}");
+            }
             bail!("{message}")
         }
     }
@@ -546,8 +551,16 @@ fn attempt_install(
     if let Err(error) = apply() {
         let recovery = (|| {
             stop()?;
-            saved.restore(install)?;
-            restart()
+            let restore = saved.restore(install);
+            let started = restart();
+            match (restore, started) {
+                (Ok(()), Ok(())) => Ok(()),
+                (Err(restore), Ok(())) => Err(restore),
+                (Ok(()), Err(started)) => Err(started),
+                (Err(restore), Err(started)) => {
+                    bail!("{restore:#}; restarting the host also failed: {started:#}")
+                }
+            }
         })();
         Err(InstallFailure { error, recovery })
     } else {
@@ -624,13 +637,23 @@ impl Backup {
         })
     }
     fn restore(&self, install: &Path) -> Result<()> {
+        let mut errors = Vec::new();
         for (name, existed) in &self.files {
-            let target = payload::safe_join(install, name)?;
-            if *existed {
-                install::replace_file(&payload::safe_join(&self.directory, name)?, &target)?;
-            } else if target.exists() {
-                std::fs::remove_file(target)?;
+            let outcome = (|| -> Result<()> {
+                let target = payload::safe_join(install, name)?;
+                if *existed {
+                    install::replace_file(&payload::safe_join(&self.directory, name)?, &target)?;
+                } else if target.exists() {
+                    std::fs::remove_file(target)?;
+                }
+                Ok(())
+            })();
+            if let Err(error) = outcome {
+                errors.push(format!("{name}: {error:#}"));
             }
+        }
+        if !errors.is_empty() {
+            bail!("some files could not be restored: {}", errors.join("; "));
         }
         Ok(())
     }

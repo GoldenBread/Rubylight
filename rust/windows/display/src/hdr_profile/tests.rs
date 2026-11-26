@@ -2,13 +2,20 @@
 
 use super::*;
 use std::cell::RefCell;
-/// Associations by display and scope (system or the user's).
+/// Associations by display and scope (system or the user's), most recent default first.
 #[derive(Default)]
-struct Fake(RefCell<BTreeMap<(String, bool), String>>);
+struct Fake(RefCell<BTreeMap<(String, bool), Vec<String>>>);
 impl Fake {
     fn with(self, monitor: &Monitor, system: bool, name: &str) -> Self {
         self.add(monitor, system, name).unwrap();
         self
+    }
+    fn list(&self, monitor: &Monitor, system: bool) -> Vec<String> {
+        self.0
+            .borrow()
+            .get(&(monitor.device_id.clone(), system))
+            .cloned()
+            .unwrap_or_default()
     }
 }
 impl Associations for Fake {
@@ -17,24 +24,29 @@ impl Associations for Fake {
             .0
             .borrow()
             .get(&(monitor.device_id.clone(), system))
-            .cloned())
+            .and_then(|list| list.first().cloned()))
     }
     fn add(&self, monitor: &Monitor, system: bool, name: &str) -> Result<()> {
-        self.0
-            .borrow_mut()
-            .insert((monitor.device_id.clone(), system), name.into());
+        let mut associations = self.0.borrow_mut();
+        let list = associations
+            .entry((monitor.device_id.clone(), system))
+            .or_default();
+        list.retain(|existing| !existing.eq_ignore_ascii_case(name));
+        list.insert(0, name.into());
         Ok(())
     }
     fn remove(&self, monitor: &Monitor, system: bool, name: &str) -> Result<()> {
         let mut associations = self.0.borrow_mut();
         let key = (monitor.device_id.clone(), system);
-        anyhow::ensure!(
-            associations
-                .get(&key)
-                .is_some_and(|current| current.eq_ignore_ascii_case(name)),
-            "{name} is not associated"
-        );
-        associations.remove(&key);
+        let Some(list) = associations.get_mut(&key) else {
+            bail!("{name} is not associated");
+        };
+        let before = list.len();
+        list.retain(|existing| !existing.eq_ignore_ascii_case(name));
+        anyhow::ensure!(list.len() < before, "{name} is not associated");
+        if list.is_empty() {
+            associations.remove(&key);
+        }
         Ok(())
     }
 }
@@ -82,10 +94,13 @@ fn the_virtual_display_gets_back_what_it_had_unless_someone_chose_another() -> R
     let fake = Fake::default().with(&display, true, "main-cal.icm");
     restore_with(&fake, &display, None, "main-cal.icm", true)?;
     assert_eq!(fake.get(&display, true)?, None);
-    // A profile before comes back.
-    let fake = Fake::default().with(&display, true, "main-cal.icm");
+    // A profile before comes back, and the stream's profile is disassociated.
+    let fake = Fake::default()
+        .with(&display, true, "old.icm")
+        .with(&display, true, "main-cal.icm");
     restore_with(&fake, &display, Some("old.icm"), "main-cal.icm", true)?;
     assert_eq!(fake.get(&display, true)?, Some("old.icm".into()));
+    assert_eq!(fake.list(&display, true), vec!["old.icm"]);
     // One chosen while streaming stays, in either scope.
     let fake =
         Fake::default()

@@ -551,3 +551,77 @@ fn enet_control_answers_from_the_address_the_client_reached() {
     let (length, from) = observer.recv_from(&mut buffer).unwrap();
     assert_eq!((&buffer[..length], from), (&b"held"[..], reached));
 }
+
+#[test]
+fn session_ping_feature_rejects_bare_ping() {
+    let f = crate::state::test_support::Fixture::new();
+    let client = f.client(u32::MAX);
+    let mut launch = f.launch(client, Role::Stream);
+    launch.ping = "fedcba9876543210".into();
+    let negotiated = butterpollo_media_policy::rtsp::Negotiated {
+        moonlight_features: 0x02,
+        ..Default::default()
+    };
+    let s = Session::new(launch, negotiated);
+    let sessions = &f.host.sessions;
+    sessions
+        .lock()
+        .unwrap()
+        .active
+        .insert(s.launch.id.clone(), s.clone());
+    let peers = Mutex::new(Peers::default());
+    let peer: SocketAddr = "127.0.0.1:50000".parse().unwrap();
+    let find = |ping: &[u8]| {
+        super::super::ping_session(&sessions.lock().unwrap(), &peers, ping, peer, false)
+    };
+    // Even with a single session on this IP, bare "PING" is refused when session ping is negotiated.
+    assert!(find(b"PING").is_none());
+    let (found, _) = find(b"fedcba9876543210").unwrap();
+    assert!(Arc::ptr_eq(&found, &s));
+    peers.lock().unwrap().insert(&s.launch.id, false, peer);
+    s.roamed(peer.ip(), Instant::now());
+    assert!(find(b"PING").is_none());
+    assert!(find(b"fedcba9876543210").is_some());
+}
+
+#[test]
+fn control_seq_memory_preserves_sequence_and_replay_window_across_restarts() {
+    let memory = super::super::ControlSeqMemory::default();
+    let key_a = [0x11; 16];
+    let key_b = [0x22; 16];
+
+    {
+        let state = memory.for_launch("launch-a", key_a);
+        let mut guard = state.lock().unwrap();
+        assert_eq!(guard.sequence, 0);
+        guard.sequence = 2;
+        assert!(guard.received.accept(0));
+        assert!(guard.received.accept(2));
+        assert!(!guard.received.accept(2));
+    }
+
+    // Re-acquiring for the same launch id and key keeps both sequence and replay window.
+    {
+        let restarted = memory.for_launch("launch-a", key_a);
+        let mut guard = restarted.lock().unwrap();
+        assert_eq!(guard.sequence, 2);
+        assert!(!guard.received.accept(0));
+        assert!(!guard.received.accept(2));
+        assert!(guard.received.accept(1));
+    }
+
+    // A new launch starting with the same key starts cleanly rather than inheriting replay state.
+    {
+        let second_launch = memory.for_launch("launch-a-2", key_a);
+        let mut guard = second_launch.lock().unwrap();
+        assert_eq!(guard.sequence, 0);
+        assert!(guard.received.accept(0));
+    }
+
+    // Ended launches are pruned on retain_launches.
+    let b = memory.for_launch("launch-b", key_b);
+    b.lock().unwrap().sequence = 5;
+    memory.retain_launches([("launch-a", &key_a)]);
+    let reset_b = memory.for_launch("launch-b", key_b);
+    assert_eq!(reset_b.lock().unwrap().sequence, 0);
+}

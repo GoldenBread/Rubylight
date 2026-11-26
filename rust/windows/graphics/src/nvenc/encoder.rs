@@ -40,13 +40,27 @@ pub(super) fn refuse_native_444(coded: &Negotiated) -> Result<()> {
 
 /// The statistics pass behind the conversion a frame takes: the compute
 /// queue's, or the D3D11 conversion's (as `amf::stats`).
+pub(super) enum HdrStatsBox {
+    Gpu(Box<crate::gpu_color::HdrStats>),
+    #[cfg(test)]
+    Mock(Box<dyn crate::amf::dynamic::Stats + Send>),
+}
+impl HdrStatsBox {
+    fn as_dyn_mut(&mut self) -> &mut dyn crate::amf::dynamic::Stats {
+        match self {
+            Self::Gpu(stats) => stats.as_mut(),
+            #[cfg(test)]
+            Self::Mock(stats) => stats.as_mut(),
+        }
+    }
+}
 fn stats<'a>(
     compute: Option<&'a mut crate::compute::Converter>,
-    graphics: Option<&'a mut crate::gpu_color::HdrStats>,
+    graphics: Option<&'a mut HdrStatsBox>,
 ) -> Option<&'a mut dyn crate::amf::dynamic::Stats> {
     match compute {
         Some(converter) => Some(converter),
-        None => graphics.map(|stats| stats as &mut dyn crate::amf::dynamic::Stats),
+        None => graphics.map(HdrStatsBox::as_dyn_mut),
     }
 }
 /// A D3D12 session's READBACK buffer: twice an uncompressed picture, within
@@ -98,12 +112,22 @@ impl Encoder {
         warnings: &Arc<dyn Warnings>,
         compute: Option<Arc<crate::compute::Compute>>,
     ) -> Result<Self> {
+        let runtime = Runtime::load()?;
+        Self::new_with_runtime(config, gpu, options, warnings, compute, runtime)
+    }
+    pub(super) fn new_with_runtime(
+        config: &Negotiated,
+        gpu: Device,
+        options: &Config,
+        warnings: &Arc<dyn Warnings>,
+        compute: Option<Arc<crate::compute::Compute>>,
+        runtime: Arc<Runtime>,
+    ) -> Result<Self> {
         if config.chroma_packing != 0 {
             config.validate()?;
         }
         let coded = coded(config);
         refuse_native_444(&coded)?;
-        let runtime = Runtime::load()?;
         let mut tuning = Tuning::new(options, &coded)?;
         // 8-bit native 4:4:4 (AYUV) can convert on the D3D12 compute queue and
         // encode on its D3D12 device (Rubylight #150); 10-bit 4:4:4 stays on
@@ -229,12 +253,14 @@ impl Encoder {
         let wanted = crate::amf::dynamic::wanted(&self.config, options)?;
         let packed = self.config.chroma_packing != 0;
         if !packed && self.compute.is_none() {
-            self.stats = Some(Box::new(crate::gpu_color::HdrStats::new(&self.gpu)));
+            self.stats = Some(HdrStatsBox::Gpu(Box::new(crate::gpu_color::HdrStats::new(
+                &self.gpu,
+            ))));
         }
         crate::amf::dynamic::start(
             wanted,
             packed,
-            stats(self.compute.as_deref_mut(), self.stats.as_deref_mut()),
+            stats(self.compute.as_deref_mut(), self.stats.as_mut()),
             &self.warnings,
         )
     }
@@ -492,7 +518,7 @@ impl Encoder {
             // frame so static repeat screens do not carry stale dynamic metadata.
             crate::amf::dynamic::sample(
                 &mut self.dynamic,
-                stats(self.compute.as_deref_mut(), self.stats.as_deref_mut()),
+                stats(self.compute.as_deref_mut(), self.stats.as_mut()),
                 &self.warnings,
             );
             if self.dynamic.is_none() {
@@ -583,7 +609,9 @@ impl Encoder {
         converter.set_overlay(self.overlay.as_ref());
         let converted = converter.convert(image)?;
         // Submitted with `dynamic::sample`, once the frame went to NVENC.
-        if let (Some(stats), Some(converter)) = (self.stats.as_deref_mut(), &self.converter) {
+        if let (Some(HdrStatsBox::Gpu(stats)), Some(converter)) =
+            (self.stats.as_mut(), &self.converter)
+        {
             stats.queue(image, converter);
         }
         let slot_key = converted.as_raw() as usize;
@@ -607,7 +635,11 @@ impl Encoder {
         self.last_submitted = Some(Instant::now());
         // Before the poll, so the frame it returns carries the newest
         // finished sample.
-        crate::amf::dynamic::sample(&mut self.dynamic, self.stats.as_deref_mut(), &self.warnings);
+        crate::amf::dynamic::sample(
+            &mut self.dynamic,
+            self.stats.as_mut().map(HdrStatsBox::as_dyn_mut),
+            &self.warnings,
+        );
         if self.dynamic.is_none() {
             self.session.dynamic_headroom = 0;
         }
@@ -617,32 +649,76 @@ impl Encoder {
 
 #[cfg(test)]
 mod repeat_dynamic_tests {
-    use crate::amf::dynamic::{self, Dynamic, Stats, Wanted};
+    use super::HdrStatsBox;
+    use crate::amf::dynamic::{Dynamic, Stats, Wanted};
     use crate::compute::HdrStatsReadout;
-    use butterpollo_media_policy::{RecordedWarnings, hdr_dynamic::Codec};
+    use crate::nvenc::{Encoder, Runtime};
+    use butterpollo_config::config::Config;
+    use butterpollo_media_policy::nvenc::ApiVersion;
+    use butterpollo_media_policy::{RecordedWarnings, hdr_dynamic::Codec, rtsp::Negotiated};
+    use std::sync::{Arc, Mutex};
 
-    struct DelayedStats {
+    struct SharedStatsState {
         ready: Option<HdrStatsReadout>,
         submits: u32,
     }
+    struct DelayedStats(Arc<Mutex<SharedStatsState>>);
     impl Stats for DelayedStats {
         fn enable(&mut self) -> anyhow::Result<()> {
             Ok(())
         }
         fn submit(&mut self) -> anyhow::Result<()> {
-            self.submits += 1;
+            self.0.lock().unwrap().submits += 1;
             Ok(())
         }
         fn latest(&self, newer_than: u64) -> anyhow::Result<Option<HdrStatsReadout>> {
-            Ok(self.ready.clone().filter(|r| r.conversion > newer_than))
+            Ok(self
+                .0
+                .lock()
+                .unwrap()
+                .ready
+                .clone()
+                .filter(|r| r.conversion > newer_than))
         }
         fn stop(&mut self) {}
     }
 
     #[test]
     fn repeat_frame_sampling_harvests_completed_hdr_histogram_from_last_fresh_frame() {
-        let warnings = RecordedWarnings::default();
-        let mut dynamic = Some(Box::new(Dynamic::with(
+        let Ok(_com) = crate::capture::ComGuard::new() else {
+            return;
+        };
+        let Ok(gpu) = crate::capture::Device::new("") else {
+            return;
+        };
+        let config = Negotiated {
+            width: 64,
+            height: 64,
+            codec: 1, // HEVC
+            hdr: true,
+            ..Negotiated::default()
+        };
+        let warnings: Arc<dyn butterpollo_media_policy::WarningSink> =
+            Arc::new(RecordedWarnings::default());
+        let runtime = Arc::new(Runtime {
+            _library: None,
+            create: crate::nvenc::tests::fake_driver::create,
+            maximum: ApiVersion(13, 0),
+        });
+        let mut encoder = Encoder::new_with_runtime(
+            &config,
+            gpu.clone(),
+            &Config::default(),
+            &warnings,
+            None,
+            runtime,
+        )
+        .expect("fake NVENC encoder");
+        let state = Arc::new(Mutex::new(SharedStatsState {
+            ready: None,
+            submits: 0,
+        }));
+        encoder.dynamic = Some(Box::new(Dynamic::with(
             Wanted {
                 codec: Codec::Hevc,
                 t35: true,
@@ -651,26 +727,46 @@ mod repeat_dynamic_tests {
             },
             true,
         )));
-        let mut stats = DelayedStats {
-            ready: None,
-            submits: 0,
-        };
-        // Frame 1 (fresh): submits GPU pass, readout not ready yet.
-        dynamic::sample(&mut dynamic, Some(&mut stats), &warnings);
-        assert_eq!(dynamic.as_deref().unwrap().sampled(), 0);
-        // GPU finishes histogram before frame 2 (cached repeat hit).
+        encoder.stats = Some(HdrStatsBox::Mock(Box::new(DelayedStats(state.clone()))));
+        let image = crate::capture::GpuImage::upload_settled(
+            &gpu,
+            &crate::capture::Image {
+                width: 64,
+                height: 64,
+                stride: 64 * 4,
+                bytes: vec![128; 64 * 64 * 4],
+                captured: std::time::Instant::now(),
+                pixel: crate::capture::Pixel::Bgra8,
+            },
+        )
+        .expect("upload test image");
+
+        // Frame 1 (fresh): submits frame 1 into the 1-frame pipeline (`pending.len() == 1`).
+        let fresh = encoder
+            .encode_gpu(&image, true, config.bitrate_kbps)
+            .unwrap();
+        assert!(fresh.is_empty());
+        assert_eq!(encoder.dynamic.as_deref().unwrap().sampled(), 0);
+        assert_eq!(state.lock().unwrap().submits, 1);
+
+        // GPU finishes histogram before frame 2 (cached repeat hit inside Encoder::encode_gpu).
         let mut histogram = vec![0u32; crate::compute::HDR_STATS_BINS];
         histogram[256] = 100;
         histogram[512] = 200;
-        stats.ready = Some(HdrStatsReadout {
+        state.lock().unwrap().ready = Some(HdrStatsReadout {
             conversion: 1,
             histogram,
             min_pq: 0.25,
             max_pq: 0.5,
         });
-        // Frame 2 (cached repeat hit): sampling harvests conversion 1.
-        dynamic::sample(&mut dynamic, Some(&mut stats), &warnings);
-        assert_eq!(dynamic.as_deref().unwrap().sampled(), 1);
-        assert_eq!(stats.submits, 2);
+
+        // Frame 2 (cached repeat hit): takes cached_hit path and harvests conversion 1.
+        encoder.set_repeat(true);
+        let repeat = encoder
+            .encode_gpu(&image, false, config.bitrate_kbps)
+            .unwrap();
+        assert_eq!(repeat.len(), 1);
+        assert_eq!(encoder.dynamic.as_deref().unwrap().sampled(), 1);
+        assert_eq!(state.lock().unwrap().submits, 2);
     }
 }

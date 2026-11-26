@@ -42,6 +42,7 @@ struct HudBuffer {
     source: (u32, u32),
     grid: (u32, u32),
     layout: Layout,
+    initialized: bool,
 }
 /// A mask copy in flight to [`FrameWarpGpu::mask_readback`].
 struct MaskRead {
@@ -216,6 +217,7 @@ impl FrameWarpGpu {
         if !self.can_read(image) {
             return Ok(None);
         }
+        self.compute.ensure_active()?;
         self.release_retired();
         let compute = self.compute.clone();
         let Some(index) = (0..SLOTS).find(|&slot| {
@@ -229,6 +231,7 @@ impl FrameWarpGpu {
             source.0 > 0 && source.1 > 0,
             "Frame Warp over an empty capture"
         );
+        let opened = compute.open(&image.texture)?;
         // Too soon after the capture the codes are from: no HUD pass, and the
         // next one still compares with that capture.
         let held = self.primed
@@ -247,7 +250,6 @@ impl FrameWarpGpu {
         if read {
             self.prepare_mask_readback()?;
         }
-        let opened = compute.open(&image.texture)?;
         let hud = mode.zip(self.hud_buffer.as_ref());
         let mask_readback = self
             .mask_readback
@@ -387,12 +389,20 @@ impl FrameWarpGpu {
         if let Some(ready) = ready {
             compute.wait_ready(ready)?;
         }
+        // Keep the capture image and imported resource retained in the slot before executing so
+        // if `ExecuteCommandLists` ran and `Signal` fails (retiring `compute`), `Drop` still
+        // holds the capture alive rather than releasing it under submitted GPU work.
+        self.slots[index].capture = Some((image.clone(), opened));
         let fence = compute.execute(&self.slots[index].list)?;
         self.last = fence;
         let slot = &mut self.slots[index];
         slot.fence = fence;
         slot.thumbnail = Some((at, pass.thumbnail));
-        slot.capture = Some((image.clone(), opened));
+        if mode.is_some()
+            && let Some(hud) = &mut self.hud_buffer
+        {
+            hud.initialized = true;
+        }
         self.primed = pass.hud.is_some() || held;
         if pass.hud.is_some() {
             self.taken_at = at;
@@ -419,12 +429,17 @@ impl FrameWarpGpu {
     /// new size starts over, and the first pass after the camera stood still
     /// only takes the capture's codes.
     fn prepare_hud(&mut self, source: (u32, u32), grid: (u32, u32)) -> Result<u32> {
-        if self
-            .hud_buffer
-            .as_ref()
-            .is_some_and(|hud| hud.source == source && hud.grid == grid)
+        if let Some(hud) = self.hud_buffer.as_ref()
+            && hud.source == source
+            && hud.grid == grid
         {
-            return Ok(if self.primed { SCORE } else { CLEAR });
+            return Ok(if !hud.initialized {
+                RESET
+            } else if self.primed {
+                SCORE
+            } else {
+                CLEAR
+            });
         }
         let layout = layout(source, grid)?;
         let buffer = focus_buffer(
@@ -438,6 +453,7 @@ impl FrameWarpGpu {
             source,
             grid,
             layout,
+            initialized: false,
         }) {
             self.retired.push((self.last, old.buffer));
         }

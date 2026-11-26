@@ -762,3 +762,17 @@ fn reconfiguring_a_service_keeps_its_startup_type() -> Result<()> {
     assert!(!service_running(&name));
     Ok(())
 }
+
+#[test]
+fn partial_task_exit_marker_waits_for_complete_line() {
+    assert_eq!(parse_completed_task_log("ok\r\nBUTTERPOLLO-EXIT="), None);
+    assert_eq!(parse_completed_task_log("ok\r\nBUTTERPOLLO-EXIT=0"), None);
+    assert_eq!(
+        parse_completed_task_log("ok\r\nBUTTERPOLLO-EXIT=3010\r\n"),
+        Some(("ok\r\n", 3010))
+    );
+    assert_eq!(
+        parse_completed_task_log("ok\nBUTTERPOLLO-EXIT=0\n"),
+        Some(("ok\n", 0))
+    );
+}

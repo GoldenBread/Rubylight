@@ -1,6 +1,9 @@
 import argparse, json, pathlib, subprocess, tempfile, unittest
 from unittest import mock
-import linkspeed as ls
+try:
+    import linkspeed as ls
+except ModuleNotFoundError as exc:
+    raise unittest.SkipTest(f'requires optional dependency ({exc.name})')
 
 
 class LinkSpeedHarness(unittest.TestCase):

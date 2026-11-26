@@ -581,3 +581,30 @@ fn only_the_owner_may_disconnect_end_or_close_even_if_the_launch_just_finished()
         assert_eq!(host.close_game(setup.uuid()), Ok(Outcome::Done));
     }
 }
+
+#[test]
+fn close_game_leaves_concurrent_nucleus_streams_running() {
+    use butterpollo_session::session::Seat;
+
+    let setup = Setup::new("");
+    let host_stream = setup.streaming();
+    let mut coop_client = setup.fixture.client(u32::MAX);
+    coop_client.uuid = "coop-player".into();
+    let mut coop_launch = setup.fixture.launch(coop_client, Role::Stream);
+    coop_launch.nucleus = Some(Seat {
+        session: 9,
+        slot: 0,
+    });
+    let coop_stream = Session::new(coop_launch, Default::default());
+    setup
+        .host()
+        .sessions
+        .lock()
+        .unwrap()
+        .active
+        .insert(coop_stream.launch.id.clone(), coop_stream.clone());
+
+    assert_eq!(setup.host().close_game(setup.uuid()), Ok(Outcome::Done));
+    assert!(host_stream.stopping());
+    assert!(!coop_stream.stopping());
+}

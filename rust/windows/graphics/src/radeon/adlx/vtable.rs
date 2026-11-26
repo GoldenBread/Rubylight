@@ -72,8 +72,9 @@ pub(super) struct GpuVt {
     pub(super) unused1: [usize; 4],
     pub(super) name: GetText,
     pub(super) driver_path: GetText,
-    /// PNPString .. SubSystemVendorId.
-    pub(super) unused2: [usize; 9],
+    pub(super) pnp_string: GetText,
+    /// HasDesktops .. SubSystemVendorId.
+    pub(super) unused2: [usize; 8],
     pub(super) unique_id: GetInt,
 }
 #[repr(C)]
@@ -389,6 +390,7 @@ mod tests {
         assert_eq!(size_of::<Services3Vt>(), 21 * p);
         assert_eq!(offset_of!(GpuVt, name), 7 * p);
         assert_eq!(offset_of!(GpuVt, driver_path), 8 * p);
+        assert_eq!(offset_of!(GpuVt, pnp_string), 9 * p);
         assert_eq!(offset_of!(GpuVt, unique_id), 18 * p);
         assert_eq!(offset_of!(Gpu2Vt, edition), 30 * p);
         assert_eq!(offset_of!(Gpu2Vt, software_version), 31 * p);

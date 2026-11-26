@@ -294,31 +294,46 @@ pub(super) async fn renew_pinholes(
         held.firewall = ipv6::discover(bind).await.ok();
     }
     if let Some(firewall) = held.firewall.as_mut() {
-        let result = firewall.renew(wanted).await;
-        if let Err(error) = &result {
-            tracing::debug!(%error, "IPv6 firewall pinholes could not be renewed");
+        let outcome = firewall.renew(wanted).await;
+        if let Some(error) = &outcome.error {
+            tracing::debug!(
+                %error,
+                opened = outcome.opened,
+                wanted = wanted.len(),
+                "some IPv6 firewall pinholes could not be renewed"
+            );
         }
-        let renewed = result.is_ok();
-        let pinholes = if renewed { wanted.len() } else { 0 };
-        let guest_ipv6 = (renewed && !guest.is_empty()).then(|| firewall.local());
-        let error = result.err().map(|error| format!("{error:#}"));
+        let guest_ipv6 = (outcome.opened > 0 && !guest.is_empty()).then(|| firewall.local());
+        let error = outcome.error.map(|error| format!("{error:#}"));
         crate::internet_play::update_mapping(|status| {
             status.ipv6_method = Some("UPnP".into());
-            status.ipv6_pinholes = pinholes;
+            status.ipv6_pinholes = outcome.opened;
             status.ipv6_error = error;
             status.guest_ipv6 = guest_ipv6;
         });
         return;
     }
-    if held.pinholes.is_empty() {
-        let gateways = ipv6_gateways();
-        for (local, index) in portmap::ipv6_locals(bind) {
-            for gateway in &gateways {
-                if let Ok(mapper) =
-                    portmap::PortMapper::ipv6(*gateway, local, index, nonce_secret).await
-                {
-                    held.pinholes.push(mapper);
-                }
+    let gateways = ipv6_gateways();
+    let locals = portmap::ipv6_locals(bind);
+    held.pinholes.retain(|mapper| {
+        locals.iter().any(|&(local, index)| {
+            gateways
+                .iter()
+                .any(|&gateway| mapper.serves_ipv6(gateway, local, index))
+        })
+    });
+    for (local, index) in locals {
+        for &gateway in &gateways {
+            if held
+                .pinholes
+                .iter()
+                .any(|mapper| mapper.serves_ipv6(gateway, local, index))
+            {
+                continue;
+            }
+            if let Ok(mapper) = portmap::PortMapper::ipv6(gateway, local, index, nonce_secret).await
+            {
+                held.pinholes.push(mapper);
             }
         }
     }

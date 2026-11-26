@@ -18,6 +18,29 @@ use butterpollo_stream::{state::Shared, tls::Connection, web_sessions};
 use serde_json::Value;
 use std::{collections::BTreeMap, time::Instant};
 pub(crate) type Fields = BTreeMap<String, String>;
+static NOTICE_KEY: std::sync::LazyLock<[u8; 32]> = std::sync::LazyLock::new(crypto::random::<32>);
+
+pub(super) fn sign_notice(path: &str, message: &str) -> String {
+    use sha2::Digest;
+    let mut mac = sha2::Sha256::new();
+    mac.update(*NOTICE_KEY);
+    mac.update(path.as_bytes());
+    mac.update([0]);
+    mac.update(message.as_bytes());
+    hex::encode(&mac.finalize()[..16])
+}
+
+fn verified_notice<'a>(path: &str, token: &'a str) -> Option<&'a str> {
+    let (sig, message) = token.split_once('.')?;
+    let expected = sign_notice(path, message);
+    (sig.len() == expected.len()
+        && sig
+            .bytes()
+            .zip(expected.bytes())
+            .fold(0u8, |acc, (a, b)| acc | (a ^ b))
+            == 0)
+        .then_some(message)
+}
 const NAV: [(&str, &str); 8] = [
     ("/", "Overview"),
     ("/library", "Library"),
@@ -291,7 +314,7 @@ pub(crate) async fn page(
     };
     h.reload_credentials();
     let configured = h.credentials.read().unwrap().is_some();
-    let signed_in = web::authenticated(&h, &headers, Some(connection.peer.ip()));
+    let signed_in = web::authenticated(&h, &headers, Some(connection.peer.ip())).await;
     if !configured && path != "/setup" {
         return redirect("/setup");
     }
@@ -330,7 +353,9 @@ pub(crate) async fn page(
         |n| n.1,
     );
     let mut body = String::new();
-    if let Some(notice) = query.get("notice") {
+    if let Some(token) = query.get("notice")
+        && let Some(notice) = verified_notice(path, token)
+    {
         body += &format!(
             "<div class=\"notice\" role=\"status\">{}</div>",
             i18n::data(notice)
@@ -431,5 +456,22 @@ mod tests {
         ] {
             assert_eq!(login_path(path, query), "/login");
         }
+    }
+
+    #[test]
+    fn notice_signatures_ignore_forged_and_cross_path_tokens() {
+        let sig = sign_notice("/management", "Configuration saved.");
+        let token = format!("{sig}.Configuration saved.");
+        assert_eq!(
+            verified_notice("/management", &token),
+            Some("Configuration saved.")
+        );
+        // Forged or tampered notices and tokens generated for another page are rejected.
+        assert_eq!(verified_notice("/management", "Forged message"), None);
+        assert_eq!(verified_notice("/devices", &token), None);
+        assert_eq!(
+            verified_notice("/management", &format!("{sig}.Tampered message")),
+            None
+        );
     }
 }

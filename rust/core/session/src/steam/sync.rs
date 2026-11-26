@@ -340,6 +340,26 @@ pub fn reconcile(
     covers: &HashMap<u32, PathBuf>,
     dismissed: &[String],
 ) -> bool {
+    reconcile_checked(
+        apps,
+        selected,
+        settings,
+        covers,
+        dismissed,
+        &super::Discovery::default(),
+    )
+}
+
+/// Like [`reconcile`], refusing to delete auto-synced apps whose Steam library or
+/// manifest could not be read cleanly.
+pub fn reconcile_checked(
+    apps: &mut Vec<Value>,
+    selected: &[&Game],
+    settings: &Settings,
+    covers: &HashMap<u32, PathBuf>,
+    dismissed: &[String],
+    discovery: &super::Discovery,
+) -> bool {
     let games: Vec<&Game> = selected
         .iter()
         .copied()
@@ -424,7 +444,7 @@ pub fn reconcile(
                 app["steam-id"] = json!(id.to_string());
                 app["steam-managed"] = json!("auto");
             }
-            if remove_missing {
+            if remove_missing && discovery.allows_removal(app, parsed) {
                 apps.remove(index);
                 changed = true;
                 continue;

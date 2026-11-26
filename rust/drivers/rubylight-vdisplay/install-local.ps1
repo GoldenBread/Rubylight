@@ -85,15 +85,17 @@ function Protect-Catalog([string] $catalog) {
         $signature = Set-AuthenticodeSignature -LiteralPath $catalog -Certificate $signer -HashAlgorithm SHA256
         if ($signature.Status -notin 'Valid', 'UnknownError') { throw "signing the catalog failed: $($signature.StatusMessage)" }
         Add-Trust $signer 'Root', 'TrustedPublisher'
+        if ((Get-AuthenticodeSignature -LiteralPath $catalog).Status -ne 'Valid') {
+            throw 'the signed catalog does not verify'
+        }
+        $signer
+    } catch {
+        Remove-Trust $signer.Thumbprint
+        throw
     } finally {
         # The key goes whatever happened above.
-        Remove-Item "Cert:\LocalMachine\My\$($signer.Thumbprint)" -DeleteKey
+        Remove-Item "Cert:\LocalMachine\My\$($signer.Thumbprint)" -DeleteKey -ErrorAction SilentlyContinue
     }
-    if ((Get-AuthenticodeSignature -LiteralPath $catalog).Status -ne 'Valid') {
-        Remove-Trust $signer.Thumbprint
-        throw 'the signed catalog does not verify'
-    }
-    $signer
 }
 
 # Why Windows will not load a driver signed on this PC, and what the user can do, or nothing:
@@ -136,12 +138,14 @@ function Remove-Install($recorded) {
     }
     Remove-Item $state -ErrorAction SilentlyContinue
 }
+function Ensure-StateKey {
+    if (-not (Test-Path $state)) { New-Item $state -Force | Out-Null }
+}
 # Why there is no driver, for the console (the host reads it when the driver does not open).
 function Set-Problem([string] $text) {
-    New-Item $state -Force | Out-Null
+    Ensure-StateKey
     Set-ItemProperty $state Problem $text
 }
-$script:unsupported = $null
 $script:unsupported = $null
 
 function Install-Package {
@@ -169,6 +173,9 @@ function Install-Package {
     foreach ($extension in 'inf', 'dll', 'cat') { Copy-Item -LiteralPath (Join-Path $Package "rubylight_vdisplay.$extension") $work }
     $signer = $null
     $publisherAdded = $recorded.PublisherAdded
+    $addedPublisherNow = $null
+    $backup = Join-Path $work 'backup'
+    $exportedBackup = $false
     # What a failed install takes back: the packages and the device it added.
     $before = @(Get-Packages)
     $hadDevice = [bool](Get-Device)
@@ -178,6 +185,7 @@ function Install-Package {
             $publisher = (Get-AuthenticodeSignature -LiteralPath (Join-Path $work 'rubylight_vdisplay.cat')).SignerCertificate
             if (-not (Test-Path "Cert:\LocalMachine\TrustedPublisher\$($publisher.Thumbprint)")) {
                 Add-Trust $publisher 'TrustedPublisher'
+                $addedPublisherNow = $publisher.Thumbprint
                 $publisherAdded = $publisher.Thumbprint
             }
         } else {
@@ -195,11 +203,17 @@ function Install-Package {
         $ours = Get-Packages | Where-Object { (Get-FileHash -LiteralPath "$env:SystemRoot\INF\$_").Hash -eq $hash } | Select-Object -First 1
         if (-not $ours) { throw 'the package is missing from the driver store after pnputil added it' }
         if ((Get-CurrentPackage) -ne $ours) {
-            # A package that ranks higher (a newer build, or the newer Rubylight's after a
-            # downgrade) keeps the device. Remove the others so it takes this one: the device
-            # must not stay on a package whose signer loses its trust below.
-            foreach ($other in @(Get-Packages | Where-Object { $_ -ne $ours })) {
-                Invoke-Restartable @('/delete-driver', $other, '/uninstall', '/force')
+            # A package that ranks higher keeps the device. Export prior packages before deleting them so rollback can restore them if proving `$ours` fails.
+            $others = @(Get-Packages | Where-Object { $_ -ne $ours })
+            if ($others.Count -gt 0) {
+                New-Item -ItemType Directory $backup -Force | Out-Null
+                foreach ($other in $others) {
+                    & pnputil /export-driver $other $backup | Out-Null
+                    if ($LASTEXITCODE -eq 0) { $exportedBackup = $true }
+                }
+                foreach ($other in $others) {
+                    Invoke-Restartable @('/delete-driver', $other, '/uninstall', '/force')
+                }
             }
             Add-Package $inf
             if (-not $script:restart -and (Get-CurrentPackage) -ne $ours) { throw "the device uses $(Get-CurrentPackage), not $ours" }
@@ -218,9 +232,17 @@ function Install-Package {
             foreach ($added in @(Get-Packages | Where-Object { $_ -notin $before })) {
                 pnputil /delete-driver $added /uninstall /force | Out-Null
             }
+            if ($exportedBackup -and -not (Get-Packages)) {
+                Get-ChildItem -LiteralPath $backup -Filter '*.inf' -Recurse | ForEach-Object {
+                    pnputil /add-driver $_.FullName /install | Out-Null
+                }
+            }
         } catch { Write-Host "rolling back the display driver install: $_" }
+        if ($addedPublisherNow) {
+            Get-Item "Cert:\LocalMachine\TrustedPublisher\$addedPublisherNow" -ErrorAction SilentlyContinue | Remove-Item
+        }
         if ($signer) { Remove-Trust $signer.Thumbprint }
-        if (-not $hadDevice) {
+        if (-not $hadDevice -or -not (Get-Packages) -or -not (Get-CurrentPackage)) {
             $reason = $failure.Exception
             while ($reason.InnerException) { $reason = $reason.InnerException }
             Set-Problem "Rubylight's display driver could not be installed ($($reason.Message -replace '\s+', ' ')), so streams use a physical display. Run the Rubylight installer again; its log has the details."
@@ -229,7 +251,7 @@ function Install-Package {
     } finally {
         Remove-Item -Recurse -Force $work
     }
-    New-Item $state -Force | Out-Null
+    Ensure-StateKey
     # Setup and the service tell an installed driver by this key.
     Set-ItemProperty $state Installed ((Get-Date).ToUniversalTime().ToString('o'))
     if ($signer) {

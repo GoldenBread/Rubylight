@@ -10,6 +10,7 @@ use butterpollo_crypto::{auth, crypto};
 use butterpollo_session::state::Credentials;
 use butterpollo_stream::{state::Shared, tls::Connection, web_sessions};
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use std::time::{Duration, Instant};
 
 pub(crate) fn cookie(headers: &HeaderMap, name: &str) -> Option<String> {
@@ -51,23 +52,27 @@ impl SignIns {
     const LIMIT: u32 = 10;
     const WINDOW: Duration = Duration::from_secs(60);
     pub(super) const TRACKED: usize = 1024;
-    fn key(peer: std::net::IpAddr) -> Option<std::net::IpAddr> {
+    fn key(peer: std::net::IpAddr) -> std::net::IpAddr {
         let peer = peer.to_canonical();
-        if peer.is_loopback() {
-            return None;
-        }
-        Some(match peer {
-            std::net::IpAddr::V6(address) => {
+        match peer {
+            std::net::IpAddr::V6(address) if !address.is_loopback() => {
                 std::net::Ipv6Addr::from(u128::from(address) & (u128::MAX << 64)).into()
             }
-            v4 => v4,
-        })
+            other => other,
+        }
     }
-    /// Count an attempt; false when the address has to wait.
-    pub(super) fn attempt(&mut self, peer: std::net::IpAddr, now: Instant) -> bool {
-        let Some(key) = Self::key(peer) else {
-            return true;
-        };
+    /// Whether `peer` may attempt sign-in without counting against the limit.
+    pub(super) fn allowed(&mut self, peer: std::net::IpAddr, now: Instant) -> bool {
+        let key = Self::key(peer);
+        self.attempts
+            .retain(|_, (since, _)| now.saturating_duration_since(*since) < Self::WINDOW);
+        self.attempts
+            .get(&key)
+            .is_none_or(|(_, count)| *count < Self::LIMIT)
+    }
+    /// Record a failed sign-in attempt for `peer`.
+    pub(super) fn failed(&mut self, peer: std::net::IpAddr, now: Instant) {
+        let key = Self::key(peer);
         self.attempts
             .retain(|_, (since, _)| now.saturating_duration_since(*since) < Self::WINDOW);
         // Full: forget the oldest address instead of refusing every new
@@ -83,19 +88,148 @@ impl SignIns {
             self.attempts.remove(&oldest);
         }
         let (_, count) = self.attempts.entry(key).or_insert((now, 0));
-        *count += 1;
-        *count <= Self::LIMIT
+        *count = count.saturating_add(1);
     }
     pub(super) fn succeeded(&mut self, peer: std::net::IpAddr) {
-        if let Some(key) = Self::key(peer) {
-            self.attempts.remove(&key);
-        }
+        let key = Self::key(peer);
+        self.attempts.remove(&key);
     }
+}
+
+/// Basic credentials that passed PBKDF2 in the last five minutes, so a
+/// script that sends them with every request is not slowed (and the host
+/// not loaded) by 600,000 rounds each time. A key binds the stored username,
+/// salt and hash, so it never matches once the password or its hash changes.
+pub(super) struct BasicCache {
+    /// Key: when it was verified, and the stored credentials it was checked against.
+    pub(super) entries: std::collections::HashMap<[u8; 32], (Instant, [u8; 32])>,
+}
+
+pub(super) static BASIC_CACHE: std::sync::LazyLock<std::sync::Mutex<BasicCache>> =
+    std::sync::LazyLock::new(|| {
+        std::sync::Mutex::new(BasicCache {
+            entries: Default::default(),
+        })
+    });
+
+impl BasicCache {
+    pub(super) const TTL: Duration = Duration::from_secs(300);
+    pub(super) const CAPACITY: usize = 64;
+    fn digest(parts: &[&[u8]]) -> [u8; 32] {
+        let mut hasher = Sha256::new();
+        for part in parts {
+            hasher.update((part.len() as u64).to_le_bytes());
+            hasher.update(part);
+        }
+        hasher.finalize().into()
+    }
+    /// The stored credentials, without the attempt.
+    fn owner(stored: &Credentials) -> [u8; 32] {
+        Self::digest(&[
+            stored.username.as_bytes(),
+            stored.salt.as_bytes(),
+            stored.password.as_bytes(),
+        ])
+    }
+    /// The attempt `user`/`pass` against `stored`; usernames compare as
+    /// [`Credentials::verifies`] does.
+    pub(super) fn key(stored: &Credentials, user: &str, pass: &str) -> [u8; 32] {
+        Self::digest(&[
+            &Self::owner(stored),
+            user.trim().to_ascii_lowercase().as_bytes(),
+            pass.as_bytes(),
+        ])
+    }
+    fn expire(&mut self, now: Instant) {
+        self.entries
+            .retain(|_, (since, _)| now.saturating_duration_since(*since) < Self::TTL);
+    }
+    /// Whether `key` was verified within the last [`Self::TTL`].
+    pub(super) fn hit(&mut self, key: &[u8; 32], now: Instant) -> bool {
+        self.expire(now);
+        self.entries.contains_key(key)
+    }
+    /// Remember that `key` passed against `stored` at `now`; full, the oldest entry goes.
+    pub(super) fn insert(&mut self, key: [u8; 32], stored: &Credentials, now: Instant) {
+        self.expire(now);
+        if self.entries.len() >= Self::CAPACITY
+            && !self.entries.contains_key(&key)
+            && let Some(oldest) = self
+                .entries
+                .iter()
+                .min_by_key(|(_, (since, _))| *since)
+                .map(|(key, _)| *key)
+        {
+            self.entries.remove(&oldest);
+        }
+        self.entries.insert(key, (now, Self::owner(stored)));
+    }
+    /// Drop every attempt verified against `stored`, which was just replaced.
+    pub(super) fn forget(&mut self, stored: &Credentials) {
+        let owner = Self::owner(stored);
+        self.entries.retain(|_, (_, of)| *of != owner);
+    }
+}
+
+/// Replace `stored`, just verified with `password`, by a current PBKDF2
+/// hash. Blocking: run it on the blocking pool.
+fn rehash_if_needed(h: &Shared, stored: &Credentials, password: &str) {
+    match Credentials::new(stored.username.clone(), password) {
+        Ok(upgraded) => match h.save_credentials(&upgraded) {
+            Ok(()) => {
+                *h.credentials.write().unwrap() = Some(upgraded);
+                BASIC_CACHE.lock().unwrap().forget(stored);
+            }
+            Err(error) => tracing::warn!(%error, "could not save upgraded password hash"),
+        },
+        Err(error) => tracing::warn!(%error, "could not upgrade password hash"),
+    }
+}
+
+/// Check `user`/`pass` against the stored credentials on the blocking pool,
+/// as one sign-in attempt from `peer`, and upgrade a legacy hash that
+/// passes. The attempt counts before PBKDF2 runs, so parallel guesses cannot
+/// all slip under the limit meanwhile; a success clears the count.
+async fn sign_in(h: &Shared, peer: std::net::IpAddr, user: &str, pass: &str) -> bool {
+    let now = Instant::now();
+    {
+        let mut sign_ins = SIGN_INS.lock().unwrap();
+        if !sign_ins.allowed(peer, now) {
+            return false;
+        }
+        sign_ins.failed(peer, now);
+    }
+    let Some(stored) = h.credentials.read().unwrap().clone() else {
+        return false;
+    };
+    let key = BasicCache::key(&stored, user, pass);
+    let (user, pass) = (user.to_owned(), pass.to_owned());
+    let verified = tokio::task::spawn_blocking({
+        let stored = stored.clone();
+        let pass = pass.clone();
+        move || stored.verifies(&user, &pass)
+    })
+    .await
+    .unwrap_or(false);
+    if !verified {
+        return false;
+    }
+    SIGN_INS.lock().unwrap().succeeded(peer);
+    if stored.needs_rehash() {
+        let h = h.clone();
+        let _ = tokio::task::spawn_blocking(move || rehash_if_needed(&h, &stored, &pass)).await;
+    } else {
+        BASIC_CACHE
+            .lock()
+            .unwrap()
+            .insert(key, &stored, Instant::now());
+    }
+    true
 }
 
 /// Whether the request is signed in: a browser session, or Basic
 /// credentials from `peer`, which count against its sign-in attempts.
-pub(crate) fn authenticated(
+pub(crate) async fn authenticated(
     h: &Shared,
     headers: &HeaderMap,
     peer: Option<std::net::IpAddr>,
@@ -131,19 +265,27 @@ pub(crate) fn authenticated(
         && let Some((user, pass)) = text.split_once(':')
     {
         let peer = peer.unwrap_or(std::net::Ipv4Addr::UNSPECIFIED.into());
-        if !SIGN_INS.lock().unwrap().attempt(peer, Instant::now()) {
-            return false;
-        }
-        let verified = h
+        // Verified lately: no PBKDF2. A legacy hash always goes through
+        // `sign_in`, which upgrades it.
+        let cached = h
             .credentials
             .read()
             .unwrap()
             .as_ref()
-            .is_some_and(|c| c.verifies(user, pass));
-        if verified {
-            SIGN_INS.lock().unwrap().succeeded(peer);
+            .filter(|c| !c.needs_rehash())
+            .map(|c| BasicCache::key(c, user, pass));
+        let now = Instant::now();
+        if let Some(key) = cached
+            && BASIC_CACHE.lock().unwrap().hit(&key, now)
+        {
+            let mut sign_ins = SIGN_INS.lock().unwrap();
+            if !sign_ins.allowed(peer, now) {
+                return false;
+            }
+            sign_ins.succeeded(peer);
+            return true;
         }
-        return verified;
+        return sign_in(h, peer, user, pass).await;
     }
     false
 }
@@ -318,9 +460,9 @@ pub(crate) fn refresh_browser(
     ))
 }
 
-pub(super) fn status(h: &Shared, headers: &HeaderMap, connection: &Connection) -> Response {
+pub(super) async fn status(h: &Shared, headers: &HeaderMap, connection: &Connection) -> Response {
     let configured = h.credentials.read().unwrap().is_some();
-    let authenticated = authenticated(h, headers, Some(connection.peer.ip()));
+    let authenticated = authenticated(h, headers, Some(connection.peer.ip())).await;
     // The web app asks this on load. A remembered browser whose access
     // cookie lapsed (after session_token_ttl_seconds) is renewed here, as
     // the console page does, instead of being sent to the login page.
@@ -350,7 +492,7 @@ pub(super) fn status(h: &Shared, headers: &HeaderMap, connection: &Connection) -
     Json(status).into_response()
 }
 
-pub(super) fn login(
+pub(super) async fn login(
     h: &Shared,
     method: &Method,
     headers: &HeaderMap,
@@ -363,19 +505,14 @@ pub(super) fn login(
     if !SIGN_INS
         .lock()
         .unwrap()
-        .attempt(connection.peer.ip(), Instant::now())
+        .allowed(connection.peer.ip(), Instant::now())
     {
         return error(StatusCode::TOO_MANY_REQUESTS, "try again in one minute");
     }
     let text = |k: &str| data.get(k).and_then(Value::as_str).unwrap_or("");
     let username = text("username");
-    if h.credentials
-        .read()
-        .unwrap()
-        .as_ref()
-        .is_some_and(|c| c.verifies(username, text("password")))
-    {
-        SIGN_INS.lock().unwrap().succeeded(connection.peer.ip());
+    let password = text("password");
+    if sign_in(h, connection.peer.ip(), username, password).await {
         let remember = data.get("remember_me").is_some_and(|v| {
             v.as_bool()
                 .unwrap_or_else(|| matches!(v.as_str(), Some("true" | "1" | "on")))
@@ -513,7 +650,8 @@ pub(super) fn delete_session(h: &Shared, hash: &str) -> anyhow::Result<Value> {
 
 pub(super) fn change_password(h: &Shared, data: &Value) -> anyhow::Result<Value> {
     let text = |k: &str| data.get(k).and_then(Value::as_str).unwrap_or("");
-    if let Some(c) = h.credentials.read().unwrap().as_ref()
+    let previous = h.credentials.read().unwrap().clone();
+    if let Some(c) = &previous
         && !c.verifies(text("currentUsername"), text("currentPassword"))
     {
         anyhow::bail!("current credentials do not match");
@@ -531,5 +669,8 @@ pub(super) fn change_password(h: &Shared, data: &Value) -> anyhow::Result<Value>
     sessions.clear();
     h.save_credentials(&c)?;
     *h.credentials.write().unwrap() = Some(c);
+    if let Some(previous) = &previous {
+        BASIC_CACHE.lock().unwrap().forget(previous);
+    }
     Ok(json!({"status":true}))
 }

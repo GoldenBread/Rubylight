@@ -3,9 +3,13 @@
 # Run: python -m unittest discover -s rust/release -p test_focus_ab.py
 import contextlib, io, json, math, pathlib, subprocess, sys, tempfile, types, unittest
 from unittest import mock
-import focus_ab as ab
-import focus_ab_result as result
 from gpu_hang import EXIT_GPU_HANG
+import focus_ab_result as result
+try:
+    import focus_ab as ab
+    import chroma_fixtures  # noqa: F401 - required by quality/level fixtures in CI-less check
+except ModuleNotFoundError as exc:
+    raise unittest.SkipTest(f'requires optional dependency ({exc.name})')
 
 
 def scores(vmaf, p5=None, settled=None):

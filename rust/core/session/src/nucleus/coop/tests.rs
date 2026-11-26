@@ -254,3 +254,19 @@ fn a_new_pad_is_the_one_index_that_appeared() {
     // A PC controller plugged in at the same moment: unknown, not a guess.
     assert_eq!(new_pad([false; 4], [true, true, false, false]), None);
 }
+
+#[test]
+fn guest_in_slot_zero_does_not_steal_owner_status_on_join() {
+    let start = Instant::now();
+    let mut s = coop(&[0, 1, 2]);
+    // Guest joins slot 1, then owner leaves and slot 0 becomes free.
+    assert_eq!(s.join("guest1", "Laptop", true), Ok(Joined::Seated(1)));
+    s.leave("owner", start);
+    assert_eq!(s.tick(start + GRACE).len(), 1);
+    // Second guest fills slot 0; only the true owner keeps the return-without-permission exemption.
+    assert_eq!(s.join("guest2", "TV", true), Ok(Joined::Seated(0)));
+    assert_eq!(s.join("guest2", "TV", false), Err(Refused::NotPermitted));
+    assert_eq!(s.join("owner", "Phone", true), Ok(Joined::Seated(2)));
+    s.leave("owner", start);
+    assert_eq!(s.join("owner", "Phone", false), Ok(Joined::Returned(2)));
+}

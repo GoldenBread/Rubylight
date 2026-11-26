@@ -30,8 +30,8 @@ const FILE: &str = "frame_warp.json";
 #[derive(Default)]
 pub(crate) struct VideoFrameWarp {
     passes: Option<FrameWarpGpu>,
-    /// The graphics device the passes last failed on; tried again only on another.
-    failed_on: Option<butterpollo_win_graphics::capture::Device>,
+    /// Identity (`Device::key`) of the graphics device the passes last failed on; tried again only on another.
+    failed_on: Option<usize>,
     worker: Option<Worker>,
     /// The worker could not start: no Frame Warp for the rest of this video thread.
     stopped: bool,
@@ -120,11 +120,7 @@ impl VideoFrameWarp {
             self.passes = None;
         }
         if self.passes.is_none() {
-            if self
-                .failed_on
-                .as_ref()
-                .is_some_and(|device| device.device == image.gpu.device)
-            {
+            if self.failed_on == Some(image.gpu.key()) {
                 return;
             }
             match FrameWarpGpu::for_image(image) {
@@ -167,12 +163,11 @@ impl VideoFrameWarp {
         }
     }
 
-    /// Releases GPU passes and remembered device-failure state on capture
-    /// generation reset so no dead `ID3D11Device` or capture texture survives
-    /// `release_generation`, while keeping the off-thread learning worker.
+    /// Releases GPU passes on capture generation reset so no dead
+    /// `ID3D11Device` or capture texture survives `release_generation`,
+    /// while preserving `failed_on` and the off-thread learning worker.
     pub(crate) fn reset(&mut self) {
         self.passes = None;
-        self.failed_on = None;
         self.mask_due = None;
     }
 
@@ -184,7 +179,7 @@ impl VideoFrameWarp {
             "frame warp stopped measuring the picture on this graphics device"
         );
         self.passes = None;
-        self.failed_on = Some(image.gpu.clone());
+        self.failed_on = Some(image.gpu.key());
     }
 }
 
@@ -377,7 +372,17 @@ struct Store {
 impl Store {
     fn load(&self) -> Option<Prior> {
         let key = self.key.as_ref()?;
-        read(&self.path).games.get(key).map(|game| game.prior)
+        match read(&self.path) {
+            Ok(remembered) => remembered.games.get(key).map(|game| game.prior),
+            Err(error) => {
+                tracing::warn!(
+                    path = %self.path.display(),
+                    error = %format!("{error:#}"),
+                    "frame warp could not read saved priors"
+                );
+                None
+            }
+        }
     }
 
     fn save(&self, prior: Prior) {
@@ -385,7 +390,17 @@ impl Store {
             return;
         };
         let _turn = SAVES.lock().unwrap_or_else(PoisonError::into_inner);
-        let mut remembered = read(&self.path);
+        let mut remembered = match read(&self.path) {
+            Ok(remembered) => remembered,
+            Err(error) => {
+                tracing::warn!(
+                    path = %self.path.display(),
+                    error = %format!("{error:#}"),
+                    "frame warp could not read existing priors; skipping save"
+                );
+                return;
+            }
+        };
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_or(0, |since| since.as_secs());
@@ -400,15 +415,19 @@ impl Store {
     }
 }
 
-/// The file, or nothing learned when it is missing or unreadable.
-fn read(path: &Path) -> Remembered {
-    let Ok(bytes) = std::fs::read(path) else {
-        return Remembered::default();
+/// The file, or nothing learned when it does not exist yet.
+fn read(path: &Path) -> std::io::Result<Remembered> {
+    let bytes = match std::fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(Remembered::default());
+        }
+        Err(error) => return Err(error),
     };
-    serde_json::from_slice(&bytes).unwrap_or_else(|error| {
+    Ok(serde_json::from_slice(&bytes).unwrap_or_else(|error| {
         tracing::warn!(path = %path.display(), %error, "frame warp ignores an unreadable file");
         Remembered::default()
-    })
+    }))
 }
 
 #[cfg(test)]
@@ -468,6 +487,7 @@ mod tests {
     #[test]
     fn reset_clears_gpu_state_and_mask_timer_while_keeping_session_flags() {
         let mut warp = VideoFrameWarp {
+            failed_on: Some(0x1234),
             mask_due: Some(Instant::now()),
             picture: Some(((1920, 1080), (1920, 1080))),
             stopped: true,
@@ -475,9 +495,27 @@ mod tests {
         };
         warp.reset();
         assert!(warp.passes.is_none());
-        assert!(warp.failed_on.is_none());
+        assert_eq!(warp.failed_on, Some(0x1234));
         assert!(warp.mask_due.is_none());
         assert!(warp.stopped);
         assert_eq!(warp.picture, Some(((1920, 1080), (1920, 1080))));
+    }
+
+    #[test]
+    fn save_skips_instead_of_overwriting_when_existing_file_cannot_be_read() {
+        let directory = std::env::temp_dir().join(format!("frame-warp-{}", uuid::Uuid::new_v4()));
+        let path = directory.join(FILE);
+        std::fs::create_dir_all(&path).unwrap();
+        let store = Store {
+            path: path.clone(),
+            key: Some("uuid:a".into()),
+        };
+        assert_eq!(store.load(), None);
+        store.save(prior(1.5));
+        assert!(
+            path.is_dir(),
+            "unreadable directory must not be overwritten"
+        );
+        let _ = std::fs::remove_dir_all(&directory);
     }
 }

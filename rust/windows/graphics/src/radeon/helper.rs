@@ -392,6 +392,11 @@ impl HelperBackend {
                     )));
                 }
                 Err(error) => {
+                    child.kill();
+                    self.hung
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .push(child);
                     return Err(BackendError(format!(
                         "cannot wait for the Radeon helper: {error}"
                     )));
@@ -417,6 +422,9 @@ impl HelperBackend {
 }
 
 impl RadeonBackend for HelperBackend {
+    fn gpu_identities(&mut self) -> Vec<crate::radeon::control::GpuIdentity> {
+        super::adlx::gpu_identities().unwrap_or_default()
+    }
     fn read(&mut self, gpu: i32) -> Result<Vec<Setting>, BackendError> {
         match self.call(&Request::Read { gpu })? {
             Response::Settings { settings } => Ok(settings),

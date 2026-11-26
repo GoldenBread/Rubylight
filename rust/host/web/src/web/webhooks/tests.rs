@@ -20,7 +20,11 @@ async fn list(f: &Fixture) -> Value {
 
 fn stored(f: &Fixture) -> Vec<butterpollo_session::webhook::Webhook> {
     let saved = Config::load(&f.host.config_path).unwrap();
-    butterpollo_session::webhook::parse_webhooks(saved.get("webhooks", "[]")).unwrap()
+    assert!(
+        !saved.get("webhooks", "[]").contains("\"secret\""),
+        "webhook secrets must not be stored in sunshine.conf"
+    );
+    butterpollo_session::webhook::load_from_profile(&saved, &f.host.directory)
 }
 
 #[tokio::test]
@@ -39,7 +43,11 @@ async fn a_hook_is_added_edited_and_deleted_and_its_secret_shown_once() {
     assert!(secret.chars().all(|c| c.is_ascii_hexdigit()));
     assert_eq!(stored(&f)[0].secret, secret);
     assert_eq!(
-        butterpollo_session::webhook::from_config(&f.host.config.read().unwrap())[0].secret,
+        butterpollo_session::webhook::load_from_profile(
+            &f.host.config.read().unwrap(),
+            &f.host.directory
+        )[0]
+        .secret,
         secret
     );
 
@@ -96,10 +104,50 @@ async fn a_hook_is_added_edited_and_deleted_and_its_secret_shown_once() {
     assert_eq!(stored(&f)[0].secret, fresh);
     let moved = elsewhere;
 
+    // Moved to another scheme or port on the same host also rotates the secret.
+    let same_origin_default = "http://192.168.1.20:8123/other";
+    let (status, same_origin) = post(
+        &f,
+        "/api/webhooks",
+        json!({"url": same_origin_default, "events": ["pairing.paired"], "previous": moved}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{same_origin}");
+    assert!(
+        same_origin["secret"].is_null(),
+        "same scheme+host+port keeps secret"
+    );
+    let moved = same_origin_default;
+
+    let other_port = "http://192.168.1.20:9000/api/webhook/rubylight";
+    let (status, port_changed) = post(
+        &f,
+        "/api/webhooks",
+        json!({"url": other_port, "events": ["pairing.paired"], "previous": moved}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{port_changed}");
+    let fresh_port = port_changed["secret"].as_str().unwrap().to_owned();
+    assert_ne!(fresh_port, fresh);
+    let moved = other_port;
+
+    let other_scheme = "https://192.168.1.20:9000/api/webhook/rubylight";
+    let (status, scheme_changed) = post(
+        &f,
+        "/api/webhooks",
+        json!({"url": other_scheme, "events": ["pairing.paired"], "previous": moved}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{scheme_changed}");
+    let fresh_scheme = scheme_changed["secret"].as_str().unwrap().to_owned();
+    assert_ne!(fresh_scheme, fresh_port);
+    let moved = other_scheme;
+
     let (status, _) = post(&f, "/api/webhooks/delete", json!({"url": moved})).await;
     assert_eq!(status, StatusCode::OK);
     assert!(stored(&f).is_empty());
     assert_eq!(list(&f).await["hooks"], json!([]));
+
     let (status, _) = post(&f, "/api/webhooks/delete", json!({"url": moved})).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 }
@@ -284,4 +332,56 @@ async fn send_test_reaches_the_receiver_and_shows_as_the_last_status() {
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn failed_secret_or_config_write_rolls_back_without_drift() {
+    let f = Fixture::new();
+    let keep_url = "https://keep.example/hook";
+    let (status, created) = post(
+        &f,
+        "/api/webhooks",
+        json!({"url": keep_url, "events": ["app.started"]}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{created}");
+    let keep_secret = created["secret"].as_str().unwrap().to_owned();
+    let secrets_file = butterpollo_session::webhook::secrets_path(&f.host.directory);
+
+    // If `sunshine.conf` fails to write, the new URL's secret must be rolled back.
+    let saved_conf = std::fs::read(&f.host.config_path).unwrap();
+    std::fs::remove_file(&f.host.config_path).unwrap();
+    std::fs::create_dir(&f.host.config_path).unwrap();
+    let (status, _) = post(
+        &f,
+        "/api/webhooks",
+        json!({"url": "https://new.example/hook", "events": ["app.started"]}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    std::fs::remove_dir(&f.host.config_path).unwrap();
+    std::fs::write(&f.host.config_path, saved_conf).unwrap();
+    assert_eq!(stored(&f).len(), 1);
+    assert_eq!(stored(&f)[0].url, keep_url);
+    assert_eq!(stored(&f)[0].secret, keep_secret);
+    let on_disk_secrets = butterpollo_session::webhook::load_secrets(&secrets_file).unwrap();
+    assert_eq!(on_disk_secrets.len(), 1);
+    assert_eq!(on_disk_secrets[keep_url], keep_secret);
+
+    // If `webhook_secrets.json` cannot be written, `sunshine.conf` and `h.config` must remain untouched.
+    let saved_secrets = std::fs::read(&secrets_file).unwrap();
+    std::fs::remove_file(&secrets_file).unwrap();
+    std::fs::create_dir(&secrets_file).unwrap();
+    let (status, _) = post(
+        &f,
+        "/api/webhooks",
+        json!({"url": "https://failsecret.example/hook", "events": ["app.started"]}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    std::fs::remove_dir(&secrets_file).unwrap();
+    std::fs::write(&secrets_file, saved_secrets).unwrap();
+    assert_eq!(stored(&f).len(), 1);
+    assert_eq!(stored(&f)[0].url, keep_url);
+    assert_eq!(stored(&f)[0].secret, keep_secret);
 }

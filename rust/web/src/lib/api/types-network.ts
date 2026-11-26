@@ -281,6 +281,8 @@ export interface LogChunk {
   size: number;
   /** The log was rotated or truncated since `offset`; `text` starts afresh. */
   reset: boolean;
+  /** Optional fingerprint of the log head to detect rotation even past `offset`. */
+  head?: string;
   text: string;
 }
 /** One wake setting of an adapter; ids and states from a newer host are shown by their state. */

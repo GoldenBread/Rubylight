@@ -13,7 +13,7 @@ pub const FIREWALL: &str = "firewall_blocked";
 /// The guest page's port could not be opened.
 pub const GUEST_PORT: &str = "guest_port";
 
-#[derive(Default, Serialize, Deserialize)]
+#[derive(Clone, Default, Serialize, Deserialize)]
 struct Saved {
     /// One-time notices by code, shown again at every start until dismissed.
     #[serde(default)]
@@ -26,6 +26,69 @@ struct Saved {
 /// Held across each load, change and save of the file, so concurrent dismisses
 /// and notices do not lose one another's change.
 static FILE_LOCK: Mutex<()> = Mutex::new(());
+
+#[derive(Clone, PartialEq, Eq)]
+struct FileStamp {
+    modified: Option<std::time::SystemTime>,
+    len: u64,
+}
+
+struct CachedSaved {
+    path: std::path::PathBuf,
+    stamp: Option<FileStamp>,
+    saved: Saved,
+}
+
+static SAVED_CACHE: Mutex<Option<CachedSaved>> = Mutex::new(None);
+
+fn file_stamp(path: &Path) -> Option<std::io::Result<Option<FileStamp>>> {
+    match std::fs::metadata(path) {
+        Ok(meta) => Some(Ok(Some(FileStamp {
+            modified: meta.modified().ok(),
+            len: meta.len(),
+        }))),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Some(Ok(None)),
+        Err(error) => Some(Err(error)),
+    }
+}
+
+fn cache_store(path: &Path, saved: &Saved) {
+    let stamp = file_stamp(path).and_then(Result::ok).flatten();
+    *SAVED_CACHE.lock().unwrap() = Some(CachedSaved {
+        path: path.to_path_buf(),
+        stamp,
+        saved: saved.clone(),
+    });
+}
+
+/// Cached view of `warnings.json` for read-only metadata polling, re-reading only when the file
+/// path, size, or modification timestamp changes.
+fn load_cached(directory: &Path) -> Result<Saved> {
+    let path = directory.join(FILE);
+    let read_stamp = || match file_stamp(&path) {
+        Some(Ok(stamp)) => Ok(stamp),
+        Some(Err(error)) => Err(error).with_context(|| format!("{}", path.display())),
+        None => Ok(None),
+    };
+    let stamp = read_stamp()?;
+    if let Some(cached) = SAVED_CACHE.lock().unwrap().as_ref()
+        && cached.path == path
+        && cached.stamp == stamp
+    {
+        return Ok(cached.saved.clone());
+    }
+    let _file = FILE_LOCK.lock().unwrap();
+    let stamp = read_stamp()?;
+    if let Some(cached) = SAVED_CACHE.lock().unwrap().as_ref()
+        && cached.path == path
+        && cached.stamp == stamp
+    {
+        return Ok(cached.saved.clone());
+    }
+    let saved = load(directory)?;
+    cache_store(&path, &saved);
+    Ok(saved)
+}
 
 /// The saved notices and dismissals. A file that is not valid JSON counts as
 /// empty, so it is replaced by the next save instead of blocking every dismiss.
@@ -55,6 +118,13 @@ pub fn restore(directory: &Path, warnings: &Warnings) {
     }
 }
 
+fn write_saved(directory: &Path, saved: &Saved) -> Result<()> {
+    let path = directory.join(FILE);
+    butterpollo_session::state::write_json(&path, saved)?;
+    cache_store(&path, saved);
+    Ok(())
+}
+
 /// Raises a one-time notice and saves it until the console dismisses it. A notice
 /// that cannot be saved still shows until the host stops.
 pub fn notice(directory: &Path, warnings: &Warnings, code: &str, message: &str) {
@@ -63,7 +133,7 @@ pub fn notice(directory: &Path, warnings: &Warnings, code: &str, message: &str) 
     let saved = load(directory).and_then(|mut saved| {
         saved.notices.insert(code.into(), message.into());
         saved.dismissed.remove(code);
-        butterpollo_session::state::write_json(&directory.join(FILE), &saved)
+        write_saved(directory, &saved)
     });
     if let Err(error) = saved {
         tracing::warn!(code, error = %format!("{error:#}"), "the host warning could not be saved; it shows until the host stops");
@@ -72,11 +142,19 @@ pub fn notice(directory: &Path, warnings: &Warnings, code: &str, message: &str) 
 
 /// The current warnings without those the console dismissed at this text.
 pub fn visible(directory: &Path, warnings: &Warnings) -> Vec<Warning> {
-    let dismissed = load(directory)
+    let dismissed = load_cached(directory)
         .map(|saved| saved.dismissed)
         .unwrap_or_default();
-    warnings
-        .snapshot()
+    let mut entries = warnings.snapshot();
+    if let Some(message) = crate::dsu::runtime_warning()
+        && !entries.iter().any(|w| w.code == crate::dsu::WARNING)
+    {
+        entries.push(Warning {
+            code: crate::dsu::WARNING.into(),
+            message,
+        });
+    }
+    entries
         .into_iter()
         .filter(|warning| dismissed.get(&warning.code) != Some(&warning.message))
         .collect()
@@ -84,7 +162,20 @@ pub fn visible(directory: &Path, warnings: &Warnings) -> Vec<Warning> {
 
 /// Hides the current warning `code`, and forgets it if it was a one-time notice.
 pub fn dismiss(directory: &Path, warnings: &Warnings, code: &str) -> Result<()> {
-    let Some(current) = warnings.snapshot().into_iter().find(|w| w.code == code) else {
+    let current = warnings
+        .snapshot()
+        .into_iter()
+        .find(|w| w.code == code)
+        .or_else(|| {
+            (code == crate::dsu::WARNING)
+                .then(crate::dsu::runtime_warning)
+                .flatten()
+                .map(|message| Warning {
+                    code: crate::dsu::WARNING.into(),
+                    message,
+                })
+        });
+    let Some(current) = current else {
         anyhow::bail!("there is no host warning {code:?} to dismiss");
     };
     let _file = FILE_LOCK.lock().unwrap();
@@ -94,7 +185,7 @@ pub fn dismiss(directory: &Path, warnings: &Warnings, code: &str) -> Result<()> 
     } else {
         saved.dismissed.insert(current.code, current.message);
     }
-    butterpollo_session::state::write_json(&directory.join(FILE), &saved)
+    write_saved(directory, &saved)
 }
 
 /// Takes back the notice `code` once what it reported is over: it is cleared, and neither
@@ -107,7 +198,7 @@ pub fn withdraw(directory: &Path, warnings: &Warnings, code: &str) {
         if !notice && saved.dismissed.remove(code).is_none() {
             return Ok(());
         }
-        butterpollo_session::state::write_json(&directory.join(FILE), &saved)
+        write_saved(directory, &saved)
     });
     if let Err(error) = saved {
         tracing::warn!(code, error = %format!("{error:#}"), "the host warning could not be taken back; it may show again at the next start");
@@ -280,5 +371,19 @@ mod tests {
             none.starts_with("No Windows Firewall rule allows"),
             "{none}"
         );
+    }
+
+    #[test]
+    fn visible_uses_cached_dismissals_until_file_changes() -> Result<()> {
+        let directory = tempdir()?;
+        let warnings = Warnings::default();
+        warnings.set("codec_support", "AV1 missing");
+        dismiss(directory.path(), &warnings, "codec_support")?;
+        assert!(visible(directory.path(), &warnings).is_empty());
+
+        // Rewrite `warnings.json` directly on disk to prove visible() refreshes when the stamp changes.
+        std::fs::write(directory.path().join(FILE), b"{}")?;
+        assert_eq!(visible(directory.path(), &warnings).len(), 1);
+        Ok(())
     }
 }

@@ -36,6 +36,19 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// No archive of the component is larger.
 const MAX_ASSET: u64 = 64 * 1024 * 1024;
 
+mod archive;
+
+#[derive(Debug)]
+struct StreamStarted;
+
+impl std::fmt::Display for StreamStarted {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("End the stream first: the download would take bandwidth from it.")
+    }
+}
+
+impl std::error::Error for StreamStarted {}
+
 /// The component's download or removal in progress, and the last failure.
 #[derive(Default)]
 pub struct NvidiaComponent {
@@ -397,6 +410,13 @@ async fn update(h: &Shared, installed: &str) {
         if begin(h, "download").is_ok() {
             tracing::info!(%installed, "fetching this version's NVIDIA components");
             let fetched = fetch(h).await;
+            if let Err(error) = &fetched
+                && error.is::<StreamStarted>()
+            {
+                tracing::info!("pausing NVIDIA component download because a stream started");
+                end(h, None);
+                continue;
+            }
             let done = fetched.is_ok();
             let outcome = finish(h, fetched).await;
             end(h, outcome.err());
@@ -628,6 +648,11 @@ async fn download(h: &Shared, asset: &Asset, path: &Path, before: u64, total: u6
     let mut hash = Sha256::new();
     let mut size = 0;
     while let Some(chunk) = response.chunk().await? {
+        if crate::updater::streaming(h) {
+            drop(file);
+            let _ = std::fs::remove_file(path);
+            return Err(StreamStarted.into());
+        }
         size += chunk.len() as u64;
         ensure!(
             size <= asset.size,
@@ -655,90 +680,12 @@ async fn download(h: &Shared, asset: &Asset, path: &Path, before: u64, total: u6
     Ok(())
 }
 
+#[cfg(test)]
+use archive::folder_name;
 /// Takes the files the archive `archive` (the release asset `asset`) may
 /// contribute ([`pins::wanted`]) into `into`: only entries at its top level,
 /// none larger than [`MAX_ASSET`], none twice.
-fn extract(archive: &Path, asset: &str, into: &Path) -> Result<Vec<String>> {
-    use std::io::{Read, Write};
-    let file = std::fs::File::open(archive)
-        .with_context(|| format!("cannot read {}", archive.display()))?;
-    let mut zip =
-        zip::ZipArchive::new(file).with_context(|| format!("{asset} is not a zip archive"))?;
-    let mut taken = Vec::new();
-    for index in 0..zip.len() {
-        let mut entry = zip.by_index(index)?;
-        let name = entry.name().to_owned();
-        if entry.is_dir() || name.contains(['/', '\\']) || !pins::wanted(&name) {
-            continue;
-        }
-        ensure!(entry.size() <= MAX_ASSET, "{name} in {asset} is too large");
-        let mut out = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(into.join(&name))
-            .with_context(|| format!("{name} appears twice in {asset}"))?;
-        let mut limited = (&mut entry).take(MAX_ASSET + 1);
-        let copied = std::io::copy(&mut limited, &mut out)?;
-        ensure!(copied <= MAX_ASSET, "{name} in {asset} is too large");
-        out.flush()?;
-        taken.push(name);
-    }
-    Ok(taken)
-}
-
-/// A folder name from this version and the adapter's SHA-256.
-fn folder_name(sha256: &str) -> String {
-    let version: String = VERSION
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '.' || c == '-' {
-                c
-            } else {
-                '-'
-            }
-        })
-        .collect();
-    format!("{version}-{}", &sha256[..16])
-}
-
-/// Moves the checked files in `staging` to their folder in `root`, named
-/// after the adapter ([`folder_name`]). The same files already there are
-/// kept; a folder an earlier install left, perhaps with a file still loaded,
-/// goes or is passed over for the next free name. A link is never used.
-fn place(root: &Path, staging: &Path, sha256: &str, runtime: &[Pinned]) -> Result<PathBuf> {
-    use std::os::windows::fs::MetadataExt;
-    let base = folder_name(sha256);
-    for n in 0..10 {
-        let target = match n {
-            0 => root.join(&base),
-            n => root.join(format!("{base}-{n}")),
-        };
-        match std::fs::symlink_metadata(&target) {
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => {
-                return Err(error).with_context(|| format!("cannot read {}", target.display()));
-            }
-            Ok(meta) if meta.is_dir() && meta.file_attributes() & 0x400 == 0 => {
-                if pins::verify_with(&target, sha256, runtime).is_ok() {
-                    std::fs::remove_dir_all(staging)?;
-                    return Ok(target);
-                }
-                if std::fs::remove_dir_all(&target).is_err() {
-                    continue;
-                }
-            }
-            Ok(_) => continue,
-        }
-        std::fs::rename(staging, &target).with_context(|| {
-            format!("cannot move the NVIDIA components to {}", target.display())
-        })?;
-        return Ok(target);
-    }
-    bail!(
-        "{} holds no free folder for the NVIDIA components; restart the host and download them again",
-        root.display()
-    )
-}
+use archive::{extract, place};
 
 /// Downloads, checks and installs this version's component; returns its
 /// record, already written.
@@ -761,7 +708,11 @@ async fn fetch(h: &Shared) -> Result<Record> {
     std::fs::create_dir(&staging)
         .with_context(|| format!("cannot create {}", staging.display()))?;
     let archive = root.join(format!("{}.part", asset.name));
-    download(h, &asset, &archive, 0, asset.size).await?;
+    if let Err(error) = download(h, &asset, &archive, 0, asset.size).await {
+        let _ = std::fs::remove_file(&archive);
+        let _ = std::fs::remove_dir_all(&staging);
+        return Err(error);
+    }
     let (staged, sha256) = {
         let (root, staging) = (root.clone(), staging.clone());
         tokio::task::spawn_blocking(move || -> Result<(PathBuf, String)> {

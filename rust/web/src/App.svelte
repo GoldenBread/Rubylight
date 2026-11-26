@@ -57,8 +57,8 @@
   let advancedOpen = $state(false);
 
   const Page = $derived.by(() => {
-    if (route.path === '/login') return Login;
-    if (route.path === '/setup') return Setup;
+    if (session.state === 'needs-setup' || route.path === '/setup') return Setup;
+    if (session.state === 'signed-out' || route.path === '/login') return Login;
     if (route.path === '/') return Overview;
     if (route.path === '/library/import') return LibraryImport;
     if (match('/library') || match('/library/:uuid')) return Library;

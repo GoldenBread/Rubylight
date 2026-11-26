@@ -4,6 +4,7 @@ use crate::capture::qpc_frequency;
 use butterpollo_media_policy::present_timing::Refiner;
 use std::{
     collections::VecDeque,
+    os::windows::io::{FromRawHandle, OwnedHandle},
     sync::{
         Arc, Mutex, OnceLock, Weak,
         atomic::{AtomicI64, AtomicU32, Ordering},
@@ -13,14 +14,37 @@ use std::{
 };
 use windows::{
     Win32::{
-        Foundation::{ERROR_INVALID_PARAMETER, ERROR_SUCCESS},
-        System::{Diagnostics::Etw::*, Performance::QueryPerformanceCounter},
+        Foundation::{ERROR_INVALID_PARAMETER, ERROR_SUCCESS, WAIT_OBJECT_0, WIN32_ERROR},
+        System::{
+            Diagnostics::Etw::*,
+            Performance::QueryPerformanceCounter,
+            Threading::{OpenProcess, PROCESS_SYNCHRONIZE, WaitForSingleObject},
+        },
         UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId},
     },
     core::{GUID, PCWSTR, PWSTR},
 };
 const DXGI: GUID = GUID::from_u128(0xca11c036_0102_4a2d_a6ad_f03cfed5d3c9);
+const SESSION_PREFIX: &str = "ButterpolloPresent-";
+static START_FAILURES: AtomicU32 = AtomicU32::new(0);
+static LAST_ERROR: Mutex<Option<String>> = Mutex::new(None);
+
+/// Number of ETW present-timing startup failures recorded in this process.
+pub fn start_failures() -> u32 {
+    START_FAILURES.load(Ordering::Relaxed)
+}
+/// Last ETW present-timing startup diagnostic error, if initialization failed.
+pub fn last_error() -> Option<String> {
+    LAST_ERROR.lock().ok().and_then(|g| g.clone())
+}
+fn record_failure(message: String) {
+    START_FAILURES.fetch_add(1, Ordering::Relaxed);
+    if let Ok(mut last) = LAST_ERROR.lock() {
+        *last = Some(message);
+    }
+}
 #[repr(C)]
+#[derive(Clone)]
 struct Properties {
     header: EVENT_TRACE_PROPERTIES,
     name: [u16; 128],
@@ -138,16 +162,79 @@ struct Tracker {
     // The callback points into this stable allocation, released after joining.
     events: Box<Events>,
 }
+fn stale_session_pid(name: &str) -> Option<u32> {
+    let rest = name.strip_prefix(SESSION_PREFIX)?;
+    let (pid, nonce) = rest.split_once('-')?;
+    let pid: u32 = pid.parse().ok()?;
+    (pid > 0 && !nonce.is_empty()).then_some(pid)
+}
+
+fn process_exited(pid: u32) -> bool {
+    if pid == std::process::id() {
+        return false;
+    }
+    // SAFETY: Plain Win32 PID query; handle is wrapped in `OwnedHandle` if valid.
+    match unsafe { OpenProcess(PROCESS_SYNCHRONIZE, false, pid) } {
+        Ok(raw) => {
+            // SAFETY: `raw` is an owned handle just returned by `OpenProcess`.
+            let _owned = unsafe { OwnedHandle::from_raw_handle(raw.0) };
+            // SAFETY: `raw` is live with `PROCESS_SYNCHRONIZE`.
+            unsafe { WaitForSingleObject(raw, 0) == WAIT_OBJECT_0 }
+        }
+        Err(error) => WIN32_ERROR::from_error(&error) == Some(ERROR_INVALID_PARAMETER),
+    }
+}
+
+/// Stop orphaned `ButterpolloPresent-<pid>-*` ETW sessions whose owning host
+/// process has exited abnormally so Windows' global ETW session cap is not exhausted.
+fn stop_stale_sessions() {
+    let mut storage = vec![Properties::new(false); 64];
+    let mut pointers: Vec<*mut EVENT_TRACE_PROPERTIES> = storage
+        .iter_mut()
+        .map(|p| &mut p.header as *mut _)
+        .collect();
+    let mut count = 0u32;
+    // SAFETY: Every pointer points to a live `Properties` buffer whose `BufferSize` and
+    // `LoggerNameOffset` cover its name slice; `storage` outlives the call.
+    if unsafe { QueryAllTracesW(&mut pointers, &mut count) } != ERROR_SUCCESS {
+        return;
+    }
+    for props in &storage[..(count as usize).min(storage.len())] {
+        let name = crate::text::from_wide(&props.name);
+        let Some(pid) = stale_session_pid(&name) else {
+            continue;
+        };
+        if !process_exited(pid) {
+            continue;
+        }
+        let wide: Vec<u16> = name.encode_utf16().chain(Some(0)).collect();
+        let mut stop = Properties::new(false);
+        // SAFETY: `wide` is NUL-terminated UTF-16 and `stop` is sized for the stop query.
+        if unsafe {
+            ControlTraceW(
+                CONTROLTRACE_HANDLE::default(),
+                PCWSTR(wide.as_ptr()),
+                &mut stop.header,
+                EVENT_TRACE_CONTROL_STOP,
+            )
+        } == ERROR_SUCCESS
+        {
+            tracing::info!(session = %name, pid, "stopped stale DXGI present ETW session");
+        }
+    }
+}
+
 impl Tracker {
     fn start() -> Option<Arc<Self>> {
+        stop_stale_sessions();
         let mut s = Self {
             session: CONTROLTRACE_HANDLE::default(),
             consumer: PROCESSTRACE_HANDLE { Value: u64::MAX },
             worker: None,
             events: Box::new(Events::new(qpc_frequency() * 2, qpc_frequency() * 5)),
         };
-        // Never stop or take over a trace belonging to another host instance.
-        let name: Vec<u16> = format!("ButterpolloPresent-{}-{}", std::process::id(), hex_nonce())
+        // Never stop or take over a trace belonging to another live host instance.
+        let name: Vec<u16> = format!("{SESSION_PREFIX}{}-{}", std::process::id(), hex_nonce())
             .encode_utf16()
             .chain(Some(0))
             .collect();
@@ -174,8 +261,11 @@ impl Tracker {
         }
         if result != ERROR_SUCCESS {
             s.session = CONTROLTRACE_HANDLE::default();
-            tracing::info!(
+            let message = format!("StartTraceW failed ({})", result.0);
+            record_failure(message);
+            tracing::warn!(
                 error = result.0,
+                failures = start_failures(),
                 "DXGI present tracking unavailable; keeping capture timestamps"
             );
             return None;
@@ -195,8 +285,11 @@ impl Tracker {
             )
         };
         if result != ERROR_SUCCESS {
-            tracing::info!(
+            let message = format!("EnableTraceEx2 failed ({})", result.0);
+            record_failure(message);
+            tracing::warn!(
                 error = result.0,
+                failures = start_failures(),
                 "DXGI present provider unavailable; keeping capture timestamps"
             );
             return None;
@@ -218,6 +311,11 @@ impl Tracker {
         // boxed Events, which Drop frees only after joining the trace worker.
         s.consumer = unsafe { OpenTraceW(&mut logfile) };
         if s.consumer.Value == u64::MAX {
+            record_failure("OpenTraceW returned invalid trace handle".into());
+            tracing::warn!(
+                failures = start_failures(),
+                "DXGI present trace consumer unavailable; keeping capture timestamps"
+            );
             return None;
         }
         let handle = s.consumer.Value;
@@ -230,9 +328,17 @@ impl Tracker {
             }) {
             Ok(worker) => s.worker = Some(worker),
             Err(error) => {
-                tracing::warn!(%error, "present tracking worker unavailable");
+                record_failure(format!("present worker spawn failed: {error}"));
+                tracing::warn!(
+                    %error,
+                    failures = start_failures(),
+                    "present tracking worker unavailable"
+                );
                 return None;
             }
+        }
+        if let Ok(mut last) = LAST_ERROR.lock() {
+            *last = None;
         }
         Some(Arc::new(s))
     }
@@ -532,34 +638,20 @@ mod tests {
             record.EventHeader.ProcessId = 17;
             record.EventHeader.TimeStamp = 2000;
             record.EventHeader.Flags = if pointer == 4 { 0x20 } else { 0 };
-            // SAFETY: `record` points at the live `events` and `data`, with UserDataLength within
-            // `data`.
-            unsafe {
-                on_event(&mut record);
-            }
+            // SAFETY: `record` points at live `events` and `data` with valid lengths.
+            let send = |record: &mut EVENT_RECORD| unsafe { on_event(record) };
+            send(&mut record);
             let saved = events.values.lock().unwrap().back().copied().unwrap();
             assert_eq!((saved.qpc, saved.pid, saved.chain), (2000, 17, 0x1234));
             let length = events.values.lock().unwrap().len();
             data[pointer] = 1; // DXGI_PRESENT_TEST
-            // SAFETY: `record` points at the live `events` and `data`, with UserDataLength within
-            // `data`.
-            unsafe {
-                on_event(&mut record);
-            }
+            send(&mut record);
             data[pointer] = 0;
             record.UserDataLength = pointer as u16;
-            // SAFETY: `record` points at the live `events` and `data`, with UserDataLength within
-            // `data`.
-            unsafe {
-                on_event(&mut record);
-            }
+            send(&mut record);
             record.UserDataLength = data.len() as u16;
             record.EventHeader.EventDescriptor.Id = 99;
-            // SAFETY: `record` points at the live `events` and `data`, with UserDataLength within
-            // `data`.
-            unsafe {
-                on_event(&mut record);
-            }
+            send(&mut record);
             assert_eq!(events.values.lock().unwrap().len(), length);
         }
     }
@@ -575,74 +667,45 @@ mod tests {
         let composition = window;
         // Deliberately out of order, including both edges: a present at
         // `composition - window` and one after `composition` are outside it.
-        let events = [
+        for &(qpc, chain) in &[
             (composition - window / 40, 9u64),
             (composition - window, 7),
             (composition - window / 2, 7),
             (composition + 1, 7),
             (composition - window / 20, 9),
             (composition - window / 5, 7),
-        ];
-        for &(qpc, chain) in &events {
-            let mut data = [0u8; 12];
-            data[..8].copy_from_slice(&chain.to_le_bytes());
-            let mut record = EVENT_RECORD {
-                UserContext: (&*tracker.events as *const Events).cast_mut().cast(),
-                UserData: data.as_mut_ptr().cast(),
-                UserDataLength: data.len() as u16,
-                ..Default::default()
-            };
-            record.EventHeader.ProviderId = DXGI;
-            record.EventHeader.EventDescriptor.Id = 42;
-            record.EventHeader.ProcessId = 17;
-            record.EventHeader.TimeStamp = qpc;
-            // SAFETY: `record` points at the live `tracker.events` and `data`, with
-            // UserDataLength within `data`.
-            unsafe {
-                on_event(&mut record);
-            }
+        ] {
+            present_chain(&tracker.events, 17, qpc, chain);
         }
-        assert!(
-            tracker
-                .events
-                .values
-                .lock()
-                .unwrap()
-                .iter()
-                .is_sorted_by_key(|e| e.qpc)
-        );
+        let sorted = tracker
+            .events
+            .values
+            .lock()
+            .unwrap()
+            .iter()
+            .is_sorted_by_key(|e| e.qpc);
+        assert!(sorted);
         let mut output = Vec::new();
         let mut counts = Vec::new();
+        let expected = vec![composition - window / 20, composition - window / 40];
+        let mut query = |pid| {
+            output.clear();
+            let chain = tracker.presents(pid, composition, 0, &mut output, &mut counts);
+            (chain, output.clone())
+        };
         // Chains 7 and 9 tie at two presents in the window: the higher chain wins.
-        assert_eq!(
-            tracker.presents(17, composition, 0, &mut output, &mut counts),
-            9
-        );
-        assert_eq!(
-            output,
-            [composition - window / 20, composition - window / 40]
-        );
+        assert_eq!(query(17), (9, expected.clone()));
         // A reused count buffer must not keep the previous window's counts.
-        output.clear();
-        assert_eq!(
-            tracker.presents(17, composition, 0, &mut output, &mut counts),
-            9
-        );
-        assert_eq!(
-            output,
-            [composition - window / 20, composition - window / 40]
-        );
+        assert_eq!(query(17), (9, expected));
         // Another process's presents are ignored.
-        output.clear();
-        assert_eq!(
-            tracker.presents(18, composition, 0, &mut output, &mut counts),
-            0
-        );
-        assert!(output.is_empty());
+        assert_eq!(query(18), (0, Vec::new()));
     }
     fn present(events: &Events, pid: u32, qpc: i64) {
+        present_chain(events, pid, qpc, 7);
+    }
+    fn present_chain(events: &Events, pid: u32, qpc: i64, chain: u64) {
         let mut data = [0u8; 12];
-        data[..8].copy_from_slice(&7u64.to_le_bytes());
+        data[..8].copy_from_slice(&chain.to_le_bytes());
         let mut record = EVENT_RECORD {
             UserContext: (events as *const Events).cast_mut().cast(),
             UserData: data.as_mut_ptr().cast(),
@@ -653,46 +716,62 @@ mod tests {
         record.EventHeader.EventDescriptor.Id = 42;
         record.EventHeader.ProcessId = pid;
         record.EventHeader.TimeStamp = qpc;
-        // SAFETY: `record` points at the live `events` and `data`, with UserDataLength within
-        // `data`.
-        unsafe {
-            on_event(&mut record);
-        }
+        // SAFETY: `record` points at `events` and `data` within `UserDataLength`.
+        unsafe { on_event(&mut record) };
     }
     fn recorded(events: &Events) -> Vec<(u32, i64)> {
-        let values = events.values.lock().unwrap();
-        values.iter().map(|e| (e.pid, e.qpc)).collect()
+        events
+            .values
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|e| (e.pid, e.qpc))
+            .collect()
     }
     #[test]
     fn presents_of_unwatched_processes_are_skipped_only_while_a_watch_is_fresh() {
         let events = Events::new(i64::MAX / 2, 100);
         // Nothing watched yet: every process is recorded, so a first query finds history.
-        present(&events, 17, 10);
-        present(&events, 18, 20);
-        assert_eq!(recorded(&events), [(17, 10), (18, 20)]);
+        let mut expected = vec![(17, 10), (18, 20)];
+        for &(pid, qpc) in &expected {
+            present(&events, pid, qpc);
+        }
+        assert_eq!(recorded(&events), expected);
         events.watch(17, 50);
         present(&events, 17, 60);
         present(&events, 18, 70);
-        assert_eq!(recorded(&events), [(17, 10), (18, 20), (17, 60)]);
+        expected.push((17, 60));
+        assert_eq!(recorded(&events), expected);
         // A second stream's process is recorded next to the first.
         events.watch(19, 80);
         present(&events, 19, 90);
         present(&events, 18, 100);
-        assert_eq!(recorded(&events), [(17, 10), (18, 20), (17, 60), (19, 90)]);
+        expected.push((19, 90));
+        assert_eq!(recorded(&events), expected);
         // Once every watch has expired, everything is recorded again.
         present(&events, 18, 181);
-        assert_eq!(
-            recorded(&events),
-            [(17, 10), (18, 20), (17, 60), (19, 90), (18, 181)]
-        );
+        expected.push((18, 181));
+        assert_eq!(recorded(&events), expected);
         // An expired slot is reused, and the pid of no window is never watched.
         events.watch(0, 300);
         present(&events, 18, 310);
         events.watch(20, 400);
         present(&events, 18, 410);
         present(&events, 20, 420);
-        let tail: Vec<_> = recorded(&events).into_iter().skip(5).collect();
-        assert_eq!(tail, [(18, 310), (20, 420)]);
+        assert_eq!(&recorded(&events)[5..], [(18, 310), (20, 420)]);
+    }
+    #[test]
+    fn stale_session_name_parser_extracts_valid_pid_only() {
+        let f = stale_session_pid;
+        assert_eq!(f("ButterpolloPresent-1234-deadbeef"), Some(1234));
+        let bad = [
+            "ButterpolloPresent-0-deadbeef",
+            "ButterpolloPresent-abc-deadbeef",
+            "ButterpolloPresent-1234-",
+            "ButterpolloPresent-1234",
+            "OtherSession-1234-deadbeef",
+        ];
+        assert!(bad.into_iter().all(|s| f(s).is_none()));
     }
     #[test]
     fn a_query_finding_every_slot_taken_records_unfiltered() {

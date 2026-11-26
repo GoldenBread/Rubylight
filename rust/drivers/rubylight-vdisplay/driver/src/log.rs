@@ -46,30 +46,49 @@ fn push(level: u8, line: &str) {
     r.lines.push_back((level, line[..end].to_string()));
 }
 
-/// Answer `IOCTL_DRAIN_LOG`: whole records, oldest first, up to `cap` bytes. What does not
-/// fit waits for the next call, except a record larger than `cap` alone, which is dropped.
-pub fn drain(cap: usize) -> Vec<u8> {
-    let mut out = Vec::new();
-    let Ok(mut r) = ring().lock() else { return out };
-    if r.dropped > 0 {
-        let n = std::mem::take(&mut r.dropped);
-        let line = format!("[rlvd] log ring overflowed; {n} lines dropped");
-        control::write_log_record(&mut out, control::LOG_WARN, &line);
-    }
-    while let Some((level, line)) = r.lines.pop_front() {
-        let start = out.len();
-        control::write_log_record(&mut out, level, &line);
-        if out.len() > cap {
-            out.truncate(start);
-            if start == 0 {
-                r.dropped += 1;
-            } else {
-                r.lines.push_front((level, line));
-            }
-            break;
+impl Ring {
+    fn drain(&mut self, cap: usize) -> Vec<u8> {
+        if cap == 0 {
+            return Vec::new();
         }
+        let mut out = Vec::new();
+        if self.dropped > 0 {
+            let line = format!("[rlvd] log ring overflowed; {} lines dropped", self.dropped);
+            control::write_log_record(&mut out, control::LOG_WARN, &line);
+            if out.len() > cap {
+                out.clear();
+                return out;
+            }
+            self.dropped = 0;
+        }
+        while let Some((level, line)) = self.lines.pop_front() {
+            let start = out.len();
+            control::write_log_record(&mut out, level, &line);
+            if out.len() > cap {
+                out.truncate(start);
+                if start == 0 {
+                    self.dropped += 1;
+                } else {
+                    self.lines.push_front((level, line));
+                }
+                break;
+            }
+        }
+        out
     }
-    out
+}
+
+/// Answer `IOCTL_DRAIN_LOG`: whole records, oldest first, up to `cap` bytes. What does not
+/// fit waits for the next call, except a record larger than `cap` alone (when `cap > 0`),
+/// which is dropped. A zero-byte buffer leaves the ring untouched.
+pub fn drain(cap: usize) -> Vec<u8> {
+    if cap == 0 {
+        return Vec::new();
+    }
+    let Ok(mut r) = ring().lock() else {
+        return Vec::new();
+    };
+    r.drain(cap)
 }
 
 /// A driver knob: the process environment first, then the machine environment in the
@@ -173,4 +192,48 @@ pub(crate) fn log_at(level: u8, s: &str) {
 // failure loop can hold.
 macro_rules! dbglog {
     ($($a:tt)*) => { $crate::log::log(&::std::format!($($a)*)) };
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn drain_zero_cap_preserves_lines_and_overflow_count() {
+        let mut ring = Ring {
+            lines: VecDeque::from([(control::LOG_INFO, "first".to_owned())]),
+            dropped: 3,
+        };
+        assert!(ring.drain(0).is_empty());
+        assert_eq!(ring.dropped, 3);
+        assert_eq!(ring.lines.len(), 1);
+    }
+
+    #[test]
+    fn drain_small_cap_preserves_overflow_notice_and_bounds_records() {
+        let mut ring = Ring {
+            lines: VecDeque::from([
+                (control::LOG_INFO, "alpha".to_owned()),
+                (control::LOG_WARN, "beta".to_owned()),
+            ]),
+            dropped: 4,
+        };
+        // Too small to hold the overflow notice: keep `dropped` intact and do not drop queued lines.
+        assert!(ring.drain(12).is_empty());
+        assert_eq!(ring.dropped, 4);
+        assert_eq!(ring.lines.len(), 2);
+
+        // Large enough for the notice and first line, leaving the second queued.
+        let mut expected = Vec::new();
+        control::write_log_record(
+            &mut expected,
+            control::LOG_WARN,
+            "[rlvd] log ring overflowed; 4 lines dropped",
+        );
+        control::write_log_record(&mut expected, control::LOG_INFO, "alpha");
+        let bytes = ring.drain(expected.len());
+        assert_eq!(ring.dropped, 0);
+        assert_eq!(ring.lines.len(), 1);
+        assert_eq!(bytes, expected);
+    }
 }

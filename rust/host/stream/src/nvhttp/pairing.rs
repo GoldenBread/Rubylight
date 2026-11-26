@@ -60,7 +60,7 @@ pub async fn do_pair(
             bail!("certificate too large");
         }
         let certificate = String::from_utf8(hex::decode(text)?)?;
-        crypto::public_key(&certificate)?;
+        crypto::verify_pairing_certificate(&certificate)?;
         let salt = hex::decode(args.get("salt").context("missing salt")?)?;
         if salt.len() < 16 || salt.len() > 32 {
             bail!("invalid salt length");

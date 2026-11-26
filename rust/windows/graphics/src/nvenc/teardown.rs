@@ -186,17 +186,79 @@ impl Session {
         // Synchronous sessions (including D3D12, where `enableEncodeAsync == 0`)
         // always send EOS even after all pending frames have been collected so
         // internal driver GPU work flushes before resources are unregistered.
+        // Asynchronous sessions require a registered `completionEvent` on every
+        // `nvEncEncodePicture`, including EOS.
+        let mut eos_event_registered = false;
         if self.initialized && (self.initialize.enableEncodeAsync == 0 || !self.pending.is_empty())
         {
+            let completion_event = if self.initialize.enableEncodeAsync != 0 {
+                if let Some(event) = self
+                    .slots
+                    .iter()
+                    .enumerate()
+                    .find(|(index, slot)| {
+                        slot.event_registered
+                            && slot.event.is_some()
+                            && !self.pending.iter().any(|pending| pending.slot == *index)
+                    })
+                    .and_then(|(_, slot)| slot.event.as_ref())
+                {
+                    let _ = event.reset();
+                    event.raw().0
+                } else {
+                    if self.drain_event.is_none() {
+                        self.drain_event = crate::timing::Signal::new().ok();
+                    }
+                    if let (Some(event), Some(register)) = (
+                        self.drain_event.as_ref(),
+                        self.functions.nvEncRegisterAsyncEvent,
+                    ) {
+                        let _ = event.reset();
+                        let mut params = NV_ENC_EVENT_PARAMS {
+                            version: self.api.event(),
+                            completionEvent: event.raw().0,
+                            ..Default::default()
+                        };
+                        // SAFETY: `self.raw` is a live async session and `self.drain_event` stays
+                        // open until unregistered below or retained on failure.
+                        if unsafe { register(self.raw, &mut params) } == super::SUCCESS {
+                            eos_event_registered = true;
+                            event.raw().0
+                        } else {
+                            ptr::null_mut()
+                        }
+                    } else {
+                        ptr::null_mut()
+                    }
+                }
+            } else {
+                ptr::null_mut()
+            };
             let mut eos = NV_ENC_PIC_PARAMS {
                 version: self.api.picture(),
                 encodePicFlags: _NV_ENC_PIC_FLAGS_NV_ENC_PIC_FLAG_EOS,
+                completionEvent: completion_event,
                 ..Default::default()
             };
             // SAFETY: `self.raw` is the non-null open session and `eos` is versioned.
             let _ = unsafe { (self.functions.nvEncEncodePicture.unwrap())(self.raw, &mut eos) };
             if !self.pending.is_empty() {
                 let _ = self.drain();
+            }
+            if eos_event_registered
+                && self.pending.is_empty()
+                && let (Some(event), Some(unregister)) = (
+                    self.drain_event.as_ref(),
+                    self.functions.nvEncUnregisterAsyncEvent,
+                )
+            {
+                let mut params = NV_ENC_EVENT_PARAMS {
+                    version: self.api.event(),
+                    completionEvent: event.raw().0,
+                    ..Default::default()
+                };
+                // SAFETY: `params.completionEvent` was registered above and drain finished cleanly.
+                let _ = unsafe { unregister(self.raw, &mut params) };
             }
         }
         let d3d12_idle = self.wait_d3d12_idle(d3d12_wait);

@@ -158,9 +158,7 @@ struct State {
 type Slot = Arc<Mutex<Option<State>>>;
 static LEASES: Mutex<BTreeMap<String, Slot>> = Mutex::new(BTreeMap::new());
 fn slot_for(id: &str) -> Slot {
-    LEASES
-        .lock()
-        .unwrap()
+    crate::lock_unpoisoned(&LEASES)
         .entry(id.to_owned())
         .or_default()
         .clone()
@@ -168,7 +166,7 @@ fn slot_for(id: &str) -> Slot {
 /// Runs `work` on the display's lease state under the display's own lock only.
 fn with_slot<T>(id: &str, work: impl FnOnce(&mut Option<State>) -> Result<T>) -> Result<T> {
     let slot = slot_for(id);
-    let result = work(&mut slot.lock().unwrap());
+    let result = work(&mut crate::lock_unpoisoned(&slot));
     drop(slot);
     if result.is_err() {
         forget_slot(id);
@@ -177,10 +175,10 @@ fn with_slot<T>(id: &str, work: impl FnOnce(&mut Option<State>) -> Result<T>) ->
 }
 /// Forgets the display's slot once nothing holds or waits for it.
 fn forget_slot(id: &str) {
-    let mut leases = LEASES.lock().unwrap();
+    let mut leases = crate::lock_unpoisoned(&LEASES);
     if leases
         .get(id)
-        .is_some_and(|slot| Arc::strong_count(slot) == 1 && slot.lock().unwrap().is_none())
+        .is_some_and(|slot| Arc::strong_count(slot) == 1 && crate::lock_unpoisoned(slot).is_none())
     {
         leases.remove(id);
     }
@@ -236,7 +234,7 @@ impl Lease {
             return Ok(());
         }
         let slot = slot_for(&self.identity);
-        let mut held = slot.lock().unwrap();
+        let mut held = crate::lock_unpoisoned(&slot);
         let state = held.as_mut().context("the HDR profile lease is gone")?;
         let api = Api::load()?;
         let system = state.system;
@@ -372,9 +370,8 @@ fn restore_with(
     {
         if let Some(previous) = previous {
             api.add(monitor, system, previous)?;
-        } else {
-            api.remove(monitor, system, applied)?;
         }
+        api.remove(monitor, system, applied)?;
     } else {
         tracing::info!(
             output = %monitor.display_name,
@@ -390,7 +387,7 @@ impl Drop for Lease {
     fn drop(&mut self) {
         let slot = slot_for(&self.identity);
         let result = {
-            let mut held = slot.lock().unwrap();
+            let mut held = crate::lock_unpoisoned(&slot);
             let Some(state) = held.as_mut() else {
                 return;
             };

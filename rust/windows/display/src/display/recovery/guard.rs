@@ -4,7 +4,7 @@ use super::super::modes::supported_modes;
 use super::super::virtual_display::{DisplayLease, display_lease, joined_monitor, raise_lease};
 use super::super::*;
 use super::{
-    Plan, SETTINGS, adopt, choose, lease_hdr, lease_setting, plan, restore_mode_rate,
+    Plan, SETTINGS, adopt, choose, lease_hdr, lease_setting, plan, restore_mode_rate_with,
     restore_settings, rotation, set_rotation,
 };
 
@@ -110,7 +110,7 @@ impl Guard {
             (None, None)
         };
         let chosen = if let Some(v) = &virtual_display {
-            joined_monitor(&mut *v.lock().unwrap(), needed)?
+            joined_monitor(&mut *crate::lock_unpoisoned(v), needed)?
         } else {
             let choices = monitors()?;
             choose(&choices, output)
@@ -121,14 +121,14 @@ impl Guard {
             output: chosen.display_name.clone(),
             generation: virtual_display
                 .as_ref()
-                .map_or(0, |v| v.lock().unwrap().generation),
+                .map_or(0, |v| crate::lock_unpoisoned(v).generation),
             hdr,
             virtual_display,
             identity: chosen.device_id.clone(),
             restore_pending: false,
         };
         let result = (|| -> Result<()> {
-            let mut all = SETTINGS.lock().unwrap();
+            let mut all = crate::lock_unpoisoned(&SETTINGS);
             let settings = all.entry(guard.identity.clone()).or_default();
             settings.users += 1;
             // The first user takes over what an earlier stream left pending
@@ -247,7 +247,7 @@ impl Guard {
         })();
         result?;
         if let Some(display) = &guard.virtual_display {
-            let mut display = display.lock().unwrap();
+            let mut display = crate::lock_unpoisoned(display);
             display.finish_hotplug("after settings")?;
             guard.output = display.name.clone();
         }
@@ -263,7 +263,7 @@ impl Guard {
         let requested = butterpollo_media_policy::display_policy::rotation_code(degrees)
             .with_context(|| format!("{degrees}° is not a display rotation"))?;
         let current = rotation(&self.identity)?;
-        let mut all = SETTINGS.lock().unwrap();
+        let mut all = crate::lock_unpoisoned(&SETTINGS);
         let settings = all
             .get_mut(&self.identity)
             .context("display has no settings lease")?;
@@ -307,7 +307,7 @@ impl Guard {
             .find(|m| m.device_id == self.identity)
             .context("display is unavailable for scaling")?;
         let current = dpi_scale(monitor)?;
-        let mut all = SETTINGS.lock().unwrap();
+        let mut all = crate::lock_unpoisoned(&SETTINGS);
         let settings = all
             .get_mut(&self.identity)
             .context("display has no settings lease")?;
@@ -334,7 +334,7 @@ impl Guard {
     /// refusal is logged; callers verify and report the mode themselves.
     pub fn apply_virtual_mode(&self, stage: &str) {
         if let Some(display) = &self.virtual_display {
-            display.lock().unwrap().apply_mode(stage);
+            crate::lock_unpoisoned(display).apply_mode(stage);
         }
     }
     /// Whether this guard owns a virtual display rather than a physical one.
@@ -363,7 +363,7 @@ impl Guard {
         if std::sync::Arc::strong_count(display) > 1 {
             bail!("another stream shares this virtual display, so it keeps its shape");
         }
-        if !display.lock().unwrap().reshape(width, height) {
+        if !crate::lock_unpoisoned(display).reshape(width, height) {
             bail!("Windows did not show {width}x{height} on the virtual display");
         }
         Ok(())
@@ -376,21 +376,21 @@ impl Guard {
         if std::sync::Arc::strong_count(display) > 1 {
             return None;
         }
-        display.lock().unwrap().applied_size()
+        crate::lock_unpoisoned(display).applied_size()
     }
     /// Set this resolution, at the stream's refresh, from now on where the
     /// guard sets its virtual display's mode again: after a layout, a resume
     /// or a recovery.
     pub fn adopt_virtual_size(&self, width: u32, height: u32) {
         if let Some(display) = &self.virtual_display {
-            display.lock().unwrap().adopt_size(width, height);
+            crate::lock_unpoisoned(display).adopt_size(width, height);
         }
     }
     /// True when the display was recovered, or a recovered display's HDR and
     /// mode were restored late: capture and the stream's layout follow it.
     pub fn feed(&mut self) -> Result<bool> {
         if let Some(display) = &mut self.virtual_display {
-            let mut display = display.lock().unwrap();
+            let mut display = crate::lock_unpoisoned(display);
             display.feed()?;
             if display.generation != self.generation {
                 let chosen = monitors()?
@@ -401,7 +401,7 @@ impl Guard {
                 // which the heartbeat's own lookup may not have caught.
                 display.name = chosen.display_name.clone();
                 {
-                    let mut settings = SETTINGS.lock().unwrap();
+                    let mut settings = crate::lock_unpoisoned(&SETTINGS);
                     if chosen.device_id != self.identity {
                         if let Some(old) = settings.get_mut(&self.identity) {
                             old.users -= 1;
@@ -443,7 +443,7 @@ impl Guard {
         let Some(display) = &self.virtual_display else {
             return Ok(None);
         };
-        let display = display.lock().unwrap();
+        let display = crate::lock_unpoisoned(display);
         let status = display.status()?;
         let active = display.active().ok();
         Ok(Some(DisplayDiagnostics {
@@ -461,7 +461,7 @@ impl Guard {
     /// None for a physical display or a status read that failed.
     pub fn monitor_status(&self) -> Option<DisplayStatus> {
         let display = self.virtual_display.as_ref()?;
-        let status = display.lock().unwrap().status().ok()?;
+        let status = crate::lock_unpoisoned(display).status().ok()?;
         Some(DisplayStatus {
             swap_chain: status.flags & rubylight_vdisplay_proto::control::MONITOR_SWAP_CHAIN != 0,
             ring: status.flags & rubylight_vdisplay_proto::control::MONITOR_RING != 0,
@@ -473,21 +473,21 @@ impl Guard {
     /// failure that the host could not explain from its own log.
     pub fn drain_display_log(&self) {
         if let Some(display) = &self.virtual_display {
-            display.lock().unwrap().drain_log();
+            crate::lock_unpoisoned(display).drain_log();
         }
     }
     /// A paused game retains its display for reconnect, but must not switch
     /// it on or restore mode/HDR after the user changed the local layout.
     pub fn keep_alive(&mut self) -> Result<()> {
         if let Some(display) = &self.virtual_display {
-            display.lock().unwrap().keep_alive()?;
+            crate::lock_unpoisoned(display).keep_alive()?;
         }
         Ok(())
     }
     /// Repair and publish a paused display before its stream resumes.
     pub fn resume(&mut self) -> Result<bool> {
         if let Some(display) = &self.virtual_display {
-            display.lock().unwrap().recover_now()?;
+            crate::lock_unpoisoned(display).recover_now()?;
         }
         self.feed()
     }
@@ -504,7 +504,7 @@ fn restore_recovered(
             .into_iter()
             .find(|m| display.owns_monitor(m))
             .context("recovered display unavailable")?;
-        let mut settings = SETTINGS.lock().unwrap();
+        let mut settings = crate::lock_unpoisoned(&SETTINGS);
         if let Some(color) = settings.get_mut(identity).and_then(|s| s.color.as_mut()) {
             color.0 = chosen.clone();
         }
@@ -523,7 +523,7 @@ fn restore_recovered(
 }
 impl Drop for Guard {
     fn drop(&mut self) {
-        let mut all = SETTINGS.lock().unwrap();
+        let mut all = crate::lock_unpoisoned(&SETTINGS);
         let Some(settings) = all.get_mut(&self.identity) else {
             return;
         };
@@ -535,14 +535,25 @@ impl Drop for Guard {
         // A physical display that is off or unplugged now keeps its journal
         // entry: Windows remembers HDR and modes per display, and the next
         // stream on it or host start restores them once it is back.
+        let now = monitors().ok();
         let restored = restore_settings(
             &settings,
             &self.identity,
             &self.output,
             self.virtual_display.is_some(),
-            monitors().ok().as_deref(),
+            now.as_deref(),
             set_hdr,
-            |previous, applied| restore_mode_rate(&self.identity, previous, applied),
+            |previous, applied| {
+                let current_monitors;
+                let list = match now.as_deref() {
+                    Some(list) => list,
+                    None => {
+                        current_monitors = monitors()?;
+                        &current_monitors
+                    }
+                };
+                restore_mode_rate_with(list, &self.identity, previous, applied)
+            },
             |previous, applied| {
                 crate::display_recovery::put_back(
                     rotation(&self.identity),
@@ -552,7 +563,14 @@ impl Drop for Guard {
                 )
             },
             |previous, applied| {
-                let monitors = monitors()?;
+                let list;
+                let monitors = match now.as_deref() {
+                    Some(list) => list,
+                    None => {
+                        list = monitors()?;
+                        &list
+                    }
+                };
                 let monitor = monitors
                     .iter()
                     .find(|m| m.device_id == self.identity)

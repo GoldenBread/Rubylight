@@ -277,7 +277,7 @@ pub fn uninstall(options: &Options, progress: &Progress) -> Result<Removed> {
     // has exited, then the folder if nothing else is left in it (rd without
     // /s refuses a folder that is not empty).
     if let Ok(exe) = std::env::current_exe()
-        && exe.starts_with(&install)
+        && inside(&exe, &install)
     {
         let command = format!(
             "ping 127.0.0.1 -n 3 > nul & del /f /q \"{}\" & rd \"{}\"",

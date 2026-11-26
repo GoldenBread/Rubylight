@@ -576,3 +576,22 @@ nvenc_min_qp_h264=21",
     // The host's own are untouched.
     assert_eq!(qp(&host, "nvenc_min_qp_hevc"), 23);
 }
+
+#[test]
+fn per_source_library_sync_override_passes_check_saved_when_shared_sync_is_off() {
+    use super::Config;
+    let mut config = Config::parse("library_auto_sync=false").unwrap();
+    let sent = serde_json::json!({"steam_auto_sync": true});
+    config.update(sent.as_object().unwrap()).unwrap();
+    config
+        .check_saved([&"steam_auto_sync".to_string()])
+        .unwrap();
+    assert!(config.boolean("steam_auto_sync", false));
+    assert!(!config.boolean("library_auto_sync", true));
+
+    // Actual comment/unclosed syntax is still rejected.
+    let mut bad = Config::default();
+    let sent = serde_json::json!({"sunshine_name": "Desk # 1"});
+    bad.update(sent.as_object().unwrap()).unwrap();
+    assert!(bad.check_saved([&"sunshine_name".to_string()]).is_err());
+}

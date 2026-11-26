@@ -501,6 +501,7 @@ pub fn reconcile(
             }
             let added = parse_time(field(app, "playnite-added-at")).unwrap_or(now);
             let expired = settings.delete_after_days > 0
+                && !selected_ids.contains(&id)
                 && now >= added.saturating_add(settings.delete_after_days.saturating_mul(86400))
                 && last_played.get(&id).is_none_or(|played| *played < added);
             let mut remove = (settings.remove_uninstalled && uninstalled.contains(&id)) || expired;

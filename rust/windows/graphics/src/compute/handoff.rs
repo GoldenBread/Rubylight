@@ -51,7 +51,7 @@ pub(crate) fn wait_fence_until(
         }
         let remaining = deadline.saturating_duration_since(std::time::Instant::now());
         if remaining.is_zero() {
-            bail!("GPU work did not finish within two seconds");
+            bail!("GPU work did not finish before wait deadline");
         }
         let timeout_ms = remaining.as_millis().clamp(1, u32::MAX as u128) as u32;
         let event = match FENCE_EVENT
@@ -72,7 +72,10 @@ pub(crate) fn wait_fence_until(
         })?;
         // Device removal wakes the event too; check the fence after any wake.
         if completed_value(fence.GetCompletedValue())? < value {
-            bail!("GPU work did not finish within two seconds");
+            bail!(
+                "GPU work did not finish within {} ms",
+                remaining.as_millis().max(1)
+            );
         }
         if waited == WAIT_OBJECT_0 {
             let _ = FENCE_EVENT.try_with(|cell| {
@@ -319,6 +322,9 @@ impl D3d11Signal {
         self.value = next;
         Ok(Ready::on(&self.compute, self.fence.0.clone(), next))
     }
+    pub(crate) fn forget(&self, texture: &ID3D11Texture2D) {
+        self.compute.forget(texture);
+    }
 }
 
 /// Lends compute work textures another process writes, in place, and hands
@@ -428,9 +434,8 @@ impl Returns {
         let returned = return_after_reads(
             &self.compute.stuck,
             || unsafe {
-                // Only a value that is signalled advances: a failed hand-back leaves the next
-                // value for the frame that does signal, so the fences never wait on a value no
-                // queue will reach.
+                // Advance first only to allocate a unique signal value on the fence, then signal
+                // before ordering the context wait; a failed Signal retires the compute queue.
                 self.value += 1;
                 let value = self.value;
                 self.compute

@@ -42,6 +42,14 @@ impl PendingFrame {
         self.misses = 0;
     }
 
+    /// Record a frame that has just been published into the active ring while keeping its
+    /// retained texture copy and metadata ready to seed a later ring after clear or replace.
+    pub fn mark_published(&mut self, frame: Frame) {
+        self.current = Some(frame);
+        self.pending = false;
+        self.misses = 0;
+    }
+
     pub fn clear(&mut self) {
         self.current = None;
         self.pending = false;
@@ -176,5 +184,49 @@ mod tests {
             }),
             Some(Pushed::Published)
         );
+    }
+
+    #[test]
+    fn hw_i1_close_idle_and_reopen_preserves_newest_published_frame() {
+        let mut pending = PendingFrame::default();
+        let frame1 = FINAL;
+        let frame2 = Frame {
+            present_qpc: 250,
+            acquire_qpc: 260,
+            frame_number: 8,
+        };
+        pending.mark_published(frame1);
+        pending.mark_published(frame2);
+        // Active ring already received frame2; idle retry must NOT duplicate it.
+        assert!(!pending.is_pending());
+        assert_eq!(
+            pending.retry(|_| panic!("idle ring must not re-publish")),
+            None
+        );
+
+        // Ring closes on disconnect (or fence ring replaced) while desktop stays idle.
+        // Metadata for the latest frame survives until a new ring opens and seeds.
+        assert_eq!(pending.current(), Some(frame2));
+
+        // Reconnect / replacement ring opens and seeds with fresh timestamps.
+        let seed_frame = Frame {
+            present_qpc: 900,
+            acquire_qpc: 900,
+            ..pending
+                .current()
+                .expect("newest published frame survives close")
+        };
+        pending.set(seed_frame);
+        let mut seeded = Vec::new();
+        assert_eq!(
+            pending.retry(|frame| {
+                seeded.push(frame);
+                Pushed::Published
+            }),
+            Some(Pushed::Published)
+        );
+        assert_eq!(seeded, [seed_frame]);
+        assert!(!pending.is_pending());
+        assert_eq!(pending.current(), Some(seed_frame));
     }
 }

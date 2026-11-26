@@ -4,7 +4,7 @@
 //! drains the compute queue on drop so a final `Signal` queued by [`Lent::drop`]
 //! completes before the fences, context or imported ring textures are freed.
 
-use super::{Consumer, Device, Section};
+use super::{Consumer, Device, Remote, Section};
 use anyhow::{Context, Result};
 use rubylight_vdisplay_proto::ring::{Header, MAX_SLOTS, SlotState};
 use std::{
@@ -13,6 +13,7 @@ use std::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
     },
+    time::{Duration, Instant},
 };
 use windows::{
     Win32::Graphics::{
@@ -27,6 +28,8 @@ use windows::{
 pub(super) struct Fences {
     section: Arc<Section>,
     pub(super) compute: Arc<crate::compute::Compute>,
+    remote: Option<Arc<Remote>>,
+    skip_drop_wait: AtomicBool,
     /// Imports stay available while any lent image can still be converted, even after the
     /// session replaces the ring. Also rolls back a partially constructed ring.
     pub(super) imports: Mutex<Vec<ID3D11Texture2D>>,
@@ -82,7 +85,8 @@ impl Fences {
         gpu: &Device,
         compute: Arc<crate::compute::Compute>,
         section: Arc<Section>,
-        on_compute: bool,
+        read_in_place: bool,
+        remote: Option<Arc<Remote>>,
     ) -> Result<Self> {
         let device: ID3D11Device5 = gpu.device.cast()?;
         let (written, written11, written_handle) = compute.share_fence(&device)?;
@@ -91,6 +95,8 @@ impl Fences {
         Ok(Self {
             section,
             compute,
+            remote,
+            skip_drop_wait: AtomicBool::new(false),
             imports: Mutex::new(Vec::new()),
             failed: AtomicBool::new(false),
             written,
@@ -100,7 +106,7 @@ impl Fences {
             handles: [written_handle, released_handle],
             context: gpu.context.cast()?,
             bridge: (bridge, bridge11),
-            on_compute,
+            on_compute: read_in_place,
             values: Mutex::new((0, 0)),
         })
     }
@@ -178,22 +184,64 @@ impl Fences {
         latest_written_seq_in(&header, slots)
     }
 
-    /// CPU-wait (bounded by `compute::wait_fence`'s 2 s timeout) for the driver's
-    /// latest published GPU copy on this ring to signal `written`, so the host
-    /// never releases D3D12 shared textures/fences while WUDFHost's D3D11 GPU
-    /// copy is still in flight (Rubylight #148).
-    pub(super) fn wait_written(&self) {
-        let target = self.latest_written_seq();
-        if target == 0 {
+    fn driver_exited(&self) -> bool {
+        self.remote.as_ref().is_some_and(|r| r.has_exited())
+    }
+
+    fn signal_dead_driver(&self, target: u64) {
+        if !self.driver_exited()
+            || crate::device_loss::DeviceLost::d3d12(&self.compute.device).is_some()
+        {
             return;
         }
-        if let Err(error) = crate::compute::wait_fence(&self.written, target) {
+        // SAFETY: `driver_exited()` confirmed WUDFHost has terminated, so it can never signal
+        // or access ring textures again. Signaling unblocks host waits behind `written`.
+        if unsafe { self.written.Signal(target) }.is_ok() {
+            tracing::debug!(
+                target,
+                "signaled frame ring written fence after display driver exit"
+            );
+        }
+    }
+
+    pub(super) fn mark_clear_timed_out(&self) {
+        self.skip_drop_wait.store(true, Ordering::Release);
+    }
+
+    /// CPU-wait up to `timeout` for the driver's latest published GPU copy on this ring to
+    /// signal `written`, skipping waits (and signaling `written`) only once WUDFHost has exited.
+    /// Returns `true` when cleared/complete or confirmed dead, `false` when still in flight.
+    pub(super) fn wait_written_within(&self, timeout: Duration) -> bool {
+        let target = self.latest_written_seq();
+        if target == 0 {
+            return true;
+        }
+        if self.driver_exited() {
+            self.signal_dead_driver(target);
+            return true;
+        }
+        // SAFETY: `self.written` is a live D3D12 fence owned by this `Fences`.
+        let completed = unsafe { self.written.GetCompletedValue() };
+        if completed != u64::MAX && completed >= target {
+            return true;
+        }
+        if timeout.is_zero() {
+            return false;
+        }
+        let deadline = Instant::now() + timeout;
+        if let Err(error) = crate::compute::wait_fence_until(&self.written, target, deadline) {
+            if self.driver_exited() {
+                self.signal_dead_driver(target);
+                return true;
+            }
             tracing::debug!(
                 target,
                 error = %format!("{error:#}"),
                 "waiting for driver written fence before releasing frame ring"
             );
+            return false;
         }
+        true
     }
 }
 
@@ -222,9 +270,23 @@ impl Drop for Fences {
         // on the driver's latest `written` fence value before freeing the
         // shared D3D12 textures, fences, context or compute device (#148).
         let mut work = crate::compute::RetainedWork::new(&self.compute, &self.compute.queue);
+        work.skip_drop_wait = self.skip_drop_wait.load(Ordering::Acquire);
         let written_target = self.latest_written_seq();
         if written_target > 0 {
-            work.waits.push((self.written.clone(), written_target));
+            if let Some(remote) = &self.remote {
+                if remote.has_exited() {
+                    self.signal_dead_driver(written_target);
+                } else {
+                    let remote = remote.clone();
+                    work.driver_waits.push((
+                        self.written.clone(),
+                        written_target,
+                        Box::new(move || remote.has_exited()),
+                    ));
+                }
+            } else {
+                work.waits.push((self.written.clone(), written_target));
+            }
         }
         work.keep(&self.written);
         work.keep(&self.written11);

@@ -299,6 +299,9 @@ struct Session {
     /// bitrate; [`Session::set_frame_cap`] lowers the session's VBV under it
     /// and never raises it above. 0 when the driver controls buffering.
     vbv_ceiling: u32,
+    /// Configured `nvenc_vbv_increase` percentage used to recompute `vbv_ceiling`
+    /// across bitrate changes.
+    vbv_increase: u32,
     /// The last frame cap the VBV was set for, against small changes.
     cap_requested: Option<u64>,
     /// The driver refused the VBV of `cap_requested`, which is not asked for again: frames
@@ -310,6 +313,7 @@ struct Session {
     cut_limit: Option<u64>,
     reencoded_cuts: u64,
     keyframes_over_cap: u64,
+    rfi_fallbacks: u64,
     /// When a frame over twice its cap was last reported.
     oversize_warned: Option<Instant>,
     /// Why encoding a scene cut again failed, until the encoder reports it.
@@ -378,7 +382,7 @@ pub struct Encoder {
     dynamic: Option<Box<crate::amf::dynamic::Dynamic>>,
     /// The D3D11 conversion's statistics pass behind HDR10+, HDR Vivid and
     /// measured Dolby Vision light levels.
-    stats: Option<Box<crate::gpu_color::HdrStats>>,
+    stats: Option<encoder::HdrStatsBox>,
     last_submitted: Option<Instant>,
     /// The frame cap failed and its warning is up.
     cap_warned: bool,

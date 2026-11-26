@@ -4,7 +4,7 @@ the end-to-end streams, protocol checks, display self-test and install.
 usage: validation.py --version V --package DIR --work DIR --out FILE [--scope TEXT] [--seconds N]
                      [--real-client FILE] [--installed] [--skipped CASE ...]
 """
-import argparse, datetime, hashlib, json, pathlib
+import argparse, datetime, hashlib, json, pathlib, re
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--version', required=True)
@@ -66,7 +66,8 @@ validation = dict(
     real_client=json.loads(args.real_client.read_text(encoding='utf-8-sig')) if args.real_client else 'skipped')
 if args.installed:
     installed = json.loads((work / 'elevated' / 'installed.json').read_text(encoding='utf-8-sig'))
-    assert installed['setup_exit'] == 0 and installed['reported_version'] == version, installed
+    expected_version = re.sub(r'-rc\.\d+$', '', version) if str(installed.get('setup', '')).startswith('rubylight-rc-setup-') else version
+    assert installed['setup_exit'] == 0 and installed['reported_version'] == expected_version, installed
     assert installed['host_sha256'] == host_sha256, 'the installed host is not this release'
     validation['installation'] = installed
     self_test = work / 'elevated' / 'display-self-test.json'

@@ -476,10 +476,13 @@ pub fn display_request_rate(
             }
         }
     }
-    if resolution.is_some_and(|(w, h)| !(320..=7680).contains(&w) || !(200..=4320).contains(&h))
-        || refresh.is_some_and(|f| !(1000..=1_000_000).contains(&f))
+    if let Some((w, h)) =
+        resolution.filter(|&(w, h)| !(320..=7680).contains(&w) || !(200..=4320).contains(&h))
     {
-        bail!("display mode is outside its limits");
+        bail!("display resolution {w}x{h} is outside its limits (320x200..=7680x4320)");
+    }
+    if let Some(f) = refresh.filter(|&f| !(1000..=1_000_000).contains(&f)) {
+        bail!("display refresh rate {f} mHz is outside its limits (1000..=1000000 mHz)");
     }
     Ok(DisplayRequest {
         resolution,

@@ -67,11 +67,15 @@ pub(super) fn keep_setup(setup: &mut Vec<Event>, event: &Event) {
 }
 
 pub(super) fn run<P: Pads>(
-    shared: &Shared,
+    shared: &Arc<Shared>,
     mut open: impl FnMut() -> Result<P>,
     reports: &mpsc::Sender<PadReport>,
     poll: Polling,
 ) {
+    let attach_wake: Arc<dyn Fn() + Send + Sync> = {
+        let shared = Arc::clone(shared);
+        Arc::new(move || shared.wake())
+    };
     // Mock workers must not boost their priority or register a Windows task.
     #[cfg(not(test))]
     let _priority = crate::os_helpers::InputPriority::enter();
@@ -124,10 +128,9 @@ pub(super) fn run<P: Pads>(
                     queued = queue.oldest.take();
                     break queue.take_into(&mut events);
                 }
-                if pads
-                    .as_ref()
-                    .is_some_and(|pads| (polling || pads.plugged()) && pads.feedback_ready())
-                {
+                if pads.as_ref().is_some_and(|pads| {
+                    pads.attach_ready() || ((polling || pads.plugged()) && pads.feedback_ready())
+                }) {
                     break false;
                 }
                 handles.clear();
@@ -204,8 +207,9 @@ pub(super) fn run<P: Pads>(
             }
         }
         if reopen_at(pads.is_some(), retry, &setup, &losses).is_some_and(|at| Instant::now() >= at)
-            && let Some(opened) = open_driver(shared, &mut open, &mut losses, &mut retry, &poll)
+            && let Some(mut opened) = open_driver(shared, &mut open, &mut losses, &mut retry, &poll)
         {
+            opened.set_wake(Arc::clone(&attach_wake));
             // The controllers arrive again without waiting for input.
             pads = Some(opened);
             for kept in std::mem::take(&mut setup).into_iter().rev() {
@@ -226,11 +230,13 @@ pub(super) fn run<P: Pads>(
                     keep_setup(&mut setup, &event);
                     continue;
                 }
-                let Some(opened) = open_driver(shared, &mut open, &mut losses, &mut retry, &poll)
+                let Some(mut opened) =
+                    open_driver(shared, &mut open, &mut losses, &mut retry, &poll)
                 else {
                     keep_setup(&mut setup, &event);
                     continue;
                 };
+                opened.set_wake(Arc::clone(&attach_wake));
                 pads = Some(opened);
                 if !setup.is_empty() {
                     // The controllers arrive again first, on pads opened after
@@ -323,8 +329,11 @@ pub(super) fn run<P: Pads>(
                 }
             }
         }
-        // What a release left unapplied is not applied later.
-        events.clear();
+        // Preserve unapplied controller setup (Arrival, Identity, SteamAttributes) when
+        // release_all interrupts delivery, discarding only controller state/haptic traffic.
+        for event in events.drain(..) {
+            keep_setup(&mut setup, &event);
+        }
         let now = Instant::now();
         if let Some(queued) = queued.take()
             && depth > 0
@@ -335,8 +344,8 @@ pub(super) fn run<P: Pads>(
         // A driver's completed feedback request is forwarded at once and its
         // next request started, not left to the next tick.
         if let Some(pads) = &mut pads
-            && (polling || pads.plugged())
-            && (now >= poll_at || pads.feedback_ready())
+            && (pads.attach_ready()
+                || ((polling || pads.plugged()) && (now >= poll_at || pads.feedback_ready())))
         {
             if let Err(error) = pads.refresh() {
                 tracing::debug!(%error, "controller refresh failed");

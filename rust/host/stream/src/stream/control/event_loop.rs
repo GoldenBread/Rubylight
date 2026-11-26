@@ -112,7 +112,15 @@ impl Media {
                 serviced += 1;
                 match event {
                     Event::Connect { peer, data } => {
-                        if handle_connect(&h, &socket, ping_timeout, &mut peers, peer, data) {
+                        if handle_connect(
+                            &h,
+                            &socket,
+                            ping_timeout,
+                            &self.control_seqs,
+                            &mut peers,
+                            peer,
+                            data,
+                        ) {
                             peers_came = true;
                         }
                     }
@@ -213,17 +221,29 @@ impl Media {
                     .roaming
                     .retain_peers(&socket, |peer| live.contains(&peer));
             }
-            if peers_went && !self.roam_seqs.is_empty() {
-                // An ended launch's key never returns.
+            let sweep_due = unattended_sweep.due(Instant::now(), peers_came || peers_went);
+            if (peers_went || sweep_due)
+                && (!self.roam_seqs.is_empty() || !self.control_seqs.is_empty())
+            {
+                // An ended launch never returns; sweep both on peer exit and periodically after
+                // video teardown finishes so stopping launches do not stay pinned.
                 let sessions = h.sessions.lock().unwrap();
-                self.roam_seqs.retain_launches(
-                    sessions
-                        .active
-                        .values()
-                        .map(|s| &s.launch)
-                        .chain(sessions.pending.values())
-                        .map(|l| &l.key),
-                );
+                let roam_keys: Vec<[u8; 16]> = sessions
+                    .active
+                    .values()
+                    .map(|s| s.launch.key)
+                    .chain(sessions.pending.values().map(|l| l.key))
+                    .collect();
+                self.roam_seqs.retain_launches(roam_keys.iter());
+                let control_live: Vec<(String, [u8; 16])> = sessions
+                    .active
+                    .values()
+                    .filter(|s| !s.stopping())
+                    .map(|s| (s.launch.id.clone(), s.launch.key))
+                    .chain(sessions.pending.values().map(|l| (l.id.clone(), l.key)))
+                    .collect();
+                self.control_seqs
+                    .retain_launches(control_live.iter().map(|(id, key)| (id.as_str(), key)));
             }
             menus.retain(|id| {
                 peers
@@ -234,7 +254,7 @@ impl Media {
             // this worker lost when it restarted, would otherwise hold the
             // encoder, capture and display forever (Sunshine times it out).
             // Its timeout is seconds long: input passes leave it to the timer.
-            if unattended_sweep.due(Instant::now(), peers_came || peers_went) {
+            if sweep_due {
                 active_sessions.extend(h.sessions.lock().unwrap().active.values().cloned());
                 unattended.retain(|id, _| active_sessions.iter().any(|s| &s.launch.id == id));
                 end_unattended_sessions(
@@ -342,6 +362,7 @@ fn handle_connect(
     h: &Shared,
     socket: &ReplySocket,
     ping_timeout: Duration,
+    control_seqs: &super::super::ControlSeqMemory,
     peers: &mut HashMap<PeerID, ControlPeer>,
     peer: &mut rusty_enet::Peer<ControlSocket>,
     data: u32,
@@ -395,7 +416,10 @@ fn handle_connect(
         // map is locked so its termination reason
         // survives the worker moving to teardown.
         let active = sessions.active.get(&l.id).cloned();
-        peers.insert(peer.id(), ControlPeer::new(h, l, peer.id(), active));
+        peers.insert(
+            peer.id(),
+            ControlPeer::new(h, l, peer.id(), active, control_seqs),
+        );
         accepted = true;
     } else {
         tracing::warn!(
@@ -669,7 +693,10 @@ fn handle_control_packet(
             .get(&s.launch.key, s.config.encryption & 1 != 0)
             .open_into(b, &mut scratch.1)
             .and_then(|(seq, kind, payload)| {
-                anyhow::ensure!(p.received.accept(seq), "replayed control message");
+                anyhow::ensure!(
+                    p.seq_state.lock().unwrap().received.accept(seq),
+                    "replayed control message"
+                );
                 Ok((kind, payload))
             })
     } else {

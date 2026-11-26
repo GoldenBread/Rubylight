@@ -38,20 +38,30 @@ fn target_identity(path: &DISPLAYCONFIG_PATH_INFO) -> Result<String> {
     Ok(wide(&name.monitorDevicePath).to_ascii_lowercase())
 }
 
-fn identities(paths: &[DISPLAYCONFIG_PATH_INFO]) -> Result<BTreeMap<TargetKey, String>> {
+fn identities(paths: &[DISPLAYCONFIG_PATH_INFO]) -> BTreeMap<TargetKey, String> {
     let mut result = BTreeMap::new();
     for path in paths
         .iter()
         .filter(|p| p.targetInfo.targetAvailable.as_bool())
     {
         if let std::collections::btree_map::Entry::Vacant(entry) = result.entry(key(path)) {
-            let identity = target_identity(path)?;
-            if !identity.is_empty() {
-                entry.insert(identity);
+            match target_identity(path) {
+                Ok(identity) if !identity.is_empty() => {
+                    entry.insert(identity);
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    tracing::warn!(
+                        adapter = path.targetInfo.adapterId.LowPart,
+                        target = path.targetInfo.id,
+                        error = %format!("{error:#}"),
+                        "could not read monitor name during virtual hotplug protection; continuing without it"
+                    );
+                }
             }
         }
     }
-    Ok(result)
+    result
 }
 
 fn dormant_targets(
@@ -214,9 +224,16 @@ pub(super) struct Protection {
 }
 
 impl Protection {
+    pub(super) fn empty() -> Self {
+        Self {
+            dormant: BTreeMap::new(),
+            deadline: None,
+        }
+    }
+
     pub(super) fn capture() -> Result<Self> {
         let topology = Topology::query_all()?;
-        let names = identities(&topology.paths)?;
+        let names = identities(&topology.paths);
         let dormant = dormant_targets(&topology.paths, &names);
         tracing::info!(
             count = dormant.len(),
@@ -237,27 +254,39 @@ impl Protection {
             self.deadline.is_none_or(|limit| Instant::now() < limit),
             "virtual display startup protection expired"
         );
-        let mut topology = Topology::query()?;
-        let names = identities(&topology.paths)?;
         let owned_key = monitor_key(owned);
-        anyhow::ensure!(
-            names
-                .get(&owned_key)
-                .is_some_and(|id| id.eq_ignore_ascii_case(&owned.monitor_device_path)),
-            "owned virtual display identity changed during hotplug protection"
-        );
-        let unwanted = unwanted_targets(&self.dormant, &names, owned_key);
-        if unwanted.is_empty() {
-            return Ok(false);
+        let mut topology = None;
+        let mut names = BTreeMap::new();
+        let mut unwanted = BTreeSet::new();
+        for attempt in 0..4 {
+            let candidate = Topology::query()?;
+            let candidate_names = identities(&candidate.paths);
+            anyhow::ensure!(
+                candidate_names
+                    .get(&owned_key)
+                    .is_some_and(|id| id.eq_ignore_ascii_case(&owned.monitor_device_path)),
+                "owned virtual display identity changed during hotplug protection"
+            );
+            let candidate_unwanted = unwanted_targets(&self.dormant, &candidate_names, owned_key);
+            if candidate_unwanted.is_empty() {
+                return Ok(false);
+            }
+            // Query again after reading target names: do not apply physical modes
+            // from an earlier snapshot over a concurrent layout transition; retry
+            // briefly across hotplug transitions.
+            let fresh = Topology::query()?;
+            if same_topology(&candidate, &fresh) {
+                topology = Some(candidate);
+                names = candidate_names;
+                unwanted = candidate_unwanted;
+                break;
+            }
+            if attempt == 3 {
+                anyhow::bail!("display layout changed during virtual hotplug protection");
+            }
+            std::thread::sleep(Duration::from_millis(50));
         }
-        // Query again after reading target names: do not apply physical modes
-        // from an earlier snapshot over a user's concurrent layout change.
-        // CCD has no atomic compare-and-set, so a narrow final-call race remains.
-        let fresh = Topology::query()?;
-        anyhow::ensure!(
-            same_topology(&topology, &fresh),
-            "display layout changed during virtual hotplug protection"
-        );
+        let mut topology = topology.expect("break populates topology");
         topology.paths = protected_paths(&topology.paths, &unwanted, owned_key)?;
         (topology.paths, topology.modes) = referenced_modes(&topology.paths, &topology.modes)?;
         tracing::warn!(
@@ -300,7 +329,7 @@ impl Protection {
             })?;
         }
         let after = Topology::query()?;
-        let after_names = identities(&after.paths)?;
+        let after_names = identities(&after.paths);
         anyhow::ensure!(
             after_names
                 .get(&owned_key)

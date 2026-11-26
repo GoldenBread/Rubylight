@@ -148,9 +148,11 @@ fn quit_by_itself(fake: &Fake, directory: &Path) -> Result<Mutex<State>> {
     let mut state = State::default();
     started(fake, 7);
     fake.set(7, eConsole, HEADSET)?;
-    route_with(fake, &mut state, directory, 7, GAME, SINK)?;
+    let Routed::Sink(id) = route_with(fake, &mut state, directory, 7, GAME, SINK)? else {
+        anyhow::bail!("expected Routed::Sink");
+    };
     exited(fake);
-    assert!(release_with(fake, &mut state, directory, GAME)?);
+    assert!(release_with(fake, &mut state, directory, GAME, id)?);
     state.watching = true;
     Ok(Mutex::new(state))
 }
@@ -222,10 +224,10 @@ fn a_game_without_sound_yet_is_routed_once_it_opened_it() -> Result<()> {
     assert_eq!(load(directory.path())?, Journal::default());
     assert!(state.active.is_empty());
     fake.silent.borrow_mut().clear();
-    assert_eq!(
+    assert!(matches!(
         route_with(&fake, &mut state, directory.path(), 7, GAME, SINK)?,
-        Routed::Sink
-    );
+        Routed::Sink(_)
+    ));
     assert_eq!(fake.device(GAME, eConsole), SINK);
     Ok(())
 }

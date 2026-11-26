@@ -13,9 +13,11 @@ use rsa::{
     pkcs1v15::{Signature, SigningKey, VerifyingKey},
     pkcs8::{DecodePrivateKey, DecodePublicKey, EncodePrivateKey},
     signature::{RandomizedSigner, SignatureEncoding, Verifier},
+    traits::PublicKeyParts,
 };
 use sha2::{Digest, Sha256};
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 pub use rubylight_wire::crypto::{
     GcmKey, cbc_open, cbc_seal, cbc_seal_into, equal, gcm_open, gcm_seal, gcm_seal_in_place,
@@ -192,14 +194,49 @@ pub struct Identity {
     pub signature: Vec<u8>,
     private: RsaPrivateKey,
 }
+fn identity_pending_path(key: &Path) -> Option<PathBuf> {
+    let name = key.file_name()?.to_string_lossy();
+    Some(key.with_file_name(format!(".{name}.pending")))
+}
+fn is_fresh_orphan_key(cert: &Path, key: &Path) -> bool {
+    let cert_missing =
+        std::fs::metadata(cert).is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound);
+    if !cert_missing {
+        return false;
+    }
+    std::fs::metadata(key).is_ok_and(|meta| {
+        meta.is_file()
+            && meta.modified().is_ok_and(|modified| {
+                modified
+                    .elapsed()
+                    .is_ok_and(|age| age < Duration::from_secs(300))
+            })
+    })
+}
 impl Identity {
     pub fn load(cert: &Path, key: &Path) -> Result<Self> {
-        if let Some(id) = Self::read(cert, key)? {
-            return Ok(id);
+        let pending = identity_pending_path(key);
+        let interrupted = pending.as_ref().is_some_and(|p| p.exists());
+        match Self::read(cert, key) {
+            Ok(Some(id)) => {
+                if let Some(p) = &pending {
+                    let _ = std::fs::remove_file(p);
+                }
+                return Ok(id);
+            }
+            Ok(None) => {}
+            Err(_) if interrupted || is_fresh_orphan_key(cert, key) => {}
+            Err(error) => return Err(error),
         }
         let id = Self::generate()?;
+        if let Some(p) = &pending {
+            atomic_write(p, b"")?;
+        }
         atomic_write(key, id.private_pem.as_bytes())?;
         atomic_write(cert, id.certificate.as_bytes())?;
+        if let Some(p) = &pending {
+            let _ = std::fs::remove_file(p);
+        }
         Ok(id)
     }
     /// The identity in `cert` and `key`; None when neither exists yet.
@@ -280,7 +317,7 @@ impl ConsoleCertificate {
             std::fs::read_to_string(&chain),
             std::fs::read_to_string(&key),
             std::fs::read_to_string(&root),
-        ) && Self::root_is_own(&root_pem)
+        ) && Self::matches_saved(&chain_pem, &key_pem, &root_pem)
         {
             return Ok(Self {
                 chain_pem,
@@ -296,6 +333,55 @@ impl ConsoleCertificate {
         atomic_write(&root, made.root_pem.as_bytes())?;
         atomic_write(&chain, made.chain_pem.as_bytes())?;
         Ok(made)
+    }
+    fn matches_saved(chain_pem: &str, key_pem: &str, root_pem: &str) -> bool {
+        if !Self::root_is_own(root_pem) {
+            return false;
+        }
+        let Ok(root_der) = certificate_der(root_pem) else {
+            return false;
+        };
+        let Ok((rest, root)) = x509_parser::parse_x509_certificate(&root_der) else {
+            return false;
+        };
+        if !rest.is_empty() || !root.is_ca() {
+            return false;
+        }
+        let Ok(chain_blocks) = pem::parse_many(chain_pem) else {
+            return false;
+        };
+        if chain_blocks.len() != 2
+            || chain_blocks.iter().any(|b| b.tag() != "CERTIFICATE")
+            || chain_blocks[1].contents() != root_der.as_slice()
+        {
+            return false;
+        }
+        let Ok((rest, leaf)) = x509_parser::parse_x509_certificate(chain_blocks[0].contents())
+        else {
+            return false;
+        };
+        if !rest.is_empty() || leaf.is_ca() || leaf.issuer() != root.subject() {
+            return false;
+        }
+        let Ok(key) = rcgen::KeyPair::from_pem(key_pem) else {
+            return false;
+        };
+        if leaf.tbs_certificate.subject_pki.subject_public_key.as_ref() != key.public_key_raw() {
+            return false;
+        }
+        let algorithm: &dyn ring::signature::VerificationAlgorithm =
+            match leaf.signature_algorithm.algorithm.to_id_string().as_str() {
+                "1.2.840.10045.4.3.2" => &ring::signature::ECDSA_P256_SHA256_ASN1,
+                "1.2.840.10045.4.3.3" => &ring::signature::ECDSA_P384_SHA384_ASN1,
+                "1.2.840.113549.1.1.11" => &ring::signature::RSA_PKCS1_2048_8192_SHA256,
+                _ => return false,
+            };
+        ring::signature::UnparsedPublicKey::new(
+            algorithm,
+            root.tbs_certificate.subject_pki.subject_public_key.as_ref(),
+        )
+        .verify(leaf.tbs_certificate.as_ref(), leaf.signature_value.as_ref())
+        .is_ok()
     }
     /// Whether the root's name is this host's alone. Earlier hosts named
     /// every root just [`CONSOLE_ROOT_NAME`]; Firefox, which also
@@ -383,6 +469,56 @@ pub fn public_key(pem_text: &str) -> Result<RsaPublicKey> {
         .map_err(|_| anyhow::anyhow!("invalid X.509 certificate"))?;
     RsaPublicKey::from_public_key_der(cert.tbs_certificate.subject_pki.raw)
         .context("pairing certificate must contain an RSA key")
+}
+/// Verifies that `pem_text` is a self-signed X.509 RSA certificate with
+/// public exponent 65537 and a valid signature over its `tbsCertificate`.
+pub fn verify_pairing_certificate(pem_text: &str) -> Result<RsaPublicKey> {
+    let der = certificate_der(pem_text)?;
+    let (rest, cert) = x509_parser::parse_x509_certificate(&der)
+        .map_err(|_| anyhow::anyhow!("invalid X.509 certificate"))?;
+    if !rest.is_empty() {
+        bail!("trailing bytes in X.509 certificate");
+    }
+    if cert.signature_algorithm != cert.tbs_certificate.signature {
+        bail!("certificate signature algorithm mismatch");
+    }
+    if cert.issuer() != cert.subject() {
+        bail!("pairing certificate must be self-signed");
+    }
+    if cert.signature_value.unused_bits != 0 {
+        bail!("invalid X.509 signature bit string");
+    }
+    if cert
+        .tbs_certificate
+        .subject_pki
+        .subject_public_key
+        .unused_bits
+        != 0
+    {
+        bail!("invalid X.509 public key bit string");
+    }
+    let key = RsaPublicKey::from_public_key_der(cert.tbs_certificate.subject_pki.raw)
+        .context("pairing certificate must contain an RSA key")?;
+    if key.e().to_bytes_be() != [0x01, 0x00, 0x01] {
+        bail!("pairing certificate must use RSA exponent 65537");
+    }
+    if key.size() < 256 {
+        bail!("pairing certificate RSA key must be at least 2048 bits");
+    }
+    let algorithm: &dyn ring::signature::VerificationAlgorithm =
+        match cert.signature_algorithm.algorithm.to_id_string().as_str() {
+            "1.2.840.113549.1.1.11" => &ring::signature::RSA_PKCS1_2048_8192_SHA256,
+            "1.2.840.113549.1.1.12" => &ring::signature::RSA_PKCS1_2048_8192_SHA384,
+            "1.2.840.113549.1.1.13" => &ring::signature::RSA_PKCS1_2048_8192_SHA512,
+            other => bail!("unsupported pairing certificate signature algorithm: {other}"),
+        };
+    ring::signature::UnparsedPublicKey::new(
+        algorithm,
+        cert.tbs_certificate.subject_pki.subject_public_key.as_ref(),
+    )
+    .verify(cert.tbs_certificate.as_ref(), cert.signature_value.as_ref())
+    .map_err(|_| anyhow::anyhow!("pairing certificate self-signature verification failed"))?;
+    Ok(key)
 }
 pub fn certificate_signature(pem_text: &str) -> Result<Vec<u8>> {
     let der = certificate_der(pem_text)?;
@@ -491,5 +627,71 @@ mod tests {
         let kept = ConsoleCertificate::load(directory.path()).unwrap();
         assert_eq!(made.chain_pem, kept.chain_pem);
         assert_eq!(made.root_pem, kept.root_pem);
+    }
+
+    #[test]
+    fn identity_load_recovers_interrupted_key_without_cert_and_keeps_partial_cert() {
+        let dir = tempfile::tempdir().unwrap();
+        let cert = dir.path().join("cert.pem");
+        let key = dir.path().join("key.pem");
+        let first = Identity::generate().unwrap();
+
+        // Fresh key left before cert was written regenerates cleanly.
+        std::fs::write(&key, &first.private_pem).unwrap();
+        let recovered = Identity::load(&cert, &key).unwrap();
+        assert_ne!(recovered.certificate, first.certificate);
+        assert_eq!(
+            Identity::load(&cert, &key).unwrap().certificate,
+            recovered.certificate
+        );
+
+        // Stale pending marker triggers recovery regardless of key age.
+        let dir2 = tempfile::tempdir().unwrap();
+        let cert2 = dir2.path().join("cert.pem");
+        let key2 = dir2.path().join("key.pem");
+        let pending = identity_pending_path(&key2).unwrap();
+        std::fs::write(&key2, &first.private_pem).unwrap();
+        std::fs::write(&pending, b"").unwrap();
+        let recovered2 = Identity::load(&cert2, &key2).unwrap();
+        assert!(!pending.exists());
+        assert_eq!(
+            Identity::load(&cert2, &key2).unwrap().certificate,
+            recovered2.certificate
+        );
+
+        // Cert without key (not a fresh key write) still refuses replacement.
+        let dir3 = tempfile::tempdir().unwrap();
+        let cert3 = dir3.path().join("cert.pem");
+        let key3 = dir3.path().join("key.pem");
+        std::fs::write(&cert3, &first.certificate).unwrap();
+        assert!(Identity::load(&cert3, &key3).is_err());
+    }
+
+    #[test]
+    fn console_certificate_load_regenerates_mismatched_key_or_chain() {
+        let directory = tempfile::tempdir().unwrap();
+        let one = ConsoleCertificate::generate().unwrap();
+        let two = ConsoleCertificate::generate().unwrap();
+
+        // Mismatched key from another certificate must regenerate.
+        std::fs::write(directory.path().join("console.pem"), &one.chain_pem).unwrap();
+        std::fs::write(directory.path().join("console.key"), &two.key_pem).unwrap();
+        std::fs::write(directory.path().join("console-root.pem"), &one.root_pem).unwrap();
+        let loaded = ConsoleCertificate::load(directory.path()).unwrap();
+        assert_ne!(loaded.chain_pem, one.chain_pem);
+        assert_ne!(loaded.key_pem, two.key_pem);
+
+        // Mismatched chain from an old root while key+root belong to a new one must regenerate.
+        std::fs::write(directory.path().join("console.pem"), &one.chain_pem).unwrap();
+        std::fs::write(directory.path().join("console.key"), &two.key_pem).unwrap();
+        std::fs::write(directory.path().join("console-root.pem"), &two.root_pem).unwrap();
+        let loaded2 = ConsoleCertificate::load(directory.path()).unwrap();
+        assert_ne!(loaded2.root_pem, two.root_pem);
+        assert_eq!(
+            ConsoleCertificate::load(directory.path())
+                .unwrap()
+                .chain_pem,
+            loaded2.chain_pem
+        );
     }
 }
