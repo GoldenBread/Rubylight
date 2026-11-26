@@ -217,6 +217,8 @@ pub fn start(h: Shared, connection: Connection, args: Args, resume: bool) -> Res
         // A refused `rlFecPercentage` fails the launch rather than streaming
         // with protection the client did not ask for.
         butterpollo_media_policy::extensions::fec_choice(&launch.options)?;
+        // And a refused `rlHdrDynamic`.
+        butterpollo_media_policy::extensions::hdr_dynamic_choice(&launch.options)?;
         // So does a refused `rlRateChange`, rather than a stream without 0x553C.
         butterpollo_media_policy::rate_change::launch_choice(&launch.options)?;
         // And a display scale Windows does not offer (`rlDisplayScale`).
@@ -585,43 +587,6 @@ fn launch_back_half(
         );
     }
     Ok(launch)
-}
-/// `nvidia_virtual_display_vsync` for this launch. A failure is shown and the stream starts.
-fn force_vsync<'a>(
-    h: &'a Shared,
-    args: &Args,
-    app: Option<&App>,
-    launch: &Launch,
-) -> crate::radeon_session::VsyncHold<'a> {
-    let config = crate::stream::effective_config(h, launch).ok();
-    let enabled = config
-        .as_ref()
-        .is_some_and(|c| c.boolean("nvidia_virtual_display_vsync", false));
-    let adapter = config.as_ref().map_or("", |c| c.get("adapter_name", ""));
-    // Off, the launch's preparation is not looked at.
-    let virtual_display = enabled
-        && launch
-            .preparation
-            .lock()
-            .unwrap()
-            .as_ref()
-            .is_some_and(|preparation| preparation.prepared().on_virtual_display());
-    let fps = args
-        .get("mode")
-        .and_then(|mode| crate::radeon_profile::stream_fps(mode));
-    let wanted = crate::radeon_session::wants_vsync(enabled, virtual_display, app, fps);
-    let (hold, result) = h.hold_vsync(&launch.client.uuid, adapter, wanted);
-    match result {
-        Ok(()) => launch.warnings.clear("driver_vsync"),
-        Err(error) => {
-            tracing::error!(%error, "Vertical sync is not forced on for the virtual display");
-            launch.warnings.set(
-                "driver_vsync",
-                format!("Vertical sync could not be forced on for the virtual display: {error}"),
-            );
-        }
-    }
-    hold
 }
 /// The width and height a launch asks for (`mode`, else `fallback_mode`),
 /// even like the stream's.

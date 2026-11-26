@@ -24,6 +24,7 @@ const ALL_ON: Offered = Offered {
     transport_feedback: true,
     nvidia_enhancements: crate::nvidia_enhance::ALL,
     max_video_packet: video_packet::MAX_VIDEO_PACKET,
+    hdr_dynamic_control: true,
 };
 
 #[test]
@@ -64,6 +65,7 @@ fn everything_offered_gives_the_exact_fields_and_lines() {
             ("FrameWarpProtocol", "2"),
             ("ControllerIdentityVersion", "1"),
             ("NvidiaEnhancements", "3"),
+            ("HdrDynamicControl", "1"),
         ]
     );
     assert_eq!(
@@ -613,4 +615,33 @@ fn frame_warp_is_offered_as_frame_warp_2_only() {
             .iter()
             .all(|(field, _)| !field.starts_with("FrameWarp"))
     );
+}
+
+#[test]
+fn hdr_dynamic_launch_parameter_only_turns_the_metadata_off() {
+    let options = |value: Option<&str>| -> BTreeMap<String, String> {
+        value
+            .map(|value| ("rlHdrDynamic".to_owned(), value.to_owned()))
+            .into_iter()
+            .collect()
+    };
+    assert!(hdr_dynamic_choice(&options(None)).unwrap());
+    assert!(hdr_dynamic_choice(&options(Some("1"))).unwrap());
+    assert!(!hdr_dynamic_choice(&options(Some("0"))).unwrap());
+    for bad in ["", "2", "00", "false"] {
+        let error = hdr_dynamic_choice(&options(Some(bad))).unwrap_err();
+        assert_eq!(error.to_string(), "invalid rlHdrDynamic", "{bad}");
+    }
+    let host_off =
+        butterpollo_config::config::Config::parse("hdr_dynamic_metadata = false\n").unwrap();
+    for (host, value, on) in [
+        (Default::default(), None, true),
+        (Default::default(), Some("0"), false),
+        (host_off.clone(), Some("1"), false),
+        (host_off, None, false),
+    ] {
+        let mut config: butterpollo_config::config::Config = host;
+        apply_hdr_dynamic(&mut config, &options(value)).unwrap();
+        assert_eq!(config.hdr_dynamic_metadata(), on, "{value:?}");
+    }
 }
