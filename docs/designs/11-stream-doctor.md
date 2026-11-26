@@ -1,6 +1,6 @@
 # Item 11: Stream Doctor 2.0 & Upscaler Guidance
 
-Status: design, not implemented (Wave 2 — Rubylight & Nightjar 7.0.0). Rebased 2026-11-25 onto post-refactoring `origin/main` `955ef39598` (`v6.4.1`), `docs/designs/00-protocol-reservations.md`, and `tools/size_ratchet.json`.
+Status: implemented on `RamazanKara/r70-11-stream-doctor`; see [§9 As built](#9-as-built-2026-11-26) for where the build narrows this design. Hardware runs pending (Wave 2 — Rubylight & Nightjar 7.0.0). Rebased 2026-11-25 onto post-refactoring `origin/main` `955ef39598` (`v6.4.1`), `docs/designs/00-protocol-reservations.md`, and `tools/size_ratchet.json`.
 
 ## 1. Summary & User Experience
 
@@ -327,3 +327,14 @@ When applying `render_scale_stepdown` + client upscaling:
 - **Fuse 6.3.0 `#142` Transport Telemetry into `DoctorSnapshot` (`API_VERSION = 1` additive `#[serde(default)]`):** Add a compact `transport` sub-object populated from live host telemetry (`pacing_reason`, `pacing_bps`, `link_ceiling_kbps`, `ceiling_source`, `enobufs_waits`, `gso_fallbacks`, `send_losses`, `queue_p95_ms`, `congestion_state`, `link_rate_state`, `traverse_active`) and split coarse `network_loss` into four precision rules: `host_socket_pressure` (`WSAENOBUFS`/GSO fallback -> host NIC/offload, not Wi-Fi), `wireless_burst_clamp`, `wifi_queue_jitter`, and `link_bandwidth_ceiling`.
 - **Multi-GPU & Android 60 Hz Diagnostics:** Surface Item `28` active `capture_luid`, `vdisplay_render_luid`, `encoder_luid`, and `cross_adapter_copy` state in `DoctorSnapshot`, and wire Item `29`'s `RefreshSwitchDiagnosis` (`UNEXPLAINED` / `USER_LIMIT`) + `ArrHalfRateCheck` directly into a `DisplayPacingMismatch` card with plain-English OEM 60 Hz unlock steps (OriginOS / Samsung GOS / MIUI / Android 15 Game Default Frame Rate).
 - **Aspect-Safe `render_scale_stepdown` (`#137`):** Replace hardcoded `1920×1080` stepdown target with `02`'s shared `nightjar_policy::resolution_scale` helper so 16:10, 3:2, 20:9, and Retina displays step down cleanly along their native aspect ratio without letterboxing.
+
+## 9. As built (2026-11-26)
+
+The build narrows this design as follows; each is deliberate and reversible later as an additive change.
+
+- **Host projection** lives in `rust/core/session/src/native/doctor.rs` (the session crate owns the Native API projections), not in media-policy. `host_stages` is the console's stutter report over the last 30 s, derived from the published 5-second reports (kept by age, at most 32), so no per-picture work is added.
+- **One host remedy, `bitrate_stepdown`.** It keeps the launch's FEC share inside the bitrate and caps at the codec's runtime limit and `max_bitrate`, so its undo restores the encoder exactly; an undo the limit now holds lower is refused (`capped`) and kept. `fec_auto` is not built: the FEC split is computed at stream start and needs its own design and a hardware run. The `revision` field was dropped; remedy errors use the existing error codes.
+- **Resolution step-down** is client-side over the existing in-place mode change (0x5532), offered only where the stream already supports it, with an undo for this connection. On desktop it changes the stream's in-memory settings like the Stream size editor, so after an auto-reconnect the smaller size stays while its Undo is gone (the size editor remains the way back).
+- **Frame-rate step-down and frame-pacing switch are advice, not one-tap remedies.** `LowerFrameRate` and `FramePacing` name the setting to change for the next stream. A one-tap frame-rate step through the same 0x5532 path is a follow-up.
+- **The upscaler is advice for the next stream**: no renderer switches mid-stream, and no saved setting changes.
+- **Not built from §8:** the `transport` sub-object, multi-GPU LUIDs and Android 60 Hz diagnostics, and controller glyph prompts (§5). Desktop treats only gamescope as constrained (no iGPU or battery detection yet), so integrated-GPU laptops get the FSR 1 recommendation.
