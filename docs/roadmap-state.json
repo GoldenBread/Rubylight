@@ -536,16 +536,16 @@
       "depends_on": [
         "09"
       ],
-      "hw_required": false,
+      "hw_required": true,
       "visual_review": true,
-      "status": "in_progress",
-      "phase": "implement (narrowed: 15A-C, Android requester)",
+      "status": "merged",
+      "phase": "awaiting_hw_and_wave_review",
       "branch": "wip/roadmap/15-away-wake-relay",
       "worktree": null,
-      "commit_sha": null,
+      "commit_sha": "f486000800",
       "quarantine_reason": null,
       "hw_verified": false,
-      "worker_branch": "RamazanKara/r70-15-wake-relay"
+      "worker_branch": "RamazanKara/r70-15-wake-relay-port"
     },
     {
       "id": "26",
