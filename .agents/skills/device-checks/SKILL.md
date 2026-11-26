@@ -44,7 +44,7 @@ Use this skill when a check needs real hardware; prove what you can with unit, f
 ## Windows Firewall prompts
 
 - Windows asks once per program path, so a new folder each run prompts again and blocks a remote run.
-- Run test binaries from a fixed, already-allowed folder: a warm target pool slot (`<pool>\<n>`; the plan of `tools\dev.ps1 check -DryRun` names the pool when it plans Cargo checks), the laptop host's `-LaptopPackage` folder, or for Nightjar desktop `tools\nightjar-test-client.ps1 -From <exe-or-zip> [-Slot a|b]`.
+- Run test binaries from a fixed, already-allowed folder: a warm target pool slot (build with `python tools/dev.py cargo -- ...`, which prints the slot folder; never a private `target/`), the laptop host's `-LaptopPackage` folder, or for Nightjar desktop `tools\nightjar-test-client.ps1 -From <exe-or-zip> [-Slot a|b]`.
 - Prefer loopback in tests. If a prompt is unavoidable, name the exact exe path before asking the user to allow it; never ask them to click through prompts mid-batch without it.
 
 ## Collect and clean up
