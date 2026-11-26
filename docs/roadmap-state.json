@@ -2,7 +2,7 @@
   "schema_version": 1,
   "release_target": "7.0.0",
   "integration_branch": "roadmap/redesign-and-waves-1-5",
-  "updated_at": "2026-11-26T14:10:14Z",
+  "updated_at": "2026-11-26T14:26:29Z",
   "waves": {
     "0": {
       "status": "in_progress",
@@ -270,13 +270,14 @@
       ],
       "hw_required": true,
       "visual_review": false,
-      "status": "in_progress",
-      "phase": "implement",
+      "status": "merged",
+      "phase": "awaiting_hw_and_wave_review",
       "branch": "wip/roadmap/28-host-capture-gpu-and-power",
       "worktree": null,
-      "commit_sha": null,
+      "commit_sha": "3a6b7c6e74",
       "quarantine_reason": null,
-      "hw_verified": false
+      "hw_verified": false,
+      "worker_branch": "RamazanKara/r70-28-gpu-power"
     },
     {
       "id": "29",
