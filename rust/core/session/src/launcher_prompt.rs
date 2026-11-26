@@ -1,4 +1,5 @@
-//! A launcher (Steam, Epic Games, EA app, Ubisoft Connect) that shows a prompt or an update in
+//! A launcher (Steam, Epic Games, EA app, Ubisoft Connect, the Xbox app, Battle.net, GOG Galaxy,
+//! the Riot Client) that shows a prompt or an update in
 //! place of the game it was asked to start (plan item B5). The host reads the visible windows
 //! while a launched game has not shown up and this module decides what they mean. It only
 //! looks: nothing here, or in the host, clicks or types into a launcher.
@@ -60,6 +61,10 @@ pub fn launcher_of(process: &str) -> Option<&'static str> {
         "upc.exe" | "ubisoftconnect.exe" | "uplayservice.exe" | "uplaywebcore.exe" => {
             Some("ubisoft")
         }
+        "xboxpcapp.exe" | "gamingservicesui.exe" => Some("xbox"),
+        "battle.net.exe" => Some("battlenet"),
+        "galaxyclient.exe" => Some("gog"),
+        "riotclientux.exe" => Some("riot"),
         _ => None,
     }
 }
@@ -72,7 +77,8 @@ pub fn opens_launcher_itself(command: &str) -> bool {
     let (target, rest) = split_program(&command);
     // A command that names a game to start is waited for, wherever it is written.
     let starts_a_game = |text: &str| {
-        ["applaunch", "rungameid", "launch", "steam://run/"]
+        // `rungame` also covers GOG Galaxy's `/command=runGame`.
+        ["applaunch", "rungame", "launch", "steam://run/"]
             .iter()
             .any(|word| text.contains(word))
     };
@@ -250,7 +256,7 @@ mod tests {
     const LATE: Duration = Duration::from_secs(40);
 
     #[test]
-    fn the_four_launchers_are_known_by_their_programs() {
+    fn the_launchers_are_known_by_their_programs() {
         for (program, id) in [
             ("C:\\Program Files (x86)\\Steam\\steam.exe", "steam"),
             ("steamwebhelper.exe", "steam"),
@@ -258,6 +264,11 @@ mod tests {
             ("EADesktop.exe", "ea"),
             ("upc.exe", "ubisoft"),
             ("UbisoftConnect.exe", "ubisoft"),
+            ("XboxPcApp.exe", "xbox"),
+            ("GamingServicesUI.exe", "xbox"),
+            ("Battle.net.exe", "battlenet"),
+            (r"C:\Program Files (x86)\GOG Galaxy\GalaxyClient.exe", "gog"),
+            ("RiotClientUx.exe", "riot"),
         ] {
             assert_eq!(launcher_of(program), Some(id), "{program}");
         }
@@ -276,6 +287,8 @@ mod tests {
             r"C:\Epic\EpicGamesLauncher.exe",
             r"C:\Program Files (x86)\Steam\steam.exe",
             r"C:\Program Files (x86)\Steam\steam.exe -bigpicture",
+            r"C:\Program Files (x86)\GOG Galaxy\GalaxyClient.exe",
+            "Battle.net.exe",
         ] {
             assert!(opens_launcher_itself(command), "{command}");
         }
@@ -285,6 +298,8 @@ mod tests {
             "steam://run/570",
             r#""C:\Program Files (x86)\Steam\steam.exe" -applaunch 570"#,
             "com.epicgames.launcher://apps/Fortnite?action=launch&silent=true",
+            r#""C:\Program Files (x86)\GOG Galaxy\GalaxyClient.exe" /command=runGame /gameId=1207658995"#,
+            r#""C:\Program Files (x86)\Battle.net\Battle.net.exe" --exec="launch WoW""#,
             r"C:\Games\game.exe",
             "game.exe",
             "",

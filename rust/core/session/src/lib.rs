@@ -26,6 +26,7 @@ pub mod game_files;
 pub mod game_settings;
 pub mod host_service;
 pub mod invites;
+pub mod launch_curtain;
 pub mod launch_warning;
 pub mod launcher_prompt;
 pub mod library;
