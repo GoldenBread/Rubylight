@@ -429,6 +429,8 @@ fn expected(feature: Feature) -> Availability {
         Feature::AwayWakeRelay => Unsupported(None),
         // Always offered; whether a stream's replay buffer runs travels in its DVR state.
         Feature::StreamDvr => Supported,
+        // Listed to a device with View or Launch, which every permission includes.
+        Feature::StreamDoctorV2 => Supported,
     }
 }
 
