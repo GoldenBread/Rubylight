@@ -522,7 +522,12 @@ impl Worker {
         }
     }
 
+    /// A running recording outranks a clip being written and a held error, so the device keeps
+    /// its Stop; a refused clip is answered to its request.
     fn state(&self) -> (State, Reason) {
+        if self.recording.is_some() || self.pending_recording.is_some() {
+            return (State::Recording, Reason::None);
+        }
         if let Some((reason, at)) = self.error
             && at.elapsed() < ERROR_HOLD
         {
@@ -530,8 +535,6 @@ impl Worker {
         }
         if self.job.is_some() {
             (State::Saving, Reason::None)
-        } else if self.recording.is_some() || self.pending_recording.is_some() {
-            (State::Recording, Reason::None)
         } else {
             (State::Armed, Reason::None)
         }
@@ -660,6 +663,7 @@ impl Worker {
         }
         self.h.dvr.unregister(&self.shared.session_id, &self.shared);
         tracing::info!(tap_drops = self.drops_seen, "stream dvr ended");
+        super::arm_owner(&self.h);
     }
 
     /// The state a query gets from a worker that is finishing: off, nothing streaming.
@@ -674,5 +678,34 @@ impl Worker {
             quota_used_bytes: self.quota_on_disk,
             quota_limit_bytes: self.shared.quota_limit,
         }));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_running_recording_outranks_a_clip_being_saved_and_a_held_error() {
+        let f = crate::state::test_support::Fixture::new();
+        let shared = Shared::new(
+            "dvr-state",
+            "Game".into(),
+            60,
+            std::env::temp_dir(),
+            1 << 30,
+        );
+        let limits = Limits {
+            max_us: 60_000_000,
+            max_bytes: 1 << 20,
+        };
+        let mut worker = Worker::new(f.host.clone(), Weak::new(), shared, limits);
+        assert_eq!(worker.state(), (State::Armed, Reason::None));
+        worker.error = Some((Reason::QuotaExceeded, Instant::now()));
+        worker.pending_recording = Some(("20260101-100000-manual-0001".into(), Instant::now()));
+        // The device keeps its Stop: the refused save was answered to its own request.
+        assert_eq!(worker.state(), (State::Recording, Reason::None));
+        worker.pending_recording = None;
+        assert_eq!(worker.state(), (State::Error, Reason::QuotaExceeded));
     }
 }

@@ -218,6 +218,10 @@ fn arm(h: &HostShared, s: &Arc<Session>, c: &Config) -> Option<Arc<Shared>> {
         clips_dir,
         crate::dvr_store::quota_bytes(c),
     );
+    // A device that asked before this buffer armed hears its state at once.
+    shared
+        .client_speaks
+        .store(s.dvr.speaks(), Ordering::Release);
     let Some(receiver) = s.dvr.arm() else {
         tracing::info!(client = %s.launch.client.name, "stream dvr: turned on again during this stream; it returns with the next stream");
         return None;
@@ -253,9 +257,21 @@ fn spawn(
     limits: butterpollo_media_policy::dvr::ring::Limits,
 ) -> std::io::Result<std::thread::JoinHandle<()>> {
     let worker = worker::Worker::new(h.clone(), Arc::downgrade(s), shared.clone(), limits);
+    let (h, session, shared) = (h.clone(), Arc::downgrade(s), shared.clone());
     std::thread::Builder::new()
         .name("dvr-mux".into())
-        .spawn(move || worker.run(receiver))
+        .spawn(move || {
+            let run = std::panic::AssertUnwindSafe(|| worker.run(receiver));
+            if std::panic::catch_unwind(run).is_err() {
+                // Nothing waits on a worker that is gone: API callers see their reply dropped.
+                tracing::error!("stream dvr: its worker stopped unexpectedly");
+                drop(shared.close());
+                if let Some(s) = session.upgrade() {
+                    s.dvr.disarm();
+                }
+                h.dvr.unregister(&shared.session_id, &shared);
+            }
+        })
 }
 
 /// Ends `s`'s DVR at the end of its stream: a recording is finished and a clip being written
@@ -283,6 +299,27 @@ pub(crate) fn end(h: &HostShared, s: &Session) {
         }
     }
     h.dvr.unregister(&s.launch.id, &shared);
+    arm_owner(h);
+}
+
+/// Arms the owner's stream when no stream has the replay buffer: after the setting is turned
+/// on during a stream (a settings save calls this), or once the stream before it let go of
+/// the buffer (resuming or Continue Here while its last clip was written).
+pub fn arm_owner(h: &HostShared) {
+    if h.dvr.active().is_some() {
+        return;
+    }
+    let config = h
+        .config
+        .read()
+        .unwrap_or_else(PoisonError::into_inner)
+        .clone();
+    if !config.dvr_enabled() {
+        return;
+    }
+    if let Some(s) = owner_stream(h) {
+        let _ = start(h, &s, &config);
+    }
 }
 
 /// Copies a frame's encoded pictures to the DVR worker while armed; one relaxed load when not.
@@ -359,6 +396,8 @@ pub(crate) fn idle(h: &HostShared, config: &Config) -> (State, Reason) {
         Some(Err(reason @ (Reason::Pyrowave | Reason::AudioCodecUnsupported))) => {
             (State::Unsupported, reason)
         }
+        // Turned off and on again during this stream: it returns with the next one.
+        Some(Ok(())) => (State::Off, Reason::Unknown),
         _ => (State::Off, Reason::NotStreaming),
     }
 }

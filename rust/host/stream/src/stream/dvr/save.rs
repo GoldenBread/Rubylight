@@ -218,7 +218,8 @@ impl Recording {
             ..Default::default()
         };
         if let Err(error) = dvr_store::write_draft(dir, &draft) {
-            tracing::debug!(%error, "stream dvr: the recording's draft sidecar was not written");
+            // Without it, a crash leaves this recording to be salvaged as a replay clip.
+            tracing::warn!(%error, "stream dvr: the recording's draft sidecar was not written");
         }
         tracing::info!(clip = %id, "stream dvr: recording started");
         Ok(Self {
@@ -312,6 +313,13 @@ impl Recording {
                 let finished = recorder.finish_written();
                 // Whatever of the failed fragment is still buffered is dropped, not written.
                 let (file, _unwritten) = out.into_parts();
+                if finished.info.duration_ms == 0 {
+                    // Not one fragment was written: there is no clip to keep.
+                    drop(file);
+                    std::fs::remove_file(&temp)?;
+                    let _ = std::fs::remove_file(dvr_store::draft_path(&dir, &id));
+                    return Err(io::Error::other("no fragment of the recording was written"));
+                }
                 file.set_len(finished.info.bytes)?;
                 (finished, file)
             } else {

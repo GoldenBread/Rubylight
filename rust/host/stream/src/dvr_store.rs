@@ -8,7 +8,7 @@
 //! [`quota::DISK_FLOOR_BYTES`] free.
 //!
 //! One stream at a time has a replay buffer: the owner's plain stream that armed first
-//! ([`DvrStore::register`]); the native API and the console reach it through
+//! ([`DvrStore::get_or_start`]); the native API and the console reach it through
 //! [`DvrStore::active`].
 use butterpollo_config::config::Config;
 use butterpollo_media_policy::dvr::quota::{self, StoredClip};

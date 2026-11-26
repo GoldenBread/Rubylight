@@ -160,7 +160,9 @@ pub(super) fn encode_frame(
     }
     let recovering = idr || invalidation.is_some();
     // Stream DVR's keyframe is the host's own: no recovery, nothing skipped or re-sent.
-    let keyframe = idr || s.dvr.take_keyframe();
+    // Taken either way: a recovery keyframe also serves Stream DVR.
+    let dvr_keyframe = s.dvr.take_keyframe();
+    let keyframe = idr || dvr_keyframe;
     // A client-chosen FEC share moves the encoder's part of the
     // budget at a fence (an IDR or a new encoder) or after a
     // statistical FEC report; a new rate needs no keyframe.

@@ -143,6 +143,8 @@ pub(super) fn handle(h: &Shared, method: &str, path: &str, data: &Value) -> anyh
                 .fetch_add(1, std::sync::atomic::Ordering::Release);
             ended_usb(h);
             h.packed_settings_saved(&before);
+            // Stream DVR turned on during a stream arms it now.
+            butterpollo_stream::stream::dvr::arm_owner(h);
             h.metadata.lock().unwrap().take();
             // The idle loop follows some settings by their own deadlines (the
             // update interval, the restore hotkey): a save wakes it to look
@@ -274,6 +276,7 @@ pub(super) fn save_setting_tx<P, T>(
         .fetch_add(1, std::sync::atomic::Ordering::Release);
     ended_usb(h);
     h.packed_settings_saved(&before);
+    butterpollo_stream::stream::dvr::arm_owner(h);
     // The idle loop follows some settings by their own deadlines (the update
     // interval, the restore hotkey): a save wakes it to look at once.
     h.wake_maintenance();

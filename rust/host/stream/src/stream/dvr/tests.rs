@@ -141,3 +141,38 @@ fn one_stream_gets_one_registration_however_many_threads_arm_it() {
     store.unregister("dvr-race", &got[0]);
     assert!(store.active().is_none());
 }
+
+#[test]
+fn a_stream_arms_when_turned_on_and_once_the_buffer_before_it_is_let_go() {
+    use butterpollo_session::session::Role;
+    let f = crate::state::test_support::Fixture::new();
+    let h = &f.host;
+    let first = f.session(f.client(u32::MAX), Role::Stream);
+    assert_eq!(eligibility(&first), Ok(()));
+    arm_owner(h);
+    assert!(h.dvr.active().is_none(), "off by default");
+    // Turned on during the stream: the save arms it, and a device that asked hears its state.
+    first.dvr.mark_speaks();
+    h.config
+        .write()
+        .unwrap()
+        .values
+        .insert("dvr_enabled".into(), "true".into());
+    arm_owner(h);
+    let armed = h
+        .dvr
+        .active_for(&first.launch.id)
+        .expect("armed by the save");
+    assert!(armed.client_speaks.load(Ordering::Acquire));
+    assert!(first.dvr.is_armed());
+    // A second stream waits while the first holds the buffer, and arms once it is let go.
+    let second = f.session(f.client(u32::MAX), Role::Stream);
+    assert!(start(h, &second, &h.config.read().unwrap().clone()).is_none());
+    first.stop();
+    end(h, &first);
+    assert!(h.dvr.active_for(&second.launch.id).is_some());
+    assert!(second.dvr.is_armed());
+    second.stop();
+    end(h, &second);
+    assert!(h.dvr.active().is_none());
+}

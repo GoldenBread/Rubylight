@@ -32,6 +32,7 @@ pub(crate) fn handle_control(
     s.dvr.set_wake(move || {
         let _ = wake.send(&[1]);
     });
+    s.dvr.mark_speaks();
     let mutates = request.op != Op::QueryState;
     if mutates && (!encrypted || !may_save(s)) {
         return refuse(s, &request, State::Off, Reason::PermissionDenied);

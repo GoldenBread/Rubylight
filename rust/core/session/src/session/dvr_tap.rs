@@ -76,6 +76,7 @@ pub struct DvrTap {
     wake: Mutex<Option<Wake>>,
     layout: Mutex<Option<OpusLayout>>,
     keyframe: AtomicBool,
+    speaks: AtomicBool,
 }
 
 /// An Opus layout: channels, streams, coupled streams and the channel mapping.
@@ -177,6 +178,17 @@ impl DvrTap {
         if let Some(wake) = wake {
             wake();
         }
+    }
+
+    /// The device sent a Stream DVR request, so it reads the state frames pushed to it, also
+    /// from a replay buffer armed later in the stream.
+    pub fn mark_speaks(&self) {
+        self.speaks.store(true, Ordering::Release);
+    }
+
+    /// Whether the device sent a Stream DVR request.
+    pub fn speaks(&self) -> bool {
+        self.speaks.load(Ordering::Acquire)
     }
 
     /// How the control loop is woken when a frame is queued.
