@@ -25,6 +25,7 @@ pub fn restore_hdr(stream: &mut crate::rtsp::Negotiated, negotiated: &crate::rts
         stream.hdr = true;
         stream.sdr_10bit = negotiated.sdr_10bit;
         stream.hdr_format = negotiated.hdr_format;
+        stream.dolby_vision_full_range = negotiated.dolby_vision_full_range;
     }
 }
 

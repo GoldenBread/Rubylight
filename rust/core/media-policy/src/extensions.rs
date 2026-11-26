@@ -38,7 +38,8 @@ const PYROWAVE_MAIN10: u32 = 0x0200_0000;
 /// HLG on HEVC, AV1 or PyroWave Main10 while `hlg` (`hdr_hlg`) is on, Dolby
 /// Vision 8.1 on HEVC Main10 and 10.1 on AV1 Main10 while `dolby_vision`
 /// (`hdr_dolby_vision`) is on, and Dolby Vision 8.4, which is HLG underneath,
-/// while both are, beside stock PQ. HLG on PyroWave also sets the offer flag
+/// while both are, beside stock PQ. Dolby Vision 8.1 comes with the offer flag
+/// `hdr::DV_81_FULL_RANGE`. HLG on PyroWave also sets the offer flag
 /// `hdr::PYROWAVE_HLG`, which 3.0 rc hosts never sent. PQ alone is stock HDR
 /// and is not listed, so a host with nothing beyond it shows stock clients
 /// nothing new.
@@ -53,7 +54,7 @@ pub fn hdr_offer(codecs: u32, hlg: bool, dolby_vision: bool) -> u8 {
         formats |= hdr::HLG | hdr::PYROWAVE_HLG;
     }
     if dolby_vision && hevc {
-        formats |= hdr::DV_81;
+        formats |= hdr::DV_81 | hdr::DV_81_FULL_RANGE;
         if hlg {
             formats |= hdr::DV_84;
         }
@@ -321,6 +322,17 @@ impl Offered {
                     || n.codec == 3 && self.hdr_formats & hdr::PYROWAVE_HLG != 0)
             {
                 bail!("{attribute} {format} (HLG) needs HEVC or AV1, or PyroWave where offered");
+            }
+        }
+        if n.dolby_vision_full_range {
+            let attribute = hdr::FULL_RANGE_ANNOUNCE_ATTRIBUTE;
+            if self.hdr_formats & hdr::DV_81_FULL_RANGE == 0 {
+                bail!("{attribute} was not offered");
+            }
+            if !(n.codec == 1 && format == hdr::DV_81 && n.hdr && n.full_range()) {
+                bail!(
+                    "{attribute} needs HEVC, Dolby Vision profile 8.1, HDR and full range (x-nv-video[0].encoderCscMode)"
+                );
             }
         }
         let codec = n.audio_codec;

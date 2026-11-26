@@ -34,15 +34,17 @@ pub fn apply_color(stream: &mut Negotiated, config: &Config) {
 pub const PACKED_DOLBY_VISION: &str = "Dolby Vision is off for packed 4:4:4 streams: the device unpacks the packed picture itself, so a Dolby Vision decoder would tone-map the packed layout instead of the picture. The stream carries static HDR10 instead";
 /// Why a native 4:4:4 stream never carries Dolby Vision.
 pub const NATIVE_444_DOLBY_VISION: &str = "Dolby Vision is off for YUV 4:4:4 streams: its profiles 8.1 and 8.4 are 4:2:0 only. The stream carries static HDR10 instead";
-/// Why a Dolby Vision stream is never full range: the RPUs of [`crate::dovi`]
-/// describe a limited-range base layer.
+/// Why a Dolby Vision stream is limited range: its RPUs ([`crate::dovi`])
+/// describe a limited-range base layer, except on the 8.1 stream whose client
+/// asked for full range.
 pub const DOLBY_VISION_LIMITED_RANGE: &str = "Full color range is off for this Dolby Vision stream: its Dolby Vision metadata describes limited-range video. Turn off Dolby Vision (hdr_dolby_vision) to stream full-range HDR10";
 /// A packed 4:4:4 stream whose client picked Dolby Vision streams static
 /// HDR10, from the control channel: the client decodes the packed
 /// picture as plain sample data and unpacks it in its own shader, and the
 /// RPU would not survive the unpack. A native 4:4:4 stream (HEVC Rext) does
 /// the same: Dolby Vision profile 8 is HEVC Main10 4:2:0. A full-range
-/// stream keeps Dolby Vision and gives up full range instead: the client
+/// stream keeps Dolby Vision and, unless it is HDR HEVC 8.1 whose client asked
+/// for full-range RPUs, gives up full range instead: the client
 /// opens its Dolby Vision decoder from its own ANNOUNCE, and a frame without
 /// an RPU takes an NVIDIA Shield's hardware composer down (nightjar#193).
 /// The log and the session's warnings say so; any other stream clears the
@@ -62,13 +64,21 @@ pub fn packed_drops_dolby_vision(
         tracing::warn!(hdr_format = stream.hdr_format, "{reason}");
         warnings.set("hdr_dolby_vision", reason);
         stream.hdr_format = 0;
-    } else if picked && stream.full_range() {
+        stream.dolby_vision_full_range = false;
+    } else if picked
+        && stream.full_range()
+        && !(stream.dolby_vision_full_range
+            && stream.hdr
+            && stream.codec == 1
+            && stream.hdr_format == rubylight_protocol::hdr::DV_81)
+    {
         tracing::warn!(
             hdr_format = stream.hdr_format,
             "{DOLBY_VISION_LIMITED_RANGE}"
         );
         warnings.set("hdr_dolby_vision", DOLBY_VISION_LIMITED_RANGE);
         stream.csc_mode &= !1;
+        stream.dolby_vision_full_range = false;
     } else {
         warnings.clear("hdr_dolby_vision");
     }
@@ -101,6 +111,7 @@ pub fn stream_sdr_10bit(stream: &mut Negotiated) {
     stream.sdr_10bit = true;
     stream.hdr = false;
     stream.hdr_format = 0;
+    stream.dolby_vision_full_range = false;
 }
 /// The protocol has no flag for ten-bit SDR: a client that wants it
 /// negotiates a ten-bit format in RTSP (`dynamicRangeMode=1`) while its launch

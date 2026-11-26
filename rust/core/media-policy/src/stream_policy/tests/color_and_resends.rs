@@ -212,6 +212,67 @@ fn a_dolby_vision_stream_gives_up_full_range_loudly_and_keeps_its_rpus() {
     assert!(hdr10.full_range());
 }
 #[test]
+fn only_a_consented_hevc_8_1_stream_stays_full_range() {
+    use rubylight_protocol::hdr;
+    let offered = crate::extensions::Offered {
+        hdr_formats: crate::extensions::hdr_offer(0x2_0200, true, true),
+        ..crate::extensions::Offered::NONE
+    };
+    let request = |codec: u8, format: u8, csc: u8, dynamic_range: u8, extra: &str| {
+        Negotiated::from_sdp(
+            format!(
+                "a=x-nv-video[0].dynamicRangeMode:{dynamic_range}\na=x-nv-video[0].encoderCscMode:{csc}\na=x-nv-vqos[0].bitStreamFormat:{codec}\na=x-rl-video[0].hdrFormat:{format}\na=x-rl-video[0].dolbyVisionFullRange:1\n{extra}"
+            )
+            .as_bytes(),
+        )
+        .unwrap()
+    };
+    let warnings = crate::TestWarnings::default();
+    let mut full = request(1, hdr::DV_81, 5, 1, "");
+    assert!(full.dolby_vision_full_range);
+    offered.check_announce(&full).unwrap();
+    assert!(!packed_drops_dolby_vision(&mut full, &warnings));
+    assert!(full.full_range() && full.dolby_vision_full_range);
+    assert!(warnings.snapshot().is_empty());
+    // Ten-bit SDR clears it, and HDR coming back restores it.
+    let negotiated = full.clone();
+    stream_sdr_10bit(&mut full);
+    assert!(!full.dolby_vision_full_range);
+    crate::hdr::restore_hdr(&mut full, &negotiated);
+    assert!(full.dolby_vision_full_range && full.hdr_format == hdr::DV_81);
+    // Not offered, or not HEVC 8.1 HDR full range: refused.
+    let without = crate::extensions::Offered {
+        hdr_formats: offered.hdr_formats & !hdr::DV_81_FULL_RANGE,
+        ..offered
+    };
+    for (offered, stream) in [
+        (without, request(1, hdr::DV_81, 5, 1, "")),
+        (offered, request(1, hdr::DV_81, 4, 1, "")),
+        (offered, request(1, hdr::DV_84, 5, 1, "")),
+        (offered, request(2, hdr::DV_101, 5, 1, "")),
+        (offered, request(1, 0, 5, 1, "")),
+        (offered, request(1, 0, 5, 0, "")),
+    ] {
+        let error = offered.check_announce(&stream).unwrap_err().to_string();
+        assert!(error.contains("dolbyVisionFullRange"), "{error}");
+    }
+    // 4:4:4 and packed lose Dolby Vision and the field with it.
+    for extra in [
+        "a=x-ss-video[0].chromaSamplingType:1\n",
+        "a=x-rl-video[0].chromaPacking:1\n",
+    ] {
+        let mut dropped = request(1, hdr::DV_81, 5, 1, extra);
+        assert!(packed_drops_dolby_vision(&mut dropped, &warnings));
+        assert!(!dropped.dolby_vision_full_range && dropped.full_range());
+    }
+    // 8.4 and 10.1 are limited range whatever the field says.
+    for (codec, format) in [(1, hdr::DV_84), (2, hdr::DV_101)] {
+        let mut other = request(codec, format, 5, 1, "");
+        assert!(!packed_drops_dolby_vision(&mut other, &warnings));
+        assert!(!other.full_range() && !other.dolby_vision_full_range);
+    }
+}
+#[test]
 fn a_packed_stream_drops_hlg_loudly_and_streams_hdr10() {
     let offered = crate::extensions::Offered {
         hdr_formats: crate::extensions::hdr_offer(0x200, true, true),

@@ -142,7 +142,7 @@ fn partial_offers_keep_their_order_and_add_opus() {
         "a=x-rl-audio.codecs:3\r\na=x-rl-control:0x5539,0x5540\r\n"
     );
     let hdr = Offered {
-        hdr_formats: hdr::HLG | 0x60,
+        hdr_formats: hdr::HLG | 0x20,
         ..Offered::NONE
     };
     assert_eq!(hdr.serverinfo_fields(), [("HdrFormats", "2".to_owned())]);
@@ -306,19 +306,29 @@ fn hlg_and_dolby_vision_are_offered_by_codec_while_their_settings_are_on() {
             hevc_main10,
             true,
             true,
-            hdr::PQ | hdr::HLG | hdr::DV_81 | hdr::DV_84,
+            hdr::PQ | hdr::HLG | hdr::DV_81 | hdr::DV_81_FULL_RANGE | hdr::DV_84,
         ),
-        (hevc_main10, false, true, hdr::PQ | hdr::DV_81),
+        (
+            hevc_main10,
+            false,
+            true,
+            hdr::PQ | hdr::DV_81 | hdr::DV_81_FULL_RANGE,
+        ),
         (hevc_main10, true, false, hdr::PQ | hdr::HLG),
         (av1_main10, true, true, hdr::PQ | hdr::HLG | hdr::DV_101),
         (av1_main10, false, true, hdr::PQ | hdr::DV_101),
         (av1_main10, true, false, hdr::PQ | hdr::HLG),
-        (av1_main10 | 0x200, true, true, hdr::ALL),
+        (
+            av1_main10 | 0x200,
+            true,
+            true,
+            hdr::ALL | hdr::DV_81_FULL_RANGE,
+        ),
         (
             av1_main10 | 0x200,
             false,
             true,
-            hdr::PQ | hdr::DV_81 | hdr::DV_101,
+            hdr::PQ | hdr::DV_81 | hdr::DV_81_FULL_RANGE | hdr::DV_101,
         ),
     ] {
         assert_eq!(
@@ -350,9 +360,9 @@ fn hlg_and_dolby_vision_are_offered_by_codec_while_their_settings_are_on() {
     };
     assert_eq!(
         offered.serverinfo_fields(),
-        [("HdrFormats", "5".to_owned())]
+        [("HdrFormats", "69".to_owned())]
     );
-    assert_eq!(offered.describe_lines(), "a=x-rl-video.hdrFormats:5\r\n");
+    assert_eq!(offered.describe_lines(), "a=x-rl-video.hdrFormats:69\r\n");
     let hdr = "a=x-nv-video[0].dynamicRangeMode:1\na=x-nv-vqos[0].bitStreamFormat:1\n";
     let pick = |offered: &Offered, format: u8| {
         offered.check_announce(&announce(&format!(
@@ -369,7 +379,7 @@ fn hlg_and_dolby_vision_are_offered_by_codec_while_their_settings_are_on() {
         hdr_formats: hdr_offer(hevc_main10, true, true),
         ..Offered::NONE
     };
-    assert_eq!(all.describe_lines(), "a=x-rl-video.hdrFormats:15\r\n");
+    assert_eq!(all.describe_lines(), "a=x-rl-video.hdrFormats:79\r\n");
     for format in [1, 2, 4, 8] {
         pick(&all, format).unwrap();
     }
@@ -431,14 +441,19 @@ fn hlg_on_pyrowave_is_offered_with_its_flag_and_taken_only_then() {
             hevc_main10 | pyrowave_main10,
             true,
             true,
-            hdr::PQ | hdr::HLG | hdr::DV_81 | hdr::DV_84 | hdr::PYROWAVE_HLG,
+            hdr::PQ
+                | hdr::HLG
+                | hdr::DV_81
+                | hdr::DV_81_FULL_RANGE
+                | hdr::DV_84
+                | hdr::PYROWAVE_HLG,
         ),
         // AV1 Main10 adds Dolby Vision 10.1 beside the flag.
         (
             hevc_main10 | 0x2_0000 | pyrowave_main10,
             true,
             true,
-            hdr::ALL | hdr::PYROWAVE_HLG,
+            hdr::ALL | hdr::PYROWAVE_HLG | hdr::DV_81_FULL_RANGE,
         ),
         (
             pyrowave_main10,
@@ -450,7 +465,7 @@ fn hlg_on_pyrowave_is_offered_with_its_flag_and_taken_only_then() {
             hevc_main10 | pyrowave_main10,
             false,
             true,
-            hdr::PQ | hdr::DV_81,
+            hdr::PQ | hdr::DV_81 | hdr::DV_81_FULL_RANGE,
         ),
         (
             hevc_main10 | 0x0080_0000 | 0x0400_0000,
@@ -474,8 +489,8 @@ fn hlg_on_pyrowave_is_offered_with_its_flag_and_taken_only_then() {
     assert_eq!(hlg.serverinfo_fields(), [("HdrFormats", "131".to_owned())]);
     assert_eq!(hlg.describe_lines(), "a=x-rl-video.hdrFormats:131\r\n");
     let all = with_flag(hevc_main10 | pyrowave_main10, true);
-    assert_eq!(all.serverinfo_fields(), [("HdrFormats", "143".to_owned())]);
-    assert_eq!(all.describe_lines(), "a=x-rl-video.hdrFormats:143\r\n");
+    assert_eq!(all.serverinfo_fields(), [("HdrFormats", "207".to_owned())]);
+    assert_eq!(all.describe_lines(), "a=x-rl-video.hdrFormats:207\r\n");
     // The flag alone is no format, so it shows nothing.
     let flag_only = Offered {
         hdr_formats: hdr::PYROWAVE_HLG,

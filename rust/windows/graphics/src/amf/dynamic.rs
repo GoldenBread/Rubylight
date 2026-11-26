@@ -29,6 +29,8 @@ pub(crate) struct Wanted {
     pub(crate) dolby_vision: bool,
     /// An HLG stream (`Negotiated::hlg`): HLG or Dolby Vision 8.4.
     pub(crate) hlg: bool,
+    /// A full-range stream (`Negotiated::full_range`): its 8.1 RPUs say so.
+    pub(crate) full_range: bool,
 }
 
 impl Wanted {
@@ -39,6 +41,7 @@ impl Wanted {
             t35: true,
             dolby_vision: false,
             hlg: false,
+            full_range: false,
         }
     }
 
@@ -53,9 +56,11 @@ impl Wanted {
         } else {
             (writer, dovi::Profile::P81)
         };
-        let rpus = self
-            .dolby_vision
-            .then(|| dovi::Writer::new(target_nits).with_profile(profile));
+        let rpus = self.dolby_vision.then(|| {
+            dovi::Writer::new(target_nits)
+                .with_profile(profile)
+                .with_full_range(self.full_range)
+        });
         (writer, rpus)
     }
 }
@@ -79,6 +84,7 @@ pub(crate) fn wanted(
         t35: options.hdr_dynamic_metadata() && !(hlg && codec == Codec::Av1),
         dolby_vision: dovi::negotiated(config).is_some(),
         hlg,
+        full_range: config.full_range(),
     };
     (wanted.t35 || wanted.dolby_vision).then_some(wanted)
 }

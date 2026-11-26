@@ -8,6 +8,7 @@ fn dolby_vision(t35: bool) -> Wanted {
         t35,
         dolby_vision: true,
         hlg: false,
+        full_range: false,
     }
 }
 
@@ -170,6 +171,7 @@ fn hlg_streams_want_hdr_vivid_on_hevc_and_dolby_vision_8_4() {
         t35,
         dolby_vision,
         hlg: true,
+        full_range: false,
     };
     assert_eq!(wanted(&config(1, 2), &on), Some(hlg(true, false)));
     assert_eq!(wanted(&config(1, 2), &off), None);
@@ -195,6 +197,7 @@ fn a_dolby_vision_8_4_frame_carries_hdr_vivid_for_hlg_and_an_8_4_rpu() {
     };
     let wanted = Wanted {
         hlg: true,
+        full_range: false,
         ..dolby_vision(true)
     };
     let mut slot = start(wanted, false, Some(&mut stats), &warnings);
@@ -558,4 +561,21 @@ fn the_receivers_display_peak_leaves_the_units() {
         dynamic.first_unit(frame.clone()),
         [&frame[..at], &units, &frame[at..]].concat()
     );
+}
+
+#[test]
+fn a_full_range_stream_gets_full_range_rpus() {
+    let off = butterpollo_config::config::Config::default();
+    let mut stream = butterpollo_media_policy::rtsp::Negotiated {
+        codec: 1,
+        hdr: true,
+        hdr_format: 4,
+        ..Default::default()
+    };
+    assert!(!wanted(&stream, &off).unwrap().full_range);
+    stream.csc_mode |= 1;
+    let wanted = wanted(&stream, &off).unwrap();
+    assert!(wanted.full_range);
+    let (_, rpus) = wanted.writers(600);
+    assert!(rpus.unwrap().frame(true).full_range);
 }

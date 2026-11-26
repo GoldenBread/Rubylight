@@ -105,6 +105,10 @@ pub struct Negotiated {
     /// stock HDR. `extensions::Offered::check_announce` refuses one not offered.
     #[serde(default)]
     pub hdr_format: u8,
+    /// The client asked for its Dolby Vision 8.1 stream full range, with RPUs
+    /// that say so (`x-rl-video[0].dolbyVisionFullRange:1`).
+    #[serde(default)]
+    pub dolby_vision_full_range: bool,
     /// The audio codec the client picked (`x-rl-audio.codec`, one
     /// `rubylight_protocol::audio_ext::CODEC_*` bit); 0 or 1 is Opus.
     #[serde(default)]
@@ -154,6 +158,7 @@ impl Default for Negotiated {
             audio_qos: true,
             mic: false,
             hdr_format: 0,
+            dolby_vision_full_range: false,
             audio_codec: 0,
         }
     }
@@ -374,6 +379,8 @@ impl Negotiated {
 
         // 3.0 extensions, sent only for what the host offered.
         n.hdr_format = u8::try_from(get(rubylight_protocol::hdr::ANNOUNCE_ATTRIBUTE, 0)?)?;
+        n.dolby_vision_full_range =
+            get(rubylight_protocol::hdr::FULL_RANGE_ANNOUNCE_ATTRIBUTE, 0)? != 0;
         n.audio_codec = u8::try_from(get(
             rubylight_protocol::audio_ext::CODEC_ANNOUNCE_ATTRIBUTE,
             0,

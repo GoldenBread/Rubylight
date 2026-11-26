@@ -54,6 +54,10 @@ const SOURCE_DIAGONAL: u16 = 42;
 /// point of profile 8.1's display-management data.
 const YCC_TO_RGB: [i16; 9] = [9574, 0, 13802, 9574, -1540, -5348, 9574, 17610, 0];
 const YCC_TO_RGB_OFFSETS: [u32; 3] = [16_777_216, 134_217_728, 134_217_728];
+/// The same for a full-range base layer (BT.2020 non-constant luminance, Kr
+/// 0.2627, Kb 0.0593), with dovi_tool's full-range profile 5 offsets.
+const YCC_TO_RGB_FULL: [i16; 9] = [8192, 0, 12080, 8192, -1348, -4681, 8192, 15412, 0];
+const YCC_TO_RGB_FULL_OFFSETS: [u32; 3] = [0, 134_217_728, 134_217_728];
 const RGB_TO_LMS: [i16; 9] = [7222, 8771, 390, 2654, 12430, 1300, 0, 422, 15962];
 
 /// The profiles: 8.1 over an HDR10 base layer and 8.4 over an HLG one on
@@ -161,6 +165,8 @@ pub struct Frame {
     /// carry its temporal filtering across it.
     pub scene_refresh: bool,
     pub profile: Profile,
+    /// The base layer is full range; profile 8.1 only, the others ignore it.
+    pub full_range: bool,
 }
 
 impl Frame {
@@ -232,15 +238,24 @@ impl Frame {
         }
     }
 
+    fn is_full_range(&self) -> bool {
+        self.full_range && self.profile == Profile::P81
+    }
+
     fn dm_data(&self, bits: &mut Bits) {
         let metadata = &self.metadata;
         bits.ue(0); // affected_dm_metadata_id
         bits.ue(0); // current_dm_metadata_id
         bits.ue(u32::from(self.scene_refresh));
-        for coefficient in YCC_TO_RGB {
+        let (matrix, offsets) = if self.is_full_range() {
+            (YCC_TO_RGB_FULL, YCC_TO_RGB_FULL_OFFSETS)
+        } else {
+            (YCC_TO_RGB, YCC_TO_RGB_OFFSETS)
+        };
+        for coefficient in matrix {
             bits.signed(16, coefficient.into());
         }
-        for offset in YCC_TO_RGB_OFFSETS {
+        for offset in offsets {
             bits.put(32, offset.into());
         }
         for coefficient in RGB_TO_LMS {
@@ -304,6 +319,8 @@ fn header(bits: &mut Bits) {
     bits.put(2, 0); // coefficient_data_type: fixed point
     bits.ue(COEFFICIENT_LOG2_DENOM.into());
     bits.put(2, 1); // vdr_rpu_normalized_idc
+    // bl_video_full_range_flag: 0 for a full-range base layer too, whose range the
+    // ycc_to_rgb matrix and offsets carry, as streams in the field do.
     bits.put(1, 0); // bl_video_full_range_flag
     bits.ue(2); // bl_bit_depth_minus8
     bits.ue(2); // el_bit_depth_minus8, ext_mapping_idc 0
@@ -499,6 +516,7 @@ pub fn crc32_mpeg2(data: &[u8]) -> u32 {
 #[derive(Clone, Debug)]
 pub struct Writer {
     profile: Profile,
+    full_range: bool,
     metadata: Metadata,
     target_nits: u16,
     measured: Option<Level1>,
@@ -511,6 +529,7 @@ impl Writer {
     pub fn new(target_nits: u16) -> Self {
         Self {
             profile: Profile::P81,
+            full_range: false,
             metadata: Metadata::default(),
             target_nits,
             measured: None,
@@ -520,6 +539,12 @@ impl Writer {
 
     pub fn with_profile(mut self, profile: Profile) -> Self {
         self.profile = profile;
+        self
+    }
+
+    /// RPUs for a full-range base layer (profile 8.1 only).
+    pub fn with_full_range(mut self, full_range: bool) -> Self {
+        self.full_range = full_range;
         self
     }
 
@@ -572,6 +597,7 @@ impl Writer {
             metadata: self.metadata,
             scene_refresh: self.refresh || keyframe,
             profile: self.profile,
+            full_range: self.full_range,
         };
         self.refresh = false;
         frame

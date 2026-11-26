@@ -28,6 +28,7 @@ fn frame() -> Frame {
         metadata: hdr10(),
         scene_refresh: true,
         profile: Profile::P81,
+        full_range: false,
     }
 }
 
@@ -437,4 +438,111 @@ fn crc32_mpeg2_lookup_table_matches_bitwise_reference() {
         crc32_mpeg2(&rpu[1..rpu.len() - 5]),
         bitwise_crc32_mpeg2(&rpu[1..rpu.len() - 5])
     );
+}
+
+/// The RPU's bits, MSB first, up to its CRC.
+fn rpu_bits(rpu: &[u8]) -> String {
+    rpu[..rpu.len() - 5]
+        .iter()
+        .map(|byte| format!("{byte:08b}"))
+        .collect()
+}
+
+fn matrix_bits(matrix: [i16; 9], offsets: [u32; 3]) -> String {
+    matrix
+        .iter()
+        .map(|value| format!("{:016b}", *value as u16))
+        .chain(offsets.iter().map(|value| format!("{value:032b}")))
+        .collect()
+}
+
+#[test]
+fn a_full_range_rpu_differs_only_in_the_matrix() {
+    let limited = frame().rpu();
+    let full = Frame {
+        full_range: true,
+        ..frame()
+    }
+    .rpu();
+    let mut expected = rpu_bits(&limited);
+    // bl_video_full_range_flag, after the prefix and the header fields before
+    // it, stays 0: the matrix carries the range.
+    assert_eq!(&expected[48..49], "0");
+    let from = matrix_bits(YCC_TO_RGB, YCC_TO_RGB_OFFSETS);
+    let at = expected.find(&from).unwrap();
+    expected.replace_range(
+        at..at + from.len(),
+        &matrix_bits(
+            [8192, 0, 12080, 8192, -1348, -4681, 8192, 15412, 0],
+            [0, 134_217_728, 134_217_728],
+        ),
+    );
+    assert_eq!(rpu_bits(&full), expected);
+    assert_eq!(full.len(), limited.len());
+    let crc_at = full.len() - 5;
+    assert_eq!(
+        crc32_mpeg2(&full[1..crc_at]).to_be_bytes(),
+        full[crc_at..full.len() - 1]
+    );
+    assert_eq!(full.last(), Some(&0x80));
+    // The writer carries it, and only profile 8.1 takes it.
+    let writer = || Writer::new(600).with_full_range(true);
+    assert!(writer().frame(false).full_range);
+    for profile in [Profile::P84, Profile::P101] {
+        let frame = writer().with_profile(profile).frame(false);
+        assert_eq!(
+            frame.rpu(),
+            Frame {
+                full_range: false,
+                ..frame
+            }
+            .rpu(),
+            "{profile:?}"
+        );
+    }
+}
+
+#[test]
+fn full_range_codes_give_the_rgb_the_limited_codes_give() {
+    // A model of how a decoder applies the display-management data (ETSI GS
+    // CCM 001): 10-bit codes over 1024, less the offsets over 2^28, through
+    // the matrix over 2^13. It checks the two matrices against each other,
+    // not a decoder.
+    let decode = |codes: [f64; 3], matrix: [i16; 9], offsets: [u32; 3]| -> [f64; 3] {
+        std::array::from_fn(|row| {
+            (0..3)
+                .map(|column| {
+                    f64::from(matrix[row * 3 + column]) / 8192.
+                        * (codes[column] / 1024. - f64::from(offsets[column]) / f64::from(1 << 28))
+                })
+                .sum()
+        })
+    };
+    let (kr, kb) = (0.2627, 0.0593);
+    let white = f64::from(nits_to_pq(203.));
+    let peak = f64::from(nits_to_pq(10_000.));
+    for rgb in [
+        [0.; 3],
+        [white; 3],
+        [peak; 3],
+        [peak, 0., 0.],
+        [0., peak, 0.],
+        [0., 0., peak],
+    ] {
+        let y = kr * rgb[0] + (1. - kr - kb) * rgb[1] + kb * rgb[2];
+        let cb = (rgb[2] - y) / (2. * (1. - kb));
+        let cr = (rgb[0] - y) / (2. * (1. - kr));
+        let full = [1023. * y, 512. + 1023. * cb, 512. + 1023. * cr]
+            .map(|code: f64| code.round().min(1023.));
+        let limited = [64. + 876. * y, 512. + 896. * cb, 512. + 896. * cr].map(f64::round);
+        let full = decode(full, YCC_TO_RGB_FULL, YCC_TO_RGB_FULL_OFFSETS);
+        let limited = decode(limited, YCC_TO_RGB, YCC_TO_RGB_OFFSETS);
+        for channel in 0..3 {
+            assert!(
+                (full[channel] - limited[channel]).abs() < 0.004
+                    && (full[channel] - rgb[channel]).abs() < 0.004,
+                "{rgb:?} {full:?} {limited:?}"
+            );
+        }
+    }
 }

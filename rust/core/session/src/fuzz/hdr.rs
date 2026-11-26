@@ -110,6 +110,7 @@ prop_compose! {
             metadata,
             scene_refresh,
             profile: if hlg { Profile::P84 } else { Profile::P81 },
+            full_range: false,
         }
     }
 }

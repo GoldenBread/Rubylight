@@ -39,7 +39,7 @@ async fn describe_for_a_default_config_is_byte_identical() -> Result<()> {
              a=fmtp:97 surround-params=21101\r\n\
              a=fmtp:97 surround-params=660014523\r\n\
              a=fmtp:97 surround-params=88001456723\r\n\
-             a=x-rl-video.hdrFormats:15\r\n\
+             a=x-rl-video.hdrFormats:79\r\n\
              a=x-rl-max-packet-size:{max_packet}\r\n\
              a=x-rl-audio.codecs:3\r\n\
              a=x-rl-audio.layout714:12,8,4,0,1,2,3,4,5,6,7,8,9,10,11\r\n\
@@ -130,7 +130,7 @@ async fn describe_with_packed_444_and_the_microphone_is_byte_identical() -> Resu
              a=x-rl-video.packed444Version:1\r\n\
              a=x-rl-video.packed444Modes:15\r\n\
              a=x-rl-video.packed444LayeredModes:10\r\n\
-             a=x-rl-video.hdrFormats:15\r\n\
+             a=x-rl-video.hdrFormats:79\r\n\
              a=x-rl-max-packet-size:{max_packet}\r\n\
              a=x-rl-audio.codecs:3\r\n\
              a=x-rl-audio.layout714:12,8,4,0,1,2,3,4,5,6,7,8,9,10,11\r\n\
@@ -262,7 +262,7 @@ async fn hlg_on_pyrowave_is_offered_and_sends_the_hdr_mode_message() -> Result<(
     let launch = h.launch_hdr(0, false, None).await?;
     let describe = h.rtsp(&launch, 10, "DESCRIBE", "").await?;
     assert!(
-        describe.contains("a=x-rl-video.hdrFormats:15\r\n"),
+        describe.contains("a=x-rl-video.hdrFormats:79\r\n"),
         "{describe}"
     );
     let response = h
@@ -278,7 +278,7 @@ async fn hlg_on_pyrowave_is_offered_and_sends_the_hdr_mode_message() -> Result<(
         .store(0x1 | 0x100 | 0x200 | 0x0200_0000, Ordering::Release);
     let describe = h.rtsp(&launch, 12, "DESCRIBE", "").await?;
     assert!(
-        describe.contains("a=x-rl-video.hdrFormats:143\r\n"),
+        describe.contains("a=x-rl-video.hdrFormats:207\r\n"),
         "{describe}"
     );
     let (session, client) = h.connect_announcing(&launch, 0, sdp).await?;

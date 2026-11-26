@@ -724,6 +724,7 @@ mod repeat_dynamic_tests {
                 t35: true,
                 dolby_vision: false,
                 hlg: false,
+                full_range: false,
             },
             true,
         )));
