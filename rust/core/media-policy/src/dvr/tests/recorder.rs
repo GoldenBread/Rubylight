@@ -1,5 +1,6 @@
-//! The live recorder (fragments, restarts, the duration patch) and crash salvage of torn
-//! recordings, including a no-panic property on arbitrary bytes.
+//! The live recorder (fragments, restarts, the duration patch, ending at a fragment the
+//! host could not write) and crash salvage of torn recordings, including a no-panic
+//! property on arbitrary bytes.
 
 use super::bmff::{be32, be64, kinds, parse, tfdt, trun};
 use super::*;
@@ -19,6 +20,12 @@ struct Recording {
 
 /// 150 frames at 30 fps, a keyframe every 30, and 10 ms audio up to the last frame.
 fn record(codec: VideoCodec) -> Recording {
+    record_until(codec, None)
+}
+
+/// [`record`], where writing fragment `fail_at` (1-based) fails and the host ends the part
+/// with `finish_written`.
+fn record_until(codec: VideoCodec, fail_at: Option<usize>) -> Recording {
     let info = info(codec);
     let video = frames(codec, 0, 150 * FRAME_US, FRAME_US, 30 * FRAME_US);
     let mut video = video.into_iter();
@@ -32,6 +39,16 @@ fn record(codec: VideoCodec) -> Recording {
         }
         match recorder.push_video(&info, frame) {
             RecPush::Buffered => {}
+            RecPush::Fragment(_) if fail_at == Some(fragments + 1) => {
+                let finished = recorder.finish_written();
+                assert!(finished.tail.is_empty());
+                return Recording {
+                    file,
+                    fragments,
+                    info: finished.info,
+                    patch: finished.duration_patch.unwrap(),
+                };
+            }
             RecPush::Fragment(bytes) => {
                 file.extend_from_slice(&bytes);
                 fragments += 1;
@@ -101,6 +118,35 @@ fn recorder_writes_two_second_fragments_and_patches_the_duration() {
     // Frame 149 at 446996 ticks, lasting as long as frame 148.
     assert_eq!(video_end, 449_996);
     assert_eq!(audio_samples, 497);
+}
+
+#[test]
+fn a_fragment_the_host_could_not_write_ends_the_part_at_the_one_before() {
+    let mut recording = record_until(VideoCodec::H264, Some(2));
+    assert_eq!(recording.fragments, 1);
+    assert_eq!(recording.info.bytes, recording.file.len() as u64);
+    // Frames 0..=60 end at 182998 ticks (2033 ms); their audio, 204 packets, at 2040 ms.
+    assert_eq!(recording.info.duration_ms, 2040);
+    let (at, bytes) = recording.patch.clone();
+    let at = at as usize;
+    recording.file[at..at + bytes.len()].copy_from_slice(&bytes);
+    let file = &recording.file;
+    let tree = parse(file);
+    assert_eq!(kinds(&tree), ["ftyp", "moov", "moof", "mdat"]);
+    assert_eq!(be64(file, at), 2040);
+    let trafs = tree[2].all("traf");
+    assert_eq!(trun(file, trafs[0].child("trun")).samples.len(), 61);
+    assert_eq!(trun(file, trafs[1].child("trun")).samples.len(), 204);
+    let found = salvage(&mut Cursor::new(file)).unwrap();
+    assert_eq!((found.valid_len, found.fragments), (file.len() as u64, 1));
+    assert_eq!(found.duration_us, 2_033_311);
+
+    // Failing the first fragment leaves the init segment alone.
+    let recording = record_until(VideoCodec::H264, Some(1));
+    assert_eq!(recording.fragments, 0);
+    assert_eq!(recording.info.bytes, recording.file.len() as u64);
+    assert_eq!(recording.info.duration_ms, 0);
+    assert_eq!(kinds(&parse(&recording.file)), ["ftyp", "moov"]);
 }
 
 #[test]

@@ -7,8 +7,8 @@
 //! `BUTTERPOLLO_FFMPEG_DIR`, else `C:\msys64\ucrt64\bin`, else PATH. Run with
 //! `cargo test -p butterpollo-media-policy --test dvr_ffprobe -- --ignored`.
 use butterpollo_media_policy::dvr::{
-    AudioPacket, HdrInfo, Limits, OpusConfig, Pushed, RecPush, Recorder, Ring, StreamInfo,
-    VideoCodec, VideoFrame, salvage, write_clip,
+    AudioPacket, Finished, HdrInfo, Limits, OpusConfig, Pushed, RecPush, Recorder, Ring,
+    StreamInfo, VideoCodec, VideoFrame, salvage, write_clip,
 };
 use butterpollo_media_policy::hdr::Metadata;
 use serde_json::Value;
@@ -17,6 +17,7 @@ use std::process::Command;
 
 const START_US: u64 = 5_000_000;
 const FPS: u64 = 30;
+/// Frames of a replay-clip encode (three seconds).
 const FRAMES: u64 = 90;
 
 fn tool(name: &str) -> PathBuf {
@@ -55,8 +56,8 @@ enum Video {
 const MASTER_DISPLAY: &str =
     "G(13250,34500)B(7500,3000)R(34000,16000)WP(15635,16450)L(10000000,50)";
 
-/// Three seconds of test pattern, a keyframe every 15 frames, no B-frames.
-fn encode_video(dir: &Path, video: Video) -> Vec<u8> {
+/// `frames` frames of test pattern, a keyframe every 15 frames, no B-frames.
+fn encode_video(dir: &Path, video: Video, frames: u64) -> Vec<u8> {
     let x265 = "keyint=15:min-keyint=15:scenecut=0:bframes=0:open-gop=0:aud=1:\
                 repeat-headers=1:log-level=error";
     let hdr10 = format!(
@@ -119,7 +120,7 @@ fn encode_video(dir: &Path, video: Video) -> Vec<u8> {
         ),
     };
     let source = format!("testsrc2=size={size}:rate={FPS}");
-    let frames = FRAMES.to_string();
+    let frames = frames.to_string();
     let mut args = vec![
         "-f",
         "lavfi",
@@ -137,12 +138,12 @@ fn encode_video(dir: &Path, video: Video) -> Vec<u8> {
 
 /// Access units: Annex-B split before each AUD, or OBUs split before each temporal
 /// delimiter; with whether each is a keyframe.
-fn access_units(video: Video, stream: &[u8]) -> Vec<(bool, Vec<u8>)> {
+fn access_units(video: Video, stream: &[u8], frames: u64) -> Vec<(bool, Vec<u8>)> {
     let units: Vec<(bool, Vec<u8>)> = match video {
         Video::Av1 => split_obus(stream),
         _ => split_annexb(stream, matches!(video, Video::H264 | Video::H264Bt601Full)),
     };
-    assert_eq!(units.len() as u64, FRAMES);
+    assert_eq!(units.len() as u64, frames);
     assert!(units[0].0, "starts on a keyframe");
     assert!(units.iter().filter(|unit| unit.0).count() >= 3);
     units
@@ -276,20 +277,22 @@ fn vorbis_order(channels: usize) -> Vec<usize> {
     }
 }
 
-/// Three seconds of Opus in 10 ms packets; the layout as the host states it (WAVE order).
-fn encode_opus(dir: &Path, channels: u8) -> (OpusConfig, Vec<AudioPacket>) {
+/// `seconds` of Opus in 10 ms packets; the layout as the host states it (WAVE order).
+fn encode_opus(dir: &Path, channels: u8, seconds: u32) -> (OpusConfig, Vec<AudioPacket>) {
     let source = if channels == 6 {
-        "aevalsrc=0.1*sin(440*2*PI*t)|0.1*sin(550*2*PI*t)|0.1*sin(660*2*PI*t)|\
-         0.1*sin(110*2*PI*t)|0.1*sin(770*2*PI*t)|0.1*sin(880*2*PI*t):s=48000:d=3:c=5.1"
+        format!(
+            "aevalsrc=0.1*sin(440*2*PI*t)|0.1*sin(550*2*PI*t)|0.1*sin(660*2*PI*t)|\
+             0.1*sin(110*2*PI*t)|0.1*sin(770*2*PI*t)|0.1*sin(880*2*PI*t):s=48000:d={seconds}:c=5.1"
+        )
     } else {
-        "sine=frequency=440:sample_rate=48000:duration=3"
+        format!("sine=frequency=440:sample_rate=48000:duration={seconds}")
     };
     let channel_count = channels.to_string();
     let args = [
         "-f",
         "lavfi",
         "-i",
-        source,
+        source.as_str(),
         "-ac",
         channel_count.as_str(),
         "-c:a",
@@ -346,6 +349,7 @@ fn video_frames(units: Vec<(bool, Vec<u8>)>) -> Vec<VideoFrame> {
         .collect()
 }
 
+#[derive(Clone)]
 enum Event {
     Video(VideoFrame),
     Audio(AudioPacket),
@@ -467,7 +471,8 @@ fn ring_clip(
     info: StreamInfo,
     audio: Vec<AudioPacket>,
 ) -> Value {
-    let frames = video_frames(access_units(video, &encode_video(dir, video)));
+    let stream = encode_video(dir, video, FRAMES);
+    let frames = video_frames(access_units(video, &stream, FRAMES));
     let mut ring = Ring::new(Limits {
         max_us: 60_000_000,
         max_bytes: 512 << 20,
@@ -503,7 +508,7 @@ fn ring_clip(
 #[ignore = "needs ffmpeg and ffprobe"]
 fn ring_clip_h264_with_stereo_opus() {
     let dir = tempfile::tempdir().unwrap();
-    let (config, audio) = encode_opus(dir.path(), 2);
+    let (config, audio) = encode_opus(dir.path(), 2, 3);
     let info = info(VideoCodec::H264, None, Some(config));
     let video = ring_clip(dir.path(), "h264.mp4", Video::H264, info, audio);
     assert_eq!(
@@ -599,7 +604,7 @@ fn ring_clip_hevc_hdr10_carries_colour_metadata() {
 #[ignore = "needs ffmpeg and ffprobe"]
 fn ring_clip_av1_with_surround_opus() {
     let dir = tempfile::tempdir().unwrap();
-    let (config, audio) = encode_opus(dir.path(), 6);
+    let (config, audio) = encode_opus(dir.path(), 6, 3);
     assert_eq!(config.channels, 6);
     let info = info(VideoCodec::Av1, None, Some(config));
     let video = ring_clip(dir.path(), "av1.mp4", Video::Av1, info, audio);
@@ -609,17 +614,11 @@ fn ring_clip_av1_with_surround_opus() {
     );
 }
 
-#[test]
-#[ignore = "needs ffmpeg and ffprobe"]
-fn recording_hevc_with_stereo_opus_and_its_salvage() {
-    let dir = tempfile::tempdir().unwrap();
-    let (config, audio) = encode_opus(dir.path(), 2);
-    let info = info(VideoCodec::Hevc, None, Some(config));
-    let frames = video_frames(access_units(
-        Video::Hevc,
-        &encode_video(dir.path(), Video::Hevc),
-    ));
-    let mut events = interleave(frames, audio).into_iter();
+/// Records `events` as the host does: the file with its tail (the duration not yet
+/// patched), how the part ended and the fragments written. Writing fragment `fail_at`
+/// (1-based) fails, and the part ends with `finish_written`.
+fn record(info: &StreamInfo, events: Vec<Event>, fail_at: Option<u32>) -> (Vec<u8>, Finished, u32) {
+    let mut events = events.into_iter();
     let first = loop {
         match events.next() {
             Some(Event::Video(frame)) => break frame,
@@ -627,12 +626,15 @@ fn recording_hevc_with_stereo_opus_and_its_salvage() {
             None => panic!("no video"),
         }
     };
-    let (mut recorder, mut file) = Recorder::start(&info, first).unwrap();
+    let (mut recorder, mut file) = Recorder::start(info, first).unwrap();
     let mut fragments = 0;
     for event in events {
         match event {
-            Event::Video(frame) => match recorder.push_video(&info, frame) {
+            Event::Video(frame) => match recorder.push_video(info, frame) {
                 RecPush::Buffered => {}
+                RecPush::Fragment(_) if fail_at == Some(fragments + 1) => {
+                    return (file, recorder.finish_written(), fragments);
+                }
                 RecPush::Fragment(bytes) => {
                     file.extend_from_slice(&bytes);
                     fragments += 1;
@@ -642,32 +644,67 @@ fn recording_hevc_with_stereo_opus_and_its_salvage() {
             Event::Audio(packet) => recorder.push_audio(packet),
         }
     }
-    assert_eq!(fragments, 1, "frames 0..60, cut at the frame at 2 s");
     let finished = recorder.finish();
     file.extend_from_slice(&finished.tail);
-    // Torn inside the tail fragment.
-    let torn = file[..file.len() - finished.tail.len() / 2].to_vec();
-    let (at, patch) = finished.duration_patch.unwrap();
-    let mut complete = file.clone();
-    complete[at as usize..at as usize + patch.len()].copy_from_slice(&patch);
+    (file, finished, fragments)
+}
+
+/// The first `len` bytes of `file` with the duration patch applied.
+fn patched(file: &[u8], len: u64, patch: Option<(u64, Vec<u8>)>) -> Vec<u8> {
+    let mut out = file[..len as usize].to_vec();
+    let (at, bytes) = patch.expect("a duration patch");
+    out[at as usize..at as usize + bytes.len()].copy_from_slice(&bytes);
+    out
+}
+
+#[test]
+#[ignore = "needs ffmpeg and ffprobe"]
+fn recording_hevc_with_stereo_opus_its_salvage_and_a_failed_write() {
+    let dir = tempfile::tempdir().unwrap();
+    let (config, audio) = encode_opus(dir.path(), 2, 5);
+    let info = info(VideoCodec::Hevc, None, Some(config));
+    let stream = encode_video(dir.path(), Video::Hevc, 150);
+    let events = interleave(video_frames(access_units(Video::Hevc, &stream, 150)), audio);
+
+    let (file, finished, fragments) = record(&info, events.clone(), None);
+    assert_eq!(fragments, 2, "frames 0..60 and 60..120, cut at 2 s and 4 s");
+    assert_eq!(finished.info.bytes, file.len() as u64);
     let expect = Expect {
         codec: "hevc",
         size: (202, 118),
-        frames: FRAMES as usize,
+        frames: 150,
         audio_channels: Some(2),
         duration_ms: finished.info.duration_ms,
     };
+    let complete = patched(&file, file.len() as u64, finished.duration_patch);
     check(dir.path(), "recording.mp4", &complete, &expect);
 
-    let found = salvage(&mut std::io::Cursor::new(&torn)).unwrap();
-    assert_eq!(found.fragments, 1);
-    let mut recovered = torn[..found.valid_len as usize].to_vec();
-    let (at, patch) = found.mehd_patch.unwrap();
-    recovered[at as usize..at as usize + patch.len()].copy_from_slice(&patch);
+    // Torn inside the tail fragment.
+    let torn = &file[..file.len() - finished.tail.len() / 2];
+    let found = salvage(&mut std::io::Cursor::new(torn)).unwrap();
+    assert_eq!(found.fragments, 2);
     let salvaged = Expect {
-        frames: 60,
+        frames: 120,
         duration_ms: found.duration_us / 1000,
         ..expect
     };
+    let recovered = patched(torn, found.valid_len, found.mehd_patch);
     check(dir.path(), "recovered.mp4", &recovered, &salvaged);
+
+    // The disk refused the second fragment: the part ends after the first.
+    let (file, finished, fragments) = record(&info, events, Some(2));
+    assert_eq!((fragments, finished.tail.len()), (1, 0));
+    assert_eq!(finished.info.bytes, file.len() as u64);
+    assert!(
+        (1990..=2050).contains(&finished.info.duration_ms),
+        "{} ms",
+        finished.info.duration_ms
+    );
+    let kept = Expect {
+        frames: 60,
+        duration_ms: finished.info.duration_ms,
+        ..expect
+    };
+    let written = patched(&file, finished.info.bytes, finished.duration_patch);
+    check(dir.path(), "written.mp4", &written, &kept);
 }

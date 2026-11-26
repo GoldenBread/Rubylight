@@ -1,7 +1,8 @@
 //! Live manual recording as fragmented MP4, streamed to disk by the host: the init segment
 //! up front (with a placeholder `mehd` duration), a `moof` + `mdat` for about every
 //! [`FRAGMENT_US`] of video, then a tail fragment and the in-place duration patch. A
-//! configuration change at a keyframe ends the part so the host can start the next one.
+//! configuration change at a keyframe ends the part so the host can start the next one,
+//! and a fragment the host could not write ends it at the fragment before.
 
 use super::fmp4::{
     self, AUDIO_TIMESCALE, AudioTimeline, ClipInfo, MuxError, VIDEO_TIMESCALE, VideoTimeline,
@@ -33,6 +34,13 @@ pub struct Finished {
     pub info: ClipInfo,
 }
 
+/// The file before the latest fragment: its length and the timelines' state then.
+struct Written {
+    bytes: u64,
+    video_clock: VideoTimeline,
+    audio_clock: AudioTimeline,
+}
+
 pub struct Recorder {
     info: StreamInfo,
     params: ParamSets,
@@ -49,6 +57,7 @@ pub struct Recorder {
     bytes: u64,
     mehd_at: u64,
     awaiting: bool,
+    written: Written,
 }
 
 impl Recorder {
@@ -74,6 +83,11 @@ impl Recorder {
             bytes: init.len() as u64,
             mehd_at: mehd_at as u64,
             awaiting: false,
+            written: Written {
+                bytes: init.len() as u64,
+                video_clock: VideoTimeline::new(start_us),
+                audio_clock: AudioTimeline::new(start_us),
+            },
         };
         Ok((recorder, init))
     }
@@ -142,6 +156,11 @@ impl Recorder {
         if frames.is_empty() && packets.is_empty() {
             return Vec::new();
         }
+        self.written = Written {
+            bytes: self.bytes,
+            video_clock: self.video_clock.clone(),
+            audio_clock: self.audio_clock.clone(),
+        };
         let (video_base, video_durations) = self.video_clock.layout(&frames, next_pts);
         let after = self.audio.first().map(|packet| packet.pts_us);
         let (audio_base, audio_durations) = self.audio_clock.layout(&packets, after);
@@ -156,12 +175,33 @@ impl Recorder {
         fragment
     }
 
-    /// Ends the part: the tail fragment, the duration patch and what the file holds.
+    /// Ends the part: the tail fragment, the duration patch and what the file holds. When
+    /// writing the tail fails, [`super::salvage`] of the file finds the end and duration.
     pub fn finish(mut self) -> Finished {
         let tail = self.flush(None);
-        let video_ms = fmp4::to_ms(self.video_clock.end(), VIDEO_TIMESCALE);
-        let audio_ms = self
-            .audio_clock
+        self.finished(tail, self.bytes, &self.video_clock, &self.audio_clock)
+    }
+
+    /// Ends the part when the host could not write the last [`RecPush::Fragment`] it got
+    /// (a failed or refused write), instead of [`Recorder::finish`]: no tail, and the
+    /// duration patch and `info` describe the file up to the fragment before it (the init
+    /// segment alone when it was the first). The host truncates the file to `info.bytes`,
+    /// applies the patch and keeps the part.
+    pub fn finish_written(self) -> Finished {
+        let written = &self.written;
+        let (video, audio) = (&written.video_clock, &written.audio_clock);
+        self.finished(Vec::new(), written.bytes, video, audio)
+    }
+
+    fn finished(
+        &self,
+        tail: Vec<u8>,
+        bytes: u64,
+        video_clock: &VideoTimeline,
+        audio_clock: &AudioTimeline,
+    ) -> Finished {
+        let video_ms = fmp4::to_ms(video_clock.end(), VIDEO_TIMESCALE);
+        let audio_ms = audio_clock
             .end()
             .map_or(0, |end| fmp4::to_ms(end, AUDIO_TIMESCALE));
         let duration_ms = video_ms.max(audio_ms);
@@ -169,11 +209,11 @@ impl Recorder {
             tail,
             duration_patch: Some((self.mehd_at, duration_ms.to_be_bytes().to_vec())),
             info: ClipInfo {
-                bytes: self.bytes,
+                bytes,
                 duration_ms,
                 width: self.width,
                 height: self.height,
-                fps: self.video_clock.fps(),
+                fps: video_clock.fps(),
                 codec: self.codec,
                 hdr: self.info.hdr.is_some(),
                 ten_bit: self.ten_bit,

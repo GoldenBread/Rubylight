@@ -242,6 +242,7 @@ pub(crate) fn to_ms(ticks: u64, timescale: u32) -> u64 {
 
 /// Video decode times at 90 kHz from frame timestamps: strictly increasing, each frame
 /// lasting until the next one, the last as long as the one before.
+#[derive(Clone)]
 pub(crate) struct VideoTimeline {
     start_us: u64,
     end: u64,
@@ -305,6 +306,7 @@ impl VideoTimeline {
 
 /// Opus decode times at 48 kHz: packets play back to back for their sample counts, and a
 /// gap of more than half a packet in the timestamps (lost packets) is kept as a gap.
+#[derive(Clone)]
 pub(crate) struct AudioTimeline {
     start_us: u64,
     end: Option<u64>,
