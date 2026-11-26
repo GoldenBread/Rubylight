@@ -4,7 +4,7 @@ description: >-
   Sonnet latest (medium effort, isolated worktree). Use for mechanical localization
   across 15 Nightjar and 22 host locales (tools/i18n.py, strings_70/*.rs, values-*/strings.xml),
   declarative settings.toml codegen, code-map updates, READMEs/docs (20), and notes.d fragments.
-model: sonnet
+model: opus
 effort: medium
 isolation: worktree
 autoCompactWindow: 250000
