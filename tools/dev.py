@@ -1370,4 +1370,6 @@ def main(argv=None):
 
 
 if __name__ == '__main__':
+    # A log redirected on Windows is cp1252: a test name or message outside it must not end the run.
+    sys.stdout.reconfigure(errors='replace')
     sys.exit(main())
