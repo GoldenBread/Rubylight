@@ -1,0 +1,2 @@
+# HDR10 desktop on SDR streams
+- **HDR highlights kept from HDR10 captures too.** With *Keep HDR highlights in SDR streams* on, an HDR desktop captured as 10-bit HDR10 now streams to an SDR client with its highlights compressed, as an FP16 capture already did; before, the stream refused such a capture. With the option off, an HDR10 capture on an SDR stream still fails with a message that names the option.

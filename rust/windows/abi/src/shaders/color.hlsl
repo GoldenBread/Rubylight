@@ -7,8 +7,8 @@ cbuffer Config : register(b0) {
     uint tenBit; float sdrWhiteScale; float hdrScale; uint padding;
     int2 pointerPosition; uint2 pointerSize;
     uint pointerMode;
-    // SDR streams of FP16 captures: `toneMap` is `hdr_sdr_tone_map`, and
-    // `sdrDesktop` marks a capture whose display is not in HDR.
+    // SDR streams of FP16 and PQ captures: `toneMap` is `hdr_sdr_tone_map`,
+    // and `sdrDesktop` marks an FP16 capture whose display is not in HDR.
     uint toneMap; uint sdrDesktop; uint pointerPadding;
 };
 float4 vertex(uint id : SV_VertexID) : SV_Position {
@@ -26,6 +26,12 @@ float3 gamut2020(float3 rgb) {
     return float3(dot(rgb, float3(0.627404, 0.329283, 0.043313)),
                   dot(rgb, float3(0.069097, 0.919540, 0.011362)),
                   dot(rgb, float3(0.016391, 0.088013, 0.895595)));
+}
+// BT.2020 to BT.709 primaries, the inverse of `gamut2020`.
+float3 gamut709(float3 rgb) {
+    return float3(dot(rgb, float3(1.660491, -0.587641, -0.072850)),
+                  dot(rgb, float3(-0.124550, 1.132900, -0.008349)),
+                  dot(rgb, float3(-0.018151, -0.100579, 1.118730)));
 }
 float3 pq(float3 luminance) {
     float3 power = pow(clamp(luminance, 0, 1), 2610.0 / 16384.0);
@@ -61,7 +67,8 @@ float3 hlg(float3 light) {
 // (src_assets/windows/assets/shaders/directx/include/convert_linear_base.hlsl,
 // AlkaidLab/foundation-sunshine, commit 9d761ba, PR #1387). Copyright (c)
 // Foundation Sunshine authors, GPL-3.0. `color::method_b` is the CPU reference.
-bool tone_mapped() { return hdr == 0 && pixel == 1 && toneMap != 0 && sdrDesktop == 0; }
+// A PQ capture enters as scRGB too (`load`).
+bool tone_mapped() { return hdr == 0 && pixel != 0 && toneMap != 0 && sdrDesktop == 0; }
 // BT.2100 LMS matrix composed with the linear primary conversions.
 static const float3x3 rec709ToLms = {
     0.295809355, 0.623101305, 0.081089341,
@@ -176,6 +183,9 @@ float3 load(int2 p) {
         rgb *= sdrWhiteScale;
     }
     if (hdr != 0 && pixel == 1) rgb *= hdrScale;
+    // A tone-mapped PQ capture becomes scRGB here, so resizing averages
+    // light and Method B sees what an FP16 capture of that desktop gives.
+    if (pixel == 2 && tone_mapped()) rgb = gamut709(depq(rgb) * 125.0);
     // Normalize scRGB to SDR white. A BT.2020 stream keeps linear, extended
     // Rec.709 values until gamut mapping; clipping to sRGB here would lose
     // wide-gamut colors that are still inside BT.2020. A tone-mapped stream

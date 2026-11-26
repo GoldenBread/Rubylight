@@ -256,10 +256,11 @@ fn validate_source(
     source: (u32, u32, Pixel),
 ) -> Result<()> {
     // An HDR desktop hands an SDR stream FP16 frames, which the shader
-    // takes back to sRGB; only PQ has no SDR path. Refusing FP16 failed
-    // every fallback from the compute queue on such a desktop.
-    if !config.hdr && source.2 == Pixel::Rgba10Pq {
-        bail!("HDR surface supplied to an SDR converter");
+    // takes back to sRGB; PQ has an SDR path only through the tone mapping.
+    // Refusing FP16 failed every fallback from the compute queue on such a
+    // desktop.
+    if !config.hdr && source.2 == Pixel::Rgba10Pq && !config.sdr_tone_map {
+        bail!("HDR surface supplied to an SDR converter (hdr_sdr_tone_map is off)");
     }
     Ok(())
 }
