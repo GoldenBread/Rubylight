@@ -346,6 +346,17 @@ pub fn serverinfo_response(
             (h.codecs.load(std::sync::atomic::Ordering::Acquire) & !0x40000000).to_string(),
         ),
         ("RustHostVersion", env!("CARGO_PKG_VERSION").into()),
+        // The host's operating system, so a client offers Rubylight's (Windows) releases
+        // only to a Windows host.
+        (
+            rubylight_protocol::host_platform::SERVERINFO_FIELD,
+            if cfg!(target_os = "linux") {
+                rubylight_protocol::host_platform::LINUX
+            } else {
+                rubylight_protocol::host_platform::WINDOWS
+            }
+            .into(),
+        ),
         ("RustHostEncoderBitrateKbps", encoder_bitrate.to_string()),
         (
             "RustHostInitialEncoderBitrateKbps",
@@ -546,6 +557,21 @@ mod tests {
         let mut headers = axum::http::HeaderMap::new();
         headers.insert(axum::http::header::HOST, "127.0.0.1:47984".parse().unwrap());
         serverinfo_xml_with_headers(h, &headers, client).await
+    }
+
+    #[tokio::test]
+    async fn serverinfo_names_the_host_platform_unpaired_too() {
+        let f = crate::state::test_support::Fixture::new();
+        let platform = if cfg!(target_os = "linux") {
+            "linux"
+        } else {
+            "windows"
+        };
+        let tag = format!("<HostPlatform>{platform}</HostPlatform>");
+        let unpaired = serverinfo_xml(&f.host, None).await;
+        assert!(unpaired.contains(&tag), "{tag} missing: {unpaired}");
+        let paired = serverinfo_xml(&f.host, Some(&f.client(u32::MAX))).await;
+        assert!(paired.contains(&tag), "{tag} missing: {paired}");
     }
 
     #[tokio::test]

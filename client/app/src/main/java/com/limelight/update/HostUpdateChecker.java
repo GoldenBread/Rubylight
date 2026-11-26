@@ -22,19 +22,20 @@ public final class HostUpdateChecker {
      */
     private static boolean isDue(Context context, HostCapabilities caps) {
         return UpdateFlow.isAvailable(context) &&
-                caps.isRubylight() && SemVer.parse(caps.hostVersion()) != null &&
+                caps.isRubylight() && caps.updatedByReleases() && SemVer.parse(caps.hostVersion()) != null &&
                 UpdatePolicy.isCheckDue(new UpdatePrefs(context).isAutoCheck(),
                         state(context).getLong("last_check", 0), System.currentTimeMillis());
     }
 
     /**
      * The newer Rubylight version for this PC, or null. The host's own answer (GET /update, which also knows its
-     * update channel) wins; without one, a build that updates itself falls back to the latest GitHub release.
+     * update channel) wins; without one, a build that updates itself falls back to the latest GitHub release, for a
+     * host those releases update (a Windows host; a Linux host is updated by its package manager).
      */
     public static String availableVersion(Context context, String hostUuid, HostCapabilities caps) {
         if (!caps.isRubylight()) return null;
         if (KnownUpdates.answered(hostUuid)) return KnownUpdates.offered(hostUuid);
-        if (!UpdateFlow.isAvailable(context)) return null;
+        if (!UpdateFlow.isAvailable(context) || !caps.updatedByReleases()) return null;
         String latest = state(context).getString("latest_version", "");
         return SemVer.isNewer(latest, caps.hostVersion()) ? latest : null;
     }

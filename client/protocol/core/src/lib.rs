@@ -24,6 +24,7 @@ pub mod fec_report;
 pub mod frame_warp;
 pub mod frame_warp_v2;
 pub mod hdr;
+pub mod host_platform;
 pub mod ids;
 pub mod invite_uri;
 pub mod keyboard_layout;

@@ -27,9 +27,13 @@ public class HostUpdateNoticeTest {
     private static final String PC = "pc-uuid";
 
     private static HostCapabilities host(String version) {
+        return host(version, "");
+    }
+
+    private static HostCapabilities host(String version, String platform) {
         return ReflectionHelpers.callStaticMethod(HostCapabilities.class, "fromServerInfo",
                 ReflectionHelpers.ClassParameter.from(String.class,
-                        "<root><RustHostVersion>" + version + "</RustHostVersion></root>"));
+                        "<root><RustHostVersion>" + version + "</RustHostVersion>" + platform + "</root>"));
     }
 
     private static void hostAnswers(String offered) {
@@ -56,6 +60,16 @@ public class HostUpdateNoticeTest {
     @Test
     public void withoutTheHostsAnswerASelfUpdatingBuildUsesTheGitHubRelease() {
         assertEquals("3.11.8", HostUpdateChecker.availableVersion(context, PC, host("3.10.0")));
+    }
+
+    @Test
+    public void aLinuxHostNeverShowsTheWindowsReleaseButStillItsOwnAnswer() {
+        HostCapabilities linux = host("3.10.0", "<HostPlatform>linux</HostPlatform>");
+        assertNull(HostUpdateChecker.availableVersion(context, PC, linux));
+        assertEquals("3.11.8", HostUpdateChecker.availableVersion(context, PC,
+                host("3.10.0", "<HostPlatform>windows</HostPlatform>")));
+        hostAnswers("3.11.7");
+        assertEquals("3.11.7", HostUpdateChecker.availableVersion(context, PC, linux));
     }
 
     @Test

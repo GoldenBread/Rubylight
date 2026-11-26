@@ -129,6 +129,7 @@ pub(crate) fn snapshot(caps: &HostCapabilities) -> Value {
         "json": caps.to_versioned_json(),
         "family": family_name(caps.family()),
         "host_version": caps.host_version(),
+        "updated_by_releases": caps.host_platform().updated_by_releases(),
         "native_api_version": caps.native_api_version(),
         "hdr_formats": caps.hdr_formats(),
         "max_video_packet": caps.max_video_packet(),

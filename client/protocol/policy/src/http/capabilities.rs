@@ -661,6 +661,15 @@ impl HostCapabilities {
             .map_or(Family::Unknown, Evidence::family)
     }
 
+    /// The operating system the host names; a host that names none is Windows.
+    pub fn host_platform(&self) -> rubylight_protocol::host_platform::Platform {
+        rubylight_protocol::host_platform::Platform::parse(
+            self.evidence
+                .as_ref()
+                .and_then(|e| e.host_platform.as_deref()),
+        )
+    }
+
     /// The Rubylight version the host reports, or None for other hosts.
     pub fn host_version(&self) -> Option<&str> {
         self.evidence.as_ref()?.rust_host_version.as_deref()

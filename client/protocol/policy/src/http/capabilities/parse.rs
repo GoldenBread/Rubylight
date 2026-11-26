@@ -119,6 +119,9 @@ impl Evidence {
                 "appversion" => e.sunshine_version = text.trim().ends_with(".-1"),
                 "PairStatus" => e.paired = text.trim() == "1",
                 "RustHostVersion" => e.rust_host_version = Some(text.trim().to_owned()),
+                rubylight_protocol::host_platform::SERVERINFO_FIELD => {
+                    e.host_platform = Some(text.trim().to_ascii_lowercase());
+                }
                 "Permission" => e.permission = unsigned(&text, 0xFFFF_FFFF) as i64,
                 "ServerCommand" => e.server_commands += 1,
                 "VirtualDisplayCapable" => e.virtual_display_capable = flag(&text),

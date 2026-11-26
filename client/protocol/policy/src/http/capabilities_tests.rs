@@ -345,6 +345,28 @@ fn reading_the_native_capabilities_again_drops_what_the_host_stopped_offering() 
 }
 
 #[test]
+fn the_host_platform_comes_from_serverinfo_and_survives_the_cache() {
+    use rubylight_protocol::host_platform::Platform;
+    let caps = |field: &str| {
+        let xml = format!(
+            "<root status_code=\"200\"><uniqueid>uid</uniqueid><state>SUNSHINE_SERVER_FREE</state>\
+             <PairStatus>0</PairStatus><RustHostVersion>6.4.1</RustHostVersion>{field}</root>"
+        );
+        super::super::serverinfo::ServerInfo::parse(&xml, 47989)
+            .unwrap()
+            .capabilities
+    };
+    // Every Rubylight before the Linux host sent no platform: Windows.
+    assert_eq!(caps("").host_platform(), Platform::Windows);
+    assert!(caps("").host_platform().updated_by_releases());
+    let linux = caps("<HostPlatform>linux</HostPlatform>");
+    assert_eq!(linux.host_platform(), Platform::Linux);
+    assert!(!linux.host_platform().updated_by_releases());
+    let restored = HostCapabilities::from_versioned_json(&linux.to_versioned_json().unwrap());
+    assert_eq!(restored.host_platform(), Platform::Linux);
+}
+
+#[test]
 fn versioned_json_round_trip_and_validation() {
     let xml =
         include_str!("../../../../app/src/test/resources/protocol/rubylight-30-serverinfo.xml");

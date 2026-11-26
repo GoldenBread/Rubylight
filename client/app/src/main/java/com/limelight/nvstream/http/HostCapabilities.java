@@ -174,6 +174,7 @@ public final class HostCapabilities {
     private final String json;
     private final Family family;
     private final String hostVersion;
+    private final boolean updatedByReleases;
     private final int nativeApiVersion;
     private final int hdrFormats;
     private final int maxVideoPacket;
@@ -185,6 +186,7 @@ public final class HostCapabilities {
         this.json = null;
         this.family = Family.UNKNOWN;
         this.hostVersion = null;
+        this.updatedByReleases = true;
         this.nativeApiVersion = -1;
         this.hdrFormats = 0;
         this.maxVideoPacket = 0;
@@ -201,6 +203,7 @@ public final class HostCapabilities {
         this.json = snap.isNull("json") ? null : snap.getString("json");
         this.family = Family.valueOf(snap.getString("family"));
         this.hostVersion = snap.isNull("host_version") ? null : snap.getString("host_version");
+        this.updatedByReleases = snap.optBoolean("updated_by_releases", true);
         this.nativeApiVersion = snap.getInt("native_api_version");
         this.hdrFormats = snap.getInt("hdr_formats");
         this.maxVideoPacket = snap.getInt("max_video_packet");
@@ -257,6 +260,11 @@ public final class HostCapabilities {
     public Family family() { return family; }
     public boolean isRubylight() { return family == Family.RUBYLIGHT; }
     public String hostVersion() { return hostVersion; }
+    /**
+     * Whether Rubylight's published releases update this host: a Windows host (or one that names no platform), not
+     * a Linux host, which its package manager updates.
+     */
+    public boolean updatedByReleases() { return updatedByReleases; }
     public int nativeApiVersion() { return nativeApiVersion; }
     public boolean has(Feature feature) { return availability(feature).isSupported(); }
     public int maxVideoPacket() { return maxVideoPacket; }

@@ -197,6 +197,9 @@ impl Evidence {
         if let Some(version) = &self.rust_host_version {
             map.insert("rustHostVersion".into(), Value::from(version.as_str()));
         }
+        if let Some(platform) = &self.host_platform {
+            map.insert("hostPlatform".into(), Value::from(platform.as_str()));
+        }
         if let Some(v) = self.frame_limiter {
             map.insert("frameLimiter".into(), Value::from(v));
         }
@@ -252,6 +255,10 @@ impl Evidence {
                 Some(s.to_owned())
             }
         };
+        let host_platform = match obj.get("hostPlatform") {
+            None => None,
+            Some(v) => Some(v.as_str()?.to_owned()),
+        };
         let permission = req_i64("permission")?;
         if !(-1..=0xFFFF_FFFF).contains(&permission) {
             return None;
@@ -273,6 +280,7 @@ impl Evidence {
             sunshine_version: req_bool("sunshineVersion")?,
             paired: req_bool("paired")?,
             rust_host_version,
+            host_platform,
             permission,
             server_commands,
             virtual_display_capable: opt_tri("virtualDisplayCapable")?,

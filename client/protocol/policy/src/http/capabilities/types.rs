@@ -276,6 +276,8 @@ pub struct Evidence {
     pub sunshine_version: bool,
     pub paired: bool,
     pub rust_host_version: Option<String>,
+    /// `HostPlatform` as sent (`rubylight_protocol::host_platform`); None when absent.
+    pub host_platform: Option<String>,
     /// -1 when the host reports no permissions.
     pub permission: i64,
     pub server_commands: u32,
