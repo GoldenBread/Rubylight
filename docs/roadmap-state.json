@@ -177,14 +177,14 @@
       ],
       "hw_required": true,
       "visual_review": true,
-      "status": "in_progress",
-      "phase": "port_client_half",
+      "status": "merged",
+      "phase": "awaiting_hw_and_wave_review",
       "branch": "wip/roadmap/05-stream-dvr",
       "worktree": null,
-      "commit_sha": null,
+      "commit_sha": "fd395256a6",
       "quarantine_reason": null,
       "hw_verified": false,
-      "worker_branch": "RamazanKara/r70-05-dvr"
+      "worker_branch": "RamazanKara/r70-05-dvr-port"
     },
     {
       "id": "06",
