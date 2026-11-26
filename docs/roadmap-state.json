@@ -138,14 +138,14 @@
       ],
       "hw_required": true,
       "visual_review": true,
-      "status": "in_progress",
-      "phase": "implement",
+      "status": "merged",
+      "phase": "awaiting_hw_and_wave_review",
       "branch": "wip/roadmap/03-launch-curtain",
       "worktree": null,
-      "commit_sha": null,
+      "commit_sha": "bb15e0ae88",
       "quarantine_reason": null,
       "hw_verified": false,
-      "worker_branch": "RamazanKara/r70-03-launch-curtain"
+      "worker_branch": "RamazanKara/r70-03-launch-curtain-port"
     },
     {
       "id": "04",
