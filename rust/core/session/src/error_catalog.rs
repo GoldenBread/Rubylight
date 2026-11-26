@@ -73,7 +73,6 @@ pub fn for_code(code: ErrorCode) -> Option<Explanation> {
             Some("Free up space on the PC, then send the file again."),
         ),
         NoConsoleUser => says("Nobody is signed in on the PC", None),
-        DvrRefused => says("The PC can't save a clip right now", None),
         TransferBusy => says("A file transfer is already running", None),
         UsbDisabled => says("USB forwarding is off", None),
         UsbLimit => says(
