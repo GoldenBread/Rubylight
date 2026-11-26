@@ -590,7 +590,7 @@ async fn {name}_interop_scenario() {{
     // Wire host + nightjar-core in-process interop assertion here.
 }}
 """
-        wire = f'Run with `cargo test -p rubylight-interop --test {name} --locked`'
+        wire = f'Run with `python tools/dev.py cargo -- test -p rubylight-interop --test {name} --locked`'
     else:
         raise ValueError(f'unsupported suite: {suite!r}')
     return {rel: src}, [wire]

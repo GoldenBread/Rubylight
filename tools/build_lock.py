@@ -739,6 +739,22 @@ def status(directory=None):
     return '\n'.join(lines)
 
 
+def builds_without_target_dir(cargo_args):
+    """Whether a hand-run cargo with these arguments builds into its default target dir."""
+    own = cargo_args[:cargo_args.index('--')] if '--' in cargo_args else cargo_args
+    if any(arg == '--target-dir' or arg.startswith('--target-dir=') for arg in own):
+        return False
+    rest = iter(own)
+    for arg in rest:
+        if arg in ('--version', '-V'):
+            return False
+        if arg in ('--color', '--config', '-C', '-Z'):
+            next(rest, None)  # the option's value is not the subcommand
+        elif not arg.startswith(('-', '+')):
+            return arg not in ('fmt', 'metadata', 'tree', 'locate-project', 'pkgid')
+    return True
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     parser.add_argument('--lock-directory')
@@ -774,7 +790,8 @@ def main(argv=None):
         return 0
     if not command:
         parser.error('provide a command after --')
-    if args.lane == 'cargo' and pathlib.Path(command[0]).stem.lower() == 'cargo' and not os.environ.get('CARGO_TARGET_DIR'):
+    if args.lane == 'cargo' and pathlib.Path(command[0]).stem.lower() == 'cargo' and not os.environ.get('CARGO_TARGET_DIR') \
+            and builds_without_target_dir(command[1:]):
         print('build_lock: no CARGO_TARGET_DIR, so this builds into a private target/; '
               'use `python tools/dev.py cargo -- ...` for a warm pool slot', file=sys.stderr)
     try:

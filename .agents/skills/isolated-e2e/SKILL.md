@@ -36,12 +36,14 @@ Machine settings (`$BUTTERPOLLO_TEST_PYTHON`, fixtures in `C:\src\butterpollo-re
 - **Shaped slow-link test (`bottleneck.py`):**
   ```powershell
   python tools/dev.py cargo -- build --release -p butterpollo-probes --bin udp_shaper
+  New-Item -ItemType Directory -Force <work-dir> | Out-Null
+  Copy-Item <target>\release\udp_shaper.exe <work-dir>
   python rust/release/bottleneck.py --package <pkg-dir> --work <work-dir> `
       --client C:\src\butterpollo-release\fixtures\moonlight-client.exe `
-      --shaper <target>\release\udp_shaper.exe `
+      --shaper <work-dir>\udp_shaper.exe `
       --codec av1 --mode 2560x1440x60 --bitrate 40000 --rate-kbps 100000 --queue-kib 64 --rfi
   ```
-  `<target>` is the pool folder `dev.py cargo` prints (`dev cargo: target ...`).
+  `<target>` is the pool folder `dev.py cargo` prints (`dev cargo: target ...`). Copy the shaper right away: the slot's lease ends with the build, and another session may rebuild or prune it.
 - **Bounded soak & fault injection:** `pwsh rust/release/soak.ps1` (or `rust/release/soak.py`).
 - **Stage timing report:** `python rust/release/timing_report.py <frames.csv> --host-record <host-record>`.
 - **Hardware batch / laptop host:** `tools\hw\run.ps1 -Batch <device>` (`tools/hw/catalog.yaml`), `pwsh tools\hw\laptop-host.ps1 -Out <dir>`.

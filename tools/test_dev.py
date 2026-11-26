@@ -924,7 +924,11 @@ class HandRunCargo(unittest.TestCase):
         def env(target, **_):
             return {'CARGO_TARGET_DIR': str(target)}
 
+        def service_env(target, **_):
+            return env(pathlib.Path(target) / 'service')
+
         with tempfile.TemporaryDirectory() as directory, \
+                mock.patch.object(dev, 'service_env', side_effect=service_env) as service, \
                 mock.patch.object(dev, 'claim_slot', side_effect=claim), \
                 mock.patch.object(dev, 'claim_target') as claim_target, \
                 mock.patch.object(dev, 'host_env', side_effect=env), \
@@ -948,7 +952,8 @@ class HandRunCargo(unittest.TestCase):
                     slot = dev.build_lock.HandleSlot(path)
                     self.assertTrue(slot.try_take('test'), path)
                     slot.release()
-            seen.update(base=base, pool=pool, claim_target=claim_target.call_args, stderr=stderr.getvalue())
+            seen.update(base=base, pool=pool, claim_target=claim_target.call_args, stderr=stderr.getvalue(),
+                        service=service.called)
         return seen
 
     def test_a_host_command_builds_in_a_claimed_host_slot_and_returns_its_code(self):
@@ -981,6 +986,26 @@ class HandRunCargo(unittest.TestCase):
             self.assertEqual(seen['target'], target)
             self.assertEqual(seen['claim_target'].args[0], target)
             self.assertNotIn('claimed', seen)
+
+    def test_a_service_manifest_builds_as_the_service_check_does(self):
+        for manifest in (['--manifest-path', 'rust/service/Cargo.toml'], ['--manifest-path=rust/service/Cargo.toml']):
+            seen = self.cargo('--', 'build', *manifest)
+            self.assertTrue(seen['service'])
+            self.assertEqual(seen['claimed'], seen['pool'] / '1.lock')
+            self.assertEqual(seen['target'], seen['pool'] / '1' / 'service')
+            self.assertEqual(seen['cwd'], ROOT.resolve())
+            self.assertEqual(seen['command'][1:], ['build', *manifest])
+            self.assertIn(f"dev cargo: target {seen['target']}", seen['stderr'])
+        self.assertFalse(self.cargo('--', 'build')['service'])
+
+    def test_relative_wrapper_paths_are_the_checkout_roots(self):
+        with mock.patch.object(dev, 'stage_groups', side_effect=RuntimeError('stop')) as groups, \
+                mock.patch.object(dev.build_lock, 'end_children_with_me'), \
+                contextlib.redirect_stderr(io.StringIO()):
+            dev.main(['cargo', '--target-dir', 't', '--pool', 'p', '--lock-directory', 'l', '--', 'build'])
+        args = groups.call_args.args[2]
+        self.assertEqual([args.target_dir, args.pool, args.lock_directory],
+                         [ROOT.resolve() / name for name in ('t', 'p', 'l')])
 
     def test_the_lanes_are_released_when_cargo_fails_to_run(self):
         seen = self.cargo('--', 'build', error=OSError('no cargo'))

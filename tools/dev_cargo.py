@@ -2,9 +2,14 @@
 
 usage: python tools/dev.py cargo [--client] [--fast] [--label L] [--target-dir DIR] -- <cargo args...>
 
-Relative paths are the checkout root's. A client command (--client, or a
---manifest-path below client/) takes a client slot and runs in Nightjar's
-workspace; any other takes a host slot and runs in the checkout root.
+Paths: wrapper options and --manifest-path are relative to the checkout root; in
+client mode Cargo runs in client/protocol, so Cargo's other relative path
+arguments resolve there.
+
+A client command (--client, or a --manifest-path below client/) takes a client
+slot and runs in Nightjar's workspace; any other takes a host slot and runs in
+the checkout root. A --manifest-path below rust/service builds as `check` builds
+the service: in <slot>/service, without the GNU/lld flags.
 """
 import argparse, pathlib, shutil, subprocess, sys
 
@@ -41,17 +46,19 @@ def main(argv, root=None):
         parser.error('provide the cargo arguments after --')
     if args.lock_timeout < 0:
         parser.error('--lock-timeout must be nonnegative')
-    if args.target_dir:
-        args.target_dir = args.target_dir.resolve()
+    for name in ('target_dir', 'pool', 'lock_directory'):
+        if getattr(args, name):
+            setattr(args, name, (root / getattr(args, name)).resolve())
     manifests = manifest_paths(cargo_args, root)
-    client = args.client or any(path.is_relative_to(root / 'client') for _, _, path in manifests)
+    service = any(path.is_relative_to(root / dev.SERVICE_WORKSPACE) for _, _, path in manifests)
+    client = not service and (args.client or any(path.is_relative_to(root / 'client') for _, _, path in manifests))
     cwd = root
     if client:
         # Cargo reads .cargo/config.toml from its working folder, not from the manifest's.
         cwd = root / dev.CLIENT_WORKSPACE
         for index, prefix, path in manifests:
             cargo_args[index] = f'{prefix}{path}'
-    check = dev.Check('cargo', 'client' if client else 'host', [])
+    check = dev.Check('cargo', 'service' if service else 'client' if client else 'host', [])
     label = args.label or f'dev cargo {root}'
 
     def say(*a, **k):
@@ -62,11 +69,13 @@ def main(argv, root=None):
         with build_lock.StageLease(dev.stage_groups(check, root, args), args.lock_directory, label,
                                    args.lock_timeout, say=say) as lease:
             target = dev.stage_target(check, lease.taken, root, args.target_dir)
-            if client:
+            if service:
+                env = dev.service_env(target, fast=args.fast, lock_directory=args.lock_directory)
+            elif client:
                 env = dev.client_env(target, fast=args.fast, lock_directory=args.lock_directory)
             else:
                 env = dev.host_env(target, lock_directory=args.lock_directory, fast=args.fast)
-            say(f'dev cargo: target {target}', flush=True)
+            say(f"dev cargo: target {env['CARGO_TARGET_DIR']}", flush=True)
             # Windows looks the program up on this process's PATH, not env's.
             program = shutil.which('cargo', path=env.get('PATH'))
             if not program:

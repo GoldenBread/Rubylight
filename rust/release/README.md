@@ -101,7 +101,9 @@ It first refuses when this PC's user is not idle (`user_idle.py`, 10 minutes, as
 `bottleneck.py` streams a packaged host like `e2e.py` (isolated profile and ports, the independent receiver, a moving strip at twice the stream rate), but the receiver reaches the host through `udp_shaper` on `127.0.0.2`. The shaper relays RTSP, control and audio unchanged and drains the video port toward the client at a fixed rate through a drop-tail queue, as a 100 Mbps switch port in front of a TV box does. It reports the frames the host sent, the frames the receiver got whole, keyframe requests and the shaper's drops; it does not judge.
 
 ```powershell
-cargo build --release -p butterpollo-probes --bin udp_shaper   # copy udp_shaper.exe beside the receiver
+python tools/dev.py cargo -- build --release -p butterpollo-probes --bin udp_shaper
+# udp_shaper.exe is in <target>\release, <target> being the printed `dev cargo: target ...` folder:
+# copy it beside the receiver, or copy it elsewhere and pass --shaper
 & $python rust\release\bottleneck.py --package <pkg> --work <dir> --client <fixtures>\moonlight-client.exe `
     --codec av1 --mode 2560x1440x60 --bitrate 40000 --rate-kbps 100000 --queue-kib 64 --rfi
 ```

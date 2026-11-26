@@ -81,7 +81,7 @@ Deadlines, by name: [`ENCODER_RECOVERY`](../rust/host/stream/src/stream/video.rs
 | Browser play | `session/src/webrtc/` | | `webrtc/` |
 | Update, service | `src/update_files.rs`, `src/update_recovery.rs` | `io/src/service.rs` | `updater.rs`, `updater/`, `maintenance.rs`, `service_tasks.rs` |
 
-Outside those crates: the installer in `rust/setup/src/`, the service in `rust/service/src/`, the display and virtual gamepad drivers and their protocols in `rust/drivers/`, capture and encoder probes in `rust/probes/src/` (run with `cargo run -p butterpollo-probes --bin <name>`; several change real settings and say so in their header).
+Outside those crates: the installer in `rust/setup/src/`, the service in `rust/service/src/`, the display and virtual gamepad drivers and their protocols in `rust/drivers/`, capture and encoder probes in `rust/probes/src/` (run with `python tools/dev.py cargo -- run -p butterpollo-probes --bin <name>`; several change real settings and say so in their header).
 
 ## Checklists
 
@@ -132,9 +132,9 @@ The host says what it offers in three places: serverinfo fields ([`serverinfo_fi
 
 | Change | Test |
 | --- | --- |
-| A decision in core | The module's own tests: `cargo test -p butterpollo-<crate> --locked <module>` (`crypto`, `config`, `media-policy`, `input-policy`, `session`). No GPU, any OS. |
+| A decision in core | The module's own tests: `python tools/dev.py cargo -- test -p butterpollo-<crate> --locked <module>` (`crypto`, `config`, `media-policy`, `input-policy`, `session`). No GPU, any OS. |
 | Launch, resume, reconnect, control messages, roaming, session end | `tests/host/tests/reconnect_tests.rs` and the files under `tests/host/tests/reconnect_tests/`: the real HTTP, RTSP, ENet and session workers on loopback with a fake capture, encoder and input. Start here for a session bug: it needs no GPU, driver or service. |
-| Anything Nightjar and the host must agree on | `tests/interop/` (`cargo test -p rubylight-interop --locked`) runs Nightjar's engine against this host in one process. |
+| Anything Nightjar and the host must agree on | `tests/interop/` (`python tools/dev.py cargo -- test -p rubylight-interop --locked`) runs Nightjar's engine against this host in one process. |
 | Moonlight HTTP replies | `tests/host/tests/nvhttp_parity/parity_tests.rs`, `tests/host/tests/nvhttp_parity/native_tests/` |
 | Bytes from the network | The property tests in `rust/core/session/src/fuzz.rs` and `client/protocol/core/src/fuzz.rs`: no input panics, and what decodes encodes back. `PROPTEST_CASES` raises the count. |
 | Capture, conversion, encoders, displays, input devices | Tests marked `#[ignore]` in `rust/windows/{abi,graphics,display,io}/src/`, each with the reason it needs hardware; the [developer guide](../rust/README.md#running-the-native-checks) has the command. They read `BUTTERPOLLO_TEST_*` variables for decoders and report files. |

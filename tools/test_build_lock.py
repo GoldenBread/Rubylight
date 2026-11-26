@@ -663,7 +663,7 @@ try { 'acquired' } finally { Exit-CheckLocks $held -NoPause }
             self.assertEqual(build_lock.prune_pool(pool=pool, min_free_gb=float('inf')), [])
 
 class CargoHint(unittest.TestCase):
-    def stderr(self, lane, target):
+    def stderr(self, lane, target, cargo_args=('test',)):
         with tempfile.TemporaryDirectory() as directory, \
                 mock.patch.dict(os.environ, {'CARGO_TARGET_DIR': target}), \
                 mock.patch.object(build_lock.subprocess, 'Popen'), \
@@ -672,7 +672,7 @@ class CargoHint(unittest.TestCase):
                 contextlib.redirect_stderr(io.StringIO()) as stderr:
             if not target:
                 del os.environ['CARGO_TARGET_DIR']
-            argv = ['--lock-directory', directory, '--lane', lane, '--', 'cargo', 'test']
+            argv = ['--lock-directory', directory, '--lane', lane, '--', 'cargo', *cargo_args]
             self.assertEqual(build_lock.main(argv), 7)
         return stderr.getvalue()
 
@@ -682,6 +682,13 @@ class CargoHint(unittest.TestCase):
         self.assertEqual(hint.count('\n'), 1)
         self.assertNotIn('dev.py cargo', self.stderr('cargo', 'x'))
         self.assertNotIn('dev.py cargo', self.stderr('web', ''))
+
+    def test_no_hint_with_a_target_dir_argument_or_without_a_build(self):
+        for argv in (['build', '--target-dir', 'x'], ['build', '--target-dir=x'], ['fmt'], ['metadata'], ['tree'],
+                     ['--version'], ['locate-project'], ['pkgid'], ['+stable', '--color', 'never', 'fmt']):
+            self.assertNotIn('dev.py cargo', self.stderr('cargo', '', argv), argv)
+        for argv in (['build'], ['--color', 'never', 'build'], ['test', '--', '--target-dir', 'x']):
+            self.assertIn('dev.py cargo', self.stderr('cargo', '', argv), argv)
 
 
 if __name__ == '__main__':
