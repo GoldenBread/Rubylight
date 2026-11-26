@@ -715,3 +715,40 @@ pub fn launch_response(
         }
     }
 }
+/// `nvidia_virtual_display_vsync` for this launch. A failure is shown and the stream starts.
+pub fn force_vsync<'a>(
+    h: &'a Shared,
+    args: &Args,
+    app: Option<&App>,
+    launch: &Launch,
+) -> crate::radeon_session::VsyncHold<'a> {
+    let config = crate::stream::effective_config(h, launch).ok();
+    let enabled = config
+        .as_ref()
+        .is_some_and(|c| c.boolean("nvidia_virtual_display_vsync", false));
+    let adapter = config.as_ref().map_or("", |c| c.get("adapter_name", ""));
+    // Off, the launch's preparation is not looked at.
+    let virtual_display = enabled
+        && launch
+            .preparation
+            .lock()
+            .unwrap()
+            .as_ref()
+            .is_some_and(|preparation| preparation.prepared().on_virtual_display());
+    let fps = args
+        .get("mode")
+        .and_then(|mode| crate::radeon_profile::stream_fps(mode));
+    let wanted = crate::radeon_session::wants_vsync(enabled, virtual_display, app, fps);
+    let (hold, result) = h.hold_vsync(&launch.client.uuid, adapter, wanted);
+    match result {
+        Ok(()) => launch.warnings.clear("driver_vsync"),
+        Err(error) => {
+            tracing::error!(%error, "Vertical sync is not forced on for the virtual display");
+            launch.warnings.set(
+                "driver_vsync",
+                format!("Vertical sync could not be forced on for the virtual display: {error}"),
+            );
+        }
+    }
+    hold
+}
