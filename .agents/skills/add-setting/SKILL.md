@@ -17,14 +17,16 @@ Use this skill when adding, changing, renaming, or retiring a setting in Rubylig
 
 ## Host setting checklist
 
-1. **Scaffold starter snippets** (optional; use for wording only, its schema and console targets predate the catalog):
+1. **Scaffold the entry** (optional): prints a `[[setting]]` entry, order-list checklist, i18n spec and note; `--group` is required; `--settings-30` (implies `--extension`), `--override-allowed`, `--restart` and `--extension` set the matching fields, `--vendor amd|nvidia` picks the encoder console group:
    ```powershell
-   python tools/scaffold.py setting <key> --type bool --default true --label "..." --description "..." --dry-run
+   python tools/scaffold.py setting <key> --type bool --default true --group "..." --label "..." --description "..." --dry-run
    ```
-2. **Catalog:** Add the `[[setting]]` entry (key, part, type, default, UI text, control) in `rust/core/config/settings.toml`. For a no-JS console row add its `console` field and list the key in `[console]` `global_order` (app/device rows: `[[console.app]]` / `[[console.client]]`).
+2. **Catalog:** Add the `[[setting]]` entry (key, part, type, default, UI text, control) in `rust/core/config/settings.toml`. For a no-JS console row add its `console` field and insert the key in `[console]` `global_order` next to the other keys of its console group (groups are contiguous; app/device rows: `[[console.app]]` / `[[console.client]]`).
+   - Docs table: add the key to the `keys` of the `[[docs.sections]]` entry matching its category; these lists alone drive the All settings tables in `docs/configuration.md`.
+   - Counts: raise the hard-coded counts in `rust/core/config/src/config/tests/catalog_parity.rs`.
    - 3.0 extension: `settings_30` fields and `[rust]` `settings_30_order` (generates `SETTINGS_30`; update the count test in `rust/core/config/src/config/settings30.rs`).
    - Per-app/device override: `override_allowed` and `[rust]` `override_order` (read by `override_allowed` in `rust/core/config/src/config/overrides.rs`; resolution lives in `rust/core/session/src/device_overrides.rs`).
-   - Read only at startup: `restart` and `[rust]` `restart_order`.
+   - Read only at startup: `restart` and `[rust]` `restart_order`, plus the hand-written `RESTART_KEYS` in `rust/host/web/src/web/config.rs`.
    - Tiers: the `[web]` lists (everyday settings need none and may not depend on diagnostic or Games-page ones; `folded_groups` generates `FOLDED_GROUPS`).
 3. **Accessor & validation:** Use the entry's `rust_accessor` / `validate` fields; hand-write only what they cannot express, on `Config` in `rust/core/config/src/config.rs` (parsers in `rust/core/config/src/config/values.rs`). Add tests in `rust/core/config/src/config/tests.rs` or `rust/core/config/src/config/tests/`.
 4. **Regenerate:** `python tools/generated_docs.py` writes the Rust catalogs, the modules in `rust/web/src/lib/schema/`, the console rows rendered by `rust/host/web/src/console/settings.rs` and the All settings tables in `docs/configuration.md`.

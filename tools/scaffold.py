@@ -3,7 +3,7 @@
 Generates LF-only files with `//!` module headers and <=800 LOC compliance (`tools/arch_check.py`):
   - control-message: `no_std` wire module in `client/protocol/core/src/<name>.rs` (checks `ids.rs`)
   - native-endpoint: additive v1 types, LF fixture, Axum handler, and nvhttp_parity test
-  - setting:         host setting snippets (Config accessor, web schema, console row, i18n spec, note)
+  - setting:         host settings.toml [[setting]] entry, checklist, i18n spec and note
   - test-scenario:   focused scenario test module for reconnect, native, config, or interop suites
 
 Usage:
@@ -15,6 +15,7 @@ Usage:
 
 import argparse
 import json
+import os
 import pathlib
 import re
 import sys
@@ -344,115 +345,180 @@ async fn {name}_enforces_caller_permissions() {{
     return files, checklist
 
 
-# ---- 3. Host setting stub generator ----
+# ---- 3. Host setting catalog entry generator ----
 
-# Valid `CategoryId` values from `rust/web/src/lib/settings-types.ts`, mapped to their schema file.
-CATEGORY_TO_SCHEMA_FILE = {
-    'general': 'basics.ts',
-    'network': 'basics.ts',
-    'audio': 'basics.ts',
-    'input': 'basics.ts',
-    'commands': 'basics.ts',
-    'advanced': 'basics.ts',
-    'video': 'video.ts',
-    'encoders': 'video.ts',
-    'hdr': 'video.ts',
-    'display': 'display.ts',
-    'frame-limiting': 'display.ts',
-    'library': 'library.ts',
+# Valid `CategoryId` values, mapped to the usual catalog `part` and fallback-console group.
+CATEGORY_TARGETS = {
+    'general': ('basics_core', 'Network, administration and commands'),
+    'network': ('basics_core', 'Network, administration and commands'),
+    'audio': ('basics_io', 'Audio'),
+    'input': ('basics_io', 'Input'),
+    'commands': ('basics_io', 'Network, administration and commands'),
+    'advanced': ('basics_core', 'Network, administration and commands'),
+    'video': ('video_stream', 'Video and capture'),
+    'encoders': ('video_encoders', 'Video and capture'),
+    'hdr': ('display_extras', 'Displays and HDR'),
+    'display': ('display_screen', 'Displays and HDR'),
+    'frame-limiting': ('display_extras', 'Frame generation and limiting'),
+    'library': ('library', 'App behavior'),
+}
+
+# `--vendor` console groups for `--category encoders`.
+VENDOR_CONSOLE_GROUPS = {'amd': 'AMD encoding', 'nvidia': 'NVIDIA encoding'}
+
+# The [[docs.sections]] heading of each category in docs/configuration.md.
+CATEGORY_DOC_SECTIONS = {
+    'general': '### This PC',
+    'network': '### Network',
+    'audio': '### Sound & controls',
+    'input': '### Sound & controls',
+    'commands': '### Games',
+    'advanced': '### Advanced',
+    'video': '### Picture',
+    'encoders': '### Picture',
+    'hdr': '### Picture',
+    'display': '### Picture',
+    'frame-limiting': '### Picture',
+    'library': '### Games',
 }
 
 
+def toml_value(value):
+    """Render a value as inline TOML, spelled like rust/core/config/settings.toml."""
+    if isinstance(value, dict):
+        return '{ ' + ', '.join(f'{k} = {toml_value(v)}' for k, v in value.items()) + ' }'
+    if isinstance(value, list):
+        return '[' + ', '.join(toml_value(v) for v in value) + ']'
+    # JSON booleans, integers and strings are valid TOML.
+    return json.dumps(value, ensure_ascii=False)
+
+
 def generate_setting_stub(
-    key, kind, default, label, description, category='video', group='General',
+    key, kind, default, label, description, *, group, category='video',
     choices=(), min_val=None, max_val=None, extension=False,
+    settings_30=False, override_allowed=False, restart=False, vendor=None,
 ):
     validate_snake(key, 'setting key')
-    if category not in CATEGORY_TO_SCHEMA_FILE:
+    if category not in CATEGORY_TARGETS:
         raise ValueError(
-            f'invalid CategoryId {category!r}; expected one of: {", ".join(CATEGORY_TO_SCHEMA_FILE)}'
+            f'invalid CategoryId {category!r}; expected one of: {", ".join(CATEGORY_TARGETS)}'
         )
-    schema_file = 'extensions.ts' if extension else CATEGORY_TO_SCHEMA_FILE[category]
+    part, console_group = CATEGORY_TARGETS[category]
+    if vendor:
+        if category != 'encoders':
+            raise ValueError('--vendor applies only to --category encoders')
+        console_group = VENDOR_CONSOLE_GROUPS[vendor]
+    # 3.0 settings are extensions.
+    extension = extension or settings_30
+    accessor = None
+    console = {'group': console_group, 'label': label}
     if kind == 'bool':
         if default.lower() not in ('true', 'false'):
             raise ValueError(f'bool setting default must be true or false, got {default!r}')
-        rust_ret = 'bool'
-        rust_body = f'self.boolean("{key}", {default.lower()})'
-        ts_default = default.lower()
-        ts_control = "{ kind: 'toggle' }"
-        console_ctrl = 'Bool'
+        toml_type, value = 'bool', default.lower() == 'true'
+        control = {'kind': 'toggle'}
+        console['control'] = 'bool'
+        accessor = {'kind': 'bool', 'method': key}
     elif kind == 'int':
-        int_def = int(default)
-        if min_val is not None and int_def < min_val:
-            raise ValueError(f'default {int_def} < min {min_val}')
-        if max_val is not None and int_def > max_val:
-            raise ValueError(f'default {int_def} > max {max_val}')
-        rust_ret = 'i64'
-        if min_val is not None and max_val is not None:
-            rust_body = f'self.integer("{key}", {int_def}).clamp({min_val}, {max_val})'
-        else:
-            rust_body = f'self.integer("{key}", {int_def})'
-        ts_default = str(int_def)
-        parts = ["kind: 'number'"]
+        toml_type, value = 'int', int(default)
+        if min_val is not None and value < min_val:
+            raise ValueError(f'default {value} < min {min_val}')
+        if max_val is not None and value > max_val:
+            raise ValueError(f'default {value} > max {max_val}')
+        control = {'kind': 'number'}
         if min_val is not None:
-            parts.append(f'min: {min_val}')
+            control['min'] = min_val
         if max_val is not None:
-            parts.append(f'max: {max_val}')
-        ts_control = '{ ' + ', '.join(parts) + ' }'
-        console_ctrl = 'Number'
+            control['max'] = max_val
+        console['control'] = 'number'
+        if min_val is not None and max_val is not None:
+            ret = 'u64' if min_val >= 0 else 'i32'
+            accessor = {'kind': 'clamped_int', 'method': key, 'ret': ret, 'min': min_val, 'max': max_val}
     elif kind == 'choice':
         if not choices:
             raise ValueError('--choices is required for --type choice')
         if default not in choices:
             raise ValueError(f'choice default {default!r} must be one of {list(choices)}')
-        rust_ret = '&str'
-        rust_body = f'self.get("{key}", "{default}")'
-        ts_default = json.dumps(default)
-        opts = ', '.join(f"{{ value: {json.dumps(c)}, label: {json.dumps(c.replace('_', ' ').title())} }}" for c in choices)
-        ts_control = f"{{ kind: 'select', options: [{opts}] }}"
-        ch_list = ', '.join(json.dumps(c) for c in choices)
-        console_ctrl = f'Choice(&[{ch_list}])'
+        toml_type, value = 'enum', default
+        options = [{'value': c, 'label': c.replace('_', ' ').title()} for c in choices]
+        control = {'kind': 'select', 'options': options}
+        console.update(control='choice', choices=list(choices))
     elif kind == 'text':
-        rust_ret = '&str'
-        rust_body = f'self.get("{key}", {json.dumps(default)})'
-        ts_default = json.dumps(default)
-        ts_control = "{ kind: 'text' }"
-        console_ctrl = 'Text'
+        toml_type, value = 'string', default
+        control = {'kind': 'text'}
+        console['control'] = 'text'
     else:
         raise ValueError(f'unsupported setting type: {kind!r}')
 
-    rust_snippet = f"""    /// {label}: {description}
-    pub fn {key}(&self) -> {rust_ret} {{
-        {rust_body}
-    }}"""
+    entry = {'key': key, 'part': 'extensions' if extension else part, 'type': toml_type, 'default': value}
+    if restart:
+        entry['restart'] = True
+    if override_allowed:
+        entry['override_allowed'] = True
+    if settings_30:
+        entry['settings_30'] = True
+        entry['settings_30_default'] = default.lower() if kind == 'bool' else str(value)
+    entry.update(category=category, group=group, label=label, description=description, control=control)
+    # 3.0 extensions have no fallback-console row.
+    if not extension:
+        entry['console'] = console
+    if accessor:
+        accessor['doc'] = f'{" ".join(label.split())} (`{key}`).'
+        entry['rust_accessor'] = accessor
+    toml_entry = '[[setting]]\n' + ''.join(f'{k} = {toml_value(v)}\n' for k, v in entry.items())
 
-    ts_snippet = f"""  {{
-    key: {json.dumps(key)},
-    label: {json.dumps(label)},
-    description: {json.dumps(description)},
-    category: {json.dumps(category)},
-    group: {json.dumps(group)},
-    control: {ts_control},
-    default: {ts_default},
-  }},"""
+    steps = ['Paste the entry into rust/core/config/settings.toml']
+    if not extension:
+        steps.append(
+            f'Insert "{key}" in [console] global_order next to the other "{console_group}" keys '
+            '(console groups are contiguous; do not append at the end)'
+        )
+        if category == 'encoders' and not vendor:
+            steps.append('Vendor-specific encoder setting: rerun with --vendor amd|nvidia for its console group')
+    steps.append(
+        f'Add "{key}" to the keys of the [[docs.sections]] entry "{CATEGORY_DOC_SECTIONS[category]}" '
+        '(category ' + category + '; this alone lists it in the All settings tables of docs/configuration.md)'
+    )
+    for flag, order in ((settings_30, 'settings_30_order'), (override_allowed, 'override_order'),
+                        (restart, 'restart_order')):
+        if flag:
+            steps.append(f'Add "{key}" to [rust] {order}')
+    counts = ['settings (toml_keys)']
+    if not extension:
+        counts.append('GLOBAL console rows')
+    if override_allowed:
+        counts.append('overrides')
+    if restart:
+        counts.append('restarts')
+    if settings_30:
+        counts.append('SETTINGS_30')
+    steps.append(
+        'Raise these counts in rust/core/config/src/config/tests/catalog_parity.rs: ' + ', '.join(counts)
+    )
+    if settings_30:
+        steps.append('Update the count test in rust/core/config/src/config/settings30.rs')
+    if restart:
+        steps.append(f'Add "{key}" to the hand-written RESTART_KEYS in rust/host/web/src/web/config.rs (catalog_parity.rs compares them)')
+    steps.append('[web] tier lists: only for a non-everyday setting (everyday settings need none)')
+    if not accessor:
+        steps.append('No rust_accessor emitted: add one, or hand-write it on Config, if code reads the key')
+    steps.append('python tools/generated_docs.py')
+    steps.append('Fill the translations in the spec below, then: python tools/i18n.py apply <spec.json>')
+    checklist = ''.join(f'- {step}\n' for step in steps)
 
-    console_snippet = f'        "{key}", {json.dumps(label)}, {console_ctrl};'
     i18n_spec = {
         'host': [
             {'key': f'config.{key}', 'en': label, 'translations': {}},
             {'key': f'config.{key}_desc', 'en': description, 'translations': {}},
         ]
     }
-    doc_row = f'| `{key}` | `{default}` | {description} |'
     note_md = f'# {label}\n- **{label}.** {description}\n'
 
     rendered = (
-        f'=== 1. Rust accessor (rust/core/config/src/config.rs) ===\n{rust_snippet}\n\n'
-        f'=== 2. Web schema (rust/web/src/lib/schema/{schema_file}) ===\n{ts_snippet}\n\n'
-        f'=== 3. No-JS console (rust/host/web/src/console/settings.rs) ===\n{console_snippet}\n\n'
-        f'=== 4. Host i18n batch spec (tools/i18n.py apply) ===\n{json.dumps(i18n_spec, indent=2, ensure_ascii=False)}\n\n'
-        f'=== 5. docs/configuration.md row ===\n{doc_row}\n\n'
-        f'=== 6. Release note fragment (rust/release/notes.d/{key}.md) ===\n{note_md}'
+        f'=== 1. Catalog entry (rust/core/config/settings.toml) ===\n{toml_entry}\n'
+        f'=== 2. Checklist ===\n{checklist}\n'
+        f'=== 3. Host i18n batch spec (tools/i18n.py apply) ===\n{json.dumps(i18n_spec, indent=2, ensure_ascii=False)}\n\n'
+        f'=== 4. Release note fragment (rust/release/notes.d/{key}.md) ===\n{note_md}'
     )
     return rendered, note_md
 
@@ -564,6 +630,19 @@ def cmd_native_endpoint(args):
     return 0
 
 
+def check_setting_output(root, out_path, force):
+    """Refuse an --output that would clobber the catalog, or any existing file without --force."""
+    target = out_path.resolve()
+    for base in (root, ROOT):
+        catalog = (base / 'rust/core/config/settings.toml').resolve()
+        if os.path.normcase(target) == os.path.normcase(catalog) or (
+            target.exists() and catalog.exists() and os.path.samefile(target, catalog)
+        ):
+            raise ValueError('--output must not be rust/core/config/settings.toml; paste the entry into it')
+    if target.exists() and not force:
+        raise FileExistsError(f'refusing to overwrite {out_path} (use --force)')
+
+
 def cmd_setting(args):
     root = pathlib.Path(args.root).resolve()
     choices = tuple(c.strip() for c in args.choices.split(',') if c.strip()) if args.choices else ()
@@ -580,7 +659,13 @@ def cmd_setting(args):
             min_val=args.min,
             max_val=args.max,
             extension=args.extension,
+            settings_30=args.settings_30,
+            override_allowed=args.override_allowed,
+            restart=args.restart,
+            vendor=args.vendor,
         )
+        if args.output:
+            check_setting_output(root, pathlib.Path(args.output), args.force)
         files = {}
         if args.with_note:
             files[f'rust/release/notes.d/{args.key}.md'] = note_md
@@ -643,22 +728,33 @@ def build_parser():
     p_ne.add_argument('--force', action='store_true')
     p_ne.set_defaults(func=cmd_native_endpoint)
 
-    p_set = sub.add_parser('setting', help='generate host setting boilerplate snippets and optional note fragment')
+    p_set = sub.add_parser(
+        'setting',
+        help='print a host settings.toml entry and optional note fragment',
+        description='Print a [[setting]] entry to paste into rust/core/config/settings.toml. The catalog is '
+        'never edited; without --dry-run only --with-note and --output write files.',
+    )
     p_set.add_argument('key', help='snake_case setting key')
     p_set.add_argument('--type', choices=('bool', 'int', 'choice', 'text'), required=True)
     p_set.add_argument('--default', required=True, help='default value')
     p_set.add_argument('--label', required=True, help='UI label')
     p_set.add_argument('--description', required=True, help='UI description')
-    p_set.add_argument('--category', default='video', choices=tuple(CATEGORY_TO_SCHEMA_FILE.keys()))
-    p_set.add_argument('--extension', action='store_true', help='target rust/web/src/lib/schema/extensions.ts')
-    p_set.add_argument('--group', default='General')
+    p_set.add_argument('--category', default='video', choices=tuple(CATEGORY_TARGETS))
+    p_set.add_argument('--extension', action='store_true', help='use part = "extensions" (no console row)')
+    p_set.add_argument('--settings-30', action='store_true',
+                       help='3.0 setting (settings_30); implies --extension (no console row)')
+    p_set.add_argument('--override-allowed', action='store_true', help='apps and devices may override it')
+    p_set.add_argument('--restart', action='store_true', help='read only at host startup')
+    p_set.add_argument('--group', required=True, help='UI group (required); use one the category already has')
+    p_set.add_argument('--vendor', choices=tuple(VENDOR_CONSOLE_GROUPS),
+                       help='vendor console group, for --category encoders')
     p_set.add_argument('--choices', default='', help='comma-separated values for --type choice')
     p_set.add_argument('--min', type=int, default=None)
     p_set.add_argument('--max', type=int, default=None)
     p_set.add_argument('--with-note', action='store_true', help='also create rust/release/notes.d/<key>.md')
-    p_set.add_argument('--output', default='', help='optional path to write rendered snippets')
+    p_set.add_argument('--output', default='', help='write the snippets to this new file; never settings.toml')
     p_set.add_argument('--dry-run', action='store_true')
-    p_set.add_argument('--force', action='store_true')
+    p_set.add_argument('--force', action='store_true', help='overwrite an existing --output or note file')
     p_set.set_defaults(func=cmd_setting)
 
     p_ts = sub.add_parser('test-scenario', help='scaffold a focused <=800-LOC Rust test scenario file')

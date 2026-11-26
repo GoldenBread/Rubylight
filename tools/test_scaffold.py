@@ -1,6 +1,7 @@
 """Tests for tools/scaffold.py and .agents/skills/ integrity."""
 
 import contextlib
+import copy
 import io
 import json
 import pathlib
@@ -9,10 +10,12 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import tomllib
 import unittest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import arch_check  # noqa: E402
+import generated_docs  # noqa: E402
 import scaffold  # noqa: E402
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -32,6 +35,11 @@ def run_cli(argv):
     with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
         rc = scaffold.main(argv)
     return rc, stdout.getvalue(), stderr.getvalue()
+
+
+def parse_entry(out):
+    block = out.split('(rust/core/config/settings.toml) ===\n', 1)[1].split('=== 2.', 1)[0]
+    return tomllib.loads(block)['setting'][0]
 
 
 class ScaffoldTests(unittest.TestCase):
@@ -137,59 +145,205 @@ class ScaffoldTests(unittest.TestCase):
         self.assertIn('.route(&path("/audio-boost"), post(audio_boost::write).fallback(unknown))', out)
 
     def test_setting_types_validation_and_note(self):
-        # Bool + note dry-run with valid CategoryId mapped to basics.ts
+        # Bool + note dry-run
         rc, out, err = run_cli([
             '--root', str(self.root), 'setting', 'fast_resume',
-            '--type', 'bool', '--default', 'true', '--category', 'general',
+            '--type', 'bool', '--default', 'true', '--category', 'general', '--group', 'Power',
             '--label', 'Fast resume', '--description', 'Resumes streams without resetting capture.',
             '--with-note', '--dry-run',
         ])
         self.assertEqual(rc, 0, out + err)
-        self.assertIn('pub fn fast_resume(&self) -> bool', out)
-        self.assertIn('rust/web/src/lib/schema/basics.ts', out)
-        self.assertIn('category: "general"', out)
+        entry = parse_entry(out)
+        self.assertEqual(
+            (entry['part'], entry['type'], entry['default'], entry['category']),
+            ('basics_core', 'bool', True, 'general'),
+        )
+        self.assertEqual(entry['control'], {'kind': 'toggle'})
+        self.assertEqual(entry['console']['control'], 'bool')
+        self.assertEqual(entry['rust_accessor']['kind'], 'bool')
+        self.assertIn('Insert "fast_resume" in [console] global_order next to', out)
+        self.assertIn('[[docs.sections]] entry "### This PC"', out)
+        self.assertIn('catalog_parity.rs: settings (toml_keys), GLOBAL console rows\n', out)
+        self.assertIn('python tools/generated_docs.py', out)
+        self.assertIn('python tools/i18n.py apply <spec.json>', out)
+        self.assertNotIn('[rust]', out)
         self.assertFalse((self.root / 'rust/release/notes.d/fast_resume.md').exists())
 
-        # Choice + real note write with frame-limiting -> display.ts and --extension -> extensions.ts
+        # Choice + real note write, then --extension with the order-list flags
         rc, out, err = run_cli([
             '--root', str(self.root), 'setting', 'capture_mode',
             '--type', 'choice', '--choices', 'auto,wgc,dd', '--default', 'auto',
-            '--category', 'frame-limiting',
+            '--category', 'frame-limiting', '--group', 'Frame limiter',
             '--label', 'Capture mode', '--description', 'Selects capture API.',
             '--with-note',
         ])
         self.assertEqual(rc, 0, out + err)
-        self.assertIn('Choice(&["auto", "wgc", "dd"])', out)
-        self.assertIn('rust/web/src/lib/schema/display.ts', out)
-        self.assertIn('category: "frame-limiting"', out)
+        entry = parse_entry(out)
+        self.assertEqual((entry['type'], entry['default']), ('enum', 'auto'))
+        self.assertEqual([o['value'] for o in entry['control']['options']], ['auto', 'wgc', 'dd'])
+        self.assertEqual(entry['console']['choices'], ['auto', 'wgc', 'dd'])
+        self.assertEqual(entry['category'], 'frame-limiting')
         note = self.root / 'rust/release/notes.d/capture_mode.md'
         self.assertTrue(note.is_file())
         self.assertNotIn(b'\r\n', note.read_bytes())
 
         rc, out, err = run_cli([
             '--root', str(self.root), 'setting', 'ext_flag',
-            '--type', 'bool', '--default', 'false', '--category', 'input', '--extension',
+            '--type', 'bool', '--default', 'false', '--category', 'input', '--group', 'Controller',
             '--label', 'Ext flag', '--description', 'Extension option.', '--dry-run',
+            '--settings-30', '--override-allowed', '--restart',
         ])
         self.assertEqual(rc, 0, out + err)
-        self.assertIn('rust/web/src/lib/schema/extensions.ts', out)
-        self.assertIn('category: "input"', out)
+        entry = parse_entry(out)
+        self.assertEqual((entry['part'], entry['category']), ('extensions', 'input'))
+        self.assertEqual(entry['settings_30_default'], 'false')
+        self.assertTrue(entry['settings_30'] and entry['override_allowed'] and entry['restart'])
+        self.assertNotIn('console', entry)
+        self.assertNotIn('global_order', out)
+        for order in ('settings_30_order', 'override_order', 'restart_order'):
+            self.assertIn(f'Add "ext_flag" to [rust] {order}', out)
+        self.assertIn('catalog_parity.rs: settings (toml_keys), overrides, restarts, SETTINGS_30\n', out)
+        self.assertIn('settings30.rs', out)
+        self.assertIn('[[docs.sections]] entry "### Sound & controls"', out)
+
+        # --group is required
+        with self.assertRaises(SystemExit):
+            run_cli(['setting', 'x', '--type', 'bool', '--default', 'true', '--label', 'X', '--description', 'Y'])
+
+        # Encoder console groups follow the vendor
+        for vendor, group in (('amd', 'AMD encoding'), ('nvidia', 'NVIDIA encoding')):
+            rendered, _ = scaffold.generate_setting_stub(
+                'x', 'bool', 'true', 'X', 'Y', group='G', category='encoders', vendor=vendor,
+            )
+            self.assertEqual(parse_entry(rendered)['console']['group'], group)
+            self.assertIn(f'other "{group}" keys', rendered)
 
         # Validation failures (including invalid CategoryId like schema filenames 'basics'/'extensions')
         with self.assertRaises(ValueError):
-            scaffold.generate_setting_stub('x', 'bool', 'true', 'X', 'Y', category='basics')
+            scaffold.generate_setting_stub('x', 'bool', 'true', 'X', 'Y', group='G', category='basics')
         with self.assertRaises(ValueError):
-            scaffold.generate_setting_stub('x', 'bool', 'true', 'X', 'Y', category='extensions')
+            scaffold.generate_setting_stub('x', 'bool', 'true', 'X', 'Y', group='G', category='extensions')
         rc, _, _ = run_cli([
             '--root', str(self.root), 'setting', 'BadKey',
-            '--type', 'bool', '--default', 'true', '--label', 'X', '--description', 'Y',
+            '--type', 'bool', '--default', 'true', '--group', 'G', '--label', 'X', '--description', 'Y',
         ])
         self.assertEqual(rc, 1)
         rc, _, _ = run_cli([
             '--root', str(self.root), 'setting', 'bad_int',
-            '--type', 'int', '--default', '500', '--min', '1', '--max', '100', '--label', 'X', '--description', 'Y',
+            '--type', 'int', '--default', '500', '--min', '1', '--max', '100', '--group', 'G', '--label', 'X', '--description', 'Y',
         ])
         self.assertEqual(rc, 1)
+
+    def test_setting_entry_uses_only_catalog_fields(self):
+        catalog = tomllib.loads((ROOT / 'rust/core/config/settings.toml').read_text(encoding='utf-8'))
+        used = {}
+        for existing in catalog['setting']:
+            for field, value in existing.items():
+                used.setdefault(field, set())
+                if isinstance(value, dict):
+                    used[field].update(value)
+        text = 'say "hi" \\ there'
+        cases = (
+            ('bool', 'true', {}),
+            ('int', '5', {'min_val': 1, 'max_val': 10}),
+            ('choice', 'a', {'choices': ('a', 'b')}),
+            ('text', text, {}),
+        )
+        for kind, default, extra in cases:
+            rendered, _ = scaffold.generate_setting_stub(
+                'demo_flag', kind, default, 'Demo', 'Demo help.', group='G',
+                settings_30=True, override_allowed=True, restart=True, **extra,
+            )
+            entry = parse_entry(rendered)
+            self.assertLessEqual(set(entry), set(used), kind)
+            for field, value in entry.items():
+                if isinstance(value, dict):
+                    self.assertLessEqual(set(value), used[field], f'{kind} {field}')
+            if kind == 'text':
+                self.assertEqual(entry['default'], text)
+
+    def test_setting_entries_render_with_generated_docs(self):
+        settings = ROOT / generated_docs.SETTINGS_TOML
+        before = settings.read_bytes()
+        catalog = generated_docs.load_catalog(ROOT)
+        existing = catalog['setting']
+        parts = {s.get('part') for s in existing}
+        types = {s['type'] for s in existing}
+        accessors = {s['rust_accessor']['kind'] for s in existing if 'rust_accessor' in s}
+        controls = {s['console']['control'] for s in existing if 'console' in s}
+        cases = (
+            ('bool', 'true', {}),
+            ('int', '5', {'min_val': 1, 'max_val': 10}),
+            ('int', '5', {'min_val': 1}),
+            ('choice', 'a', {'choices': ('a', 'b')}),
+            ('text', 'hello', {}),
+        )
+        for kind, default, extra in cases:
+            with self.subTest(kind=kind, **extra):
+                entry = parse_entry(scaffold.generate_setting_stub(
+                    'demo_flag', kind, default, 'Demo', 'Demo help.', group='Capture',
+                    override_allowed=True, restart=True, **extra,
+                )[0])
+                self.assertIn(entry['part'], parts)
+                self.assertIn(entry['type'], types)
+                self.assertIn(entry['console']['control'], controls)
+                accessor = entry.get('rust_accessor')
+                if accessor:
+                    self.assertIn(accessor['kind'], accessors)
+                if 'max_val' in extra:
+                    self.assertEqual(
+                        (accessor['kind'], accessor['ret'], accessor['min'], accessor['max']),
+                        ('clamped_int', 'u64', 1, 10),
+                    )
+                elif kind == 'int':
+                    self.assertIsNone(accessor)
+
+                cat = copy.deepcopy(catalog)
+                cat['setting'].append(entry)
+                cat['_by_key']['demo_flag'] = entry
+                cat['rust']['override_order'].append('demo_flag')
+                cat['rust']['restart_order'].append('demo_flag')
+                order = cat['console']['global_order']
+                group = entry['console']['group']
+                last = max(i for i, k in enumerate(order) if cat['_by_key'][k]['console']['group'] == group)
+                order.insert(last + 1, 'demo_flag')
+                next(s for s in cat['docs']['sections'] if s['heading'] == '### Picture')['keys'].append('demo_flag')
+                rendered = {}
+                for doc in generated_docs.DOCS:
+                    if doc.render is not None:
+                        path = ROOT / doc.path
+                        current = path.read_text(encoding='utf-8') if path.exists() else None
+                        rendered[doc.path] = doc.render(cat, current)
+                for path in ('rust/core/config/src/config/catalog_gen.rs' if accessor else
+                             'rust/core/config/src/config/console_global_gen.rs',
+                             'rust/web/src/lib/schema/video_stream.gen.ts', 'docs/configuration.md'):
+                    self.assertIn('demo_flag', rendered[path], path)
+        self.assertEqual(settings.read_bytes(), before)
+
+    def test_setting_output_never_clobbers(self):
+        settings = ROOT / generated_docs.SETTINGS_TOML
+        before = settings.read_bytes()
+        base = [
+            'setting', 'demo_flag', '--type', 'bool', '--default', 'true', '--group', 'G',
+            '--label', 'X', '--description', 'Y', '--output',
+        ]
+        target = self.root / 'snippets.txt'
+        target.write_text('keep', encoding='utf-8')
+        rc, _, err = run_cli([*base, str(target)])
+        self.assertEqual(rc, 1)
+        self.assertIn('refusing to overwrite', err)
+        self.assertEqual(target.read_text(encoding='utf-8'), 'keep')
+        rc, _, err = run_cli([*base, str(target), '--force'])
+        self.assertEqual(rc, 0, err)
+        self.assertIn('[[setting]]', target.read_text(encoding='utf-8'))
+
+        detour = ROOT / 'rust/core/../core/config/settings.toml'
+        for path in (settings, detour):
+            for flags in ((), ('--force',), ('--force', '--dry-run')):
+                rc, _, err = run_cli([*base, str(path), *flags])
+                self.assertEqual(rc, 1, (path, flags))
+                self.assertIn('must not be rust/core/config/settings.toml', err)
+        self.assertEqual(settings.read_bytes(), before)
 
     def test_test_scenario_all_suites(self):
         suites = {
