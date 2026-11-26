@@ -160,7 +160,7 @@ pub fn epic_arguments(manifest: &[u8], exe_path: &str) -> Result<Option<String>,
 /// Why an Epic game's instance ended soon after it started.
 pub fn epic_exit(exited: &str, title: &str) -> String {
     format!(
-        "{exited}: {title} is an Epic Games game, and it may have started again through the Epic Games Launcher, on the PC's monitor and outside Nucleus Co-op. Close it there if it is open; a normal stream plays it"
+        "{exited}: {title} is an Epic Games game, and it may have started again through the Epic Games Launcher, on the PC's monitor and outside the co-op helper. Close it there if it is open; a normal stream plays it"
     )
 }
 

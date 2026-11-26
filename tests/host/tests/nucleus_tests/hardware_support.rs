@@ -436,14 +436,14 @@ pub(crate) fn settings_are(text: &[u8], values: &[(&str, &str, &str)]) -> Result
 pub(crate) fn click_delay(lines: &[(Instant, String)]) -> Result<Duration> {
     let started = lines
         .iter()
-        .find(|(_, line)| line.contains("Nucleus Co-op started"))
+        .find(|(_, line)| line.contains("The co-op helper started"))
         .map(|(at, _)| *at)
-        .context("no \"Nucleus Co-op started\" in the log")?;
+        .context("no \"the co-op helper started\" in the log")?;
     let clicked = lines
         .iter()
         .find(|(at, line)| *at >= started && line.contains("profile Rubylight clicked"))
         .map(|(at, _)| *at)
-        .context("no \"profile Rubylight clicked\" after \"Nucleus Co-op started\"")?;
+        .context("no \"profile Rubylight clicked\" after \"the co-op helper started\"")?;
     Ok(clicked - started)
 }
 
@@ -521,7 +521,7 @@ pub(crate) fn no_message_box(
     shown.retain(|b| !before.contains(&b.window));
     match shown.first() {
         Some(shown) => anyhow::bail!(
-            "Nucleus Co-op shows \"{}\" on the PC's screen",
+            "The co-op helper shows \"{}\" on the PC's screen",
             shown.summary()
         ),
         None => Ok(()),

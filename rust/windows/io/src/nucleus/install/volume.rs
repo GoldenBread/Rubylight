@@ -2,7 +2,7 @@
 //! for Nucleus Co-op install folders.
 use super::{Checks, PROGRAM_FILES, refuse};
 use anyhow::{Context, Result, bail};
-use butterpollo_session::nucleus::install::{self as pinned, Manifest, Problem, Shipped};
+use butterpollo_session::nucleus::install::{Manifest, Problem, Shipped};
 use std::collections::HashMap;
 use std::os::windows::fs::OpenOptionsExt;
 use std::os::windows::io::AsRawHandle;
@@ -22,7 +22,6 @@ pub(super) const DRIVE_RAMDISK: u32 = 6;
 /// inside this PC. Its drive's root (`C:\`) and the drive.
 pub(super) fn placed(folder: &Path, checks: &Checks) -> Result<(String, Volume)> {
     let shown = folder.display();
-    let exe_name = pinned::EXECUTABLE;
     let text = folder.to_string_lossy();
     let device = [r"\\?\", r"\\.\", "//?/", "//./"]
         .iter()
@@ -37,7 +36,7 @@ pub(super) fn placed(folder: &Path, checks: &Checks) -> Result<(String, Volume)>
         return Err(refuse(
             Problem::Untrusted,
             format!(
-                "{shown} is a device path: choose the folder by its own full path, such as C:\\Program Files\\Nucleus Co-op"
+                "{shown} is a device path: choose the folder by its own full path, such as a folder under C:\\Program Files"
             ),
         ));
     }
@@ -45,14 +44,14 @@ pub(super) fn placed(folder: &Path, checks: &Checks) -> Result<(String, Volume)>
         return Err(refuse(
             Problem::Untrusted,
             format!(
-                "{shown} is a network path, and Nucleus Co-op runs elevated, so Rubylight runs it only from a drive of this PC. {PROGRAM_FILES}"
+                "{shown} is a network path, and the co-op helper runs elevated, so Rubylight runs it only from a drive of this PC. {PROGRAM_FILES}"
             ),
         ));
     }
     if !folder.is_absolute() {
         return Err(refuse(
             Problem::Missing,
-            format!("{shown} is no full folder path: choose the folder that holds {exe_name}"),
+            format!("{shown} is no full folder path: choose the co-op helper's folder"),
         ));
     }
     if text
@@ -73,7 +72,7 @@ pub(super) fn placed(folder: &Path, checks: &Checks) -> Result<(String, Volume)>
         return Err(refuse(
             Problem::Untrusted,
             format!(
-                "{shown} is on a USB drive, and Nucleus Co-op runs elevated, so Rubylight runs it only from a drive inside this PC. {PROGRAM_FILES}"
+                "{shown} is on a USB drive, and the co-op helper runs elevated, so Rubylight runs it only from a drive inside this PC. {PROGRAM_FILES}"
             ),
         ));
     }
@@ -264,7 +263,7 @@ pub(super) fn drive_refusal(shown: &str, root: &str, kind: u32) -> Option<anyhow
     Some(refuse(
         Problem::Untrusted,
         format!(
-            "{shown} is on {what}, and Nucleus Co-op runs elevated, so Rubylight runs it only from a fixed drive of this PC. {PROGRAM_FILES}"
+            "{shown} is on {what}, and the co-op helper runs elevated, so Rubylight runs it only from a fixed drive of this PC. {PROGRAM_FILES}"
         ),
     ))
 }
@@ -288,7 +287,7 @@ pub(super) fn blocked(path: &Path) -> Result<()> {
         Ok(_) => Err(refuse(
             Problem::Blocked,
             format!(
-                "{} is marked as downloaded from the internet. Unblock the zip before extracting: right-click NucleusApp.zip, choose Properties, tick Unblock, then unpack it again into a new folder",
+                "{} is marked as downloaded from the internet. Unblock the zip before extracting: right-click the downloaded zip, choose Properties, tick Unblock, then unpack it again into a new folder",
                 path.display()
             ),
         )),

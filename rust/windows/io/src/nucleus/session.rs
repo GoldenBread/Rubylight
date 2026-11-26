@@ -206,7 +206,7 @@ fn unhooked(start: &Start) -> Result<Option<String>> {
         return Ok(None);
     }
     Ok(Some(format!(
-        "{} refused every way Nucleus Co-op injects its input hooks, so it runs without them: a keyboard, mouse or pad on the PC reaches it too, and it takes the controller only while its window is in front on the PC, where Rubylight puts it as it opens unless someone uses the PC. If the game pauses when it is not in front, the picture stops too",
+        "{} refused every way the co-op helper injects its input hooks, so it runs without them: a keyboard, mouse or pad on the PC reaches it too, and it takes the controller only while its window is in front on the PC, where Rubylight puts it as it opens unless someone uses the PC. If the game pauses when it is not in front, the picture stops too",
         start.title
     )))
 }
@@ -360,13 +360,15 @@ fn begin(
     // by button press, it would wait for a press no one gives (#56).
     launcher
         .in_profile(&mut |profile| files::index_pads(profile, &start.handler.guid))
-        .context("giving the game its pads by XInput index in Nucleus Co-op's per-game settings")?;
+        .context(
+            "giving the game its pads by XInput index in the co-op helper's per-game settings",
+        )?;
     tracing::info!(
         number,
         game = start.handler.guid,
         players = start.players,
         folder = %folder.display(),
-        "Nucleus Co-op profile {TITLE} written"
+        "Co-op profile {TITLE} written"
     );
     // Restored when the session ends, or here should Nucleus not start.
     let layers = Guard::take(
@@ -376,7 +378,7 @@ fn begin(
         &start.handler.executable,
         start.exe_path,
     )
-    .context("keeping the game's compatibility settings, which Nucleus Co-op changes")?;
+    .context("keeping the game's compatibility settings, which the co-op helper changes")?;
     // In the folder Nucleus runs from, read as the account that reads it.
     let reader = launcher.reader()?;
     let crashlog = Crashlog::at_launch(folder, reader.as_ref());
@@ -385,7 +387,7 @@ fn begin(
     // Windows' boxes up now are another program's: Nucleus isn't running.
     let before = desktop
         .message_boxes(&BTreeSet::new())
-        .context("listing the message boxes on the PC's screen before Nucleus Co-op starts")?
+        .context("listing the message boxes on the PC's screen before the co-op helper starts")?
         .into_iter()
         .map(|shown| shown.window)
         .collect();
@@ -456,7 +458,7 @@ fn begin(
     let thread = std::thread::Builder::new()
         .name("nucleus".into())
         .spawn(move || run(runner, stopped))
-        .context("starting the Nucleus Co-op session thread")?;
+        .context("starting the co-op session thread")?;
     Ok(Running {
         shared,
         pads,
@@ -561,7 +563,7 @@ impl Running {
         if let Some(thread) = thread.take()
             && thread.join().is_err()
         {
-            tracing::error!("the Nucleus Co-op session thread panicked");
+            tracing::error!("the co-op session thread panicked");
         }
         self.pads.unplug();
     }

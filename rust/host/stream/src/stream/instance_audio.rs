@@ -131,7 +131,7 @@ pub fn instance_routes(h: &Shared, config: &Config, on_pc: bool) -> Option<Arc<I
         Err(error) => {
             tracing::warn!(
                 error = format!("{error:#}"),
-                "the Nucleus Co-op instances' sound moves only once each stream finds its instance"
+                "the co-op instances' sound moves only once each stream finds its instance"
             );
             None
         }
@@ -272,7 +272,7 @@ impl InstanceRoutes {
             tracing::warn!(
                 slot,
                 on_pc,
-                "the Nucleus Co-op instance's audio device did not change within {} s",
+                "the co-op instance's audio device did not change within {} s",
                 PUT_BACK_WAIT.as_secs()
             );
             None
@@ -298,7 +298,7 @@ impl Told for InstanceRoutes {
             && answer.recv_timeout(PUT_BACK_WAIT).is_err()
         {
             tracing::warn!(
-                "the Nucleus Co-op instances' audio devices were not put back within {} s; they are when the game next runs",
+                "the co-op instances' audio devices were not put back within {} s; they are when the game next runs",
                 PUT_BACK_WAIT.as_secs()
             );
         }
@@ -403,7 +403,7 @@ impl<R> Early<R> {
                     if self.waiting.wait(*identity, now) {
                         tracing::warn!(
                             pid = identity.pid,
-                            "the Nucleus Co-op instance has opened no sound Rubylight can see for {} s: Windows takes its device only once it does",
+                            "the co-op instance has opened no sound Rubylight can see for {} s: Windows takes its device only once it does",
                             SILENT_FOR.as_secs()
                         );
                     }
@@ -418,7 +418,7 @@ impl<R> Early<R> {
                         tracing::warn!(
                             pid = identity.pid,
                             error = format!("{error:#}"),
-                            "the Nucleus Co-op instance's sound stays on the PC's playback device until its stream moves it"
+                            "the co-op instance's sound stays on the PC's playback device until its stream moves it"
                         );
                     })
                     .ok()

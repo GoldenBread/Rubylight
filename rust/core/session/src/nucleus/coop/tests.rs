@@ -186,7 +186,7 @@ fn nucleus_runs_one_game_and_only_co_op_of_the_same_game_joins() {
     assert_eq!(admit(Some(&s), "Racer", Kind::Coop, "tv"), Admit::Join(1));
     let busy = admit(Some(&s), "Shooter", Kind::Coop, "tv");
     assert!(
-        matches!(&busy, Admit::Busy(text) if text.starts_with("Nucleus Co-op is running Racer for a co-op session")),
+        matches!(&busy, Admit::Busy(text) if text.starts_with("The co-op helper is running Racer for a co-op session")),
         "{busy:?}"
     );
     assert!(matches!(

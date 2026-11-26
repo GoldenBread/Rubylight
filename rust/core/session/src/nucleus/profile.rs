@@ -450,16 +450,16 @@ pub fn meta_info_by_index(text: Option<&[u8]>, guid: &str) -> Result<Option<Vec<
         return Ok(Some(b"{}".to_vec()));
     };
     let mut games: Value = serde_json::from_slice(text)
-        .map_err(|error| format!("Nucleus Co-op can't read it as JSON ({error})"))?;
+        .map_err(|error| format!("The co-op helper can't read it as JSON ({error})"))?;
     let Some(games) = games.as_object_mut() else {
-        return Err("Nucleus Co-op can't read it: it is not a JSON object".into());
+        return Err("The co-op helper can't read it: it is not a JSON object".into());
     };
     let Some(game) = games.get_mut(guid) else {
         return Ok(None);
     };
     let Some(game) = game.as_object_mut() else {
         return Err(format!(
-            "Nucleus Co-op can't read the entry of {guid}: it is not a JSON object"
+            "The co-op helper can't read the entry of {guid}: it is not a JSON object"
         ));
     };
     let mut changed = false;

@@ -76,7 +76,7 @@ impl Registry {
                 tracing::info!(
                     session = seat.session,
                     slot = seat.slot,
-                    "Nucleus Co-op: a player's stream ended"
+                    "Co-op helper: a player's stream ended"
                 );
             }
         }
@@ -108,7 +108,7 @@ impl Registry {
                 Ok(slot)
             })
             .map_err(JoinError::Refused)?;
-        tracing::info!(session, slot, client = %client.name, "Nucleus Co-op: a device took a slot from its session list");
+        tracing::info!(session, slot, client = %client.name, "Co-op helper: a device took a slot from its session list");
         Ok((slot, entry.app_id))
     }
 
@@ -136,7 +136,7 @@ impl Registry {
             session,
             slot,
             device,
-            "Nucleus Co-op: player removed in the web console"
+            "Co-op helper: player removed in the web console"
         );
         Some(device)
     }
@@ -179,8 +179,8 @@ impl Registry {
             _ => None,
         });
         match why {
-            Some(why) => tracing::warn!(session, why, "Nucleus Co-op: session ended"),
-            None => tracing::info!(session, "Nucleus Co-op: session ended"),
+            Some(why) => tracing::warn!(session, why, "Co-op helper: session ended"),
+            None => tracing::info!(session, "Co-op helper: session ended"),
         }
         instance.stop();
         stop(self.reap());

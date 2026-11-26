@@ -171,7 +171,7 @@ pub(super) fn started(launch: &Launch, account: Option<&str>) -> Result<Box<dyn 
             Err(_) => "unknown",
         },
         environment = ?launch.environment,
-        "Nucleus Co-op started"
+        "The co-op helper started"
     );
     if let Some(note) = rights_note(launch.elevated, &elevated) {
         tracing::warn!(pid = process.pid, "{note}");
@@ -184,13 +184,13 @@ pub(super) fn started(launch: &Launch, account: Option<&str>) -> Result<Box<dyn 
 pub(super) fn rights_note(asked: bool, elevated: &Result<bool>) -> Option<String> {
     match (asked, elevated) {
         (false, Ok(true)) => Some(
-            "Nucleus Co-op: started as the signed-in user, it runs with administrator rights all the same: Windows gives this account only its full token (User Account Control is off)".into(),
+            "Co-op helper: started as the signed-in user, it runs with administrator rights all the same: Windows gives this account only its full token (User Account Control is off)".into(),
         ),
         (true, Ok(false)) => Some(
-            "Nucleus Co-op: started elevated, it runs without administrator rights".into(),
+            "Co-op helper: started elevated, it runs without administrator rights".into(),
         ),
         (_, Err(error)) => Some(format!(
-            "Nucleus Co-op: Rubylight could not read whether it runs with administrator rights: {error:#}"
+            "Co-op helper: Rubylight could not read whether it runs with administrator rights: {error:#}"
         )),
         _ => None,
     }
@@ -217,7 +217,7 @@ pub fn open(folder: &Path) -> Result<Opened> {
         true,
     )
     .with_context(|| format!("starting {} elevated", program.display()))?;
-    tracing::info!(pid = process.pid, folder = %folder.display(), "Nucleus Co-op opened for the user");
+    tracing::info!(pid = process.pid, folder = %folder.display(), "The co-op helper opened for the user");
     Ok(Opened(process))
 }
 
@@ -230,7 +230,7 @@ pub fn open(folder: &Path) -> Result<Opened> {
 /// `extra` (a Steam game's app id) is added to it.
 pub(super) fn environment(extra: &BTreeMap<String, String>) -> Result<BTreeMap<String, String>> {
     let local = crate::child_session::console_local_app_data()?
-        .context("Nucleus Co-op needs a Windows account signed in at this PC's screen")?;
+        .context("The co-op helper needs a Windows account signed in at this PC's screen")?;
     Ok(webview_environment(&local, extra))
 }
 pub(super) fn webview_environment(
@@ -260,7 +260,7 @@ pub(super) fn require_administrator(account: Account, refused: Refused) -> Resul
 
 fn refusal(account: Account, refused: Refused) -> String {
     format!(
-        "Nucleus Co-op needs administrator rights, and {}",
+        "The co-op helper needs administrator rights, and {}",
         account.no_elevation(refused)
     )
 }
@@ -293,11 +293,11 @@ impl Opened {
     pub fn close(&self, timeout: Duration) -> Result<()> {
         ensure!(
             self.0.close_image(EXECUTABLE, timeout)?,
-            "Nucleus Co-op (process {}) did not close within {} s: close it on the PC",
+            "The co-op helper (process {}) did not close within {} s: close it on the PC",
             self.0.pid,
             timeout.as_secs()
         );
-        tracing::info!(pid = self.0.pid, "Nucleus Co-op closed");
+        tracing::info!(pid = self.0.pid, "The co-op helper closed");
         Ok(())
     }
 }
@@ -313,7 +313,7 @@ pub fn running() -> Result<Option<u32>> {
 /// Why a session does not start while Nucleus Co-op process `pid` runs.
 pub fn already_running(pid: u32) -> String {
     format!(
-        "Nucleus Co-op is already running on the PC (process {pid}): close it, then start the stream again"
+        "The co-op helper is already running on the PC (process {pid}): close it, then start the stream again"
     )
 }
 
@@ -335,7 +335,10 @@ impl Nucleus for Started {
     }
     fn stop(&mut self, instances: &BTreeMap<u32, u64>) {
         if let Err(error) = self.process.stop_graceful(STOP_TIMEOUT) {
-            tracing::warn!(error = format!("{error:#}"), "Nucleus Co-op did not stop");
+            tracing::warn!(
+                error = format!("{error:#}"),
+                "The co-op helper did not stop"
+            );
         }
         // Instances Nucleus started outside its job.
         crate::process::stop_processes(instances, STOP_TIMEOUT);

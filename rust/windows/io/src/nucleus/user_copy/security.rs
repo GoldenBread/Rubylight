@@ -39,7 +39,7 @@ pub(super) fn hold_with(
         })
         .with_context(|| {
             format!(
-                "{} is not a program file Rubylight starts Nucleus Co-op from: start the stream again, which copies it again",
+                "{} is not a program file Rubylight starts the co-op helper from: start the stream again, which copies it again",
                 program.display()
             )
         })?;
@@ -131,7 +131,7 @@ pub(super) fn open_program(path: &Path) -> Result<std::fs::File> {
 pub(super) fn made(path: &Path, sddl: &str, user: &[&str], steps: &Steps) -> Result<std::fs::File> {
     match (steps.create)(path, sddl) {
         Ok(()) => {
-            tracing::info!(folder = %path.display(), "Nucleus Co-op: folder for the users' own copies made")
+            tracing::info!(folder = %path.display(), "Co-op helper: folder for the users' own copies made")
         }
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
         Err(error) => return Err(error).with_context(|| format!("creating {}", path.display())),
@@ -171,7 +171,7 @@ pub(super) fn verdict(
 ) -> Result<()> {
     let refused = |why: String| {
         anyhow::anyhow!(
-            "{why}, so Rubylight doesn't use it for Nucleus Co-op: an administrator of this PC can delete {}, then start the stream again",
+            "{why}, so Rubylight doesn't use it for the co-op helper: an administrator of this PC can delete {}, then start the stream again",
             path.display()
         )
     };

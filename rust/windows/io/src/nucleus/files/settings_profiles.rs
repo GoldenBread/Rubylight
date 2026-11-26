@@ -20,7 +20,7 @@ fn write_whole(root: &Path, path: &Path, bytes: &[u8]) -> Result<()> {
 fn ansi_settings(path: &Path, text: &[u8]) -> Result<()> {
     ensure!(
         !profile::utf16_ini(text),
-        "{} is saved as UTF-16 (Unicode) text, which Rubylight does not edit: save it as ANSI, or delete it and Rubylight writes Nucleus Co-op's defaults",
+        "{} is saved as UTF-16 (Unicode) text, which Rubylight does not edit: save it as ANSI, or delete it and Rubylight writes the co-op helper's defaults",
         path.display()
     );
     Ok(())
@@ -36,7 +36,7 @@ fn put_back_settings(folder: &Path, forced: &[profile::Forced]) -> Result<usize>
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             tracing::info!(
                 file = %path.display(),
-                "Nucleus Co-op: Settings.ini is gone, nothing to put back"
+                "Co-op helper: Settings.ini is gone, nothing to put back"
             );
             return Ok(0);
         }
@@ -81,7 +81,7 @@ fn restore_left_locked(folder: &Path) -> Result<usize> {
         Err(error) => {
             return Err(error).with_context(|| {
                 format!(
-                    "reading {}, which keeps the Nucleus Co-op settings an earlier session changed",
+                    "reading {}, which keeps the co-op helper's settings an earlier session changed",
                     journal.display()
                 )
             });
@@ -91,26 +91,26 @@ fn restore_left_locked(folder: &Path) -> Result<usize> {
     if bytes.iter().all(u8::is_ascii_whitespace) {
         tracing::warn!(
             file = %journal.display(),
-            "Nucleus Co-op: the settings file of an earlier session is empty; removing it"
+            "Co-op helper: the settings file of an earlier session is empty; removing it"
         );
         remove_settings_journal(&journal)?;
         return Ok(0);
     }
     let forced: Vec<profile::Forced> = serde_json::from_slice(&bytes).map_err(|error| {
         anyhow::anyhow!(
-            "{} can't be read ({error}): delete it, then start the stream again. The Nucleus Co-op settings it kept stay as the earlier session set them",
+            "{} can't be read ({error}): delete it, then start the stream again. The co-op helper's settings it kept stay as the earlier session set them",
             journal.display()
         )
     })?;
     let changed = put_back_settings(folder, &forced).with_context(|| {
         format!(
-            "the Nucleus Co-op settings an earlier session changed were not put back from {}",
+            "the co-op helper's settings an earlier session changed were not put back from {}",
             journal.display()
         )
     })?;
     tracing::info!(
         changed,
-        "Nucleus Co-op: an earlier session's changes to Settings.ini are put back"
+        "Co-op helper: an earlier session's changes to Settings.ini are put back"
     );
     remove_settings_journal(&journal)?;
     Ok(changed)
@@ -139,19 +139,19 @@ impl SettingsGuard {
             Ok(changed) => {
                 tracing::info!(
                     changed,
-                    "Nucleus Co-op: Settings.ini is back as the user set it"
+                    "Co-op helper: Settings.ini is back as the user set it"
                 );
                 if let Err(error) = remove_settings_journal(&journal) {
                     tracing::warn!(
                         error = format!("{error:#}"),
-                        "Nucleus Co-op: the put-back settings' file was not removed"
+                        "Co-op helper: the put-back settings' file was not removed"
                     );
                 }
             }
             Err(error) => tracing::error!(
                 error = format!("{error:#}"),
                 file = %journal.display(),
-                "Nucleus Co-op: Settings.ini was not put back; the next session tries again"
+                "Co-op helper: Settings.ini was not put back; the next session tries again"
             ),
         }
     }
@@ -209,7 +209,7 @@ fn session_settings(path: &Path) -> Result<(Vec<u8>, profile::Settings)> {
         tracing::info!(
             file = %path.display(),
             keys = settings.added.join(", "),
-            "Nucleus Co-op: Settings.ini completed from Nucleus Co-op {}'s defaults",
+            "Co-op helper: Settings.ini completed from the co-op helper {}'s defaults",
             butterpollo_session::nucleus::install::VERSION
         );
     }
@@ -260,12 +260,12 @@ pub fn index_pads(profile: &Path, guid: &str) -> Result<()> {
         tracing::info!(
             file = %path.display(),
             game = guid,
-            "Nucleus Co-op: the game's pads go by XInput index again in its per-game settings"
+            "Co-op helper: the game's pads go by XInput index again in its per-game settings"
         );
     } else {
         tracing::info!(
             file = %path.display(),
-            "Nucleus Co-op: per-game settings started empty, so each game takes pads by index from Settings.ini"
+            "Co-op helper: per-game settings started empty, so each game takes pads by index from Settings.ini"
         );
     }
     Ok(())
@@ -280,7 +280,7 @@ fn profile_folder(folder: &Path, guid: &str) -> Result<PathBuf> {
             && guid != ".."
             && !guid.contains(['\\', '/', ':', '*', '?', '"', '<', '>', '|'])
             && !guid.chars().any(char::is_control),
-        "the Nucleus Co-op handler's Game.GUID {guid:?} cannot name a profile folder"
+        "the co-op handler's Game.GUID {guid:?} cannot name a profile folder"
     );
     Ok(folder.join("game profiles").join(guid))
 }
@@ -321,10 +321,7 @@ pub fn write_profile(
     screens: &[Rect],
     plays_itself: bool,
 ) -> Result<u32> {
-    ensure!(
-        !players.is_empty(),
-        "a Nucleus Co-op profile needs a player"
-    );
+    ensure!(!players.is_empty(), "a co-op profile needs a player");
     let profiles = profile_folder(folder, guid)?;
     super::super::unfollowed::create_folders(folder, &profiles)?;
     let before = listed(&profiles)?;
@@ -339,7 +336,7 @@ pub fn write_profile(
         .find(|(file, _, _)| file.eq_ignore_ascii_case(&name))
     {
         Some((_, _, title)) if title.as_deref() != Some(profile::TITLE) => bail!(
-            "Nucleus Co-op's profile {name} for {guid} is not Rubylight's: delete or renumber the game's profiles in Nucleus Co-op"
+            "The co-op helper's profile {name} for {guid} is not Rubylight's: delete or renumber the game's profiles in the co-op helper"
         ),
         Some(_) => true,
         None => false,
@@ -357,7 +354,7 @@ pub fn write_profile(
         }
         let files: Vec<&str> = after.iter().map(|(file, _, _)| file.as_str()).collect();
         bail!(
-            "Nucleus Co-op would not load Rubylight's profile {name} for {guid} (its folder lists {}): delete or renumber the game's profiles in Nucleus Co-op",
+            "The co-op helper would not load Rubylight's profile {name} for {guid} (its folder lists {}): delete or renumber the game's profiles in the co-op helper",
             files.join(", ")
         );
     }

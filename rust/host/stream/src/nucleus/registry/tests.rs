@@ -112,3 +112,20 @@ fn game_folder_probes_always_run_under_user_impersonation_and_refuse_when_unavai
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn a_background_refusal_reads_on_after_its_colon() {
+    let mid = super::admit::mid_sentence;
+    assert_eq!(
+        mid("The co-op helper is not ready: x"),
+        "the co-op helper is not ready: x"
+    );
+    assert_eq!(
+        mid("Co-op sessions need the service"),
+        "co-op sessions need the service"
+    );
+    assert_eq!(
+        mid("Portal 2 refused its hooks"),
+        "Portal 2 refused its hooks"
+    );
+}

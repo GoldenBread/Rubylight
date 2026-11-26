@@ -45,7 +45,7 @@ impl Listing {
                 let attributes = metadata.file_attributes();
                 if attributes & REPARSE_POINT != 0 {
                     bail!(
-                        "{} is a link, which Rubylight does not copy into a user's own Nucleus Co-op: remove it",
+                        "{} is a link, which Rubylight does not copy into a user's own co-op helper: remove it",
                         entry.path().display()
                     );
                 }
@@ -116,14 +116,8 @@ pub(super) fn differs(copy: &Path, text: &str) -> Option<Differs> {
     // [`super::hold`] refuses a program with another name: copied again, it has one.
     match names_of(&copy.join(pinned::EXECUTABLE)) {
         Ok(1) => None,
-        Ok(names) => Some(Differs::Changed(format!(
-            "its {} has {names} names",
-            pinned::EXECUTABLE
-        ))),
-        Err(error) => Some(Differs::Changed(format!(
-            "reading its {}: {error}",
-            pinned::EXECUTABLE
-        ))),
+        Ok(names) => Some(Differs::Changed(format!("its program has {names} names"))),
+        Err(error) => Some(Differs::Changed(format!("reading its program: {error}"))),
     }
 }
 
@@ -179,12 +173,12 @@ pub(super) fn make(
         Ok(files) => files,
         Err(error) => {
             if let Err(left) = as_user(token, || empty(copy)).and_then(|emptied| emptied) {
-                tracing::warn!(copy = %copy.display(), error = format!("{left:#}"), "Nucleus Co-op: a partial copy is left; the next start empties it");
+                tracing::warn!(copy = %copy.display(), error = format!("{left:#}"), "Co-op helper: a partial copy is left; the next start empties it");
             }
-            return Err(error.context("copying Nucleus Co-op for the signed-in user"));
+            return Err(error.context("copying the co-op helper for the signed-in user"));
         }
     };
-    tracing::info!(copy = %copy.display(), files, "Nucleus Co-op: the signed-in user's own copy is made");
+    tracing::info!(copy = %copy.display(), files, "Co-op helper: the signed-in user's own copy is made");
     Ok(())
 }
 
@@ -338,10 +332,10 @@ pub(super) fn remove_others(folder: &Path, key: &str, token: Option<&OwnedHandle
         };
         match removed {
             Ok(()) => {
-                tracing::info!(path = %path.display(), "Nucleus Co-op: another copy of the signed-in user's removed")
+                tracing::info!(path = %path.display(), "Co-op helper: another copy of the signed-in user's removed")
             }
             Err(error) => {
-                tracing::warn!(path = %path.display(), error = format!("{error:#}"), "Nucleus Co-op: another copy of the signed-in user's was not fully removed; it is tried again next time, and an administrator of this PC can delete it")
+                tracing::warn!(path = %path.display(), error = format!("{error:#}"), "Co-op helper: another copy of the signed-in user's was not fully removed; it is tried again next time, and an administrator of this PC can delete it")
             }
         }
     }

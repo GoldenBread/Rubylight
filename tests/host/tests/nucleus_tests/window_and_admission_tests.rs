@@ -26,7 +26,7 @@ fn open_needs_the_install_and_no_running_session() {
         (refused.status, refused.message.as_str()),
         (
             409,
-            "Nucleus Co-op is running Portal 2: end that session first"
+            "The co-op helper is running Portal 2: end that session first"
         )
     );
     assert_eq!(pc.opened.load(std::sync::atomic::Ordering::Relaxed), 1);
@@ -156,7 +156,7 @@ fn only_a_starting_session_releases_parked_controllers() {
     let stuck = background(&|| anyhow::bail!("the driver did not answer")).unwrap_err();
     assert!(
         stuck.message.contains(
-            "Nucleus Co-op could not unplug the controllers of streams that ended: the driver did not answer"
+            "the co-op helper could not unplug the controllers of streams that ended: the driver did not answer"
         ),
         "{}",
         stuck.message
@@ -179,7 +179,7 @@ fn a_window_that_wont_close_refuses_the_session_and_stays_open() {
         (refused.status, refused.message.as_str()),
         (
             503,
-            "Nucleus Co-op did not start Portal 2: Nucleus Co-op (process 9000) did not close within 5 s: close it on the PC"
+            "The co-op helper did not start Portal 2: the co-op helper (process 9000) did not close within 5 s: close it on the PC"
         )
     );
     // Asked to close, never ended.
@@ -225,7 +225,7 @@ fn a_launch_the_pc_cant_start_leaves_the_window_open() {
         (refused.status, refused.message.as_str()),
         (
             503,
-            "Nucleus Co-op did not start Portal 2: no administrator rights"
+            "The co-op helper did not start Portal 2: no administrator rights"
         )
     );
     let ice = app("Ice", r"C:\NoSuchGames\Ice\Ice.exe");
@@ -260,7 +260,7 @@ fn a_window_that_cant_be_read_refuses_the_session_with_why() {
         (refused.status, refused.message.as_str()),
         (
             503,
-            "Nucleus Co-op did not start Portal 2: Nucleus Co-op's window (process 9000) could not be read: access denied"
+            "The co-op helper did not start Portal 2: the co-op helper's window (process 9000) could not be read: access denied"
         )
     );
     assert_eq!(window.closes.load(Relaxed), 0);
@@ -288,7 +288,7 @@ fn open_is_refused_while_a_launch_is_being_admitted() {
         (refused.status, refused.message.as_str()),
         (
             409,
-            "A co-op or background stream is starting: open Nucleus Co-op once it has"
+            "A co-op or background stream is starting: open the co-op helper once it has"
         )
     );
     assert_eq!(pc.opened.load(Relaxed), 0);
@@ -309,7 +309,7 @@ fn a_nucleus_that_restarted_itself_is_still_the_one_the_console_opened() {
         (refused.status, refused.message.as_str()),
         (
             409,
-            "Nucleus Co-op is already open on the PC's screen: use it there, or close it here"
+            "The co-op helper is already open on the PC's screen: use it there, or close it here"
         )
     );
     assert!(registry.close().unwrap());
@@ -327,7 +327,7 @@ fn open_and_close_leave_a_nucleus_the_host_did_not_start_alone() {
         (refused.status, refused.message.as_str()),
         (
             409,
-            "Nucleus Co-op is already running on the PC (process 77): close it there first"
+            "The co-op helper is already running on the PC (process 77): close it there first"
         )
     );
     assert_eq!(pc.opened.load(Relaxed), 0);
@@ -336,7 +336,7 @@ fn open_and_close_leave_a_nucleus_the_host_did_not_start_alone() {
         (refused.status, refused.message.as_str()),
         (
             409,
-            "Nucleus Co-op (process 77) was not opened from this console: close it on the PC"
+            "The co-op helper (process 77) was not opened from this console: close it on the PC"
         )
     );
     // A launch is refused as before, loudly.
@@ -345,7 +345,7 @@ fn open_and_close_leave_a_nucleus_the_host_did_not_start_alone() {
     assert!(
             refused
                 .message
-                .ends_with("Nucleus Co-op is already running on the PC (process 77): close it, then start the stream again"),
+                .ends_with("The co-op helper is already running on the PC (process 77): close it, then start the stream again"),
             "{refused}"
         );
 }
@@ -361,7 +361,7 @@ fn open_twice_is_refused_and_close_closes_it_once() {
         (refused.status, refused.message.as_str()),
         (
             409,
-            "Nucleus Co-op is already open on the PC's screen: use it there, or close it here"
+            "The co-op helper is already open on the PC's screen: use it there, or close it here"
         )
     );
     assert_eq!(pc.opened.load(Relaxed), 1);

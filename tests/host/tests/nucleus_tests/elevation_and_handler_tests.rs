@@ -141,7 +141,7 @@ fn an_admin_game_or_a_hub_handler_on_an_account_without_elevation_is_refused() {
     assert_eq!(
         refused.message,
         format!(
-            "Ice can't stream in the background: Nucleus Co-op did not start Ice: The game needs administrator rights (its manifest asks for them), so Nucleus Co-op runs elevated, and {}",
+            "Ice can't stream in the background: the co-op helper did not start Ice: The game needs administrator rights (its manifest asks for them), so the co-op helper runs elevated, and {}",
             elevation::STANDARD
         )
     );
@@ -157,7 +157,7 @@ fn an_admin_game_or_a_hub_handler_on_an_account_without_elevation_is_refused() {
     )
     .unwrap_err();
     assert!(
-            refused.message.ends_with(", and Windows' Administrator protection keeps them from Rubylight, so Nucleus Co-op can't run this game on this PC; games Rubylight adds itself still stream if they need no administrator rights"),
+            refused.message.ends_with(", and Windows' Administrator protection keeps them from Rubylight, so the co-op helper can't run this game on this PC; games Rubylight adds itself still stream if they need no administrator rights"),
             "{refused:?}"
         );
     *pc.account.lock().unwrap() = Account::Standard;
@@ -225,7 +225,7 @@ fn a_user_copy_that_is_not_made_refuses_the_stream() {
     assert_eq!(refused.status, 503);
     assert!(
         refused.message.contains(
-            "the signed-in user's own copy of Nucleus Co-op was not made: an administrator"
+            "the signed-in user's own copy of the co-op helper was not made: an administrator"
         ),
         "{refused:?}"
     );
@@ -429,7 +429,7 @@ fn ours_goes_as_soon_as_a_hub_handler_for_its_exe_is_installed() {
     assert_eq!(
         shown[0].message,
         format!(
-            "Rubylight's Nucleus Co-op handlers {}, {} were not fully removed: access denied",
+            "Rubylight's co-op handlers {}, {} were not fully removed: access denied",
             ours.file(),
             unused.file()
         )
@@ -589,7 +589,7 @@ fn our_handler_is_never_written_while_nucleus_runs_or_when_it_fails() {
     assert!(
             refused
                 .message
-                .starts_with("Ice can't stream in the background: Rubylight's Nucleus Co-op handler for Ice was not written: "),
+                .starts_with("Ice can't stream in the background: Rubylight's co-op handler for Ice was not written: "),
             "{refused}"
         );
     assert!(pc.own.lock().unwrap().is_empty());

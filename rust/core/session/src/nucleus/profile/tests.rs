@@ -464,6 +464,6 @@ fn a_game_with_pads_by_index_or_no_entry_leaves_the_file_alone() {
 fn a_metainfo_nucleus_can_t_read_is_refused() {
     for text in [&b"{"[..], b"[]", b"null", br#"{"Game": 1}"#] {
         let error = meta_info_by_index(Some(text), "Game").unwrap_err();
-        assert!(error.starts_with("Nucleus Co-op can't read"), "{error}");
+        assert!(error.starts_with("The co-op helper can't read"), "{error}");
     }
 }

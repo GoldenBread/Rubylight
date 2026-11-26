@@ -362,7 +362,7 @@ fn a_running_nucleus_or_too_few_controller_slots_refuse_the_start() {
         .unwrap()
         .to_string();
     assert!(
-        error.starts_with("Nucleus Co-op is already running on the PC (process 42)"),
+        error.starts_with("The co-op helper is already running on the PC (process 42)"),
         "{error}"
     );
     let screen = super::screen();

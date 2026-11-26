@@ -461,7 +461,7 @@ fn a_folder_without_nucleus_or_a_bad_sid_makes_no_copy() {
     std::fs::remove_file(host.path().join("NucleusCoop.exe")).unwrap();
     let error = ensure_with(data.path(), host.path(), SID, None, &TEST).unwrap_err();
     assert!(
-        error.to_string().ends_with("holds no NucleusCoop.exe"),
+        error.to_string().ends_with("doesn't hold the co-op helper"),
         "{error}"
     );
     assert!(!pinned::user_root(data.path()).exists());

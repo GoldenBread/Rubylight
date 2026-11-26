@@ -23,10 +23,10 @@ pub fn add_game(json: Option<&str>, guid: &str, exe_path: &str) -> Result<Option
         )));
     }
     let value: serde_json::Value = serde_json::from_str(body)
-        .map_err(|e| format!("Nucleus Co-op's userprofile.json is not readable: {e}"))?;
+        .map_err(|e| format!("The co-op helper's userprofile.json is not readable: {e}"))?;
     let object = value
         .as_object()
-        .ok_or("Nucleus Co-op's userprofile.json is not an object")?;
+        .ok_or("The co-op helper's userprofile.json is not an object")?;
     match object.get("Games") {
         Some(serde_json::Value::Array(games)) => {
             if games
@@ -36,7 +36,7 @@ pub fn add_game(json: Option<&str>, guid: &str, exe_path: &str) -> Result<Option
                 return Ok(None);
             }
             let (open, close) = games_array(text)
-                .ok_or("Nucleus Co-op's userprofile.json has an unreadable game list")?;
+                .ok_or("The co-op helper's userprofile.json has an unreadable game list")?;
             let inside = &text[open + 1..close];
             Ok(Some(if inside.trim().is_empty() {
                 format!(
@@ -70,7 +70,7 @@ pub fn add_game(json: Option<&str>, guid: &str, exe_path: &str) -> Result<Option
             let pretty = serde_json::to_string_pretty(&object).map_err(|e| e.to_string())?;
             Ok(Some(format!("{bom}{}", pretty.replace('\n', newline))))
         }
-        Some(_) => Err("Nucleus Co-op's userprofile.json has no game list".into()),
+        Some(_) => Err("The co-op helper's userprofile.json has no game list".into()),
     }
 }
 
@@ -111,7 +111,7 @@ pub fn remove_game(json: &str, guid: &str) -> Result<Option<String>, String> {
     }
     let ours = |&(start, end): &(usize, usize)| {
         serde_json::from_str::<serde_json::Value>(&json[start..end])
-            .map_err(|e| format!("Nucleus Co-op's userprofile.json is not readable: {e}"))
+            .map_err(|e| format!("The co-op helper's userprofile.json is not readable: {e}"))
             .map(|game| game.get("GameGuid").and_then(|g| g.as_str()) == Some(guid))
     };
     let mut kept = Vec::new();

@@ -86,10 +86,10 @@ pub fn user() -> Result<OwnedHandle> {
     match crate::user_folder::user_token() {
         Ok(Some(token)) => Ok(token),
         Ok(None) => bail!(
-            "Nucleus Co-op's copy for the signed-in user needs the host to run as the Rubylight Windows service"
+            "The co-op helper's copy for the signed-in user needs the host to run as the Rubylight Windows service"
         ),
         Err(error) => Err(anyhow::anyhow!("{error}"))
-            .context("finding the signed-in user, whose own Nucleus Co-op copy runs"),
+            .context("finding the signed-in user, whose own co-op helper copy runs"),
     }
 }
 
@@ -143,7 +143,7 @@ fn ensure_with(
         .with_context(|| format!("{sid:?} is not a Windows account's SID"))?;
     let listing = Listing::of(source).with_context(|| {
         format!(
-            "reading the Nucleus Co-op folder {} for the signed-in user's own copy",
+            "reading the co-op helper's folder {} for the signed-in user's own copy",
             source.display()
         )
     })?;
@@ -151,9 +151,8 @@ fn ensure_with(
         listing.files.iter().any(|(name, _)| name
             .to_str()
             .is_some_and(|name| name.eq_ignore_ascii_case(pinned::EXECUTABLE))),
-        "{} holds no {}",
-        source.display(),
-        pinned::EXECUTABLE
+        "{} doesn't hold the co-op helper",
+        source.display()
     );
     let root = pinned::user_root(data);
     // Each held open ([`security::open_held`]): none can be moved, replaced or made a
@@ -170,10 +169,10 @@ fn ensure_with(
     match &differs {
         None => {}
         Some(Differs::Missing) => {
-            tracing::info!(copy = %copy.display(), source = %source.display(), "Nucleus Co-op: copying it for the signed-in user");
+            tracing::info!(copy = %copy.display(), source = %source.display(), "Co-op helper: copying it for the signed-in user");
         }
         Some(Differs::Changed(why)) => {
-            tracing::warn!(copy = %copy.display(), source = %source.display(), why, "Nucleus Co-op: the signed-in user's copy is not the host's; copying it again");
+            tracing::warn!(copy = %copy.display(), source = %source.display(), why, "Co-op helper: the signed-in user's copy is not the host's; copying it again");
         }
     }
     let stuck = match &differs {
@@ -183,7 +182,7 @@ fn ensure_with(
             .map(|why| format!("{why:#}")),
     };
     if let Some(why) = &stuck {
-        tracing::warn!(copy = %copy.display(), why, "Nucleus Co-op: the signed-in user can't change a file in their copy any more; it is set aside and copied again");
+        tracing::warn!(copy = %copy.display(), why, "Co-op helper: the signed-in user can't change a file in their copy any more; it is set aside and copied again");
         // A rename writes the folder it is in: both are let go for it, and
         // checked again. The user can't add to `<SID>`.
         drop((held, held_folder));
@@ -311,7 +310,7 @@ fn unchangeable(path: &Path, folder: bool) -> Option<String> {
                     path.display()
                 ));
             }
-            tracing::info!(file = %path.display(), attributes = format!("0x{attributes:x}"), "Nucleus Co-op: a read-only, hidden or system file in the signed-in user's copy made plain");
+            tracing::info!(file = %path.display(), attributes = format!("0x{attributes:x}"), "Co-op helper: a read-only, hidden or system file in the signed-in user's copy made plain");
         }
         Ok(_) => {}
         Err(error) => return refused(error),
@@ -383,7 +382,7 @@ fn set_aside(folder: &Path, key: &str) -> Result<()> {
             from.display()
         )
     })?;
-    tracing::info!(from = %from.display(), to = %to.display(), "Nucleus Co-op: the signed-in user's copy set aside");
+    tracing::info!(from = %from.display(), to = %to.display(), "Co-op helper: the signed-in user's copy set aside");
     Ok(())
 }
 
@@ -430,7 +429,7 @@ pub fn write_own(
     as_user(token, || files::check_list(copy, Some(setup), &[]))??;
     let handler = files::write_own(folder, setup)?;
     let handlers = mirror_handlers(folder, copy, &handler.file, token)?;
-    tracing::debug!(handlers, copy = %copy.display(), "Nucleus Co-op: the user's own copy has the host's handlers");
+    tracing::debug!(handlers, copy = %copy.display(), "Co-op helper: the user's own copy has the host's handlers");
     as_user(token, || files::add_game(copy, setup))??;
     Ok(handler)
 }

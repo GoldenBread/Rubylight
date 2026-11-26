@@ -258,13 +258,13 @@ pub struct Game {
 /// The games in Nucleus' `userprofile.json`.
 pub fn user_games(json: &str) -> Result<Vec<Game>, String> {
     let value: serde_json::Value = serde_json::from_str(json.trim_start_matches('\u{feff}'))
-        .map_err(|e| format!("Nucleus Co-op's userprofile.json is not readable: {e}"))?;
+        .map_err(|e| format!("The co-op helper's userprofile.json is not readable: {e}"))?;
     let Some(games) = value.get("Games") else {
         return Ok(Vec::new());
     };
     let games = games
         .as_array()
-        .ok_or("Nucleus Co-op's userprofile.json has no game list")?;
+        .ok_or("The co-op helper's userprofile.json has no game list")?;
     Ok(games
         .iter()
         .filter_map(|game| {
@@ -308,18 +308,18 @@ impl std::fmt::Display for Missing {
         match self {
             Self::NoExecutable { app } => write!(
                 f,
-                "Nucleus Co-op starts games by their .exe, and {app} does not name one: set the app's command to the game's .exe"
+                "The co-op helper starts games by their .exe, and {app} does not name one: set the app's command to the game's .exe"
             ),
             Self::NoHandler { executable } => write!(
                 f,
-                "No Nucleus Co-op handler for {executable}: add one in Nucleus Co-op's handler hub"
+                "No co-op handler for {executable}: add one in the co-op helper's handler hub"
             ),
             Self::NotAdded {
                 executable,
                 handler,
             } => write!(
                 f,
-                "Nucleus Co-op has the handler {handler} for {executable}, but the game is not added: open Nucleus Co-op and add it once"
+                "The co-op helper has the handler {handler} for {executable}, but the game is not added: open the co-op helper and add it once"
             ),
             Self::AntiCheat {
                 executable,

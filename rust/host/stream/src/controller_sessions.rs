@@ -224,7 +224,7 @@ impl Pool {
             tracing::info!(
                 streams = released,
                 pads = plugged,
-                "parked controllers released for Nucleus Co-op"
+                "parked controllers released for the co-op helper"
             );
         }
         Ok(plugged)
@@ -436,7 +436,7 @@ mod tests {
         });
         assert!(
             !through_steam(&coop),
-            "Nucleus Co-op starts the game itself"
+            "The co-op helper starts the game itself"
         );
         let config = Config::default();
         let steam_app = |launch: &Launch| {

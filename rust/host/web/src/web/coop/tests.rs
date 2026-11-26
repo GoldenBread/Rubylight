@@ -316,7 +316,7 @@ fn kept_by_hand(f: &Fixture, folder: &str) {
 async fn a_settings_save_keeps_the_folder_as_the_panels_do() {
     let f = Fixture::new();
     let pc = Arc::new(fake::Pc::installed());
-    let why = r"D:\Downloads holds no NucleusCoop.exe: choose the folder you unpacked Nucleus Co-op 2.4.2 into";
+    let why = r"D:\Downloads doesn't hold the co-op helper: choose the folder you unpacked the co-op helper 2.4.2 into";
     pc.unusable.lock().unwrap().insert(
         r"D:\Downloads".into(),
         Unusable {
@@ -514,7 +514,7 @@ async fn changing_the_folder_puts_back_what_the_one_left_kept() {
     value(choose(r"D:\Nucleus").await, StatusCode::OK).await;
     assert_eq!(pc.put_back.lock().unwrap().len(), 1);
     // One that can't be put back keeps the folder, and says why.
-    let why = r"D:\Nucleus\Rubylight-layers-S-1-5-21-9.json keeps the compatibility settings a Nucleus Co-op session changed for another Windows account: sign in to this PC as that account, so Rubylight puts them back, then choose the folder again";
+    let why = r"D:\Nucleus\Rubylight-layers-S-1-5-21-9.json keeps the compatibility settings a co-op session changed for another Windows account: sign in to this PC as that account, so Rubylight puts them back, then choose the folder again";
     *pc.put_back_error.lock().unwrap() = Some(why.into());
     let body = value(choose(r"E:\Nucleus").await, StatusCode::CONFLICT).await;
     assert_eq!(body["error"], why);

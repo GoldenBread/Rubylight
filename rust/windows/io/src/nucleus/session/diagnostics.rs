@@ -55,7 +55,7 @@ impl Crashlog {
             Ok(Err(error)) => error.to_string(),
             Err(error) => format!("{error:#}"),
         };
-        tracing::warn!(error = why, path = %path.display(), "Nucleus Co-op's crashlog not read");
+        tracing::warn!(error = why, path = %path.display(), "The co-op helper's crashlog not read");
         None
     }
 
@@ -115,7 +115,7 @@ impl Runner {
                 if self.unseen.as_ref() != Some(&why) {
                     tracing::warn!(
                         why,
-                        "the PC's message boxes not listed, so a game refusing Nucleus Co-op's input hooks or waiting on a box is not seen"
+                        "the PC's message boxes not listed, so a game refusing the co-op helper's input hooks or waiting on a box is not seen"
                     );
                 }
                 self.unseen = Some(why);
@@ -130,7 +130,10 @@ impl Runner {
                     .any(|failed| shown.text.contains(failed))
             })
         {
-            let why = self.refuse_way(&shown.summary(), "Nucleus Co-op ends a game it can't hook");
+            let why = self.refuse_way(
+                &shown.summary(),
+                "the co-op helper ends a game it can't hook",
+            );
             return Some(self.failure(why));
         }
         let shown = boxes
@@ -194,7 +197,7 @@ impl Runner {
                 {
                     self.refuse_way(&said, "it waits there for an answer")
                 }
-                Some(_) => format!("{waits}, even without Nucleus Co-op's input hooks"),
+                Some(_) => format!("{waits}, even without the co-op helper's input hooks"),
                 None => waits,
             },
             Err(error) => format!(
@@ -210,7 +213,7 @@ impl Runner {
             return format!("{} showed \"{said}\", and {ends}", self.title);
         };
         let refused = format!(
-            "{} refused Nucleus Co-op's input hooks (it showed \"{said}\"), and {ends}",
+            "{} refused the co-op helper's input hooks (it showed \"{said}\"), and {ends}",
             self.title
         );
         match files::refuse_inject(folder, exe) {
@@ -218,7 +221,7 @@ impl Runner {
                 format!("{refused}: start the stream again, and Rubylight starts it without them")
             }
             Ok(_) => format!(
-                "{refused}: start the stream again, and Rubylight has Nucleus Co-op hook it another way"
+                "{refused}: start the stream again, and Rubylight has the co-op helper hook it another way"
             ),
             Err(error) => {
                 format!("{refused}; Rubylight could not keep that for its next start: {error:#}")
@@ -246,11 +249,7 @@ impl Runner {
     pub(super) fn failed_pass(&mut self, error: anyhow::Error) -> Option<End> {
         self.failed += 1;
         let why = format!("{error:#}");
-        tracing::warn!(
-            error = why,
-            failed = self.failed,
-            "Nucleus Co-op pass failed"
-        );
+        tracing::warn!(error = why, failed = self.failed, "Co-op pass failed");
         (self.failed >= FAILED_PASSES).then(|| self.failure(why))
     }
 
@@ -279,7 +278,7 @@ impl Runner {
             Err(error) => {
                 let why = format!("{error:#}");
                 if self.unseen.as_ref() != Some(&why) {
-                    tracing::warn!(why, "Nucleus Co-op's windows not listed");
+                    tracing::warn!(why, "The co-op helper's windows not listed");
                 }
                 self.unseen = Some(why);
             }
@@ -287,7 +286,7 @@ impl Runner {
         for shown in &self.showing {
             if !self.logged.contains(shown) {
                 tracing::warn!(
-                    "Nucleus Co-op shows \"{}\" on the PC's screen",
+                    "The co-op helper shows \"{}\" on the PC's screen",
                     shown.summary()
                 );
                 self.logged.push(shown.clone());
@@ -299,21 +298,21 @@ impl Runner {
     fn unshown(&self) -> String {
         if let Some(shown) = self.showing.first() {
             return format!(
-                "Nucleus Co-op shows \"{}\" on the PC's screen",
+                "The co-op helper shows \"{}\" on the PC's screen",
                 shown.summary()
             );
         }
         let why = if self.shown {
             self.unlisted().unwrap_or_else(|| {
                 format!(
-                    "Nucleus Co-op shows no profile {TITLE} for {}; open Nucleus Co-op and load the profile {TITLE} once",
+                    "The co-op helper shows no profile {TITLE} for {}; open the co-op helper and load the profile {TITLE} once",
                     self.title
                 )
             })
         } else if let Some(unseen) = &self.unseen {
-            format!("Nucleus Co-op's windows could not be listed: {unseen}")
+            format!("The co-op helper's windows could not be listed: {unseen}")
         } else {
-            "Nucleus Co-op showed no window".to_string()
+            "The co-op helper showed no window".to_string()
         };
         self.quoting_crashlog(why)
     }
@@ -329,14 +328,14 @@ impl Runner {
         let boxed = self.last_form.as_ref().filter(|_| self.boxed);
         let why = if let Some(form) = boxed {
             format!(
-                "Nucleus Co-op did not start {}: after the last click on the profile {TITLE} it showed {} over its window ({} closed since the launch)",
+                "The co-op helper did not start {}: after the last click on the profile {TITLE} it showed {} over its window ({} closed since the launch)",
                 self.title,
                 said(form),
                 self.closed.len()
             )
         } else if self.played {
             format!(
-                "Nucleus Co-op did not start {} after Rubylight pressed Play on the profile {TITLE}",
+                "The co-op helper did not start {} after Rubylight pressed Play on the profile {TITLE}",
                 self.title
             )
         } else if !self.hid {
@@ -346,12 +345,12 @@ impl Runner {
                 "which shows Play"
             };
             format!(
-                "Nucleus Co-op did not start {}: it still shows its setup screen with the profile {TITLE}, {then} once every player has a controller there",
+                "The co-op helper did not start {}: it still shows its setup screen with the profile {TITLE}, {then} once every player has a controller there",
                 self.title
             )
         } else {
             format!(
-                "Nucleus Co-op did not start {} after loading the profile {TITLE}",
+                "The co-op helper did not start {} after loading the profile {TITLE}",
                 self.title
             )
         };
@@ -378,12 +377,12 @@ impl Runner {
         match listed {
             Ok(listed) if listed.contains(guid) => None,
             Ok(_) => Some(format!(
-                "Nucleus Co-op does not list {}: {} has no entry for it with its handler and an .exe that is there",
+                "The co-op helper does not list {}: {} has no entry for it with its handler and an .exe that is there",
                 self.title,
                 list.display()
             )),
             Err(error) => Some(format!(
-                "Nucleus Co-op's game list can't be read: {error:#}"
+                "The co-op helper's game list can't be read: {error:#}"
             )),
         }
     }
@@ -401,15 +400,17 @@ impl Runner {
         match (&self.unclicked, clicked, roots) {
             // The box is why: it covers the list or holds the start.
             (_, _, 0) if !self.showing.is_empty() => self.unshown(),
-            (Some(why), false, 0) => format!("Nucleus Co-op did not start {}: {why}", self.title),
+            (Some(why), false, 0) => {
+                format!("The co-op helper did not start {}: {why}", self.title)
+            }
             (None, false, 0) => self.unshown(),
             // The last press, of Play or the profile's entry, failed: what stopped it is why.
             (Some(why), true, 0) if !self.plays_itself && !self.played => {
-                format!("Nucleus Co-op did not start {}: {why}", self.title)
+                format!("The co-op helper did not start {}: {why}", self.title)
             }
             (_, _, 0) => self.unstarted(),
             _ if roots < self.players => self.quoting_crashlog(format!(
-                "Nucleus Co-op started {roots} of {} instances of {}",
+                "The co-op helper started {roots} of {} instances of {}",
                 self.players, self.title
             )),
             _ => {
@@ -431,7 +432,7 @@ impl Runner {
 /// reads as nothing, and is named for what it is.
 pub(super) fn said(form: &MessageBox) -> String {
     match form.summary() {
-        summary if summary.is_empty() => "its own untitled message box, whose text can't be read (in Nucleus Co-op 2.4.2 it says the profile can't be loaded, or that the game's folder is missing)".to_string(),
+        summary if summary.is_empty() => "its own untitled message box, whose text can't be read (in the co-op helper 2.4.2 it says the profile can't be loaded, or that the game's folder is missing)".to_string(),
         summary => format!("\"{summary}\""),
     }
 }

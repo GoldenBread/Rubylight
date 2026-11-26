@@ -118,7 +118,7 @@ impl Runner {
             let mut session = self.shared.session.lock().unwrap();
             for event in session.tick(now) {
                 if let coop::Event::Freed { slot, device } = event {
-                    tracing::info!(slot, device, "Nucleus Co-op player did not return");
+                    tracing::info!(slot, device, "Co-op player did not return");
                 }
             }
             if let Phase::Ended(why) = &session.phase {
@@ -128,7 +128,7 @@ impl Runner {
         let job = match self.nucleus.job() {
             Ok(job) => job,
             Err(error) => {
-                return self.failed_pass(error.context("listing Nucleus Co-op's processes"));
+                return self.failed_pass(error.context("listing the co-op helper's processes"));
             }
         };
         // Once an instance runs, Nucleus has loaded a profile: a second
@@ -192,12 +192,12 @@ impl Runner {
             if self.desktop.to_front(window) {
                 tracing::info!(
                     title = self.title,
-                    "Nucleus Co-op: the game runs without ProtoInput's hooks, so its window was brought to the front, where it takes the stream's controller"
+                    "Co-op helper: the game runs without ProtoInput's hooks, so its window was brought to the front, where it takes the stream's controller"
                 );
             } else {
                 tracing::warn!(
                     title = self.title,
-                    "Nucleus Co-op: the game runs without ProtoInput's hooks and Windows kept its window from the front: it takes the stream's controller only once it is clicked on the PC"
+                    "Co-op helper: the game runs without ProtoInput's hooks and Windows kept its window from the front: it takes the stream's controller only once it is clicked on the PC"
                 );
             }
         }
@@ -207,7 +207,7 @@ impl Runner {
             // While it runs, a window that closed is gone from its slot at once.
             if running || windows == self.players {
                 if !running {
-                    tracing::info!(title = self.title, "Nucleus Co-op session running");
+                    tracing::info!(title = self.title, "Co-op session running");
                 }
                 session.running(&pass.windows);
             }
@@ -217,20 +217,20 @@ impl Runner {
             let code = match self.nucleus.exit_code() {
                 Ok(code) => code,
                 Err(error) => {
-                    return self.failed_pass(error.context("reading Nucleus Co-op's exit code"));
+                    return self.failed_pass(error.context("reading the co-op helper's exit code"));
                 }
             };
             if let Some(code) = code {
                 self.exited = true;
                 if !running && roots == 0 {
                     return Some(End::Failed(format!(
-                        "Nucleus Co-op exited with code {code} before starting {}",
+                        "The co-op helper exited with code {code} before starting {}",
                         self.title
                     )));
                 }
                 tracing::warn!(
                     code,
-                    "Nucleus Co-op exited; the session goes on with the instances it started"
+                    "The co-op helper exited; the session goes on with the instances it started"
                 );
             }
         }
@@ -246,7 +246,7 @@ impl Runner {
                         // One that takes a few passes to close is told once.
                         if self.closed.insert(form.window) {
                             tracing::warn!(
-                                "Nucleus Co-op showed {} over its window after the profile {TITLE} was clicked; closed it to click the profile again",
+                                "The co-op helper showed {} over its window after the profile {TITLE} was clicked; closed it to click the profile again",
                                 said(&form)
                             );
                         }
@@ -255,7 +255,7 @@ impl Runner {
                     }
                 }
                 Err(error) => {
-                    return self.failed_pass(error.context("closing Nucleus Co-op's windows"));
+                    return self.failed_pass(error.context("closing the co-op helper's windows"));
                 }
             }
             // A box Nucleus shows after the click (its End-key reminder, a
@@ -268,8 +268,9 @@ impl Runner {
                     Ok(Some(button)) => self.play(&job, button),
                     Ok(None) => {}
                     Err(error) => {
-                        return self
-                            .failed_pass(error.context("looking for Nucleus Co-op's Play button"));
+                        return self.failed_pass(
+                            error.context("looking for the co-op helper's Play button"),
+                        );
                     }
                 }
             }
@@ -293,7 +294,7 @@ impl Runner {
                     Ok(None) => self.hid = true,
                     Err(error) => {
                         return self.failed_pass(
-                            error.context("looking for Nucleus Co-op's profile list"),
+                            error.context("looking for the co-op helper's profile list"),
                         );
                     }
                 }
@@ -317,7 +318,7 @@ impl Runner {
             }
             Err(error) => {
                 return ControlFlow::Break(
-                    self.failed_pass(error.context("looking for Nucleus Co-op's profile list")),
+                    self.failed_pass(error.context("looking for the co-op helper's profile list")),
                 );
             }
         };
@@ -334,11 +335,9 @@ impl Runner {
         match self.desktop.click(label) {
             Ok(()) => {
                 if self.clicked {
-                    tracing::info!(
-                        "Nucleus Co-op profile {TITLE} clicked again: it still lists it"
-                    );
+                    tracing::info!("Co-op profile {TITLE} clicked again: it still lists it");
                 } else {
-                    tracing::info!("Nucleus Co-op profile {TITLE} clicked");
+                    tracing::info!("Co-op profile {TITLE} clicked");
                 }
                 self.clicked = true;
                 self.clicked_at = Some(now);
@@ -348,7 +347,7 @@ impl Runner {
             Err(error) => {
                 let why = format!("{error:#}");
                 if self.unclicked.as_ref() != Some(&why) {
-                    tracing::warn!(why, "Nucleus Co-op profile {TITLE} not clicked");
+                    tracing::warn!(why, "Co-op profile {TITLE} not clicked");
                 }
                 self.unclicked = Some(why);
                 // What covers the list may be Nucleus' own message box.
@@ -361,14 +360,14 @@ impl Runner {
     fn play(&mut self, job: &BTreeSet<u32>, button: u64) {
         match self.desktop.click(button) {
             Ok(()) => {
-                tracing::info!("Nucleus Co-op Play pressed");
+                tracing::info!("Co-op helper: Play pressed");
                 self.played = true;
                 self.unclicked = None;
             }
             Err(error) => {
                 let why = format!("{error:#}");
                 if self.unclicked.as_ref() != Some(&why) {
-                    tracing::warn!(why, "Nucleus Co-op Play not pressed");
+                    tracing::warn!(why, "Co-op helper: Play not pressed");
                 }
                 self.unclicked = Some(why);
                 self.look(job);
@@ -386,10 +385,10 @@ impl Runner {
         };
         match phase {
             Phase::Ended(End::Ended) => {
-                tracing::info!(title = self.title, "Nucleus Co-op session ended")
+                tracing::info!(title = self.title, "Co-op session ended")
             }
             Phase::Ended(why) => {
-                tracing::warn!(title = self.title, "Nucleus Co-op session ended: {why}");
+                tracing::warn!(title = self.title, "Co-op session ended: {why}");
                 if let (End::Failed(_), Some(game)) = (why, &self.game_folder) {
                     super::super::elevation::forget(game);
                 }

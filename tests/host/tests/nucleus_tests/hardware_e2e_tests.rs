@@ -55,7 +55,7 @@ use std::{
 /// user's values back with no journal left; the copy's keeps the
 /// session's, with no journal in it.
 #[test]
-#[ignore = "starts a game through Nucleus Co-op on this PC as SYSTEM"]
+#[ignore = "starts a game through the co-op helper on this PC as SYSTEM"]
 fn a_background_stream_without_a_hub_handler_on_this_pc() -> Result<()> {
     use butterpollo_win_io::nucleus::layers::{Layers, UserHive};
     let log = CaseLog::install()?;
@@ -82,9 +82,9 @@ fn a_background_stream_without_a_hub_handler_on_this_pc() -> Result<()> {
     let chosen = std::env::var("RUBYLIGHT_NUCLEUS_PATH").unwrap_or_default();
     let folder = pc
         .installed(&chosen)?
-        .context("Nucleus Co-op is not set up: set RUBYLIGHT_NUCLEUS_PATH to its folder")?;
+        .context("The co-op helper is not set up: set RUBYLIGHT_NUCLEUS_PATH to its folder")?;
     if let Some(pid) = pc.running()? {
-        anyhow::bail!("Nucleus Co-op runs (process {pid}): close it first");
+        anyhow::bail!("The co-op helper runs (process {pid}): close it first");
     }
     // The signed-in user's own copy, made here as the admission would
     // when the session runs as them: its folder is named by the host's
@@ -226,21 +226,21 @@ fn a_background_stream_without_a_hub_handler_on_this_pc() -> Result<()> {
         .handlers
         .iter()
         .find(|h| h.guid == guid)
-        .with_context(|| format!("no handler {guid} in Nucleus Co-op's handlers"))?
+        .with_context(|| format!("no handler {guid} in the co-op helper's handlers"))?
         .clone();
     ensure!(handler.own, "{} is not Rubylight's handler", handler.file);
     let entry = catalog
         .games
         .iter()
         .find(|g| g.guid == guid)
-        .with_context(|| format!("{guid} is not in Nucleus Co-op's game list"))?;
+        .with_context(|| format!("{guid} is not in the co-op helper's game list"))?;
     // As Nucleus Co-op 2.4.2 loads the list of the folder it runs from:
     // shown, so it can be selected. The copy's is read as the user.
     let reader = (run == Run::User).then_some(&user);
     let listed = user_copy::as_user(reader, || files::listed_by_nucleus(from))??;
     ensure!(
         listed.contains(&guid),
-        "Nucleus Co-op does not show {guid} from {}",
+        "The co-op helper does not show {guid} from {}",
         files::list(from).display()
     );
     println!("listed in {}", files::list(from).display());
@@ -267,10 +267,10 @@ fn a_background_stream_without_a_hub_handler_on_this_pc() -> Result<()> {
     }
     println!("running after {:?}", started.elapsed());
     let delay = click_delay(&log.0.lock().unwrap())?;
-    println!("profile clicked {delay:?} after Nucleus Co-op started");
+    println!("profile clicked {delay:?} after the co-op helper started");
     ensure!(
         !cold || delay <= Duration::from_secs(15),
-        "the profile was clicked {delay:?} after Nucleus Co-op started, not within 15 s"
+        "the profile was clicked {delay:?} after the co-op helper started, not within 15 s"
     );
     let set = layer_changes(
         &cleanup.layers_before,
@@ -297,7 +297,7 @@ fn a_background_stream_without_a_hub_handler_on_this_pc() -> Result<()> {
     }
     ensure!(
         !cold || !set.is_empty(),
-        "Nucleus Co-op set no DPI mode for {}",
+        "The co-op helper set no DPI mode for {}",
         handler.executable
     );
     let game_processes: Vec<u32> = butterpollo_win_io::process::processes()?
@@ -430,7 +430,7 @@ fn a_background_stream_without_a_hub_handler_on_this_pc() -> Result<()> {
     println!("compatibility settings as before");
     ensure!(
         crashes()? == crashes_before,
-        "Nucleus Co-op wrote to {} or {}",
+        "The co-op helper wrote to {} or {}",
         crashlogs[0].display(),
         crashlogs[1].display()
     );

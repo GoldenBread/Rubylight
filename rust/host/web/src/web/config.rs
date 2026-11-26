@@ -75,7 +75,9 @@ pub(super) fn handle(h: &Shared, method: &str, path: &str, data: &Value) -> anyh
                     (!current.is_empty()).then(String::new)
                 }
                 Some(_) => {
-                    anyhow::bail!("nucleus_path must be the folder Nucleus Co-op was unpacked into")
+                    anyhow::bail!(
+                        "nucleus_path must be the folder the co-op helper was unpacked into"
+                    )
                 }
                 None => None,
             };

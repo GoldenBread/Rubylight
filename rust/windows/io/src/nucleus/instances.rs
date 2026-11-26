@@ -355,17 +355,13 @@ impl Keeper {
                 .or_else(|| self.slots.iter().position(free));
             match index {
                 Some(index) => {
-                    tracing::info!(
-                        slot = index,
-                        pid = root.pid,
-                        "Nucleus Co-op instance started"
-                    );
+                    tracing::info!(slot = index, pid = root.pid, "Co-op instance started");
                     self.slots[index].root = Some(root);
                 }
                 None => {
                     tracing::debug!(
                         pid = root.pid,
-                        "Nucleus Co-op started more instances than players"
+                        "The co-op helper started more instances than players"
                     )
                 }
             }
@@ -401,7 +397,7 @@ impl Keeper {
             if !usable {
                 let picked = window::pick(&windows, &pids);
                 if picked != slot.window {
-                    tracing::info!(slot = index, window = ?picked, "Nucleus Co-op instance window");
+                    tracing::info!(slot = index, window = ?picked, "Co-op instance window");
                     slot.tries = 0;
                     slot.stuck = false;
                 }
@@ -448,11 +444,11 @@ impl Keeper {
                 if !in_sight {
                     slot.stuck = true;
                     pass.stuck.push(index);
-                    tracing::warn!(slot = index, rect = ?window.rect, framed = window.framed, "Nucleus Co-op window keeps its own place, size or frame beside the PC's desktop; left there");
+                    tracing::warn!(slot = index, rect = ?window.rect, framed = window.framed, "The co-op instance window keeps its own place, size or frame beside the PC's desktop; left there");
                     continue;
                 }
                 if slot.tries == TRIES + 1 {
-                    tracing::warn!(slot = index, rect = ?window.rect, minimized = window.minimized, "Nucleus Co-op window keeps returning to the PC's monitors or minimising; put back every {BACKOFF} passes");
+                    tracing::warn!(slot = index, rect = ?window.rect, minimized = window.minimized, "The co-op instance window keeps returning to the PC's monitors or minimising; put back every {BACKOFF} passes");
                 }
                 if !(slot.tries - TRIES - 1).is_multiple_of(BACKOFF) {
                     continue;
@@ -462,10 +458,10 @@ impl Keeper {
             if window.framed
                 && let Err(error) = desktop.unframe(window.id)
             {
-                tracing::debug!(%error, slot = index, "Nucleus Co-op window's frame could not be taken away");
+                tracing::debug!(%error, slot = index, "The co-op instance window's frame could not be taken away");
             }
             if let Err(error) = desktop.place(window.id, parked) {
-                tracing::debug!(%error, slot = index, "Nucleus Co-op window could not be moved");
+                tracing::debug!(%error, slot = index, "The co-op instance window could not be moved");
             }
         }
         desktop.unthrottle(&processes_of_instances);

@@ -132,7 +132,7 @@ pub(super) fn ensure_input_ready(
             .ok()
             .and_then(|c| crate::nucleus::Player::of(h, &s.launch, &c));
         if p.coop.is_none() {
-            tracing::warn!(client = %s.launch.client.name, "co-op input has no Nucleus Co-op session: this player's input is dropped");
+            tracing::warn!(client = %s.launch.client.name, "co-op input has no co-op session: this player's input is dropped");
         }
     }
     // Made before input comes; after a failure, again when it

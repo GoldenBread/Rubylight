@@ -96,7 +96,7 @@ pub(super) fn left_in_checked(data: &Path, configured: &str, checks: &Checks) ->
         })()
         .with_context(|| {
             format!(
-                "Rubylight doesn't put back the settings a Nucleus Co-op session left in {}",
+                "Rubylight doesn't put back the settings a co-op session left in {}",
                 folder.display()
             )
         });

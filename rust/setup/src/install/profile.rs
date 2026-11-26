@@ -505,7 +505,7 @@ pub(super) fn repair_profile(profile: &Path) -> Result<()> {
                 && error.downcast_ref::<system::Untrusted>().is_some()
             {
                 return Err(error.context(format!(
-                    "an administrator can delete {} (Rubylight copies Nucleus Co-op for each user again), then run setup again",
+                    "an administrator can delete {} (Rubylight copies the co-op helper for each user again), then run setup again",
                     nucleus.display()
                 )));
             }

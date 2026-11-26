@@ -415,7 +415,7 @@ fn launch_back_half(
                 release_parked: &|| release_parked_pads(h),
                 instances,
             })?;
-            tracing::info!(client = %launch.client.name, session = seat.session, slot = seat.slot, "Nucleus Co-op seat taken");
+            tracing::info!(client = %launch.client.name, session = seat.session, slot = seat.slot, "Co-op seat taken");
             // A slot another player held, or whose instance started before
             // its player was known, follows this player's choice.
             if let Some(message) = h.nucleus.plays_on_pc(seat, on_pc) {

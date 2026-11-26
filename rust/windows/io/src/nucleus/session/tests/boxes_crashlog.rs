@@ -36,7 +36,7 @@ fn a_message_box_nucleus_shows_instead_of_the_profile_is_named() {
     assert_eq!(
         runner.step(t0 + START_TIMEOUT),
         Some(End::Failed(
-            "Nucleus Co-op shows \"OneDrive must be disabled: Your Documents folder is in OneDrive.\" on the PC's screen".into()
+            "The co-op helper shows \"OneDrive must be disabled: Your Documents folder is in OneDrive.\" on the PC's screen".into()
         ))
     );
 }
@@ -66,7 +66,7 @@ fn a_window_without_the_profile_is_named_with_the_sessions_crash() {
     assert_eq!(
         runner.step(t0 + START_TIMEOUT),
         Some(End::Failed(format!(
-            "Nucleus Co-op shows no profile Rubylight for Game; {HINT}. Its crashlog.txt says: [29.10.2026 12:00:00] System.NullReferenceException: no game"
+            "The co-op helper shows no profile Rubylight for Game; {HINT}. Its crashlog.txt says: [29.10.2026 12:00:00] System.NullReferenceException: no game"
         )))
     );
 }
@@ -97,7 +97,7 @@ fn a_game_nucleus_does_not_list_is_named_with_its_list() {
     assert_eq!(
         timeout(),
         Some(End::Failed(format!(
-            "Nucleus Co-op shows no profile Rubylight for Game; {HINT}"
+            "The co-op helper shows no profile Rubylight for Game; {HINT}"
         )))
     );
     // Not in the list Nucleus reads (#59).
@@ -106,7 +106,7 @@ fn a_game_nucleus_does_not_list_is_named_with_its_list() {
     assert_eq!(
         timeout(),
         Some(End::Failed(format!(
-            "Nucleus Co-op does not list Game: {} has no entry for it with its handler and an .exe that is there",
+            "The co-op helper does not list Game: {} has no entry for it with its handler and an .exe that is there",
             list.display()
         )))
     );
@@ -207,7 +207,7 @@ fn a_covered_profile_list_is_named_when_it_times_out() {
     assert_eq!(
         runner.step(t0 + START_TIMEOUT),
         Some(End::Failed(
-            "Nucleus Co-op did not start Game: covered".into()
+            "The co-op helper did not start Game: covered".into()
         ))
     );
 }
@@ -219,7 +219,7 @@ fn reminder() -> MessageBox {
         text: "Press the End key to unlock the input.".into(),
     }
 }
-const REMINDED: &str = "Nucleus Co-op shows \"Nucleus Co-op: Press the End key to unlock the input.\" on the PC's screen";
+const REMINDED: &str = "The co-op helper shows \"Nucleus Co-op: Press the End key to unlock the input.\" on the PC's screen";
 
 #[test]
 fn only_a_box_windows_shows_after_the_launch_is_named() {
@@ -266,7 +266,7 @@ fn only_a_box_windows_shows_after_the_launch_is_named() {
     assert_eq!(
         runner.step(t0 + START_TIMEOUT),
         Some(End::Failed(
-            "Nucleus Co-op shows \"Nucleus Co-op: Unable to load settings.\" on the PC's screen"
+            "The co-op helper shows \"Nucleus Co-op: Unable to load settings.\" on the PC's screen"
                 .into()
         ))
     );
@@ -280,7 +280,7 @@ fn a_start_that_cannot_list_the_boxes_up_before_nucleus_is_refused() {
     let (running, _) = start_with(folder.path(), 1, [false; 4], &screen, &probe);
     let error = format!("{:#}", running.err().unwrap());
     assert!(
-        error.contains("message boxes on the PC's screen before Nucleus Co-op starts"),
+        error.contains("message boxes on the PC's screen before the co-op helper starts"),
         "{error}"
     );
     assert!(probe.launched.lock().unwrap().is_empty());
@@ -337,7 +337,7 @@ fn a_box_gone_from_the_list_is_not_quoted_and_a_failed_list_is_named() {
     assert_eq!(
         runner.step(t0 + START_TIMEOUT),
         Some(End::Failed(
-            "Nucleus Co-op's windows could not be listed: access denied".into()
+            "The co-op helper's windows could not be listed: access denied".into()
         ))
     );
 }
@@ -358,7 +358,7 @@ fn each_step_nucleus_makes_gives_it_the_timeout_again() {
     assert_eq!(
         runner.step(first + START_TIMEOUT),
         Some(End::Failed(
-            "Nucleus Co-op started 1 of 2 instances of Game".into()
+            "The co-op helper started 1 of 2 instances of Game".into()
         ))
     );
 }
@@ -390,7 +390,7 @@ fn nucleus_exiting_before_the_game_fails_with_its_code() {
     assert_eq!(
         runner.step(t0),
         Some(End::Failed(
-            "Nucleus Co-op exited with code 3 before starting Game".into()
+            "The co-op helper exited with code 3 before starting Game".into()
         ))
     );
 }
@@ -470,7 +470,7 @@ fn a_failed_start_walks_the_game_folder_again() {
     // One that failed to start: walked again next time.
     let mut runner = runner(1, &screen, &probe, t0);
     runner.game_folder = Some(game.path().to_path_buf());
-    runner.finish(End::Failed("Nucleus Co-op did not start Game".into()));
+    runner.finish(End::Failed("The co-op helper did not start Game".into()));
     assert!(!elevation::is_kept(game.path()));
     // Nor one Nucleus never started for.
     elevation::folder_need(game.path(), None).unwrap();

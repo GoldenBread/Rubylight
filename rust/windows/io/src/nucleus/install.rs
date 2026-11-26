@@ -67,7 +67,7 @@ impl Found {
     pub fn notice(&self) -> Option<String> {
         self.instead.as_ref().map(|why| {
             format!(
-                "{why}. Until then Rubylight runs the Nucleus Co-op {} an earlier Rubylight installed, in {}",
+                "{why}. Until then Rubylight runs the co-op helper {} an earlier Rubylight installed, in {}",
                 pinned::VERSION,
                 self.folder.display()
             )
@@ -187,7 +187,7 @@ fn found_checked(data: &Path, configured: &str, checks: &Checks) -> Result<Optio
         })),
         Ok(None) => Err(error),
         Err(left) => {
-            tracing::warn!(folder = %earlier.display(), error = format!("{left:#}"), "Nucleus Co-op: the copy an earlier Rubylight installed does not stand in for the folder chosen");
+            tracing::warn!(folder = %earlier.display(), error = format!("{left:#}"), "Co-op helper: the copy an earlier Rubylight installed does not stand in for the folder chosen");
             Err(error)
         }
     }
@@ -257,7 +257,7 @@ fn chosen(folder: &Path, checks: &Checks) -> Result<Checked> {
             return Err(refuse(
                 Problem::Missing,
                 format!(
-                    "{shown} doesn't exist: choose the folder you unpacked Nucleus Co-op {version} into"
+                    "{shown} doesn't exist: choose the folder you unpacked the co-op helper {version} into"
                 ),
             ));
         }
@@ -275,7 +275,7 @@ fn chosen(folder: &Path, checks: &Checks) -> Result<Checked> {
         refuse(
             Problem::Missing,
             format!(
-                "{shown} holds no {exe_name}: choose the folder you unpacked Nucleus Co-op {version} into"
+                "{shown} doesn't hold the co-op helper: choose the folder you unpacked the co-op helper {version} into"
             ),
         )
     };
@@ -324,12 +324,12 @@ fn chosen(folder: &Path, checks: &Checks) -> Result<Checked> {
     let shipped = checks
         .release
         .program(exe_name)
-        .context("the pinned release has no NucleusCoop.exe")?;
+        .context("the pinned release lists no program")?;
     if !as_shipped(&expected, &program, shipped)? {
         return Err(refuse(
             Problem::Version,
             format!(
-                "The {exe_name} in {} isn't Nucleus Co-op {version}'s: download {version} from its release page and choose its folder",
+                "The co-op helper in {} isn't version {version}: download {version} from its release page and choose its folder",
                 canonical.display()
             ),
         ));
@@ -402,7 +402,7 @@ fn above(folder: &Path, checks: &Checks) -> Result<()> {
             refuse(
                 Problem::Untrusted,
                 format!(
-                    "Rubylight doesn't run Nucleus Co-op from {}: it runs elevated, and {why}, so the folder could be swapped. {PROGRAM_FILES}",
+                    "Rubylight doesn't run the co-op helper from {}: it runs elevated, and {why}, so the folder could be swapped. {PROGRAM_FILES}",
                     folder.display()
                 ),
             )
@@ -433,7 +433,7 @@ fn trusted(path: &Path, owner: &str, writers: &[String], checks: &Checks) -> Res
         refuse(
             Problem::Untrusted,
             format!(
-                "Rubylight doesn't run Nucleus Co-op from there: it runs elevated, so only administrators may change its files ({why:#}). {PROGRAM_FILES}, rather than moving it there"
+                "Rubylight doesn't run the co-op helper from there: it runs elevated, so only administrators may change its files ({why:#}). {PROGRAM_FILES}, rather than moving it there"
             ),
         )
     })
@@ -500,7 +500,7 @@ fn walk(folder: &Path, checks: &Checks) -> Result<()> {
                 return Err(refuse(
                     Problem::Untrusted,
                     format!(
-                        "{} is a link to elsewhere, which an elevated Nucleus Co-op would follow: unpack the release again into a new folder under C:\\Program Files",
+                        "{} is a link to elsewhere, which an elevated co-op helper would follow: unpack the release again into a new folder under C:\\Program Files",
                         path.display()
                     ),
                 ));
@@ -534,7 +534,7 @@ fn walk(folder: &Path, checks: &Checks) -> Result<()> {
                 return Err(refuse(
                     Problem::Version,
                     format!(
-                        "{} isn't Nucleus Co-op {}'s: unpack the whole release again into a new folder under C:\\Program Files and choose that one",
+                        "{} isn't the co-op helper {}'s: unpack the whole release again into a new folder under C:\\Program Files and choose that one",
                         path.display(),
                         pinned::VERSION
                     ),
@@ -550,7 +550,7 @@ fn walk(folder: &Path, checks: &Checks) -> Result<()> {
         return Err(refuse(
             Problem::Version,
             format!(
-                "{} is missing from Nucleus Co-op {}: unpack the whole release again into a new folder under C:\\Program Files and choose that one",
+                "{} is missing from the co-op helper {}: unpack the whole release again into a new folder under C:\\Program Files and choose that one",
                 folder.join(&missing.path).display(),
                 pinned::VERSION
             ),

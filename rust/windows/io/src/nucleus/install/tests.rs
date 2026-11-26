@@ -377,7 +377,7 @@ fn settings_are_put_back_from_a_folder_nucleus_no_longer_runs_from() {
     let folders = left(&data, &configured, &checks);
     let error = folders[0].as_ref().unwrap_err();
     assert!(
-        error.contains("doesn't put back the settings a Nucleus Co-op session left in"),
+        error.contains("doesn't put back the settings a co-op session left in"),
         "{error}"
     );
     assert!(error.contains("can be changed by S-1-5-11"), "{error}");

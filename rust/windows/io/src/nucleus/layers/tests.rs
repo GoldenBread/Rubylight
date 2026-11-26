@@ -448,7 +448,7 @@ fn leaving_a_nucleus_puts_back_what_its_sessions_left_or_says_why_not() {
     nucleus_runs(&map, &[GAME]);
     let error = format!("{:#}", leave(1).unwrap_err());
     assert!(
-        error.contains("A Nucleus Co-op session runs from") && error.contains("end it"),
+        error.contains("A co-op session runs from") && error.contains("end it"),
         "{error}"
     );
     assert_eq!(favourites(), b"False");

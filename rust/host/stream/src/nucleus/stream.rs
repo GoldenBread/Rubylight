@@ -60,7 +60,7 @@ pub fn end_streams(h: &Host, session: u32, device: Option<&str>) {
         tracing::info!(
             session,
             launches = canceled.len(),
-            "Nucleus Co-op: pending launches canceled"
+            "Co-op helper: pending launches canceled"
         );
     }
     drop(canceled);
@@ -120,7 +120,7 @@ impl Player {
             tracing::info!(
                 session = self.seat.session,
                 slot = self.seat.slot,
-                "Nucleus Co-op: {limit}"
+                "Co-op helper: {limit}"
             );
             warnings.set(dropped_code(dropped), limit);
         }
@@ -184,10 +184,10 @@ impl Watch {
                         Some(instance) => instance
                             .end()
                             .map(|end| (instance.session(|s| ended_text(s, &end)), end)),
-                        None => Some(("The Nucleus Co-op session is gone".into(), End::Ended)),
+                        None => Some(("The co-op session is gone".into(), End::Ended)),
                     };
                     if let Some((text, end)) = end {
-                        tracing::warn!(session = seat.session, slot = seat.slot, client = %s.launch.client.name, "Nucleus Co-op: {text}");
+                        tracing::warn!(session = seat.session, slot = seat.slot, client = %s.launch.client.name, "Co-op helper: {text}");
                         s.launch.warnings.set("coop_ended", &text);
                         match end {
                             End::Crashed(_) | End::Failed(_) => s.fail(text),
@@ -211,7 +211,7 @@ impl Drop for Watch {
         if let Some(thread) = self.thread.take() {
             thread.thread().unpark();
             if thread.join().is_err() {
-                tracing::error!("the Nucleus Co-op stream watch panicked");
+                tracing::error!("the co-op stream watch panicked");
             }
         }
     }
@@ -229,13 +229,11 @@ pub fn prepare(
     config: &Config,
     wait: Duration,
 ) -> Result<crate::display_session::StreamPreparation> {
-    let seat = launch
-        .nucleus
-        .context("the launch has no Nucleus Co-op slot")?;
+    let seat = launch.nucleus.context("the launch has no co-op slot")?;
     let instance = h
         .nucleus
         .instance(seat.session)
-        .ok_or_else(|| Refusal::unavailable("The Nucleus Co-op session ended: launch it again"))?;
+        .ok_or_else(|| Refusal::unavailable("The co-op session ended: launch it again"))?;
     instance.resize(seat.slot, stream.display_size())?;
     // The display only picks the GPU the window is captured on.
     let display = butterpollo_win_graphics::capture::primary_display()
@@ -251,7 +249,7 @@ pub fn prepare(
             );
         }
     };
-    tracing::info!(session = seat.session, slot = seat.slot, target = %first, "Nucleus Co-op: streaming the player's game window");
+    tracing::info!(session = seat.session, slot = seat.slot, target = %first, "Co-op helper: streaming the player's game window");
     warn_audio(
         butterpollo_win_display::display::windows_build(),
         &launch.warnings,
@@ -349,7 +347,7 @@ pub fn first_window(
             Ok(target) => return Ok(target),
             Err(error) if Instant::now() >= deadline => {
                 return Err(Refusal::unavailable(format!(
-                    "{error:#}: Nucleus Co-op showed no window for Player {} within {} s",
+                    "{error:#}: the co-op helper showed no window for Player {} within {} s",
                     slot + 1,
                     wait.as_secs()
                 ))

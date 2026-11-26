@@ -39,7 +39,7 @@ impl UserHive {
     /// The user the host, in their session, runs Nucleus Co-op as.
     pub fn signed_in() -> Result<Self> {
         let sid = crate::process::user_sid().context(
-            "finding the signed-in user, whose compatibility settings Nucleus Co-op changes",
+            "finding the signed-in user, whose compatibility settings the co-op helper changes",
         )?;
         Ok(Self::of(sid))
     }

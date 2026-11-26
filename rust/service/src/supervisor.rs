@@ -581,7 +581,7 @@ fn supervise() -> Result<()> {
     }
     // The restore's task has ended with its job; its worker reads what is left.
     if let Some(worker) = restorer.take() {
-        join_bounded(worker, Duration::from_secs(10), "the Nucleus Co-op restore");
+        join_bounded(worker, Duration::from_secs(10), "the co-op restore");
     }
     if let Some(worker) = driver_repair {
         join_bounded(

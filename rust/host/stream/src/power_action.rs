@@ -234,7 +234,7 @@ pub fn busy_beside_gate(h: &Shared) -> Option<Busy> {
             .iter()
             .find(|a| a.id() == coop.app_id)
             .map(|a| a.name.clone())
-            .unwrap_or_else(|| "Nucleus Co-op".to_owned());
+            .unwrap_or_else(|| "A co-op game".to_owned());
         return Some(Busy::App(name));
     }
     if ending || !h.monitors.lock().unwrap().is_empty() {

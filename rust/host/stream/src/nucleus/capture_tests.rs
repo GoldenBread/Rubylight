@@ -11,7 +11,7 @@ use anyhow::{Context, Result, ensure};
 /// found from. The user's compatibility settings must be as before
 /// afterwards. Run as SYSTEM, like the service.
 #[test]
-#[ignore = "requires Nucleus Co-op, a handler with its game, the virtual gamepad driver and SYSTEM"]
+#[ignore = "requires the co-op helper, a handler with its game, the virtual gamepad driver and SYSTEM"]
 fn a_session_on_this_pc() -> Result<()> {
     use butterpollo_input_policy::input::Input;
     use butterpollo_session::nucleus::install::EXECUTABLE;
@@ -35,7 +35,7 @@ fn a_session_on_this_pc() -> Result<()> {
     );
     let configured = std::env::var("RUBYLIGHT_NUCLEUS_PATH").unwrap_or_default();
     let folder = install::installed(&data, &configured)?
-        .context("Nucleus Co-op is not set up: set RUBYLIGHT_NUCLEUS_PATH")?;
+        .context("The co-op helper is not set up: set RUBYLIGHT_NUCLEUS_PATH")?;
     let steam_app: Option<u32> = std::env::var("RUBYLIGHT_NUCLEUS_STEAM_APP")
         .ok()
         .map(|app| app.parse().context("RUBYLIGHT_NUCLEUS_STEAM_APP"))
@@ -51,7 +51,7 @@ fn a_session_on_this_pc() -> Result<()> {
         .games
         .into_iter()
         .find(|game| game.guid == handler.guid)
-        .with_context(|| format!("add {}'s game in Nucleus Co-op first", handler.name))?
+        .with_context(|| format!("add {}'s game in the co-op helper first", handler.name))?
         .exe_path;
     println!("handler {} for {}", handler.file, handler.executable);
     let layers_before = layers::UserHive::signed_in()?.values()?;

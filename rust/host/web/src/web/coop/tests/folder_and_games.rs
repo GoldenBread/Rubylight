@@ -17,7 +17,7 @@ async fn the_folder_stays_while_a_session_runs_from_it() {
     .await;
     assert_eq!(
         body["error"],
-        "Nucleus Co-op is running Portal 2: end that session first, then choose the folder"
+        "The co-op helper is running Portal 2: end that session first, then choose the folder"
     );
     assert_eq!(kept(&c.f), "");
     assert!(c.pc.put_back.lock().unwrap().is_empty());
@@ -27,9 +27,9 @@ async fn the_folder_stays_while_a_session_runs_from_it() {
 async fn another_release_kept_runs_the_earlier_install_with_a_notice_and_is_never_chosen() {
     let f = Fixture::new();
     let pc = Arc::new(fake::Pc::installed());
-    let why = r"The NucleusCoop.exe in D:\Old isn't Nucleus Co-op 2.4.2's: download 2.4.2 from its release page and choose its folder";
+    let why = r"The co-op helper in D:\Old isn't version 2.4.2: download 2.4.2 from its release page and choose its folder";
     let notice = format!(
-        r"{why}. Until then Rubylight runs the Nucleus Co-op 2.4.2 an earlier Rubylight installed, in C:\Nucleus"
+        r"{why}. Until then Rubylight runs the co-op helper 2.4.2 an earlier Rubylight installed, in C:\Nucleus"
     );
     *pc.instead.lock().unwrap() = Some((
         Unusable {
@@ -62,14 +62,17 @@ async fn a_refused_folder_is_never_kept_and_says_why() {
     let pc = Arc::new(fake::Pc::installed());
     f.host.nucleus.use_pc(pc.clone());
     for (problem, why) in [
-        (Problem::Missing, r"D:\Downloads holds no NucleusCoop.exe"),
+        (
+            Problem::Missing,
+            r"D:\Downloads doesn't hold the co-op helper",
+        ),
         (
             Problem::Version,
-            r"The NucleusCoop.exe in D:\Downloads isn't Nucleus Co-op 2.4.2's",
+            r"The co-op helper in D:\Downloads isn't version 2.4.2",
         ),
         (
             Problem::Untrusted,
-            r"Rubylight doesn't run Nucleus Co-op from D:\Downloads",
+            r"Rubylight doesn't run the co-op helper from D:\Downloads",
         ),
     ] {
         pc.unusable.lock().unwrap().insert(
@@ -106,7 +109,7 @@ async fn a_refused_folder_is_never_kept_and_says_why() {
 async fn a_kept_folder_nucleus_cant_run_from_shows_and_refuses_open() {
     let f = Fixture::new();
     let pc = Arc::new(fake::Pc::installed());
-    let why = r"The NucleusCoop.exe in D:\Old isn't Nucleus Co-op 2.4.2's: download 2.4.2 from its release page and choose its folder";
+    let why = r"The co-op helper in D:\Old isn't version 2.4.2: download 2.4.2 from its release page and choose its folder";
     pc.unusable.lock().unwrap().insert(
         r"D:\Old".into(),
         Unusable {
@@ -131,7 +134,7 @@ async fn a_kept_folder_nucleus_cant_run_from_shows_and_refuses_open() {
     .await;
     assert_eq!(
         refused["error"],
-        format!("Nucleus Co-op is not ready: {why}")
+        format!("The co-op helper is not ready: {why}")
     );
     assert_eq!(pc.opened.load(std::sync::atomic::Ordering::Relaxed), 0);
 }
@@ -148,7 +151,10 @@ async fn open_answers_503_when_the_folder_could_not_be_checked() {
         StatusCode::SERVICE_UNAVAILABLE,
     )
     .await;
-    assert_eq!(body["error"], format!("Nucleus Co-op is not ready: {why}"));
+    assert_eq!(
+        body["error"],
+        format!("The co-op helper is not ready: {why}")
+    );
     assert_eq!(pc.opened.load(std::sync::atomic::Ordering::Relaxed), 0);
     let body = panel(&f).await;
     assert_eq!(body["install"]["state"], "failed");
@@ -159,7 +165,7 @@ async fn open_answers_503_when_the_folder_could_not_be_checked() {
 async fn choosing_a_folder_and_open_are_refused_without_the_service() {
     let f = Fixture::new();
     let pc = Arc::new(fake::Pc::installed());
-    let why = "Nucleus Co-op sessions need the host to run as the Rubylight Windows service, which starts Nucleus Co-op as the signed-in user";
+    let why = "Co-op sessions need the host to run as the Rubylight Windows service, which starts the co-op helper as the signed-in user";
     *pc.unavailable.lock().unwrap() = Some(why.into());
     f.host.nucleus.use_pc(pc.clone());
     for (path, body) in [
@@ -260,7 +266,7 @@ async fn each_game_with_an_exe_shows_its_coop_status() {
     )
     .await;
     let no_handler = |name: &str| {
-        format!("No Nucleus Co-op handler for {name}.exe: add one in Nucleus Co-op's handler hub")
+        format!("No co-op handler for {name}.exe: add one in the co-op helper's handler hub")
     };
     assert_eq!(
         body["games"],
@@ -300,7 +306,7 @@ async fn each_game_with_an_exe_shows_its_coop_status() {
     // Open Nucleus Co-op on this PC says why before it is pressed.
     assert_eq!(
         body["open_refusal"],
-        "Nucleus Co-op needs administrator rights, and Windows doesn't give this account any: sign in to Windows on this PC as an administrator"
+        "The co-op helper needs administrator rights, and Windows doesn't give this account any: sign in to Windows on this PC as an administrator"
     );
     let games = body["games"].as_array().unwrap();
     assert_eq!(
@@ -308,7 +314,7 @@ async fn each_game_with_an_exe_shows_its_coop_status() {
         (
             &json!("ready"),
             &json!(format!(
-                "Nucleus Co-op needs administrator rights for a hub handler, and {}",
+                "The co-op helper needs administrator rights for a hub handler, and {}",
                 elevation::STANDARD
             ))
         )
@@ -343,11 +349,11 @@ async fn each_game_with_an_exe_shows_its_coop_status() {
     assert_eq!(body["admin_protection"], true);
     assert_eq!(
         body["open_refusal"],
-        "Nucleus Co-op needs administrator rights, and Windows' Administrator protection keeps them from Rubylight, so Nucleus Co-op can't open on this PC; games Rubylight adds itself still stream if they need no administrator rights"
+        "The co-op helper needs administrator rights, and Windows' Administrator protection keeps them from Rubylight, so the co-op helper can't open on this PC; games Rubylight adds itself still stream if they need no administrator rights"
     );
     assert_eq!(
         body["games"][0]["reason"],
-        "Nucleus Co-op needs administrator rights for a hub handler, and Windows' Administrator protection keeps them from Rubylight, so Nucleus Co-op can't run this game on this PC; games Rubylight adds itself still stream if they need no administrator rights"
+        "The co-op helper needs administrator rights for a hub handler, and Windows' Administrator protection keeps them from Rubylight, so the co-op helper can't run this game on this PC; games Rubylight adds itself still stream if they need no administrator rights"
     );
     // Before Nucleus Co-op is set up nothing is known yet.
     *pc.installed.lock().unwrap() = None;

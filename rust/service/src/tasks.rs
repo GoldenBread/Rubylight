@@ -170,11 +170,11 @@ pub fn restore_nucleus(host: &Path, profile: &Path, stop: &Signal) {
         Ok(Outcome { code: 0, .. }) => {}
         Ok(Outcome { code, .. }) => tracing::error!(
             code,
-            "Nucleus Co-op: what an earlier session changed was not all put back"
+            "Co-op helper: what an earlier session changed was not all put back"
         ),
         Err(error) => tracing::error!(
             error = %format!("{error:#}"),
-            "Nucleus Co-op: what an earlier session changed was not put back"
+            "Co-op helper: what an earlier session changed was not put back"
         ),
     }
 }
@@ -209,21 +209,21 @@ mod tests {
     #[test]
     fn task_lines_keep_their_level() {
         assert_eq!(
-            parse(" INFO Nucleus Co-op runs pid=42"),
-            Some((tracing::Level::INFO, "Nucleus Co-op runs pid=42"))
+            parse(" INFO The co-op helper runs pid=42"),
+            Some((tracing::Level::INFO, "The co-op helper runs pid=42"))
         );
         assert_eq!(
-            parse("ERROR Nucleus Co-op: the settings did not load error=denied"),
+            parse("ERROR Co-op helper: the settings did not load error=denied"),
             Some((
                 tracing::Level::ERROR,
-                "Nucleus Co-op: the settings did not load error=denied"
+                "Co-op helper: the settings did not load error=denied"
             ))
         );
         assert_eq!(
-            parse(" WARN Nucleus Co-op: settings kept path=\"x\""),
+            parse(" WARN Co-op helper: settings kept path=\"x\""),
             Some((
                 tracing::Level::WARN,
-                "Nucleus Co-op: settings kept path=\"x\""
+                "Co-op helper: settings kept path=\"x\""
             ))
         );
         assert_eq!(parse("thread 'main' panicked at src/main.rs:1:1:"), None);

@@ -78,7 +78,7 @@ fn a_failed_start_or_no_free_pad_is_unavailable() {
     assert_eq!(no_pad.status, 503);
     assert!(no_pad.message.contains("XInput"), "{no_pad}");
     *pc.free.lock().unwrap() = 1;
-    *pc.start_error.lock().unwrap() = Some("Nucleus Co-op is already running".into());
+    *pc.start_error.lock().unwrap() = Some("The co-op helper is already running".into());
     let failed = admit(&registry, &coop, "a", &client("A", false)).unwrap_err();
     assert_eq!(failed.status, 503);
     assert!(failed.message.contains("already running"), "{failed}");

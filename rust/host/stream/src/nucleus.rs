@@ -275,7 +275,7 @@ impl Install {
 /// Why a launch finds no Nucleus Co-op to run.
 pub fn not_set_up() -> String {
     format!(
-        "Nucleus Co-op is not set up: download Nucleus Co-op {} and choose its folder on a game's Play together panel in the Rubylight console",
+        "The co-op helper is not set up: download the co-op helper {} and choose its folder on a game's Play together panel in the Rubylight console",
         butterpollo_session::nucleus::install::VERSION
     )
 }

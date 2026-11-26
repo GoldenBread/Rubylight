@@ -158,14 +158,14 @@ fn the_console_shows_why_a_background_stream_would_be_refused() {
         "Shooter.exe uses Easy Anti-Cheat, and Rubylight never hooks a game with anti-cheat"
     );
     assert!(
-        shown[3].starts_with("Nucleus Co-op starts games by their .exe"),
+        shown[3].starts_with("The co-op helper starts games by their .exe"),
         "{}",
         shown[3]
     );
     assert!(shown[4].ends_with("is not on this PC: set the app's command to the game's .exe"));
     // A game ours streams, and a link checked only at launch.
     assert!(
-        shown[5].starts_with("No Nucleus Co-op handler for Ice.exe"),
+        shown[5].starts_with("No co-op handler for Ice.exe"),
         "{}",
         shown[5]
     );
@@ -372,14 +372,17 @@ fn a_chosen_folder_is_checked_before_it_is_kept_and_an_old_install_still_counts(
         Install::Configured(PathBuf::from(r"D:\Nucleus"))
     );
     for (problem, message) in [
-        (Problem::Missing, r"D:\Downloads holds no NucleusCoop.exe"),
+        (
+            Problem::Missing,
+            r"D:\Downloads doesn't hold the co-op helper",
+        ),
         (
             Problem::Version,
-            r"The NucleusCoop.exe in D:\Old isn't Nucleus Co-op 2.4.2's",
+            r"The co-op helper in D:\Old isn't version 2.4.2",
         ),
         (
             Problem::Untrusted,
-            r"Rubylight doesn't run Nucleus Co-op from D:\Mine",
+            r"Rubylight doesn't run the co-op helper from D:\Mine",
         ),
     ] {
         refuse(&pc, r"D:\Chosen", problem, message);

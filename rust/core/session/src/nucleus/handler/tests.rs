@@ -348,12 +348,12 @@ fn a_game_nucleus_cannot_start_says_why() {
         .unwrap_err();
     assert_eq!(
         none.to_string(),
-        "No Nucleus Co-op handler for Puzzle.exe: add one in Nucleus Co-op's handler hub"
+        "No co-op handler for Puzzle.exe: add one in the co-op helper's handler hub"
     );
     let not_added = c.find("Shooter", Some("C:\\Shooter.exe")).unwrap_err();
     assert_eq!(
         not_added.to_string(),
-        "Nucleus Co-op has the handler Shooter for Shooter.exe, but the game is not added: open Nucleus Co-op and add it once"
+        "The co-op helper has the handler Shooter for Shooter.exe, but the game is not added: open the co-op helper and add it once"
     );
     // An added game whose handler was deleted has no handler.
     assert!(matches!(

@@ -114,7 +114,7 @@ fn a_swapped_program_file_is_found_though_its_size_and_time_stay() {
     let (problem, error) = refused(&tree, &tree.folder);
     assert_eq!(problem, Some(Problem::Version), "{error}");
     assert!(
-        error.contains(&format!("{} isn't Nucleus Co-op 2.4.2's", dll.display())),
+        error.contains(&format!("{} isn't the co-op helper 2.4.2's", dll.display())),
         "{error}"
     );
     tick();
@@ -259,7 +259,7 @@ fn a_missing_or_other_program_file_is_refused_with_the_release_it_needs() {
     assert_eq!(problem, Some(Problem::Version), "{error}");
     assert!(
         error.contains(&format!(
-            "{} is missing from Nucleus Co-op 2.4.2",
+            "{} is missing from the co-op helper 2.4.2",
             hook.display()
         )),
         "{error}"
@@ -271,7 +271,7 @@ fn a_missing_or_other_program_file_is_refused_with_the_release_it_needs() {
     assert_eq!(
         error,
         format!(
-            "The NucleusCoop.exe in {} isn't Nucleus Co-op 2.4.2's: download 2.4.2 from its release page and choose its folder",
+            "The co-op helper in {} isn't version 2.4.2: download 2.4.2 from its release page and choose its folder",
             tree.folder.display()
         )
     );
@@ -285,9 +285,9 @@ fn a_folder_without_nucleus_is_refused_never_replaced_by_the_old_install() {
     let file = tree.top.join("NucleusApp.zip");
     std::fs::write(&file, b"PK").unwrap();
     for (path, says) in [
-        (empty.clone(), "holds no NucleusCoop.exe"),
+        (empty.clone(), "doesn't hold the co-op helper"),
         (tree.top.join("Gone"), "doesn't exist"),
-        (file, "holds no NucleusCoop.exe"),
+        (file, "doesn't hold the co-op helper"),
         (PathBuf::from("Nucleus"), "is no full folder path"),
     ] {
         let (problem, error) = refused(&tree, &path);
@@ -336,10 +336,10 @@ fn another_release_chosen_falls_back_to_the_earlier_install_with_a_notice() {
         Some(Problem::Version)
     );
     let notice = found.notice().unwrap();
-    assert!(notice.contains("isn't Nucleus Co-op 2.4.2's"), "{notice}");
+    assert!(notice.contains("isn't version 2.4.2"), "{notice}");
     assert!(
         notice.contains(&format!(
-            "Until then Rubylight runs the Nucleus Co-op 2.4.2 an earlier Rubylight installed, in {}",
+            "Until then Rubylight runs the co-op helper 2.4.2 an earlier Rubylight installed, in {}",
             pinned::folder(&data).display()
         )),
         "{notice}"

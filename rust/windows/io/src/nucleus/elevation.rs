@@ -54,7 +54,7 @@ pub fn game_need(exe: &Path, sid: &str, token: Option<&OwnedHandle>) -> Result<N
                 .map(|value| rule::layers_need(&value)),
         ),
     );
-    tracing::debug!(exe = %exe.display(), ?manifest, installer, ?need, "Nucleus Co-op: what the game asks of Windows");
+    tracing::debug!(exe = %exe.display(), ?manifest, installer, ?need, "Co-op helper: what the game asks of Windows");
     Ok(need)
 }
 
@@ -100,7 +100,7 @@ pub fn reads_direct_input(exe: &Path, token: Option<&OwnedHandle>) -> Result<boo
         tracing::info!(
             exe = %exe.display(),
             pads = ?butterpollo_session::nucleus::imports::pad_dlls(&dlls),
-            "Nucleus Co-op: the DLLs the game imports to read a pad"
+            "Co-op helper: the DLLs the game imports to read a pad"
         );
         Ok(butterpollo_session::nucleus::imports::direct_input(&dlls))
     })
@@ -567,7 +567,7 @@ fn walk(folder: &Path) -> Result<Walk> {
 }
 
 fn locked(path: &Path) -> Need {
-    tracing::info!(path = %path.display(), "Nucleus Co-op: the signed-in user may not change this file of the game, so Nucleus Co-op runs elevated");
+    tracing::info!(path = %path.display(), "Co-op helper: the signed-in user may not change this file of the game, so the co-op helper runs elevated");
     Need::Administrator(Why::Folder)
 }
 

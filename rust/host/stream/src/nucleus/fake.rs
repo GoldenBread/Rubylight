@@ -436,7 +436,7 @@ impl super::Window for Arc<Window> {
         self.closes.fetch_add(1, Ordering::Relaxed);
         anyhow::ensure!(
             !self.stuck.load(Ordering::Relaxed),
-            "Nucleus Co-op (process {}) did not close within {} s: close it on the PC",
+            "The co-op helper (process {}) did not close within {} s: close it on the PC",
             self.pid,
             timeout.as_secs()
         );

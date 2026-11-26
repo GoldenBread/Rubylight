@@ -100,7 +100,7 @@ fn an_account_without_administrator_rights_is_refused_before_nucleus_starts() {
         );
         assert_eq!(
             words,
-            "Nucleus Co-op needs administrator rights, and Windows doesn't give this account any: sign in to Windows on this PC as an administrator"
+            "The co-op helper needs administrator rights, and Windows doesn't give this account any: sign in to Windows on this PC as an administrator"
         );
     }
     // An administrator under Windows' Administrator protection is told
@@ -112,7 +112,7 @@ fn an_account_without_administrator_rights_is_refused_before_nucleus_starts() {
     );
     assert_eq!(
         open,
-        "Nucleus Co-op needs administrator rights, and Windows' Administrator protection keeps them from Rubylight, so Nucleus Co-op can't open on this PC; games Rubylight adds itself still stream if they need no administrator rights"
+        "The co-op helper needs administrator rights, and Windows' Administrator protection keeps them from Rubylight, so the co-op helper can't open on this PC; games Rubylight adds itself still stream if they need no administrator rights"
     );
     // The console's words before the button is pressed.
     assert_eq!(open, needs_administrator(Account::Protected));
@@ -122,7 +122,7 @@ fn an_account_without_administrator_rights_is_refused_before_nucleus_starts() {
     );
     assert_eq!(
         game,
-        "Nucleus Co-op needs administrator rights, and Windows' Administrator protection keeps them from Rubylight, so Nucleus Co-op can't run this game on this PC; games Rubylight adds itself still stream if they need no administrator rights"
+        "The co-op helper needs administrator rights, and Windows' Administrator protection keeps them from Rubylight, so the co-op helper can't run this game on this PC; games Rubylight adds itself still stream if they need no administrator rights"
     );
 }
 
@@ -382,7 +382,7 @@ fn label(screen: &Screen) {
         .push((NUCLEUS, TITLE.into(), 7));
 }
 
-const HINT: &str = "open Nucleus Co-op and load the profile Rubylight once";
+const HINT: &str = "open the co-op helper and load the profile Rubylight once";
 
 /// What a session told about its instances; whether Nucleus had stopped
 /// them when it told they stop.

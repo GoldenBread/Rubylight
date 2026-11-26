@@ -7,7 +7,7 @@ pub struct OnPc;
 impl Pc for OnPc {
     fn unavailable(&self) -> Option<String> {
         if !butterpollo_win_io::process::is_system() {
-            return Some("Nucleus Co-op sessions need the host to run as the Rubylight Windows service, which starts Nucleus Co-op as the signed-in user".into());
+            return Some("Co-op sessions need the host to run as the Rubylight Windows service, which starts the co-op helper as the signed-in user".into());
         }
         butterpollo_media_policy::os_gate::missing(
             butterpollo_win_display::display::windows_build(),
@@ -161,13 +161,13 @@ impl Pc for OnPc {
                 if let Err(error) = files::forget_appdata_games(&appdata) {
                     tracing::warn!(
                         error = format!("{error:#}"),
-                        "Nucleus Co-op: Rubylight's games left in the AppData list it does not read"
+                        "Co-op helper: Rubylight's games left in the AppData list it does not read"
                     );
                 }
             }
             Err(error) => tracing::warn!(
                 %error,
-                "Nucleus Co-op: the AppData list it does not read was not checked for Rubylight's games"
+                "Co-op helper: the AppData list it does not read was not checked for Rubylight's games"
             ),
         }
         Ok(own)

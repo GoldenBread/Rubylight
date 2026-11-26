@@ -23,7 +23,7 @@ fn refused(text: &str) -> MessageBox {
 fn a_game_that_refuses_the_hooks_ends_the_session_and_gets_the_next_way() {
     let [runtime, startup] = generic::INJECT_FAILED;
     let exe = r"D:\Games\Black Flag\ACBlackFlag.exe";
-    let another = "start the stream again, and Rubylight has Nucleus Co-op hook it another way";
+    let another = "start the stream again, and Rubylight has the co-op helper hook it another way";
     let none = "start the stream again, and Rubylight starts it without them";
     let host = tempfile::tempdir().unwrap();
     // The way it was started, the box Nucleus shows, whether the game's
@@ -59,7 +59,7 @@ fn a_game_that_refuses_the_hooks_ends_the_session_and_gets_the_next_way() {
                 continue;
             }
             let why = format!(
-                "Game refused Nucleus Co-op's input hooks (it showed \"Error: {text}\"), and Nucleus Co-op ends a game it can't hook: {then}"
+                "Game refused the co-op helper's input hooks (it showed \"Error: {text}\"), and the co-op helper ends a game it can't hook: {then}"
             );
             // The start fails; a game that ran crashed.
             let wanted = if runs {
@@ -229,7 +229,7 @@ fn a_game_waiting_on_its_mandatory_aslr_box_ends_and_keeps_its_way_unless_it_ref
             exempt(program)
         )
     };
-    let refused = "Game refused Nucleus Co-op's input hooks (it showed \"Disable Mandatory ASLR\"), and it waits there for an answer: start the stream again, and Rubylight";
+    let refused = "Game refused the co-op helper's input hooks (it showed \"Disable Mandatory ASLR\"), and it waits there for an answer: start the stream again, and Rubylight";
     let host = tempfile::tempdir().unwrap();
     files::refuse_inject(host.path(), exe).unwrap();
     // The way it was started, whether it is Rubylight's own handler's game,
@@ -265,7 +265,7 @@ fn a_game_waiting_on_its_mandatory_aslr_box_ends_and_keeps_its_way_unless_it_ref
             true,
             Some(false),
             false,
-            format!("{refused} has Nucleus Co-op hook it another way"),
+            format!("{refused} has the co-op helper hook it another way"),
             Inject::Stealth,
         ),
         (
@@ -281,7 +281,7 @@ fn a_game_waiting_on_its_mandatory_aslr_box_ends_and_keeps_its_way_unless_it_ref
             true,
             Some(false),
             false,
-            format!("{waits}, even without Nucleus Co-op's input hooks"),
+            format!("{waits}, even without the co-op helper's input hooks"),
             Inject::None,
         ),
         (
@@ -413,7 +413,7 @@ fn a_game_started_without_the_hooks_it_refused_is_told() {
     assert_eq!(
         unhooked(&start(&own)).unwrap().as_deref(),
         Some(
-            "Black Flag refused every way Nucleus Co-op injects its input hooks, so it runs without them: a keyboard, mouse or pad on the PC reaches it too, and it takes the controller only while its window is in front on the PC, where Rubylight puts it as it opens unless someone uses the PC. If the game pauses when it is not in front, the picture stops too"
+            "Black Flag refused every way the co-op helper injects its input hooks, so it runs without them: a keyboard, mouse or pad on the PC reaches it too, and it takes the controller only while its window is in front on the PC, where Rubylight puts it as it opens unless someone uses the PC. If the game pauses when it is not in front, the picture stops too"
         )
     );
     assert_eq!(unhooked(&start(&hub)).unwrap(), None);

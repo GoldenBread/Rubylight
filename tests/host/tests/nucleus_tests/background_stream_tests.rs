@@ -65,7 +65,7 @@ fn a_background_stream_is_a_private_session_its_owner_returns_to() {
     assert!(
             other
                 .message
-                .starts_with("Portal 2 can't stream in the background: Nucleus Co-op is running Portal 2 for a background stream"),
+                .starts_with("Portal 2 can't stream in the background: the co-op helper is running Portal 2 for a background stream"),
             "{}",
             other.message
         );
@@ -108,13 +108,13 @@ fn a_background_stream_nucleus_cannot_run_is_refused_with_the_reason() {
     assert_eq!(missing.status, 404);
     assert_eq!(
         missing.message,
-        "Store Game can't stream in the background: Nucleus Co-op starts games by their .exe, and Store Game does not name one: set the app's command to the game's .exe"
+        "Store Game can't stream in the background: the co-op helper starts games by their .exe, and Store Game does not name one: set the app's command to the game's .exe"
     );
     let desktop = background(&registry, &apps[0], "a", &owner, &config).unwrap_err();
     assert_eq!(desktop.status, 404);
     assert!(
         desktop.message.starts_with(
-            "Desktop can't stream in the background: Nucleus Co-op starts games by their .exe"
+            "Desktop can't stream in the background: the co-op helper starts games by their .exe"
         ),
         "{}",
         desktop.message
@@ -214,9 +214,7 @@ fn a_one_player_game_without_a_hub_handler_streams_in_the_background_with_ours()
     let refused = admit(&registry, &coop, "c", &client("B", true)).unwrap_err();
     assert_eq!(refused.status, 404);
     assert!(
-        refused
-            .message
-            .starts_with("No Nucleus Co-op handler for Ice.exe"),
+        refused.message.starts_with("No co-op handler for Ice.exe"),
         "{refused}"
     );
 }
@@ -284,21 +282,24 @@ fn a_launch_without_nucleus_is_refused_with_the_reason_and_installs_nothing() {
         (refused.status, refused.message),
         (
             503,
-            format!("Ice can't stream in the background: {}", not_set_up())
+            format!(
+                "Ice can't stream in the background: {}",
+                not_set_up().replacen("The co-op", "the co-op", 1)
+            )
         )
     );
     // A chosen folder that's another release, or one others can change,
     // is refused with its reason: the earlier install never stands in.
     *pc.installed.lock().unwrap() = Some(PathBuf::from(r"C:\Nucleus"));
     let config = Config::parse("nucleus_path = D:\\Old\n").unwrap();
-    let why = r"The NucleusCoop.exe in D:\Old isn't Nucleus Co-op 2.4.2's: download 2.4.2 from its release page and choose its folder";
+    let why = r"The co-op helper in D:\Old isn't version 2.4.2: download 2.4.2 from its release page and choose its folder";
     refuse(&pc, r"D:\Old", Problem::Version, why);
     let refused = background(&registry, &apps[3], "c", &owner, &config).unwrap_err();
     assert_eq!(
         (refused.status, refused.message),
         (
             503,
-            format!("Ice can't stream in the background: Nucleus Co-op is not ready: {why}")
+            format!("Ice can't stream in the background: the co-op helper is not ready: {why}")
         )
     );
     assert!(pc.own.lock().unwrap().is_empty());

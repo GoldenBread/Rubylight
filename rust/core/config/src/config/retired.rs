@@ -121,7 +121,7 @@ pub const RETIRED_SETTINGS: &[RetiredSetting] = &[
         key: BACKGROUND_MODE_KEY,
         retired: retired_background_mode,
         current: "nucleus",
-        reason: "Windows child sessions were removed: Windows signs a Microsoft account that uses only Windows Hello into one only with a password; Nucleus Co-op is the background mode",
+        reason: "Windows child sessions were removed: Windows signs a Microsoft account that uses only Windows Hello into one only with a password; the co-op helper is the background mode",
     },
 ];
 

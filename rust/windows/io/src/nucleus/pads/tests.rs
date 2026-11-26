@@ -252,7 +252,7 @@ fn a_stuck_earlier_set_is_waited_for_once_and_retired_once_it_ends() {
     let started = Instant::now();
     let error = format!("{:#}", next.retire_earlier().unwrap_err());
     assert!(
-        error.starts_with("an earlier Nucleus Co-op session's controllers are still plugged in")
+        error.starts_with("an earlier co-op session's controllers are still plugged in")
             && error.ends_with("restart Rubylight and start again"),
         "{error}"
     );

@@ -30,8 +30,8 @@ impl Decision {
     pub fn nucleus() -> Self {
         Self {
             mode: Mode::Nucleus,
-            label: "Background streaming (Nucleus Co-op)",
-            reason: "Nucleus Co-op is the background mode",
+            label: "Background streaming (co-op helper)",
+            reason: "The co-op helper is the background mode",
         }
     }
 }
@@ -41,7 +41,7 @@ pub fn parse(text: &str) -> Result<(), String> {
     match text.trim().to_ascii_lowercase().as_str() {
         "" | "nucleus" => Ok(()),
         other => Err(format!(
-            "{KEY} = {other} is not a mode: Nucleus Co-op is the only background mode (nucleus)"
+            "{KEY} = {other} is not a mode: the co-op helper is the only background mode (nucleus)"
         )),
     }
 }
@@ -62,13 +62,13 @@ mod tests {
         let error = parse("rdp").unwrap_err();
         assert_eq!(
             error,
-            "background_mode = rdp is not a mode: Nucleus Co-op is the only background mode (nucleus)"
+            "background_mode = rdp is not a mode: the co-op helper is the only background mode (nucleus)"
         );
         assert!(parse("child").is_err());
         assert!(!retired_background("rdp"));
         let d = Decision::nucleus();
         assert_eq!(d.mode, Mode::Nucleus);
-        assert_eq!(d.label, "Background streaming (Nucleus Co-op)");
-        assert_eq!(d.reason, "Nucleus Co-op is the background mode");
+        assert_eq!(d.label, "Background streaming (co-op helper)");
+        assert_eq!(d.reason, "The co-op helper is the background mode");
     }
 }

@@ -421,7 +421,7 @@ pub fn admit(current: Option<&Session>, game: &str, kind: Kind, device: &str) ->
         Kind::Coop => "a co-op session",
     };
     Admit::Busy(format!(
-        "Nucleus Co-op is running {} for {what}; it runs one game at a time. End it in the web console first",
+        "The co-op helper is running {} for {what}; it runs one game at a time. End it in the web console first",
         session.title
     ))
 }
@@ -430,7 +430,7 @@ pub fn admit(current: Option<&Session>, game: &str, kind: Kind, device: &str) ->
 /// by the setting and by the XInput indices the PC's own pads leave free.
 pub fn players(handler_max: u32, setting: u32, free_pads: usize) -> Result<usize, String> {
     if free_pads == 0 {
-        return Err("All four XInput controller slots are taken by controllers on the PC: disconnect one to stream through Nucleus Co-op".into());
+        return Err("All four XInput controller slots are taken by controllers on the PC: disconnect one to stream through the co-op helper".into());
     }
     let count = (handler_max as usize)
         .min(setting.clamp(1, MAX_PLAYERS as u32) as usize)

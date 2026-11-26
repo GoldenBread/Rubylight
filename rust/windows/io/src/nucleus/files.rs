@@ -71,13 +71,13 @@ fn handlers(folder: &Path) -> Result<Vec<Handler>> {
         let text = match read_handler_text(&path) {
             Ok(text) => text,
             Err(error) => {
-                tracing::warn!(%file, error = %format!("{error:#}"), "Nucleus Co-op handler could not be read; skipped");
+                tracing::warn!(%file, error = %format!("{error:#}"), "Co-op handler could not be read; skipped");
                 continue;
             }
         };
         match handler::parse(&file, &text) {
             Ok(handler) => found.push(handler),
-            Err(error) => tracing::info!(%file, %error, "Nucleus Co-op handler skipped"),
+            Err(error) => tracing::info!(%file, %error, "Co-op handler skipped"),
         }
     }
     Ok(found)
@@ -157,7 +157,7 @@ fn read_list(path: &Path) -> Result<Option<String>> {
     const REPARSE_POINT: u32 = 0x400;
     let refused = || {
         anyhow::anyhow!(
-            "{} is a folder, a link or a device, not Nucleus Co-op's game list, so Rubylight does not read it: move it away, and Nucleus Co-op makes a new one",
+            "{} is a folder, a link or a device, not the co-op helper's game list, so Rubylight does not read it: move it away, and the co-op helper makes a new one",
             path.display()
         )
     };
@@ -191,7 +191,7 @@ fn read_list(path: &Path) -> Result<Option<String>> {
         .with_context(|| format!("reading {}", path.display()))?;
     ensure!(
         bytes.len() as u64 <= LIST_CAP,
-        "{} is larger than {} MB, far more than Nucleus Co-op's game list holds, so Rubylight does not read it: move it away, and Nucleus Co-op makes a new one",
+        "{} is larger than {} MB, far more than the co-op helper's game list holds, so Rubylight does not read it: move it away, and the co-op helper makes a new one",
         path.display(),
         LIST_CAP / (1024 * 1024)
     );
@@ -215,7 +215,7 @@ pub fn check_own(folder: &Path, setup: &Setup) -> Result<()> {
     let path = folder.join("handlers").join(setup.file());
     match read_existing(&path)? {
         Some(old) if !generic::owns(&old) => bail!(
-            "{} is not Rubylight's handler, so Rubylight leaves it as it is: move it out of Nucleus Co-op's handlers folder",
+            "{} is not Rubylight's handler, so Rubylight leaves it as it is: move it out of the co-op helper's handlers folder",
             path.display()
         ),
         _ => Ok(()),
@@ -243,12 +243,12 @@ pub fn write_own(folder: &Path, setup: &Setup) -> Result<Handler> {
         Inject::Runtime => {}
         Inject::None => tracing::warn!(
             exe = setup.exe_path,
-            "Nucleus Co-op: the game refused ProtoInput's input hooks every way, so Rubylight's handler injects none: a keyboard, mouse or pad on the PC can reach it too"
+            "Co-op helper: the game refused ProtoInput's input hooks every way, so Rubylight's handler injects none: a keyboard, mouse or pad on the PC can reach it too"
         ),
         way => tracing::info!(
             exe = setup.exe_path,
             way = way.name(),
-            "Nucleus Co-op: the game refused ProtoInput's input hooks before, so Rubylight's handler injects them another way"
+            "Co-op helper: the game refused ProtoInput's input hooks before, so Rubylight's handler injects them another way"
         ),
     }
     let text = setup.handler_of(Some(&owner));
@@ -264,7 +264,7 @@ pub fn write_own(folder: &Path, setup: &Setup) -> Result<Handler> {
             tracing::info!(
                 file,
                 exe = setup.exe_path,
-                "Nucleus Co-op: Rubylight's one-player handler written"
+                "Co-op helper: Rubylight's one-player handler written"
             );
         }
     }
@@ -433,7 +433,7 @@ fn epic_arguments_under(base: &Path, components: &[&str], exe: &str) -> Option<S
             Ok(Some(found)) => found,
             Ok(None) => return None,
             Err(error) => {
-                tracing::warn!(folder = %base.display(), error, "Nucleus Co-op: the Epic Games Launcher's manifests can't be read");
+                tracing::warn!(folder = %base.display(), error, "Co-op helper: the Epic Games Launcher's manifests can't be read");
                 return None;
             }
         };
@@ -441,7 +441,7 @@ fn epic_arguments_under(base: &Path, components: &[&str], exe: &str) -> Option<S
             Ok(files) => files,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
             Err(error) => {
-                tracing::warn!(folder = %resolved.display(), %error, "Nucleus Co-op: the Epic Games Launcher's manifests can't be read");
+                tracing::warn!(folder = %resolved.display(), %error, "Co-op helper: the Epic Games Launcher's manifests can't be read");
                 return None;
             }
         };
@@ -455,7 +455,7 @@ fn epic_arguments_under(base: &Path, components: &[&str], exe: &str) -> Option<S
                 {
                     Ok(arguments) => arguments,
                     Err(error) => {
-                        tracing::warn!(manifest = %path.display(), error, "Nucleus Co-op: an Epic Games Launcher manifest can't be used");
+                        tracing::warn!(manifest = %path.display(), error, "Co-op helper: an Epic Games Launcher manifest can't be used");
                         None
                     }
                 }
@@ -463,7 +463,7 @@ fn epic_arguments_under(base: &Path, components: &[&str], exe: &str) -> Option<S
     }) {
         Ok(arguments) => arguments,
         Err(error) => {
-            tracing::warn!(folder = %base.display(), error, "Nucleus Co-op: could not read Epic Games Launcher manifests as the signed-in user");
+            tracing::warn!(folder = %base.display(), error, "Co-op helper: could not read Epic Games Launcher manifests as the signed-in user");
             None
         }
     }
@@ -487,7 +487,7 @@ fn start_arguments_under(setup: &Setup, base: &Path, components: &[&str]) -> Str
         Some(epic) if !arguments.to_ascii_lowercase().contains("-epicportal") => {
             tracing::info!(
                 exe = setup.exe_path,
-                "Nucleus Co-op: an Epic game, started with the arguments its launcher gives it"
+                "Co-op helper: an Epic game, started with the arguments its launcher gives it"
             );
             format!("{arguments} {epic}").trim().to_string()
         }
@@ -564,7 +564,7 @@ pub fn refuse_inject(folder: &Path, exe: &str) -> Result<Inject> {
         exe,
         refused = refused.name(),
         next = next.name(),
-        "Nucleus Co-op: the game refused ProtoInput's input hooks; its next start gets the next way"
+        "Co-op helper: the game refused ProtoInput's input hooks; its next start gets the next way"
     );
     Ok(next)
 }
@@ -585,7 +585,7 @@ pub(super) fn add_game(folder: &Path, setup: &Setup) -> Result<()> {
     replace(folder, path, &new)?;
     tracing::info!(
         guid = setup.guid(),
-        "Nucleus Co-op: game added to its game list"
+        "Co-op helper: game added to its game list"
     );
     Ok(())
 }
@@ -658,14 +658,14 @@ pub fn remove_own(folder: &Path, own: &Handler) -> Result<()> {
     let list = list(folder);
     remove_game(folder, &own.guid).with_context(|| {
         format!(
-            "{} is removed, but {} still lists its game. Nucleus Co-op leaves a game whose handler is gone out of the list as it loads it, and Rubylight's next handler for the game takes the entry over",
+            "{} is removed, but {} still lists its game. The co-op helper leaves a game whose handler is gone out of the list as it loads it, and Rubylight's next handler for the game takes the entry over",
             path.display(),
             list.display()
         )
     })?;
     tracing::info!(
         file = own.file,
-        "Nucleus Co-op: Rubylight's handler removed, a hub handler replaces it or no game uses it"
+        "Co-op helper: Rubylight's handler removed, a hub handler replaces it or no game uses it"
     );
     Ok(())
 }
@@ -709,7 +709,7 @@ fn forget_games(appdata: &Path) -> Result<usize> {
         tracing::info!(
             forgotten,
             list = %path.display(),
-            "Nucleus Co-op: Rubylight's games removed from a list Nucleus Co-op does not read"
+            "Co-op helper: Rubylight's games removed from a list the co-op helper does not read"
         );
     }
     Ok(forgotten)

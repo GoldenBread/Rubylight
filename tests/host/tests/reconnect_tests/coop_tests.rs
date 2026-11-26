@@ -61,10 +61,13 @@ async fn co_op_launches_share_one_session_beside_the_running_app() -> Result<()>
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn refused_co_op_launches_answer_their_status_and_leave_nothing_pending() -> Result<()> {
     let (h, pc, id) = coop_harness().await?;
-    *pc.start_error.lock().unwrap() = Some("Nucleus Co-op did not start".into());
+    *pc.start_error.lock().unwrap() = Some("The co-op helper did not start".into());
     let failed = launch_app(&h, 0, id).await?;
     assert!(failed.contains("status_code=\"503\""), "{failed}");
-    assert!(failed.contains("Nucleus Co-op did not start"), "{failed}");
+    assert!(
+        failed.contains("The co-op helper did not start"),
+        "{failed}"
+    );
     assert_eq!(xml(&failed, "gamesession"), "0");
     *pc.start_error.lock().unwrap() = None;
     assert!(launch_app(&h, 1, id).await?.contains("status_code=\"200\""));
@@ -155,7 +158,7 @@ async fn webrtc_co_op_launches_take_seats_and_answer_refusals() -> Result<()> {
             butterpollo_stream::nvhttp::launch_webrtc(&host, request)
         })
     };
-    *pc.start_error.lock().unwrap() = Some("Nucleus Co-op did not start".into());
+    *pc.start_error.lock().unwrap() = Some("The co-op helper did not start".into());
     match webrtc(0).await?.err() {
         Some(WebRtcLaunchError::Failed(message)) => {
             assert!(message.contains("did not start"), "{message}")

@@ -135,7 +135,7 @@ impl Registry {
             Err(error) => {
                 let error = format!("{error:#}");
                 if self.newly_refused(Some(&error)) {
-                    tracing::warn!(error, "Nucleus Co-op: no co-op entries");
+                    tracing::warn!(error, "Co-op helper: no co-op entries");
                 }
                 return Vec::new();
             }
@@ -175,7 +175,7 @@ impl Registry {
                 .as_ref()
                 .is_none_or(|c| c.catalog.as_ref().err() != Some(error))
         {
-            tracing::warn!(folder = %folder.display(), %error, "Nucleus Co-op: the handlers and games did not load");
+            tracing::warn!(folder = %folder.display(), %error, "Co-op helper: the handlers and games did not load");
         }
         *cached = Some(Cached {
             at: Instant::now(),
@@ -204,7 +204,7 @@ impl Registry {
             Ok(Some(folder)) => Ok(folder),
             Ok(None) => Err(Refusal::unavailable(not_set_up())),
             Err(error) => Err(Refusal::unavailable(format!(
-                "Nucleus Co-op is not ready: {error:#}"
+                "The co-op helper is not ready: {error:#}"
             ))),
         }
     }
@@ -254,7 +254,7 @@ impl Registry {
             Err(error) => {
                 tracing::warn!(
                     error = format!("{error:#}"),
-                    "Nucleus Co-op: the folder left is refused, so what its sessions left stays there"
+                    "Co-op helper: the folder left is refused, so what its sessions left stays there"
                 );
                 return save();
             }
@@ -275,12 +275,12 @@ impl Registry {
         };
         if let Some(title) = self.running_title() {
             return Err(Refusal::busy(format!(
-                "Nucleus Co-op is running {title}: end that session first, then choose the folder"
+                "The co-op helper is running {title}: end that session first, then choose the folder"
             )));
         }
         pc.put_back(&old)
             .map_err(|error| Refusal::busy(format!("{error:#}")))?;
-        tracing::info!(folder = %old.display(), "Nucleus Co-op: what its sessions left is put back before the folder changes");
+        tracing::info!(folder = %old.display(), "Co-op helper: what its sessions left is put back before the folder changes");
         save()
     }
 
@@ -308,7 +308,7 @@ impl Registry {
             Ok(None) => return Err(Refusal::unavailable(not_set_up())),
             Err(error) => {
                 return Err(Refusal::unavailable(format!(
-                    "Nucleus Co-op is not ready: {error:#}"
+                    "The co-op helper is not ready: {error:#}"
                 )));
             }
         };
@@ -318,14 +318,14 @@ impl Registry {
             Err(std::sync::TryLockError::Poisoned(one)) => one.into_inner(),
             Err(std::sync::TryLockError::WouldBlock) => {
                 return Err(Refusal::busy(
-                    "A co-op or background stream is starting: open Nucleus Co-op once it has",
+                    "A co-op or background stream is starting: open the co-op helper once it has",
                 ));
             }
         };
         // Read with no launch being admitted, so a session can't slip in.
         if let Some(title) = self.running_title() {
             return Err(Refusal::busy(format!(
-                "Nucleus Co-op is running {title}: end that session first"
+                "The co-op helper is running {title}: end that session first"
             )));
         }
         let mut opened = self.opened.lock().unwrap_or_else(PoisonError::into_inner);
@@ -334,12 +334,12 @@ impl Registry {
         if let Some(window) = opened.as_ref() {
             let running = window.running().map_err(|error| {
                 Refusal::unavailable(format!(
-                    "Nucleus Co-op's window could not be read: {error:#}"
+                    "The co-op helper's window could not be read: {error:#}"
                 ))
             })?;
             if running {
                 return Err(Refusal::busy(
-                    "Nucleus Co-op is already open on the PC's screen: use it there, or close it here",
+                    "The co-op helper is already open on the PC's screen: use it there, or close it here",
                 ));
             }
             *opened = None;
@@ -347,20 +347,20 @@ impl Registry {
         match pc.running() {
             Ok(Some(pid)) => {
                 return Err(Refusal::busy(format!(
-                    "Nucleus Co-op is already running on the PC (process {pid}): close it there first"
+                    "The co-op helper is already running on the PC (process {pid}): close it there first"
                 )));
             }
             Ok(None) => {}
             Err(error) => {
                 return Err(Refusal::unavailable(format!(
-                    "Nucleus Co-op's processes could not be listed: {error:#}"
+                    "The co-op helper's processes could not be listed: {error:#}"
                 )));
             }
         }
         let window = pc.open(&folder).map_err(|error| {
-            Refusal::unavailable(format!("Nucleus Co-op did not open: {error:#}"))
+            Refusal::unavailable(format!("The co-op helper did not open: {error:#}"))
         })?;
-        tracing::info!(pid = window.pid(), folder = %folder.display(), "Nucleus Co-op: opened on the PC from the console");
+        tracing::info!(pid = window.pid(), folder = %folder.display(), "Co-op helper: opened on the PC from the console");
         *opened = Some(window);
         Ok(())
     }
@@ -385,7 +385,7 @@ impl Registry {
             }
             Err(error) => {
                 *kept = None;
-                tracing::debug!("Nucleus Co-op: whether the signed-in account elevates: {error:#}");
+                tracing::debug!("Co-op helper: whether the signed-in account elevates: {error:#}");
                 None
             }
         }
@@ -414,7 +414,7 @@ impl Registry {
         if let Some(window) = opened.as_ref() {
             let running = window.running().map_err(|error| {
                 Refusal::unavailable(format!(
-                    "Nucleus Co-op's window could not be read: {error:#}"
+                    "The co-op helper's window could not be read: {error:#}"
                 ))
             })?;
             if running {
@@ -428,11 +428,11 @@ impl Registry {
         }
         match self.pc().running() {
             Ok(Some(pid)) => Err(Refusal::busy(format!(
-                "Nucleus Co-op (process {pid}) was not opened from this console: close it on the PC"
+                "The co-op helper (process {pid}) was not opened from this console: close it on the PC"
             ))),
             Ok(None) => Ok(false),
             Err(error) => Err(Refusal::unavailable(format!(
-                "Nucleus Co-op's processes could not be listed: {error:#}"
+                "The co-op helper's processes could not be listed: {error:#}"
             ))),
         }
     }
@@ -447,12 +447,15 @@ impl Registry {
         };
         let pid = window.pid();
         let refuse = |error: anyhow::Error| {
-            tracing::warn!(pid, error = %format!("{error:#}"), "Nucleus Co-op: the console's window did not close for a session");
-            Refusal::unavailable(format!("Nucleus Co-op did not start {title}: {error:#}"))
+            tracing::warn!(pid, error = %format!("{error:#}"), "Co-op helper: the console's window did not close for a session");
+            Refusal::unavailable(format!(
+                "The co-op helper did not start {title}: {}",
+                admit::mid_sentence(&format!("{error:#}"))
+            ))
         };
-        let running = window
-            .running()
-            .with_context(|| format!("Nucleus Co-op's window (process {pid}) could not be read"));
+        let running = window.running().with_context(|| {
+            format!("The co-op helper's window (process {pid}) could not be read")
+        });
         if !running.map_err(refuse)? {
             *opened = None;
             return Ok(());

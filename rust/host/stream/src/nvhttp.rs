@@ -401,7 +401,7 @@ async fn applist(
             Ok(coop) => coop,
             // The user's apps still list; only the co-op entries are missing.
             Err(error) => {
-                tracing::error!(%error, "Nucleus Co-op: the co-op entries did not load");
+                tracing::error!(%error, "Co-op helper: the co-op entries did not load");
                 Vec::new()
             }
         }

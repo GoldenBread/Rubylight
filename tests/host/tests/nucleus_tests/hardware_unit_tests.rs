@@ -334,12 +334,12 @@ fn the_click_is_timed_from_nucleus_start() {
     let line = |s: u64, text: &str| (t0 + Duration::from_secs(s), text.to_string());
     let lines = [
         line(0, "INFO profile written"),
-        line(1, "INFO Nucleus Co-op started pid=4"),
+        line(1, "INFO The co-op helper started pid=4"),
         line(
             5,
-            "WARN Nucleus Co-op shows \"Warning: x\" on the PC's screen",
+            "WARN The co-op helper shows \"Warning: x\" on the PC's screen",
         ),
-        line(9, "INFO Nucleus Co-op profile Rubylight clicked"),
+        line(9, "INFO co-op profile Rubylight clicked"),
     ];
     assert_eq!(click_delay(&lines).unwrap(), Duration::from_secs(8));
     assert!(click_delay(&lines[..3]).is_err());

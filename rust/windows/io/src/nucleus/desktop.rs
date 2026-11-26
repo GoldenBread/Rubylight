@@ -352,7 +352,7 @@ impl Drop for Raised {
                 && let Err(error) =
                     SetWindowPos(self.window, Some(HWND_NOTOPMOST), 0, 0, 0, 0, flags)
             {
-                tracing::warn!(%error, "Nucleus Co-op stays above the PC's other windows after the click on its profile entry");
+                tracing::warn!(%error, "The co-op helper stays above the PC's other windows after the click on its profile entry");
                 return;
             }
             let Some((above, above_topmost)) = self.below else {
@@ -365,7 +365,7 @@ impl Drop for Raised {
                 && SetWindowPos(self.window, Some(above), 0, 0, 0, 0, flags).is_ok();
             if !back {
                 tracing::warn!(
-                    "the window over Nucleus Co-op closed during the click on its profile entry, so Nucleus Co-op stays above the PC's other windows"
+                    "the window over the co-op helper closed during the click on its profile entry, so the co-op helper stays above the PC's other windows"
                 );
             }
         }
@@ -542,7 +542,7 @@ impl Desktop for Win32 {
             [] => Ok(None),
             [one] => Ok(Some(*one)),
             _ => bail!(
-                "Nucleus Co-op shows {} entries titled {text}: delete the extra profiles of the game in Nucleus Co-op",
+                "The co-op helper shows {} entries titled {text}: delete the extra profiles of the game in the co-op helper",
                 found.len()
             ),
         }
@@ -553,7 +553,7 @@ impl Desktop for Win32 {
         }
         crate::input::follow_input_desktop();
         let Some(automation) = Automation::new() else {
-            bail!("UI Automation is unavailable, so Nucleus Co-op's buttons can't be found");
+            bail!("UI Automation is unavailable, so the co-op helper's buttons can't be found");
         };
         for window in top_level(Some(processes))? {
             if !window.visible {
@@ -596,7 +596,7 @@ impl Desktop for Win32 {
         ensure!(
             // SAFETY: as above.
             unsafe { ClientToScreen(label, &mut point) }.as_bool(),
-            "Nucleus Co-op's profile entry closed"
+            "The co-op helper's profile entry closed"
         );
         // WinForms reports a click only when the point is still the label's
         // window as it handles the release (WindowFromPoint). A window over
@@ -609,14 +609,17 @@ impl Desktop for Win32 {
         } else {
             // SAFETY: as above; a closed label has no root.
             let root = unsafe { GetAncestor(label, GA_ROOT) };
-            ensure!(!root.is_invalid(), "Nucleus Co-op's profile entry closed");
+            ensure!(
+                !root.is_invalid(),
+                "The co-op helper's profile entry closed"
+            );
             let raised = Raised::new(root)?;
             let deadline = std::time::Instant::now() + RAISE_WAIT;
             // SAFETY: as above.
             while unsafe { WindowFromPoint(point) } != label {
                 ensure!(
                     std::time::Instant::now() < deadline,
-                    "another window stays over Nucleus Co-op's profile list on the PC, even with Nucleus Co-op raised above the others"
+                    "another window stays over the co-op helper's profile list on the PC, even with the co-op helper raised above the others"
                 );
                 std::thread::sleep(std::time::Duration::from_millis(15));
             }
@@ -641,14 +644,14 @@ impl Desktop for Win32 {
         // Sent, not posted: Nucleus Co-op handles both while it is raised.
         ensure!(
             send(WM_LBUTTONDOWN, LEFT_BUTTON, 1000),
-            "Nucleus Co-op did not answer the click on its profile entry"
+            "The co-op helper did not answer the click on its profile entry"
         );
         // The release runs the click, and Nucleus Co-op loads the profile in
         // it, a message box of its own included: one that takes longer than
         // the wait is under way. One that never ran shows as the profile
         // still listed, and the session clicks it again.
         if !send(WM_LBUTTONUP, 0, 1000) {
-            tracing::info!("Nucleus Co-op is still handling the click on its profile entry");
+            tracing::info!("The co-op helper is still handling the click on its profile entry");
         }
         Ok(())
     }

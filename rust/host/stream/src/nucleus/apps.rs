@@ -218,7 +218,7 @@ fn prepared(pc: &dyn Pc, mut setup: Setup) -> Result<Setup, NoRun> {
         tracing::debug!(
             stub = setup.exe_path,
             shipping,
-            "Nucleus Co-op: an Unreal game's stub starts its Shipping .exe"
+            "Co-op helper: an Unreal game's stub starts its Shipping .exe"
         );
         setup.exe_path = shipping;
     }

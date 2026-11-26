@@ -51,7 +51,7 @@ pub fn restore_nucleus_layers(config: &std::path::Path) -> bool {
             .map(|path| path.to_string_lossy().into_owned())
             .unwrap_or_default(),
         Err(error) => {
-            tracing::error!(error = %format!("{error:#}"), "Nucleus Co-op: the settings did not load, so the compatibility settings an earlier session changed were not put back");
+            tracing::error!(error = %format!("{error:#}"), "Co-op helper: the settings did not load, so the compatibility settings an earlier session changed were not put back");
             return false;
         }
     };
@@ -64,7 +64,7 @@ pub fn restore_nucleus_layers(config: &std::path::Path) -> bool {
         let folder = match folder {
             Ok(folder) => folder,
             Err(error) => {
-                tracing::error!(error = %format!("{error:#}"), "Nucleus Co-op: the settings an earlier session changed were not put back");
+                tracing::error!(error = %format!("{error:#}"), "Co-op helper: the settings an earlier session changed were not put back");
                 restored = false;
                 continue;
             }
@@ -82,7 +82,7 @@ fn restore_layers_at_console(folder: &crate::nucleus::install::Left) -> bool {
     match crate::nucleus::layers::restore_at_console(folder.folder()) {
         Ok(AtConsole::Done) => {}
         Ok(AtConsole::Busy) => tracing::info!(
-            "Nucleus Co-op: a session runs for the user at the console and puts its compatibility settings back itself"
+            "Co-op helper: a session runs for the user at the console and puts its compatibility settings back itself"
         ),
         Ok(AtConsole::NoUser { why, waiting }) => {
             if !waiting.is_empty() {
@@ -94,12 +94,12 @@ fn restore_layers_at_console(folder: &crate::nucleus::install::Left) -> bool {
                 tracing::warn!(
                     why,
                     files,
-                    "Nucleus Co-op: compatibility settings an earlier session changed wait for their user to sign in at the console"
+                    "Co-op helper: compatibility settings an earlier session changed wait for their user to sign in at the console"
                 );
             }
         }
         Err(error) => {
-            tracing::error!(error = %format!("{error:#}"), "Nucleus Co-op: the compatibility settings an earlier session changed were not put back");
+            tracing::error!(error = %format!("{error:#}"), "Co-op helper: the compatibility settings an earlier session changed were not put back");
             return false;
         }
     }
@@ -113,16 +113,16 @@ fn restore_nucleus_settings(folder: &crate::nucleus::install::Left) -> bool {
     match nucleus_settings_left(folder.folder(), crate::nucleus::session::running) {
         Ok(Some(0)) => {}
         Ok(None) => tracing::info!(
-            "Nucleus Co-op runs or a session holds its settings; they are put back when it ends or before the next"
+            "The co-op helper runs or a session holds its settings; they are put back when it ends or before the next"
         ),
         Ok(Some(changed)) => tracing::info!(
             changed,
-            "Nucleus Co-op: the settings an earlier session changed are back"
+            "Co-op helper: the settings an earlier session changed are back"
         ),
         Err(error) => {
             tracing::error!(
                 error = %format!("{error:#}"),
-                "Nucleus Co-op: the settings an earlier session changed were not put back"
+                "Co-op helper: the settings an earlier session changed were not put back"
             );
             return false;
         }
@@ -138,7 +138,7 @@ fn nucleus_settings_left(
     running: impl FnOnce() -> Result<Option<u32>>,
 ) -> Result<Option<usize>> {
     if let Some(pid) = running()? {
-        tracing::info!(pid, "Nucleus Co-op runs");
+        tracing::info!(pid, "The co-op helper runs");
         return Ok(None);
     }
     crate::nucleus::files::restore_settings_left(folder)

@@ -300,14 +300,14 @@ impl Locks {
             .with_context(|| format!("reading {}", folder.display()))?;
         anyhow::ensure!(
             metadata.file_attributes() & REPARSE_POINT == 0,
-            "{} is a link to elsewhere, not Rubylight's folder, so Rubylight starts no Nucleus Co-op session: delete it",
+            "{} is a link to elsewhere, not Rubylight's folder, so Rubylight starts no co-op session: delete it",
             folder.display()
         );
         let owner = crate::process::open_file_owner(&open)
             .with_context(|| format!("reading the owner of {}", folder.display()))?;
         anyhow::ensure!(
             self.owners.contains(&owner),
-            "{} is owned by {owner}, not by SYSTEM or Administrators, so another program may hold or replace its locks; Rubylight starts no Nucleus Co-op session until it is deleted",
+            "{} is owned by {owner}, not by SYSTEM or Administrators, so another program may hold or replace its locks; Rubylight starts no co-op session until it is deleted",
             folder.display()
         );
         // Also repairs the permissions of a lock file there already.
@@ -332,7 +332,7 @@ impl Locks {
             .with_context(|| format!("reading {}", path.display()))?;
         anyhow::ensure!(
             metadata.is_file() && metadata.file_attributes() & REPARSE_POINT == 0,
-            "{} is a link or not a file, not Rubylight's lock, so Rubylight starts no Nucleus Co-op session: delete it",
+            "{} is a link or not a file, not Rubylight's lock, so Rubylight starts no co-op session: delete it",
             path.display()
         );
         drop(open);
@@ -362,7 +362,7 @@ impl Lock {
     pub(super) fn take(journal: &Path, wait: Duration) -> Result<Self> {
         Self::acquire(&Locks::installed(), journal, wait)?.with_context(|| {
             format!(
-                "{} stays in use: a Nucleus Co-op session or the Rubylight service is putting back the settings it keeps. Start the stream again once that session ends",
+                "{} stays in use: a co-op session or the Rubylight service is putting back the settings it keeps. Start the stream again once that session ends",
                 journal.display()
             )
         })
@@ -440,20 +440,20 @@ impl Guard {
                 tracing::info!(
                     executable = self.snapshot.executable,
                     changed,
-                    "Nucleus Co-op: the game's compatibility settings are back as they were"
+                    "Co-op helper: the game's compatibility settings are back as they were"
                 );
                 if let Err(error) = remove_journal(&self.journal) {
                     tracing::warn!(
                         error = format!("{error:#}"),
                         file = %self.journal.display(),
-                        "Nucleus Co-op: the restored compatibility settings' file was not removed"
+                        "Co-op helper: the restored compatibility settings' file was not removed"
                     );
                 }
             }
             Err(error) => tracing::error!(
                 error = format!("{error:#}"),
                 file = %self.journal.display(),
-                "Nucleus Co-op: the game's compatibility settings were not put back; the next session tries again"
+                "Co-op helper: the game's compatibility settings were not put back; the next session tries again"
             ),
         }
     }
@@ -475,7 +475,7 @@ fn restore_left(layers: &mut dyn Layers, journal: &Path) -> Result<()> {
         Err(error) => {
             return Err(error).with_context(|| {
                 format!(
-                    "reading {}, which keeps the compatibility settings an earlier Nucleus Co-op session changed",
+                    "reading {}, which keeps the compatibility settings an earlier co-op session changed",
                     journal.display()
                 )
             });
@@ -486,7 +486,7 @@ fn restore_left(layers: &mut dyn Layers, journal: &Path) -> Result<()> {
     if text.iter().all(u8::is_ascii_whitespace) {
         tracing::warn!(
             file = %journal.display(),
-            "Nucleus Co-op: the compatibility settings' file of an earlier session is empty; removing it"
+            "Co-op helper: the compatibility settings' file of an earlier session is empty; removing it"
         );
         return remove_journal(journal);
     }
@@ -494,20 +494,20 @@ fn restore_left(layers: &mut dyn Layers, journal: &Path) -> Result<()> {
     // the settings it kept left as Nucleus set them.
     let left = serde_json::from_slice::<Snapshot>(&text).map_err(|error| {
         anyhow::anyhow!(
-            "{} can't be read ({error}): delete it, then start the stream again. The compatibility settings it kept stay as Nucleus Co-op set them",
+            "{} can't be read ({error}): delete it, then start the stream again. The compatibility settings it kept stay as the co-op helper set them",
             journal.display()
         )
     })?;
     let changed = restore(layers, &left).with_context(|| {
         format!(
-            "the compatibility settings an earlier Nucleus Co-op session changed were not put back from {}; deleting it lets sessions start without putting them back",
+            "the compatibility settings an earlier co-op session changed were not put back from {}; deleting it lets sessions start without putting them back",
             journal.display()
         )
     })?;
     tracing::info!(
         executable = left.executable,
         changed,
-        "Nucleus Co-op: an earlier session's compatibility settings are back as they were"
+        "Co-op helper: an earlier session's compatibility settings are back as they were"
     );
     remove_journal(journal)
 }
@@ -607,7 +607,7 @@ fn leave_with(
 ) -> Result<()> {
     let busy = || {
         anyhow::anyhow!(
-            "A Nucleus Co-op session runs from {}: end it, then choose the folder again",
+            "A co-op session runs from {}: end it, then choose the folder again",
             folder.display()
         )
     };
@@ -619,7 +619,7 @@ fn leave_with(
     }
     if let Some(left) = waiting(folder)?.first() {
         anyhow::bail!(
-            "{} keeps the compatibility settings a Nucleus Co-op session changed for another Windows account: sign in to this PC as that account, so Rubylight puts them back, then choose the folder again",
+            "{} keeps the compatibility settings a co-op session changed for another Windows account: sign in to this PC as that account, so Rubylight puts them back, then choose the folder again",
             left.display()
         );
     }

@@ -269,7 +269,7 @@ fn play_covered_is_pressed_later_and_a_press_that_starts_nothing_says_so() {
     assert_eq!(
         runner.step(t0 + START_TIMEOUT),
         Some(End::Failed(
-            "Nucleus Co-op did not start Game: covered".into()
+            "The co-op helper did not start Game: covered".into()
         ))
     );
     assert!(!runner.played);
@@ -355,7 +355,7 @@ fn a_failed_look_for_the_list_after_the_click_fails_the_pass() {
     assert_eq!(
         runner.step(t0 + FAILED_PASSES * PERIOD),
         Some(End::Failed(
-            "looking for Nucleus Co-op's profile list: two labels".into()
+            "looking for the co-op helper's profile list: two labels".into()
         ))
     );
 }
@@ -421,7 +421,7 @@ fn a_box_nucleus_shows_after_the_click_is_closed_and_the_profile_clicked_again()
     assert_eq!(
         runner.step(at),
         Some(End::Failed(format!(
-            "Nucleus Co-op did not start Game: after the last click on the profile Rubylight it showed its own untitled message box, whose text can't be read (in Nucleus Co-op 2.4.2 it says the profile can't be loaded, or that the game's folder is missing) over its window ({closed} closed since the launch)"
+            "The co-op helper did not start Game: after the last click on the profile Rubylight it showed its own untitled message box, whose text can't be read (in the co-op helper 2.4.2 it says the profile can't be loaded, or that the game's folder is missing) over its window ({closed} closed since the launch)"
         )))
     );
 
@@ -442,7 +442,7 @@ fn a_box_nucleus_shows_after_the_click_is_closed_and_the_profile_clicked_again()
     assert_eq!(
         runner.step(t0 + RECLICK + START_TIMEOUT),
         Some(End::Failed(
-            "Nucleus Co-op did not start Game: it still shows its setup screen with the profile Rubylight, which starts the game once every player has a controller there".into()
+            "The co-op helper did not start Game: it still shows its setup screen with the profile Rubylight, which starts the game once every player has a controller there".into()
         ))
     );
 }
@@ -471,7 +471,7 @@ fn a_profile_nucleus_does_not_play_says_where_it_stopped() {
     assert_eq!(
         runner.step(t0 + START_TIMEOUT),
         Some(End::Failed(
-            "Nucleus Co-op did not start Game: it still shows its setup screen with the profile Rubylight, which starts the game once every player has a controller there".into()
+            "The co-op helper did not start Game: it still shows its setup screen with the profile Rubylight, which starts the game once every player has a controller there".into()
         ))
     );
     assert!(screen.0.lock().unwrap().clicks.len() > 1);
@@ -485,7 +485,7 @@ fn a_profile_nucleus_does_not_play_says_where_it_stopped() {
     assert_eq!(
         runner.step(t0 + START_TIMEOUT),
         Some(End::Failed(
-            "Nucleus Co-op did not start Game after loading the profile Rubylight".into()
+            "The co-op helper did not start Game after loading the profile Rubylight".into()
         ))
     );
 }
@@ -497,7 +497,7 @@ fn no_profile_entry_in_time_fails_says_what_to_do_and_stops_nucleus() {
     let mut runner = runner(1, &screen, &probe, t0);
     assert_eq!(runner.step(t0 + START_TIMEOUT / 2), None);
     let end = runner.step(t0 + START_TIMEOUT).unwrap();
-    assert_eq!(end, End::Failed("Nucleus Co-op showed no window".into()));
+    assert_eq!(end, End::Failed("The co-op helper showed no window".into()));
     let shared = runner.shared.clone();
     runner.finish(end.clone());
     assert_eq!(shared.session.lock().unwrap().phase, Phase::Ended(end));

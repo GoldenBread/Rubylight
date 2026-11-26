@@ -285,11 +285,11 @@ impl Setup {
                 "Game.ProtoInput.InjectRuntime_EasyHookMethod = true;",
             ],
             Inject::Startup => &[
-                "// The game refused ProtoInput's hooks once it ran, so Nucleus Co-op injects them as it starts the game.",
+                "// The game refused ProtoInput's hooks once it ran, so the co-op helper injects them as it starts the game.",
                 "Game.ProtoInput.InjectStartup = true;",
             ],
             Inject::Stealth => &[
-                "// The game refused ProtoInput's hooks once it ran and as it started, so Nucleus Co-op injects them from one of its own threads.",
+                "// The game refused ProtoInput's hooks once it ran and as it started, so the co-op helper injects them from one of its own threads.",
                 "Game.ProtoInput.InjectStartup = false;",
                 "Game.ProtoInput.InjectRuntime_EasyHookStealthMethod = true;",
             ],
@@ -334,7 +334,7 @@ impl Setup {
         // its window parked right of the desktop (#59). It never gave such a
         // game its pad, which it reads only when really in front.
         let unhooked = [
-            "// The game refused ProtoInput's input hooks every way Nucleus Co-op injects them, so none are injected and a keyboard, mouse or pad on the PC can reach it too. It knows when it has focus, so it lets go of the PC's mouse when it loses it.",
+            "// The game refused ProtoInput's input hooks every way the co-op helper injects them, so none are injected and a keyboard, mouse or pad on the PC can reach it too. It knows when it has focus, so it lets go of the PC's mouse when it loses it.",
             // Nucleus 2.4.2 lists XInput pads on its setup screen only for a
             // handler with ProtoInput's XInput hook or this switch
             // (`DevicesFunctions.UpdateDevices`). Without either it never

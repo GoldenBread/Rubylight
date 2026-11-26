@@ -387,7 +387,7 @@ fn background_mode_saves_only_nucleus_and_earlier_modes_become_it() {
     );
     assert!(
         error.contains(
-            "background_mode = rdp is not a mode: Nucleus Co-op is the only background mode (nucleus)"
+            "background_mode = rdp is not a mode: the co-op helper is the only background mode (nucleus)"
         ),
         "{error}"
     );

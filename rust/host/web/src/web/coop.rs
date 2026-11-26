@@ -47,7 +47,7 @@ pub(super) async fn handle(h: &Shared, method: &Method, path: &str, data: &Value
             let Some(path) = data.get("path").and_then(Value::as_str) else {
                 return error(
                     StatusCode::BAD_REQUEST,
-                    "path must be the folder Nucleus Co-op was unpacked into",
+                    "path must be the folder the co-op helper was unpacked into",
                 );
             };
             let path = path.trim().to_string();
@@ -151,9 +151,9 @@ pub(super) fn choose_with(
     h.nucleus.change_folder(&configured(h), path, save)?;
     let install = checked.unwrap_or_else(|| h.nucleus.install(path));
     if path.is_empty() {
-        tracing::info!("Nucleus Co-op: folder forgotten in the console");
+        tracing::info!("Co-op helper: folder forgotten in the console");
     } else {
-        tracing::info!(folder = path, "Nucleus Co-op: folder chosen in the console");
+        tracing::info!(folder = path, "Co-op helper: folder chosen in the console");
     }
     Ok(install_json(&install, path, h.nucleus.notice(path)))
 }
@@ -163,7 +163,7 @@ pub(super) fn choose(h: &Shared, path: &str) -> Result<Value, Refusal> {
         super::config::save_setting(h, "nucleus_path", |_| Ok(path.to_string())).map_err(|e| {
             Refusal {
                 status: 500,
-                message: format!("Saving the Nucleus Co-op folder failed: {e:#}"),
+                message: format!("Saving the co-op helper's folder failed: {e:#}"),
             }
         })
     })

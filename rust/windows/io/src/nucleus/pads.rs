@@ -24,9 +24,9 @@ const POLL: Duration = Duration::from_millis(20);
 pub const RETIRE_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// What the stream shows when a player's keyboard or mouse input arrives.
-pub const KEYBOARD_MOUSE_LIMIT: &str = "Nucleus Co-op streams take controller input only: keyboard, mouse, touch and pen cannot reach one player's game instance yet";
+pub const KEYBOARD_MOUSE_LIMIT: &str = "Co-op streams take controller input only: keyboard, mouse, touch and pen cannot reach one player's game instance yet";
 /// What the stream shows when a player uses a second controller.
-pub const SECOND_CONTROLLER_LIMIT: &str = "Each Nucleus Co-op player has one controller: only this device's first controller reaches its game instance";
+pub const SECOND_CONTROLLER_LIMIT: &str = "Each co-op player has one controller: only this device's first controller reaches its game instance";
 /// The stream's warning for a controller on the PC at a lower XInput index
 /// than a player's pad ([`plug`]).
 pub const CONTROLLER_AHEAD: &str = "nucleus_controller_ahead";
@@ -127,14 +127,12 @@ impl Pads for SessionPads {
             if let Some(thread) = thread {
                 thread
                     .stop_within(deadline.saturating_duration_since(Instant::now()))
-                    .context(
-                        "an earlier Nucleus Co-op session's controllers are still plugged in",
-                    )?;
+                    .context("an earlier co-op session's controllers are still plugged in")?;
             }
             plugged().retain(|p| !p.thread.ptr_eq(&weak));
             tracing::info!(
                 xinput = ?held,
-                "Nucleus Co-op: an earlier session's controllers unplugged"
+                "Co-op helper: an earlier session's controllers unplugged"
             );
             indices.extend(held);
         }
@@ -162,7 +160,7 @@ impl Pads for SessionPads {
         let mut plugged = plugged();
         match stuck {
             Some(error) => {
-                tracing::warn!("Nucleus Co-op: {error:#}");
+                tracing::warn!("Co-op helper: {error:#}");
                 if let Some(set) = plugged.iter_mut().find(|p| p.thread.ptr_eq(&own)) {
                     set.abandoned = Some(self.thread.clone());
                 }
@@ -181,7 +179,7 @@ pub fn virtual_pads(
     warnings: Arc<Warnings>,
 ) -> Result<SessionPads> {
     let thread = GamepadThread::new(policy.session_pad, policy, warnings.clone())
-        .context("start the virtual controllers for Nucleus Co-op")?;
+        .context("start the virtual controllers for the co-op helper")?;
     Ok(session_pads(thread, warnings))
 }
 
@@ -293,7 +291,7 @@ pub fn released(xinput: &mut dyn XInput, release: impl FnOnce() -> Result<u32>) 
                 before,
                 now,
                 plugged,
-                "Nucleus Co-op: some released controllers were not XInput controllers"
+                "Co-op helper: some released controllers were not XInput controllers"
             );
             return Ok(());
         }
@@ -315,7 +313,7 @@ pub fn plug(
 ) -> Result<Vec<u8>> {
     ensure!(
         (1..=MAX_PLAYERS).contains(&players),
-        "a Nucleus Co-op session has 1 to {MAX_PLAYERS} players, not {players}"
+        "a co-op session has 1 to {MAX_PLAYERS} players, not {players}"
     );
     let retired = pads.retire_earlier()?;
     let deadline = Instant::now() + timeout;
@@ -329,7 +327,7 @@ pub fn plug(
         };
         ensure!(
             Instant::now() < deadline,
-            "an earlier Nucleus Co-op session's virtual controller still holds XInput slot {}: start the stream again",
+            "an earlier co-op session's virtual controller still holds XInput slot {}: start the stream again",
             index + 1
         );
         std::thread::sleep(POLL);
@@ -363,18 +361,18 @@ pub fn plug(
             );
             ensure!(
                 Instant::now() < deadline,
-                "Player {}'s virtual controller did not reach XInput: Nucleus Co-op needs Xbox controllers, so check the virtual gamepad driver's Xbox profile",
+                "Player {}'s virtual controller did not reach XInput: the co-op helper needs Xbox controllers, so check the virtual gamepad driver's Xbox profile",
                 slot + 1
             );
             std::thread::sleep(POLL);
         };
-        tracing::info!(slot, xinput = index, "Nucleus Co-op player controller");
+        tracing::info!(slot, xinput = index, "Co-op player controller");
         indices.push(index);
         // Also those of a start that fails later, should its pads outlive it.
         pads.took(&indices);
     }
     if let Some(message) = ahead(xinput.connected()?, &indices) {
-        tracing::warn!("Nucleus Co-op: {message}");
+        tracing::warn!("Co-op helper: {message}");
         pads.warn(CONTROLLER_AHEAD, &message);
     }
     Ok(indices)

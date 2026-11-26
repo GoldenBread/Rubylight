@@ -17,7 +17,7 @@ impl Registry {
             .ends_with(butterpollo_session::state::SECOND_SCREEN_SUFFIX)
         {
             return Err(Refusal::busy(format!(
-                "{} plays on this device's first screen: a second screen takes no Nucleus Co-op seat",
+                "{} plays on this device's first screen: a second screen takes no co-op seat",
                 game.app().name
             )));
         }
@@ -35,7 +35,7 @@ impl Registry {
             message: format!(
                 "{} can't stream in the background: {}",
                 game.app().name,
-                refusal.message
+                mid_sentence(&refusal.message)
             ),
             ..refusal
         })
@@ -67,7 +67,7 @@ impl Registry {
         let folder = self.folder(pc.as_ref(), &configured)?;
         let catalog = self.catalog(&folder, true).map_err(|error| {
             Refusal::unavailable(format!(
-                "Nucleus Co-op's handlers and games did not load: {error}"
+                "The co-op helper's handlers and games did not load: {error}"
             ))
         })?;
         let app = request.game.app();
@@ -119,7 +119,7 @@ impl Registry {
                     Refusal::unavailable(format!("the session has no slot {slot}"))
                 })?;
                 *holder = Some(request.launch.into());
-                tracing::info!(session = id, ?kind, slot, client = %client.name, title = %app.name, "Nucleus Co-op: a player joined");
+                tracing::info!(session = id, ?kind, slot, client = %client.name, title = %app.name, "Co-op helper: a player joined");
                 Ok(Seat { session: id, slot })
             }
             Admit::Start => {
@@ -134,12 +134,12 @@ impl Registry {
                 // XInput slot, and the game would read that one (#56).
                 (request.release_parked)().map_err(|error| {
                     Refusal::unavailable(format!(
-                        "Nucleus Co-op could not unplug the controllers of streams that ended: {error:#}"
+                        "The co-op helper could not unplug the controllers of streams that ended: {error:#}"
                     ))
                 })?;
                 let free = pc.free_pads().map_err(|error| {
                     Refusal::unavailable(format!(
-                        "Nucleus Co-op could not count the free controller slots: {error:#}"
+                        "The co-op helper could not count the free controller slots: {error:#}"
                     ))
                 })?;
                 let players = match (kind, &found) {
@@ -159,7 +159,7 @@ impl Registry {
                 };
                 let refused = |error: String| {
                     Refusal::unavailable(format!(
-                        "Nucleus Co-op did not start {}: {error}",
+                        "The co-op helper did not start {}: {error}",
                         app.name
                     ))
                 };
@@ -187,7 +187,7 @@ impl Registry {
                 let copy = match run {
                     Run::User => Some(pc.user_copy(&folder).map_err(|error| {
                         refused(format!(
-                            "the signed-in user's own copy of Nucleus Co-op was not made: {error:#}"
+                            "the signed-in user's own copy of the co-op helper was not made: {error:#}"
                         ))
                     })?),
                     Run::Elevated => None,
@@ -199,7 +199,7 @@ impl Registry {
                 let mut why = String::new();
                 for own in stale {
                     if let Err(error) = pc.remove_own(&folder, copy.as_deref(), own) {
-                        tracing::error!(file = own.file, error = %format!("{error:#}"), "Nucleus Co-op: Rubylight's replaced or unused handler was not fully removed");
+                        tracing::error!(file = own.file, error = %format!("{error:#}"), "Co-op helper: Rubylight's replaced or unused handler was not fully removed");
                         kept.push(own.file.as_str());
                         why = format!("{error:#}");
                     }
@@ -208,14 +208,12 @@ impl Registry {
                     [] => {}
                     [file] => request.warnings.set(
                         HANDLER_NOT_REMOVED,
-                        format!(
-                            "Rubylight's Nucleus Co-op handler {file} was not fully removed: {why}"
-                        ),
+                        format!("Rubylight's co-op handler {file} was not fully removed: {why}"),
                     ),
                     files => request.warnings.set(
                         HANDLER_NOT_REMOVED,
                         format!(
-                            "Rubylight's Nucleus Co-op handlers {} were not fully removed: {why}",
+                            "Rubylight's co-op handlers {} were not fully removed: {why}",
                             files.join(", ")
                         ),
                     ),
@@ -242,11 +240,11 @@ impl Registry {
                                 )
                             })
                             .map_err(|error| {
-                            Refusal::unavailable(format!(
-                                "Rubylight's Nucleus Co-op handler for {} was not written: {error:#}",
-                                app.name
-                            ))
-                        })?,
+                                Refusal::unavailable(format!(
+                                    "Rubylight's co-op handler for {} was not written: {error:#}",
+                                    app.name
+                                ))
+                            })?,
                         setup.steam_app,
                     ),
                 };
@@ -289,7 +287,7 @@ impl Registry {
                         audio: request.instances.clone(),
                     },
                 );
-                tracing::info!(session = id, ?kind, players, game = %handler.guid, own = handler.own, ?run, client = %client.name, title = %app.name, "Nucleus Co-op: session started");
+                tracing::info!(session = id, ?kind, players, game = %handler.guid, own = handler.own, ?run, client = %client.name, title = %app.name, "Co-op helper: session started");
                 Ok(Seat {
                     session: id,
                     slot: 0,
@@ -305,7 +303,21 @@ fn log_background_mapping() {
     static ONCE: std::sync::Once = std::sync::Once::new();
     ONCE.call_once(|| {
         tracing::info!(
-            "Nucleus Co-op: background_stream (device) and background-stream (app) now run background streams in Nucleus Co-op, which needs a handler for the game"
+            "Co-op helper: background_stream (device) and background-stream (app) now run background streams in the co-op helper, which needs a handler for the game"
         );
     });
+}
+
+/// `message` as it reads after a colon: its neutral lead word lowercased, any
+/// other start (a game's title) kept as it is.
+pub(super) fn mid_sentence(message: &str) -> String {
+    for (lead, lower) in [
+        ("The co-op helper", "the co-op helper"),
+        ("Co-op ", "co-op "),
+    ] {
+        if let Some(rest) = message.strip_prefix(lead) {
+            return format!("{lower}{rest}");
+        }
+    }
+    message.to_owned()
 }
