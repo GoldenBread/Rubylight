@@ -424,6 +424,13 @@ Its drawing of D3D11VA pictures from the decoder's own textures, with the decode
 textures made shader-readable on Intel GPUs as V+ does, follows the same d3d11va.cpp;
 the HDR tone map following HDR10+ metadata or the measured frame peak follows V+'s
 plvk.cpp and libplacebo's peak detection defaults (client/protocol/desktop-media/src/stream/direct.rs).
+Nightjar's button hints that follow the connected controller (Xbox letters, PlayStation
+symbols, Switch labels) are ported from the same project's
+app/streaming/input/gamepadglyphs.h and SdlGamepadKeyNavigation::detectUiStyle: the styles
+and their labels in client/protocol/policy/src/input_glyphs.rs, which Android reaches through
+client/protocol/android/src/policy_ui_70.rs and
+client/app/src/main/java/com/limelight/ui/InputSource.java, and the desktop's drawing of them
+in client/protocol/desktop-ui/src/glyphs.rs.
 Its Vulkan video decoding on Linux is ported from moonlight-qt's plvk.cpp
 (https://github.com/moonlight-stream/moonlight-qt, GPL-3.0, Cameron Gutman and
 contributors) as Moonlight V+ ships it: FFmpeg's Vulkan device context filled from the
