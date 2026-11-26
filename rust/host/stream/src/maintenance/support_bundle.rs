@@ -49,8 +49,9 @@ fn redactor(h: &Host) -> Redactor {
         redactor.user(&name.to_string_lossy());
     }
     // The profile folders name every user of this PC, the signed-in one among them.
-    let drive = std::env::var_os("SystemDrive").unwrap_or_else(|| "C:".into());
-    let users = PathBuf::from(drive).join("\\Users");
+    let mut users = std::env::var_os("SystemDrive").unwrap_or_else(|| "C:".into());
+    users.push("\\Users");
+    let users = PathBuf::from(users);
     for entry in std::fs::read_dir(users).into_iter().flatten().flatten() {
         if entry.file_type().is_ok_and(|t| t.is_dir()) {
             redactor.user(&entry.file_name().to_string_lossy());
