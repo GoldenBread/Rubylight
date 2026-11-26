@@ -1,3 +1,0 @@
-# Mobile hotspot and network changes
-- **Discovery across hotspot reconnects.** Restart Moonlight mDNS discovery cleanly when the PC's network addresses change, so clients find the host again on a new mobile hotspot or Wi-Fi subnet without restarting Rubylight.
-- **Clean handling when a client's route drops.** Treat unreachable-network send errors separately from a full send buffer, stopping misleading "CPU or network adapter fell behind" warnings, false bitrate/pacing penalties, and keyframe storms while a hotspot or Wi-Fi link is down, then requesting one recovery keyframe when the connection returns.
