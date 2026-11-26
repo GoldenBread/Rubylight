@@ -99,6 +99,13 @@ test('stream health is one word and one sentence, from the host’s own findings
   const late = { windows: 20, pictures: 1000, late_pictures: 90, lost_ms: 120, dominant: 'encode', stages: [], not_measured: [] };
   assert.equal(state({ stutter: late }).cause, 'Some pictures leave this PC late, most of the time lost encoding it.');
   assert.equal(state({ stutter: { ...late, late_pictures: 10 } }).level, 'healthy');
+  // The last 30 seconds come first, as Nightjar's Stream Doctor reads them, with their numbers.
+  const recent = { ...late, windows: 6, pictures: 3600, late_pictures: 94, lost_ms: 690,
+    stages: [{ id: 'encode', lost_ms: 642.5, percent: 93 }, { id: 'send', lost_ms: 22, percent: 3 }] };
+  assert.deepEqual(state({ stutter: late, stutter_recent: recent }), { level: 'attention', label: 'Attention',
+    cause: 'In the last 30 seconds, 94 of 3600 new pictures left this PC late; 643 ms of their time was lost encoding it.' });
+  // A stall older than the window no longer counts, however long the stream's whole report is.
+  assert.equal(state({ stutter: late, stutter_recent: { ...recent, late_pictures: 20 } }).level, 'healthy');
   assert.equal(state({ performance: { ...stream().performance, sample_frames: 0 } }).cause, 'The picture is still: nothing new to send.');
   // The stage's one banner is the worst of its streams.
   assert.equal(telemetry.worstHealth([stream(), stream({ state: 'STOPPING' })]).level, 'attention');

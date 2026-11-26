@@ -113,6 +113,7 @@ export interface Health {
 
 const LABELS: Record<HealthLevel, Health['label']> = { healthy: 'Healthy', attention: 'Attention', action: 'Action needed' };
 const health = (level: HealthLevel, cause: string): Health => ({ level, label: LABELS[level], cause });
+const formatMs = (ms: number): string => `${ms >= 100 ? Math.round(ms) : ms.toFixed(1)} ms`;
 const STUTTER_WORDS: Record<string, string> = {
   capture: 'capturing the picture', convert: 'converting it', encode: 'encoding it', packetize: 'packing it', send: 'sending it',
 };
@@ -135,7 +136,14 @@ export function streamHealth(stream: StreamSession): Health {
   if (stream.pyrowave_recommended_kbps != null && stream.encoder_bitrate_kbps < stream.pyrowave_recommended_kbps) {
     return health('attention', 'The bitrate is below the recommended level: text and textures may lose detail.');
   }
-  const stutter = stream.stutter;
+  // The last 30 seconds, as Nightjar's Stream Doctor judges them: 2 % late pictures name a stage.
+  const recent = stream.stutter_recent;
+  if (recent && recent.pictures >= 100 && recent.late_pictures / recent.pictures >= 0.02) {
+    const stage = recent.stages.find((item) => item.id === recent.dominant);
+    const where = stage ? `; ${formatMs(stage.lost_ms)} of their time was lost ${STUTTER_WORDS[stage.id]}` : '';
+    return health('attention', `In the last 30 seconds, ${recent.late_pictures} of ${recent.pictures} new pictures left this PC late${where}.`);
+  }
+  const stutter = recent ? undefined : stream.stutter;
   if (stutter && stutter.pictures >= 100 && stutter.late_pictures / stutter.pictures > 0.05) {
     const where = stutter.dominant ? STUTTER_WORDS[stutter.dominant] : '';
     return health('attention', `Some pictures leave this PC late${where ? `, most of the time lost ${where}` : ''}.`);

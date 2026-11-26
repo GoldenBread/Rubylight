@@ -142,6 +142,8 @@ export interface StreamSession {
   performance: Performance;
   /** Where the stream's new pictures lost time so far, from the host's stage stamps. */
   stutter?: StutterReport;
+  /** The same over the last 30 seconds, the window Nightjar's Stream Doctor reads. */
+  stutter_recent?: StutterReport;
   uptime_seconds: number;
   role: Role;
 }
