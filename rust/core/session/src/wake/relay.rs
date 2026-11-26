@@ -22,7 +22,8 @@ pub const MAX_BROADCASTS: usize = 4;
 pub const FILE: &str = "wake-relay.json";
 
 /// One enrolled relay.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// Its `Debug` leaves the secret out, so a log line never carries it.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Relay {
     /// The relay's device id: the SHA-256 of its certificate, hex.
     pub id: String,
@@ -32,6 +33,17 @@ pub struct Relay {
     pub enrolled_unix: u64,
     #[serde(default)]
     pub last_seen_unix: u64,
+}
+
+impl std::fmt::Debug for Relay {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Relay")
+            .field("id", &self.id)
+            .field("name", &self.name)
+            .field("enrolled_unix", &self.enrolled_unix)
+            .field("last_seen_unix", &self.last_seen_unix)
+            .finish_non_exhaustive()
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -299,5 +311,16 @@ mod tests {
             wakers(&clients, |cert| format!("id-{cert}")),
             vec!["id-phone"]
         );
+    }
+
+    #[test]
+    fn a_relay_prints_without_its_secret() {
+        let mut relays = Relays::default();
+        let relay = relays
+            .enroll("a", "NUC", 10, || "0123456789abcdef".into())
+            .unwrap();
+        let printed = format!("{relay:?}");
+        assert!(printed.contains("NUC"));
+        assert!(!printed.contains("0123456789abcdef"), "{printed}");
     }
 }

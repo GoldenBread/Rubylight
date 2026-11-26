@@ -305,7 +305,7 @@ export const settings: Setting[] = [
     key: 'away_wake_relay',
     label: 'Away wake relay',
     description: 'An always-on device on your network that runs Nightjar wakes this PC when you are away, without port forwarding. Only your paired devices can ask it, with signed requests.',
-    details: "The relay is a paired device with Host control on this PC's network, such as a mini PC running Nightjar's wake relay. It sends Wake-on-LAN only to this PC's network cards, at most once every ten seconds, and only for devices that may launch apps here. Unpairing a device ends its access at the relay's next check, within five minutes.",
+    details: "The relay is a paired device with Host control on this PC's network, such as a mini PC running Nightjar's wake relay. It sends Wake-on-LAN only to this PC's network cards, at most once every ten seconds, and only for devices that may launch apps here. Unpairing a device ends its access at the relay's next check, within five minutes while the PC is awake.",
     category: 'network',
     group: 'Discovery and internet',
     control: { kind: 'toggle' },

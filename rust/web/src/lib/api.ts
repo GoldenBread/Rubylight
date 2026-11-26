@@ -524,7 +524,7 @@ export const api = {
   wakeRelay: {
     status: () => get<WakeRelayStatus>('/api/wake-relay'),
     revoke: (id: string) => post<WakeRelayStatus>('/api/wake-relay/revoke', { id }),
-    /** Ends every device's and relay's keys until they next fetch them. */
+    /** New keys: each relay drops the old ones at its next refresh, each device fetches new ones. */
     rotate: () => post<WakeRelayStatus>('/api/wake-relay/rotate'),
   },
   backup: {

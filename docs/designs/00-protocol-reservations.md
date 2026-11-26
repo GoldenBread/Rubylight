@@ -76,7 +76,7 @@ All routes live under `/api/native/v1`, authenticate paired device TLS certifica
 | 11 `stream-doctor` | `STREAM_DOCTOR_V2 = "stream.doctor_v2"` | `GET /stream/doctor`, `POST /stream/doctor/apply` | `view` (read), `launch` (apply safe recommendation) |
 | 13 `client-input-deck` | `INPUT_DECK = "input.deck"` | `GET /input/decks`, `PUT /input/decks/{id}` *(64 KiB body limit)*, `DELETE /input/decks/{id}`, `POST /input/decks/active` | `launch` (own device decks) |
 | 14 `coherence-workstation` | `COHERENCE = "session.coherence"` | `GET /session/windows`, `POST /session/windows/select`, `POST /session/windows/action` | `view` (list), `launch` (select/action) |
-| 15 `away-wake-relay` | `WAKE_RELAY = "wake.relay"` | `GET /wake/relay`, `POST /wake/relay/enroll`, `POST /wake/relay/wake` | `host_control` (enroll), `launch` (wake) |
+| 15 `away-wake-relay` | `WAKE_RELAY = "wake.relay"` | `GET /wake/relay`, `POST /wake/relay/enroll` (`/wake/relay/wake` stays reserved, unused: a device asks a relay over Traverse) | `host_control` (enroll), `launch` (keys) |
 
 ## 6. Nightjar `HostCapabilities::Feature` Mapping
 

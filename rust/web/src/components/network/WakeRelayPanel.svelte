@@ -74,7 +74,7 @@
     const name = relayName(relay);
     const ok = await confirm({
       title: `Remove ${name}?`,
-      message: `${name} stops waking this PC at its next check-in, within five minutes. To add it back, run ${RELAY_COMMAND} --enroll on it at home.`,
+      message: `${name} stops waking this PC at its next check-in, within five minutes. To keep it out for good, also turn off its Host control; to add it back, run ${RELAY_COMMAND} --enroll on it at home.`,
       confirm: 'Remove',
       danger: true,
     });
@@ -87,12 +87,12 @@
     const ok = await confirm({
       title: 'Rotate the wake relay keys?',
       message:
-        'Every device must connect to this PC at home once before it can wake it from away again. Relays pick up the new keys within five minutes.',
+        'Each device must connect to this PC once to get the new keys before it can wake it from away again. Relays pick them up at their next check-in, within five minutes while this PC is awake.',
       confirm: 'Rotate keys',
       danger: true,
     });
     if (ok) {
-      await change(ROTATE, () => api.wakeRelay.rotate(), 'New keys made. Connect each device at home once.', 'Rotating the keys failed');
+      await change(ROTATE, () => api.wakeRelay.rotate(), 'New keys made. Connect each device to this PC once.', 'Rotating the keys failed');
     }
   }
 
@@ -154,7 +154,10 @@
                 <span>Added {added(relay)}</span>
               </div>
               {#if stale && status.enabled}
-                <p class="hint muted">Check that it is on, on this network and still running <code>{RELAY_COMMAND}</code>.</p>
+                <p class="hint muted">
+                  Check that it is on, on this network and still running <code>{RELAY_COMMAND}</code>. If it stopped after a refusal, run
+                  <code>{RELAY_COMMAND} --enroll</code> on it.
+                </p>
               {/if}
             </div>
             <Button size="sm" variant="danger" busy={busy === relay.id} disabled={busy !== null} onclick={() => remove(relay)}>

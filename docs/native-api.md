@@ -458,7 +458,7 @@ POST /api/native/v1/wake/relay/enroll
 
 - `action` is `enroll` (`name` optional, the device's name otherwise), `refresh`, `leave`, `revoke` (`relay`: a relay id) or `rotate_epoch`. Every action needs Host control. `enroll` and `refresh` also need a caller on one of the PC's own private subnets (not through a tunnel); `refresh` never enrolls, so a revoked relay gets 404 and stops. Only `enroll` and `refresh` return an `assignment`.
 - `macs` and `broadcasts` are the PC's physical adapters' (at most four each, private broadcasts only), `address` is the PC's own address on the relay's subnet, and `devices` are the paired devices that are turned on and may launch apps. A relay refreshes every `refresh_seconds`, which is how an unpaired device, a revoked relay or a rotated epoch reaches it.
-- At most eight relays. `rotate_epoch` gives every relay a new secret, which ends every device's keys until it reads `GET /wake/relay` again.
+- At most eight relays. `rotate_epoch` gives every relay a new secret. Each relay takes it, and drops the old device keys, at its next `refresh` (within `refresh_seconds` while the PC is awake); a device gets its new keys from `GET /wake/relay`.
 
 ## Audio processing (`audio.night_mode`, `audio.headphone_surround`)
 

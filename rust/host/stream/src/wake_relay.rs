@@ -60,9 +60,15 @@ fn path(h: &Host) -> PathBuf {
 pub fn load(h: &Host) -> Result<Relays> {
     let path = path(h);
     match std::fs::read(&path) {
-        Ok(bytes) => {
-            serde_json::from_slice(&bytes).with_context(|| format!("reading {}", path.display()))
-        }
+        // serde's message can quote the value it stopped at, which may be a secret.
+        Ok(bytes) => serde_json::from_slice(&bytes).map_err(|error| {
+            anyhow::anyhow!(
+                "{} is damaged (line {}, column {})",
+                path.display(),
+                error.line(),
+                error.column()
+            )
+        }),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Relays::default()),
         Err(error) => Err(error).with_context(|| format!("reading {}", path.display())),
     }
