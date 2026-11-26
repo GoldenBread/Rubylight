@@ -310,3 +310,125 @@ async fn login_and_basic_auth_rehash_legacy_credentials_on_signin() {
     assert!(!saved2.needs_rehash());
     assert!(saved2.verifies("user", "password1"));
 }
+
+#[test]
+fn basic_cache_binds_the_stored_hash_and_expires_and_stays_bounded() {
+    let stored = Credentials {
+        username: "User".into(),
+        password: "pbkdf2-sha256$600000$aa".into(),
+        salt: "salt-a".into(),
+    };
+    let key = BasicCache::key(&stored, "user", "secret-pass");
+    // Usernames compare as `Credentials::verifies` does; the password exactly.
+    assert_eq!(key, BasicCache::key(&stored, " USER ", "secret-pass"));
+    assert_ne!(key, BasicCache::key(&stored, "user", "secret-pasS"));
+    // A new salt, hash or username never matches an old entry.
+    for changed in [
+        Credentials {
+            salt: "salt-b".into(),
+            ..stored.clone()
+        },
+        Credentials {
+            password: "pbkdf2-sha256$600000$bb".into(),
+            ..stored.clone()
+        },
+        Credentials {
+            username: "other".into(),
+            ..stored.clone()
+        },
+    ] {
+        assert_ne!(key, BasicCache::key(&changed, "user", "secret-pass"));
+    }
+    // Length-prefixed: moving bytes between fields changes the key.
+    let shifted = Credentials {
+        username: "Use".into(),
+        salt: "rsalt-a".into(),
+        ..stored.clone()
+    };
+    assert_ne!(key, BasicCache::key(&shifted, "user", "secret-pass"));
+
+    let mut cache = BasicCache {
+        entries: Default::default(),
+    };
+    let now = Instant::now();
+    assert!(!cache.hit(&key, now));
+    cache.insert(key, &stored, now);
+    assert!(cache.hit(&key, now + BasicCache::TTL - Duration::from_secs(1)));
+    assert!(!cache.hit(&key, now + BasicCache::TTL), "expired");
+    assert!(cache.entries.is_empty());
+
+    // Full: the oldest entry goes.
+    for i in 0..BasicCache::CAPACITY as u64 {
+        let key = BasicCache::key(&stored, "user", &i.to_string());
+        cache.insert(key, &stored, now + Duration::from_millis(i));
+    }
+    let late = now + Duration::from_secs(1);
+    cache.insert(key, &stored, late);
+    assert_eq!(cache.entries.len(), BasicCache::CAPACITY);
+    assert!(!cache.hit(&BasicCache::key(&stored, "user", "0"), late));
+    assert!(cache.hit(&BasicCache::key(&stored, "user", "1"), late));
+    assert!(cache.hit(&key, late));
+
+    // Replacing the credentials forgets every attempt checked against them.
+    let other = Credentials {
+        salt: "salt-b".into(),
+        ..stored.clone()
+    };
+    let other_key = BasicCache::key(&other, "user", "secret-pass");
+    cache.insert(other_key, &other, late);
+    cache.forget(&stored);
+    assert_eq!(cache.entries.len(), 1);
+    assert!(cache.hit(&other_key, late));
+}
+
+#[tokio::test]
+async fn basic_auth_reuses_a_recent_verification_until_the_password_changes() {
+    use base64::Engine;
+    let f = butterpollo_stream::state::test_support::Fixture::new();
+    let stored = Credentials::new("cache-user".into(), "right-password").unwrap();
+    f.host.save_credentials(&stored).unwrap();
+    *f.host.credentials.write().unwrap() = Some(stored.clone());
+    // A documentation address of its own, so no other test shares its sign-in count.
+    let peer: std::net::IpAddr = "198.51.100.71".parse().unwrap();
+    let basic = |user: &str, pass: &str| {
+        let mut headers = HeaderMap::new();
+        let encoded =
+            base64::engine::general_purpose::STANDARD.encode(format!("{user}:{pass}").as_bytes());
+        headers.insert(
+            header::AUTHORIZATION,
+            format!("Basic {encoded}").parse().unwrap(),
+        );
+        headers
+    };
+
+    // A real verification is remembered.
+    assert!(authenticated(&f.host, &basic("cache-user", "right-password"), Some(peer)).await);
+    let key = BasicCache::key(&stored, "cache-user", "right-password");
+    assert!(BASIC_CACHE.lock().unwrap().hit(&key, Instant::now()));
+    assert!(!authenticated(&f.host, &basic("cache-user", "wrong-password"), Some(peer)).await);
+
+    // A remembered attempt passes without PBKDF2: this password would fail it.
+    let unverified = BasicCache::key(&stored, "Cache-User", "never-verified");
+    BASIC_CACHE
+        .lock()
+        .unwrap()
+        .insert(unverified, &stored, Instant::now());
+    assert!(authenticated(&f.host, &basic("cache-user", "never-verified"), Some(peer)).await);
+
+    // A new password (same text, new salt) forgets both.
+    super::auth::change_password(
+        &f.host,
+        &json!({
+            "currentUsername": "cache-user",
+            "currentPassword": "right-password",
+            "newUsername": "cache-user",
+            "newPassword": "right-password",
+            "confirmNewPassword": "right-password",
+        }),
+    )
+    .unwrap();
+    assert!(!BASIC_CACHE.lock().unwrap().hit(&key, Instant::now()));
+    assert!(!BASIC_CACHE.lock().unwrap().hit(&unverified, Instant::now()));
+    assert!(!authenticated(&f.host, &basic("cache-user", "never-verified"), Some(peer)).await);
+    assert!(authenticated(&f.host, &basic("cache-user", "right-password"), Some(peer)).await);
+}

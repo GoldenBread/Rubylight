@@ -8,7 +8,7 @@ Rubylight, called Butterpollo until rc.29, is written in Rust: host, native help
 
 ## New in 6.4.2
 
-- **Dolby Vision with full color range could restart an NVIDIA Shield TV** ([Nightjar #193](https://github.com/RamazanKara/nightjar/issues/193)). Since 6.4.1 the PC left the Dolby Vision metadata out when the device asked for full color range, but the device still opened its Dolby Vision decoder. Such a stream now keeps Dolby Vision and is limited range, as its metadata describes.
+- **Dolby Vision with full color range could restart an NVIDIA Shield TV** ([Nightjar #193](https://github.com/RamazanKara/nightjar/issues/193)). Since 6.4.1 the PC left the Dolby Vision metadata out when the device asked for full color range, but the device still opened its Dolby Vision decoder. Such a stream now keeps Dolby Vision and is limited range, as its metadata describes (update Nightjar to 6.4.2 so both sides match on limited range).
 - **Rotated portrait monitors keep a correct cursor after a stream (#129).** When the PC restores a rotated monitor after a stream, it now also commits the monitor's orientation, so the mouse cursor and input bounds match the rotated screen again.
 - **Sturdier display recovery.** A corrupt display recovery journal is set aside instead of blocking the restore, and display topology, monitor and HDR profile handling tolerate monitors that change or disconnect during a restore.
 - **Safer virtual display, encoder and GPU paths.** Virtual display frame rings keep their newest frame when cleared or replaced and no longer wait without limit for a clear; PyroWave checks its D3D11 texture and fence sharing before streaming and runs at high frame rates again; NVIDIA NVENC teardown, rate control and capability probes are more careful; Radeon settings match their display adapter more reliably.
@@ -19,7 +19,7 @@ Rubylight, called Butterpollo until rc.29, is written in Rust: host, native help
 - **Setup and Windows integration.** Setup checks elevated paths, uninstaller entries, folder permissions and update rollback more strictly, and the host validates trusted and launcher paths before running them.
 - **Cleaner audio from high-rate and wide surround devices.** Audio from a PC output running at 96 or 192 kHz is filtered before it is resampled to 48 kHz, so it no longer aliases, and speakers outside the client's surround layout are mixed into their nearest neighbors at a level that does not clip.
 
-<!-- Tested. Added after final Phase 3 verification. -->
+**Tested.** Automated checks passed on this release's final commit: `cargo fmt`, `cargo clippy` (`-D warnings`) and the web console crate's 146/146 unit tests (`butterpollo-web`, including the HTTP Basic sign-in cache), `i18n`, `arch_check`, `code_map`, `generated_docs`, the `rust/release` unit suite (380/380), and byte-unchanged `butterpollo-service.exe` 1.0.2 reuse (`service_inputs.py`). NVIDIA NVENC paths were checked against the vendor's `nvEncodeAPI.h` and fake-driver tests and were not run on physical NVIDIA hardware.
 
 ## New in 6.4.1
 
