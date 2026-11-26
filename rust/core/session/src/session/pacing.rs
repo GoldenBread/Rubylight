@@ -220,6 +220,16 @@ impl<P, A> Session<P, A> {
     pub fn keyframe_loss_rate_bps(&self, base: u64, safe: u64) -> u64 {
         self.keyframe_loss.lock().unwrap().bps(base, safe)
     }
+    /// The host dropped this frame because the client's network route was
+    /// unavailable: mark it abandoned for `KeyframeLoss` so client repeats or FEC
+    /// reports do not treat it as in-transit loss, without penalizing send loss
+    /// counters, pacing, or link rate.
+    pub fn keyframe_abandoned_route(&self, wire_frame: u32, reached_socket: bool) {
+        self.keyframe_loss
+            .lock()
+            .unwrap()
+            .route_abandoned(wire_frame, reached_socket);
+    }
     /// The host stopped sending this frame part way because its socket
     /// refused packets: loss on send. See [`Self::keyframe_abandoned_as`].
     pub fn keyframe_abandoned(&self, wire_frame: u32) {

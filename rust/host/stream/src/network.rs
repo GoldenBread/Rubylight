@@ -9,7 +9,6 @@ use igd_next::{
     PortMappingProtocol as Protocol,
     aio::{Gateway, Provider},
 };
-use mdns_sd::{IfKind, ServiceDaemon, ServiceInfo};
 use serde::{Deserialize, Serialize};
 use socket2::{Domain, Socket, Type};
 use std::{
@@ -19,6 +18,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+mod discovery;
 #[cfg(test)]
 mod fixtures;
 mod forward_loop;
@@ -29,6 +29,8 @@ mod peer_throttle;
 mod portmap;
 mod upnp;
 mod upnp_forward;
+
+pub use discovery::Discovery;
 
 #[cfg(test)]
 use forward_loop::{Held, RENEWAL, renew, until_renewal_or_stop};
@@ -471,102 +473,6 @@ fn per_connection(error: &std::io::Error) -> bool {
         error.kind(),
         ConnectionReset | ConnectionAborted | ConnectionRefused | Interrupted | WouldBlock
     )
-}
-
-/// How often mdns-sd re-reads this PC's interfaces on its own: a fallback for the interface and
-/// address change notifications below, which have them re-read within a second of a change
-/// instead, and covers a notification that could not be registered or missed one.
-const DISCOVERY_FALLBACK: u32 = 30;
-/// How soon after a change the notification has mdns-sd re-read the interfaces.
-const DISCOVERY_SOON: u32 = 1;
-
-pub struct Discovery {
-    /// Windows' interface change notification: `None` when Windows refused it, and the daemon's
-    /// own interval is the fallback. Dropped before the daemon, so it wakes nothing shut down.
-    watch: Option<butterpollo_win_io::net::InterfaceChanges>,
-    daemon: ServiceDaemon,
-}
-impl Discovery {
-    pub fn start(config: &Config, bind: IpAddr) -> Result<Option<Self>> {
-        if !config.boolean("enable_discovery", true) || bind.is_loopback() {
-            return Ok(None);
-        }
-        let daemon = ServiceDaemon::new()?;
-        let result = (|| -> Result<()> {
-            daemon.set_ip_check_interval(DISCOVERY_FALLBACK)?;
-            daemon.disable_interface(IfKind::LoopbackV4)?;
-            daemon.disable_interface(IfKind::LoopbackV6)?;
-            if bind.is_ipv4() {
-                daemon.disable_interface(IfKind::IPv6)?;
-            }
-            if !bind.is_unspecified() {
-                daemon.disable_interface(IfKind::All)?;
-                daemon.enable_interface(IfKind::Addr(bind))?;
-            }
-            let hostname = std::env::var("COMPUTERNAME").unwrap_or_else(|_| "butterpollo".into());
-            let hostname = format!(
-                "{}.local.",
-                hostname.trim_end_matches('.').to_ascii_lowercase()
-            );
-            let instance = host_name(config);
-            let instance = instance.as_str();
-            let addresses = if bind.is_unspecified() {
-                String::new()
-            } else {
-                bind.to_string()
-            };
-            let service = ServiceInfo::new(
-                "_nvstream._tcp.local.",
-                instance,
-                &hostname,
-                addresses.as_str(),
-                config.ports()?.http,
-                None,
-            )?;
-            let service = if bind.is_unspecified() {
-                service.enable_addr_auto()
-            } else {
-                service
-            };
-            daemon.register(service)?;
-            tracing::debug!(%instance, "Moonlight discovery registered");
-            Ok(())
-        })();
-        if let Err(error) = result {
-            let _ = daemon.shutdown();
-            return Err(error);
-        }
-        // Windows tells the daemon when an interface or address changed, and it re-reads them
-        // within a second of that; the interval set above stays only the fallback. A refused
-        // registration leaves the fallback, thirty seconds, as before.
-        let watch = butterpollo_win_io::net::InterfaceChanges::register(
-            {
-                let daemon = daemon.clone();
-                move || {
-                    let _ = daemon.set_ip_check_interval(DISCOVERY_SOON);
-                }
-            },
-            {
-                let daemon = daemon.clone();
-                move || {
-                    let _ = daemon.set_ip_check_interval(DISCOVERY_FALLBACK);
-                }
-            },
-        );
-        if watch.is_none() {
-            tracing::warn!(
-                "interface change notifications are unavailable; Moonlight discovery re-reads the interfaces on its own timer instead"
-            );
-        }
-        Ok(Some(Self { watch, daemon }))
-    }
-}
-impl Drop for Discovery {
-    fn drop(&mut self) {
-        // The notification first, so its watcher sends a shut-down daemon nothing.
-        self.watch = None;
-        let _ = self.daemon.shutdown();
-    }
 }
 
 #[cfg(test)]

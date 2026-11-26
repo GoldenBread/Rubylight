@@ -7,7 +7,10 @@ use crate::state::Session;
 use crate::webrtc_bridge::{AudioPacket, Submit, WebRtcAudioSink};
 use anyhow::Result;
 use butterpollo_media_policy::{audio::HostLoss, packet::AudioPacketizer};
-use butterpollo_win_io::{audio::Loopback, net::ReplySocket};
+use butterpollo_win_io::{
+    audio::Loopback,
+    net::{DatagramSend, ReplySocket},
+};
 use std::{
     net::SocketAddr,
     sync::{
@@ -17,17 +20,23 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) struct AudioSendLoss {
+    pub(super) refused: usize,
+    pub(super) route_unavailable: usize,
+}
+
 pub(super) trait AudioSink {
     /// Whether the far end is known. Audio is encoded either way (the capture must be drained),
     /// and a sink that is not ready when the ping window passes raises [`PingWait::WARNING`].
     fn ready(&mut self) -> bool;
     /// Start one audio capture pass so its datagrams share a single transient-buffer wait.
     fn begin_pass(&mut self) {}
-    /// Send one encoded Opus packet. Returns how many packets did not go out, which the caller
-    /// counts as loss; only a broken transport is an error. `position` is where the packet starts
-    /// in the audio thread's stream, in 48 kHz samples, counting every packet and any audio the
-    /// endpoint lost, whether or not it was sent.
-    fn send(&mut self, opus: &[u8], captured: Instant, position: u64) -> Result<usize>;
+    /// Send one encoded Opus packet. Returns how many packets did not go out and why, which the
+    /// caller counts as loss; only a broken transport is an error. `position` is where the packet
+    /// starts in the audio thread's stream, in 48 kHz samples, counting every packet and any audio
+    /// the endpoint lost, whether or not it was sent.
+    fn send(&mut self, opus: &[u8], captured: Instant, position: u64) -> Result<AudioSendLoss>;
     /// Send one AC3 or E-AC3 frame in its `parts`, which share an RTP timestamp. Only
     /// GameStream negotiates passthrough codecs.
     fn send_frame(
@@ -35,7 +44,7 @@ pub(super) trait AudioSink {
         _parts: &[Vec<u8>],
         _captured: Instant,
         _position: u64,
-    ) -> Result<usize> {
+    ) -> Result<AudioSendLoss> {
         anyhow::bail!("this transport carries only Opus audio")
     }
 }
@@ -658,24 +667,29 @@ impl AudioSink for GameStreamAudio<'_> {
             butterpollo_win_io::net::DatagramPass::new(butterpollo_win_io::net::AUDIO_ENOBUFS_WAIT);
     }
 
-    fn send(&mut self, opus: &[u8], _captured: Instant, _position: u64) -> Result<usize> {
+    fn send(&mut self, opus: &[u8], _captured: Instant, _position: u64) -> Result<AudioSendLoss> {
         let Some(peer) = self.peer else {
-            return Ok(1);
+            return Ok(AudioSendLoss {
+                refused: 1,
+                route_unavailable: 0,
+            });
         };
-        let mut unsent = 0;
+        let mut loss = AudioSendLoss::default();
         self.packetizer.encode_into(opus, &mut self.packets)?;
         // A lost audio packet is concealed by the client; only a broken socket stops the audio.
         for packet in &self.packets {
-            if !butterpollo_win_io::net::send_datagram_pass(
+            match butterpollo_win_io::net::send_datagram_pass_outcome(
                 self.socket,
                 packet,
                 peer,
                 &mut self.pass,
             )? {
-                unsent += 1;
+                DatagramSend::Sent => {}
+                DatagramSend::Refused => loss.refused += 1,
+                DatagramSend::RouteUnavailable => loss.route_unavailable += 1,
             }
         }
-        Ok(unsent)
+        Ok(loss)
     }
 
     fn send_frame(
@@ -683,26 +697,31 @@ impl AudioSink for GameStreamAudio<'_> {
         parts: &[Vec<u8>],
         _captured: Instant,
         _position: u64,
-    ) -> Result<usize> {
+    ) -> Result<AudioSendLoss> {
         let Some(peer) = self.peer else {
-            return Ok(parts.len());
+            return Ok(AudioSendLoss {
+                refused: parts.len(),
+                route_unavailable: 0,
+            });
         };
-        let mut unsent = 0;
+        let mut loss = AudioSendLoss::default();
         for (index, part) in parts.iter().enumerate() {
             self.packetizer
                 .encode_part_into(part, index + 1 == parts.len(), &mut self.packets)?;
             for packet in &self.packets {
-                if !butterpollo_win_io::net::send_datagram_pass(
+                match butterpollo_win_io::net::send_datagram_pass_outcome(
                     self.socket,
                     packet,
                     peer,
                     &mut self.pass,
                 )? {
-                    unsent += 1;
+                    DatagramSend::Sent => {}
+                    DatagramSend::Refused => loss.refused += 1,
+                    DatagramSend::RouteUnavailable => loss.route_unavailable += 1,
                 }
             }
         }
-        Ok(unsent)
+        Ok(loss)
     }
 }
 
@@ -715,15 +734,18 @@ impl AudioSink for WebRtcAudio {
         true
     }
 
-    fn send(&mut self, opus: &[u8], captured: Instant, position: u64) -> Result<usize> {
+    fn send(&mut self, opus: &[u8], captured: Instant, position: u64) -> Result<AudioSendLoss> {
         Ok(
             match self.0.submit(AudioPacket {
                 data: opus.to_vec(),
                 capture: captured,
                 position,
             }) {
-                Submit::Queued => 0,
-                Submit::Dropped => 1,
+                Submit::Queued => AudioSendLoss::default(),
+                Submit::Dropped => AudioSendLoss {
+                    refused: 1,
+                    route_unavailable: 0,
+                },
             },
         )
     }

@@ -492,3 +492,22 @@ fn per_frame_packetizer_fec_swings_do_not_churn_adaptive_pacing_floor() {
         assert_eq!(next.bps, baseline.bps, "fec={per_frame_fec}");
     }
 }
+
+#[test]
+fn recovery_estimate_includes_existing_pacing_debt_and_remaining_wire_bytes() {
+    let now = Instant::now();
+    assert_eq!(
+        recovery_remaining(now, now + Duration::from_millis(1), 50_000, 80_000_000),
+        Duration::from_millis(6)
+    );
+    assert_eq!(
+        recovery_remaining(now, now - Duration::from_millis(20), 50_000, 80_000_000),
+        Duration::from_millis(5)
+    );
+    assert_eq!(
+        recovery_remaining(now, now + Duration::from_millis(1), 0, 80_000_000),
+        Duration::from_millis(1)
+    );
+}
+
+mod route_unavailable;

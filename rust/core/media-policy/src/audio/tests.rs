@@ -284,6 +284,7 @@ fn host_audio_loss_counts_only_skips_a_late_read_explains() {
             longest: ms(52),
             buffer,
             unsent: 1,
+            route_unavailable: 0,
         })
     );
     // A late read explains skips for one buffer after it, not later.
@@ -303,9 +304,22 @@ fn host_audio_loss_counts_only_skips_a_late_read_explains() {
             longest: Duration::ZERO,
             buffer: Duration::ZERO,
             unsent: 2,
+            route_unavailable: 0,
         })
     );
     assert_eq!(loss.report(start + ms(20000)), None);
+    loss.route_unavailable();
+    assert_eq!(
+        loss.report(start + ms(20000)),
+        Some(HostLossReport {
+            late_reads: 0,
+            lost: Duration::ZERO,
+            longest: Duration::ZERO,
+            buffer: Duration::ZERO,
+            unsent: 0,
+            route_unavailable: 1,
+        })
+    );
 }
 #[test]
 fn host_audio_loss_blames_the_cause_it_saw() {
@@ -316,6 +330,7 @@ fn host_audio_loss_blames_the_cause_it_saw() {
         longest: ms(32),
         buffer: ms(22),
         unsent: 0,
+        route_unavailable: 0,
     };
     let text = late.message();
     assert!(text.contains("Windows dropped 10 ms of captured sound because the audio sender read late 1 time (longest wait 32.0 ms; Windows keeps 22.0 ms)"), "{text}");
@@ -327,6 +342,7 @@ fn host_audio_loss_blames_the_cause_it_saw() {
         longest: Duration::ZERO,
         buffer: Duration::ZERO,
         unsent: 3,
+        route_unavailable: 0,
     };
     let text = unsent.message();
     assert!(
@@ -335,6 +351,21 @@ fn host_audio_loss_blames_the_cause_it_saw() {
     );
     assert!(text.contains("lower the video bitrate"), "{text}");
     assert!(!text.contains("late"), "{text}");
+    let route_down = HostLossReport {
+        late_reads: 0,
+        lost: Duration::ZERO,
+        longest: Duration::ZERO,
+        buffer: Duration::ZERO,
+        unsent: 0,
+        route_unavailable: 4,
+    };
+    let text = route_down.message();
+    assert!(
+        text.contains("the network route to the client was unavailable for 4 audio packets"),
+        "{text}"
+    );
+    assert!(!text.contains("lower the video bitrate"), "{text}");
+    assert!(!text.contains("send queue was full"), "{text}");
 }
 #[test]
 fn surround_upmix_does_not_duplicate_right_channel() {

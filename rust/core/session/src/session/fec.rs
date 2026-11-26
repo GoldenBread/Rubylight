@@ -32,30 +32,35 @@ impl<P, A> Session<P, A> {
             let frame = u32::from_be_bytes(payload[..4].try_into().unwrap());
             let period = self.stream_mode().period();
             self.link_status(payload, frame, block);
-            if matches!(
-                block,
-                butterpollo_media_policy::adaptive_fec::Block::Unrecoverable
-            ) {
-                let (latched, ignored) = {
-                    let mut loss = self.keyframe_loss.lock().unwrap();
+            let route_abandoned = {
+                let mut loss = self.keyframe_loss.lock().unwrap();
+                let route_abandoned = loss.is_route_abandoned(frame);
+                if matches!(
+                    block,
+                    butterpollo_media_policy::adaptive_fec::Block::Unrecoverable
+                ) {
                     let latched =
                         loss.unrecoverable(frame, last_sent.unwrap(), period, Instant::now());
-                    (latched, loss.take_ignored())
-                };
-                self.report_keyframe_loss(latched, ignored);
-            }
-            self.automatic_pacing.lock().unwrap().on_block(
-                frame,
-                last_sent.unwrap(),
-                period,
-                block,
-            );
-            self.adaptive_bitrate.lock().unwrap().on_block(block);
-            let mut fec = self.adaptive_fec.lock().unwrap();
-            if fec.enabled() {
-                fec.on_block(Instant::now(), block);
-                self.fec_percent
-                    .store(fec.percent() as u32, Ordering::Release);
+                    let ignored = loss.take_ignored();
+                    drop(loss);
+                    self.report_keyframe_loss(latched, ignored);
+                }
+                route_abandoned
+            };
+            if !route_abandoned {
+                self.automatic_pacing.lock().unwrap().on_block(
+                    frame,
+                    last_sent.unwrap(),
+                    period,
+                    block,
+                );
+                self.adaptive_bitrate.lock().unwrap().on_block(block);
+                let mut fec = self.adaptive_fec.lock().unwrap();
+                if fec.enabled() {
+                    fec.on_block(Instant::now(), block);
+                    self.fec_percent
+                        .store(fec.percent() as u32, Ordering::Release);
+                }
             }
         }
     }

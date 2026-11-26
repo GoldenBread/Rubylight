@@ -363,6 +363,7 @@ pub struct HostLoss {
     longest: Duration,
     buffer: Duration,
     unsent: u64,
+    route_unavailable: u64,
     reported: Option<Instant>,
     /// A late read whose skip Windows has not delivered yet: its wait, and
     /// the time since.
@@ -377,8 +378,10 @@ pub struct HostLossReport {
     /// The longest of their waits.
     pub longest: Duration,
     pub buffer: Duration,
-    /// Audio datagrams Winsock refused.
+    /// Audio datagrams Winsock refused due to socket/adapter pressure.
     pub unsent: u64,
+    /// Audio datagrams dropped because no network route reached the client.
+    pub route_unavailable: u64,
 }
 impl HostLossReport {
     pub fn message(&self) -> String {
@@ -404,6 +407,14 @@ impl HostLossReport {
                 plural(self.unsent)
             ));
             advice.push("Refused packets mean the adapter's send queue was full: lower the video bitrate or check the network adapter and its driver.");
+        }
+        if self.route_unavailable > 0 {
+            lost.push(format!(
+                "the network route to the client was unavailable for {} audio packet{}",
+                self.route_unavailable,
+                plural(self.route_unavailable)
+            ));
+            advice.push("No route means the Wi-Fi, hotspot, or network link to the client dropped; audio resumes once the connection returns.");
         }
         format!(
             "Audio lost on the host before sending: {}. You may hear short gaps. {}",
@@ -456,9 +467,12 @@ impl HostLoss {
     pub fn unsent(&mut self) {
         self.unsent += 1;
     }
+    pub fn route_unavailable(&mut self) {
+        self.route_unavailable += 1;
+    }
     /// What was lost since the last report, at most every five seconds.
     pub fn report(&mut self, now: Instant) -> Option<HostLossReport> {
-        if (self.late_reads == 0 && self.unsent == 0)
+        if (self.late_reads == 0 && self.unsent == 0 && self.route_unavailable == 0)
             || self
                 .reported
                 .is_some_and(|at| now.saturating_duration_since(at) < Self::EVERY)
@@ -471,6 +485,7 @@ impl HostLoss {
             longest: self.longest,
             buffer: self.buffer,
             unsent: self.unsent,
+            route_unavailable: self.route_unavailable,
         };
         *self = Self {
             reported: Some(now),

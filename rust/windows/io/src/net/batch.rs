@@ -2,7 +2,7 @@
 use super::{
     datagram::{
         SegmentedFailure, WaitBudget, WritableWaits, buffer_available, classify_segmented_error,
-        send_one, send_with_retry, transient,
+        route_unavailable, send_one, send_with_retry, transient,
     },
     reply::ReplySocket,
 };
@@ -13,17 +13,46 @@ use std::{
 };
 use windows::Win32::Networking::WinSock::*;
 
+/// Cumulative drop counters read from [`Batch::drops`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct BatchDrops {
+    pub dropped: u64,
+    pub oversized: u64,
+    pub route_unavailable: u64,
+}
+
+/// Per-batch or per-frame datagram drop breakdown computed by [`Batch::drops_since`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct BatchDropDelta {
+    pub dropped: u64,
+    pub oversized: u64,
+    pub route_unavailable: u64,
+    pub refused: u64,
+}
+
+impl BatchDropDelta {
+    pub fn any(&self) -> bool {
+        self.dropped > 0
+    }
+
+    pub fn route_only(&self) -> bool {
+        self.route_unavailable > 0 && self.refused == 0 && self.oversized == 0
+    }
+}
+
 /// Per-message segmentation leaves the shared socket's options untouched.
 pub struct Batch {
     pub(super) offload: bool,
     pub system_calls: u64,
-    /// Datagrams lost to transient send errors.
+    /// Datagrams lost to transient send errors (full buffer, route unavailable, oversized).
     pub dropped: u64,
     /// Packets handed to Winsock in the last [`Batch::send`] call.
     pub(super) last_sent: usize,
     /// Datagrams the path refused because they are larger than its MTU with
     /// `IP_DONTFRAGMENT`/`IPV6_DONTFRAG` set; also counted in `dropped`.
     pub oversized: u64,
+    /// Datagrams dropped because the PC had no route to the peer; also counted in `dropped`.
+    pub route_unavailable: u64,
     /// The sender's socket refuses fragmentation ([`super::set_dont_fragment`]), as
     /// the PyroWave probe's does for a jumbo path, so an oversized datagram is
     /// a lost packet to report, not a send error that ends the stream.
@@ -36,6 +65,8 @@ pub struct Batch {
     pub(super) frame: Option<FrameWait>,
     pub(super) unreported: u64,
     pub(super) reported: Option<std::time::Instant>,
+    pub(super) unreported_route: u64,
+    pub(super) reported_route: Option<std::time::Instant>,
     /// Scratch WSABUFs filled for each segmented send, so their 1 KiB is not
     /// zeroed anew every batch.
     pub(super) buffers: [WSABUF; 64],
@@ -51,11 +82,14 @@ impl Default for Batch {
             dropped: 0,
             last_sent: 0,
             oversized: 0,
+            route_unavailable: 0,
             dont_fragment: false,
             waits: None,
             frame: None,
             unreported: 0,
             reported: None,
+            unreported_route: 0,
+            reported_route: None,
             buffers: [WSABUF {
                 len: 0,
                 buf: windows::core::PSTR::null(),
@@ -152,12 +186,55 @@ impl Batch {
         }
         count.max(1)
     }
+    /// Snapshot cumulative drop counters so callers can separate socket congestion from
+    /// route unavailability or MTU refusals.
+    pub fn drops(&self) -> BatchDrops {
+        BatchDrops {
+            dropped: self.dropped,
+            oversized: self.oversized,
+            route_unavailable: self.route_unavailable,
+        }
+    }
+    /// Compute drops recorded since `before`.
+    pub fn drops_since(&self, before: BatchDrops) -> BatchDropDelta {
+        let dropped = self.dropped.saturating_sub(before.dropped);
+        let oversized = self.oversized.saturating_sub(before.oversized);
+        let route_unavailable = self
+            .route_unavailable
+            .saturating_sub(before.route_unavailable);
+        let refused = dropped
+            .saturating_sub(oversized)
+            .saturating_sub(route_unavailable);
+        BatchDropDelta {
+            dropped,
+            oversized,
+            route_unavailable,
+            refused,
+        }
+    }
     /// Count dropped datagrams and report them at most every 5 seconds.
-    fn dropped(&mut self, count: usize, error: WSA_ERROR) {
+    pub(super) fn dropped(&mut self, count: usize, error: WSA_ERROR) {
         if let Some(trace) = self.waits.as_mut() {
             trace.last_error = error.0;
         }
         self.dropped += count as u64;
+        if route_unavailable(error) {
+            self.route_unavailable += count as u64;
+            self.unreported_route += count as u64;
+            if self
+                .reported_route
+                .is_none_or(|at| at.elapsed() >= std::time::Duration::from_secs(5))
+            {
+                tracing::warn!(
+                    code = error.0,
+                    dropped = self.unreported_route,
+                    "UDP send failed: the network route to the client is unavailable, so packets were dropped until the connection returns"
+                );
+                self.unreported_route = 0;
+                self.reported_route = Some(std::time::Instant::now());
+            }
+            return;
+        }
         self.unreported += count as u64;
         if self
             .reported

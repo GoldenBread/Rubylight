@@ -561,8 +561,12 @@ impl Media {
                     if index >= pre_processed {
                         couch.process(&s.audio, &s.launch.warnings, samples);
                     }
-                    for _ in 0..encoder.send(output.as_mut(), samples, now, at)? {
+                    let dropped = encoder.send(output.as_mut(), samples, now, at)?;
+                    for _ in 0..dropped.refused {
                         loss.unsent();
+                    }
+                    for _ in 0..dropped.route_unavailable {
+                        loss.route_unavailable();
                     }
                     if let Some(cadence) = &mut cadence {
                         cadence

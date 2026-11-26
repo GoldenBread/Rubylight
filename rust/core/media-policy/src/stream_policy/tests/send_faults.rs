@@ -376,6 +376,21 @@ fn send_loss_keyframes_back_off_only_when_part_of_a_frame_got_through() {
 }
 
 #[test]
+fn route_unavailable_waits_for_recovery_and_requests_one_keyframe_on_return() {
+    let mut recovery = SendLossRecovery::default();
+    // Repeated route-down frames mark route_down without requesting keyframe storms.
+    recovery.route_unavailable();
+    recovery.route_unavailable();
+    // When the link returns with a P-frame, request one recovery keyframe once.
+    assert!(recovery.delivered(false));
+    assert!(!recovery.delivered(false));
+    // When the link returns directly with a keyframe, no extra request is needed.
+    recovery.route_unavailable();
+    assert!(!recovery.delivered(true));
+    assert!(!recovery.delivered(false));
+}
+
+#[test]
 fn send_loss_knows_whether_any_packet_reached_the_socket() {
     let mut loss = SendLoss::new(vec![(10, 2)]);
     assert!(loss.sent(8, 8));
@@ -423,6 +438,22 @@ fn streamed_send_loss_matches_the_whole_frame_layout() {
     let mut streamed = SendLoss::streamed();
     streamed.push_block(4, 1);
     assert!(streamed.sent(5, 2));
+}
+
+#[test]
+fn sent_with_route_separates_route_unavailable_from_fec_parity_loss() {
+    // Batch 0 loses 1 refused packet (recoverable within parity 2); batch 1 hits route_unavailable.
+    let mut loss = SendLoss::new(vec![(10, 2), (10, 2)]);
+    assert!(!loss.sent_with_route(12, 1, 0));
+    assert!(loss.reached_socket());
+    assert!(!loss.sent_with_route(12, 12, 12));
+    assert!(loss.reached_socket());
+    assert!(!loss.unrecoverable());
+
+    // A batch whose non-route drops alone exceed parity IS non-route unrecoverable.
+    let mut mixed = SendLoss::new(vec![(10, 2)]);
+    assert!(mixed.sent_with_route(12, 5, 2));
+    assert!(mixed.unrecoverable());
 }
 
 #[test]
