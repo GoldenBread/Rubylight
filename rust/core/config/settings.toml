@@ -3445,6 +3445,66 @@ console = { group = "Video and capture", label = "Adaptive bitrate (on by defaul
 rust_accessor = { kind = "enum_ci", method = "bitrate_adaptation", ret = "BitrateAdaptation", variants = [["off", "BitrateAdaptation::Off"], ["on", "BitrateAdaptation::On"], ["delay", "BitrateAdaptation::Delay"]], doc = "Adaptive bitrate: `off`, `on` (default) or `delay`." }
 
 [[setting]]
+key = "dvr_enabled"
+part = "video_stream"
+type = "bool"
+default = false
+category = "video"
+group = "Stream DVR and clips"
+label = "Instant replay"
+description = "Keeps the last moments of the stream in this PC's memory so you can save clips or record without encoding again. Uses up to 512 MiB of memory; leave it off unless you save clips."
+details = "It also adds a keyframe every 4 seconds while it runs. Clips are MP4 files (H.264, HEVC or AV1 with Opus sound) written by a worker of their own after you press Save, which never holds up the stream. PyroWave streams and passthrough sound (PCM, AC3, E-AC3) cannot be clipped; the device and the console say so."
+control = { kind = "toggle" }
+console = { group = "Video and capture", label = "Instant replay and recording (Stream DVR)", control = "bool" }
+rust_accessor = { kind = "bool", method = "dvr_enabled", doc = "Stream DVR: keep a replay buffer and save clips (`dvr_enabled`, off by default)." }
+
+[[setting]]
+key = "dvr_ring_seconds"
+part = "video_stream"
+type = "enum"
+default = 60
+category = "video"
+group = "Stream DVR and clips"
+label = "Replay length"
+description = "How many seconds of recent play Instant replay keeps ready to save. Longer holds more memory (never more than 512 MiB); choose 30 seconds on a PC with 16 GB or less."
+details = "At very high bitrates the 512 MiB limit shortens the replay."
+inactive_hint = "Turn on Instant replay to use this setting."
+control = { kind = "select", options = [{ value = "30", label = "30 seconds" }, { value = "60", label = "60 seconds" }, { value = "90", label = "90 seconds" }, { value = "120", label = "120 seconds" }] }
+visible_when = { on = "dvr_enabled", default = false }
+console = { group = "Video and capture", label = "Replay length in seconds (30, 60, 90 or 120)", control = "number" }
+rust_accessor = { kind = "set_int", method = "dvr_ring_seconds", ret = "u16", allowed = [30, 60, 90, 120], doc = "`dvr_ring_seconds`: 30, 60 (the default), 90 or 120 seconds of replay buffer." }
+
+[[setting]]
+key = "dvr_quota_gb"
+part = "video_stream"
+type = "int"
+default = 20
+category = "video"
+group = "Stream DVR and clips"
+label = "Space for clips"
+description = "The most drive space clips may take. When full, the oldest replay clips are deleted and recordings are kept; raise it to keep more clips if the drive has room."
+inactive_hint = "Turn on Instant replay to use this setting."
+control = { kind = "number", min = 5, max = 500, step = 1, unit = "GB" }
+visible_when = { on = "dvr_enabled", default = false }
+console = { group = "Video and capture", label = "Space for clips (GB, 5 to 500; default 20)", control = "number" }
+rust_accessor = { kind = "ranged_int", method = "dvr_quota_gb", ret = "u32", min = 5, max = 500, doc = "The clips quota in GiB (`dvr_quota_gb`, 5 to 500, 20 by default)." }
+
+[[setting]]
+key = "dvr_directory"
+part = "video_stream"
+type = "string"
+default = ""
+category = "video"
+group = "Stream DVR and clips"
+label = "Clips folder"
+description = "Where clips and recordings are saved on this PC. Leave it empty for the clips folder beside Rubylight's settings; choose a folder on a second drive if the system drive is small."
+inactive_hint = "Turn on Instant replay to use this setting."
+control = { kind = "text", placeholder = "clips", mono = true, browse = "directory" }
+visible_when = { on = "dvr_enabled", default = false }
+console = { group = "Video and capture", label = "Clips folder (leave empty for clips beside the settings)", control = "text" }
+rust_accessor = { kind = "opt_path", method = "dvr_directory", doc = "The clips folder; `None` (empty) is `clips` in the configuration folder." }
+
+[[setting]]
 key = "encoder"
 part = "video_encoders"
 type = "enum"
@@ -3508,65 +3568,6 @@ aliases = { match = "case", spellings = { center = "centre" } }
 visible_when = { any = [{ ref = "amf" }, { ref = "nvenc" }] }
 doc_summary = "Gives more bits to parts of the picture that stay still, such as text and HUDs, and fewer to motion. See [Encoder focus](#encoder-focus)."
 console = { group = "Video and capture", label = "Encoder focus (more bits for still areas such as text and HUDs)", control = "choice", choices = ["off", "static", "centre"] }
-
-[[setting]]
-key = "dvr_enabled"
-part = "video_stream"
-type = "bool"
-default = false
-category = "video"
-group = "Stream DVR and clips"
-label = "Instant replay"
-description = "Keeps the last moments of the stream in this PC's memory, so a device or the console can save them as a clip or record without encoding again. Uses memory for the replay buffer (512 MiB at most) and adds a keyframe every 4 seconds while it runs; leave it off unless you save clips."
-details = "Clips are MP4 files (H.264, HEVC or AV1 with Opus sound) written by a worker of their own after you press Save, which never holds up the stream. PyroWave streams and passthrough sound (PCM, AC3, E-AC3) cannot be clipped; the device and the console say so."
-control = { kind = "toggle" }
-console = { group = "Video and capture", label = "Instant replay and recording (Stream DVR)", control = "bool" }
-rust_accessor = { kind = "bool", method = "dvr_enabled", doc = "Stream DVR: keep a replay buffer and save clips (`dvr_enabled`, off by default)." }
-
-[[setting]]
-key = "dvr_ring_seconds"
-part = "video_stream"
-type = "enum"
-default = 60
-category = "video"
-group = "Stream DVR and clips"
-label = "Replay length"
-description = "How many seconds of recent play Instant replay keeps ready to save. Longer holds more of this PC's memory (never more than 512 MiB, which shortens it at very high bitrates); choose 30 seconds on a PC with 16 GB or less."
-inactive_hint = "Turn on Instant replay to use this setting."
-control = { kind = "select", options = [{ value = "30", label = "30 seconds" }, { value = "60", label = "60 seconds" }, { value = "90", label = "90 seconds" }, { value = "120", label = "120 seconds" }] }
-visible_when = { on = "dvr_enabled", default = false }
-console = { group = "Video and capture", label = "Replay length in seconds (30, 60, 90 or 120)", control = "number" }
-rust_accessor = { kind = "set_int", method = "dvr_ring_seconds", ret = "u16", allowed = [30, 60, 90, 120], doc = "`dvr_ring_seconds`: 30, 60 (the default), 90 or 120 seconds of replay buffer." }
-
-[[setting]]
-key = "dvr_quota_gb"
-part = "video_stream"
-type = "int"
-default = 20
-category = "video"
-group = "Stream DVR and clips"
-label = "Space for clips"
-description = "The most drive space saved clips may take. When it is full, the oldest replay clips are deleted to make room and recordings are kept; raise it to keep more clips if the drive has room."
-inactive_hint = "Turn on Instant replay to use this setting."
-control = { kind = "number", min = 5, max = 500, step = 1, unit = "GB" }
-visible_when = { on = "dvr_enabled", default = false }
-console = { group = "Video and capture", label = "Space for clips (GB, 5 to 500; default 20)", control = "number" }
-rust_accessor = { kind = "ranged_int", method = "dvr_quota_gb", ret = "u32", min = 5, max = 500, doc = "The clips quota in GiB (`dvr_quota_gb`, 5 to 500, 20 by default)." }
-
-[[setting]]
-key = "dvr_directory"
-part = "video_stream"
-type = "string"
-default = ""
-category = "video"
-group = "Stream DVR and clips"
-label = "Clips folder"
-description = "Where clips and recordings are saved on this PC. Leave it empty for the clips folder beside Rubylight's settings; choose a folder on a second drive if the system drive is small."
-inactive_hint = "Turn on Instant replay to use this setting."
-control = { kind = "text", placeholder = "clips", mono = true, browse = "directory" }
-visible_when = { on = "dvr_enabled", default = false }
-console = { group = "Video and capture", label = "Clips folder (leave empty for clips beside the settings)", control = "text" }
-rust_accessor = { kind = "opt_path", method = "dvr_directory", doc = "The clips folder; `None` (empty) is `clips` in the configuration folder." }
 
 [[setting]]
 key = "amd_usage"

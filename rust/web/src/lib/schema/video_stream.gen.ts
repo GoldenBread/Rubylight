@@ -429,8 +429,8 @@ export const settings: Setting[] = [
   {
     key: 'dvr_enabled',
     label: 'Instant replay',
-    description: "Keeps the last moments of the stream in this PC's memory, so a device or the console can save them as a clip or record without encoding again. Uses memory for the replay buffer (512 MiB at most) and adds a keyframe every 4 seconds while it runs; leave it off unless you save clips.",
-    details: 'Clips are MP4 files (H.264, HEVC or AV1 with Opus sound) written by a worker of their own after you press Save, which never holds up the stream. PyroWave streams and passthrough sound (PCM, AC3, E-AC3) cannot be clipped; the device and the console say so.',
+    description: "Keeps the last moments of the stream in this PC's memory so you can save clips or record without encoding again. Uses up to 512 MiB of memory; leave it off unless you save clips.",
+    details: 'It also adds a keyframe every 4 seconds while it runs. Clips are MP4 files (H.264, HEVC or AV1 with Opus sound) written by a worker of their own after you press Save, which never holds up the stream. PyroWave streams and passthrough sound (PCM, AC3, E-AC3) cannot be clipped; the device and the console say so.',
     category: 'video',
     group: 'Stream DVR and clips',
     control: { kind: 'toggle' },
@@ -439,7 +439,8 @@ export const settings: Setting[] = [
   {
     key: 'dvr_ring_seconds',
     label: 'Replay length',
-    description: "How many seconds of recent play Instant replay keeps ready to save. Longer holds more of this PC's memory (never more than 512 MiB, which shortens it at very high bitrates); choose 30 seconds on a PC with 16 GB or less.",
+    description: 'How many seconds of recent play Instant replay keeps ready to save. Longer holds more memory (never more than 512 MiB); choose 30 seconds on a PC with 16 GB or less.',
+    details: 'At very high bitrates the 512 MiB limit shortens the replay.',
     category: 'video',
     group: 'Stream DVR and clips',
     control: { kind: 'select', options: [{ value: '30', label: '30 seconds' }, { value: '60', label: '60 seconds' }, { value: '90', label: '90 seconds' }, { value: '120', label: '120 seconds' }] },
@@ -450,7 +451,7 @@ export const settings: Setting[] = [
   {
     key: 'dvr_quota_gb',
     label: 'Space for clips',
-    description: 'The most drive space saved clips may take. When it is full, the oldest replay clips are deleted to make room and recordings are kept; raise it to keep more clips if the drive has room.',
+    description: 'The most drive space clips may take. When full, the oldest replay clips are deleted and recordings are kept; raise it to keep more clips if the drive has room.',
     category: 'video',
     group: 'Stream DVR and clips',
     control: { kind: 'number', min: 5, max: 500, step: 1, unit: 'GB' },
