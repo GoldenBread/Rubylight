@@ -227,6 +227,46 @@ fn hdr_without_metadata_writes_only_colr() {
 }
 
 #[test]
+fn colr_follows_the_stream_and_hlg_takes_no_static_metadata() {
+    let pts = |index: u64| 1_000_000 + index * FRAME_US;
+    // HLG with known mastering metadata: the SPS colour, and no mdcv or clli.
+    let video = (0..10)
+        .map(|i| hevc_frame_with(pts(i), i == 0, HEVC_SPS_HLG))
+        .collect();
+    let hlg = Clip {
+        info: hdr_info(VideoCodec::Hevc),
+        video,
+        audio: Vec::new(),
+    };
+    let (out, clip_info, tree) = mux(&hlg);
+    assert!(clip_info.hdr);
+    let hvc1 = entry(&tree, 0, "hvc1");
+    assert_eq!(
+        hvc1.child("colr").payload(&out),
+        [b'n', b'c', b'l', b'x', 0, 9, 0, 18, 0, 9, 0]
+    );
+    assert!(!hvc1.has("mdcv") && !hvc1.has("clli"));
+
+    // Full-range BT.601 SDR.
+    let video = (0..10)
+        .map(|i| h264_frame_with(pts(i), i == 0, H264_SPS_BT601_FULL))
+        .collect();
+    let sdr = Clip {
+        info: StreamInfo {
+            audio: None,
+            ..info(VideoCodec::H264)
+        },
+        video,
+        audio: Vec::new(),
+    };
+    let (out, _, tree) = mux(&sdr);
+    assert_eq!(
+        entry(&tree, 0, "avc1").child("colr").payload(&out),
+        [b'n', b'c', b'l', b'x', 0, 6, 0, 6, 0, 6, 0x80]
+    );
+}
+
+#[test]
 fn av1_clip_has_av1c_and_sized_obus_without_temporal_delimiters() {
     let clip = clip(VideoCodec::Av1, info(VideoCodec::Av1), 2);
     let (out, info, tree) = mux(&clip);

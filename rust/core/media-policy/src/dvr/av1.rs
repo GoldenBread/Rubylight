@@ -1,7 +1,8 @@
 //! AV1 low-overhead OBU streams: OBU iteration, size-field normalization for MP4 samples
-//! and `av1C`, and the sequence header fields `av1C` and the sample entry need. Parsers
-//! stop or return `None` on malformed input.
+//! and `av1C`, and the sequence header fields `av1C` and the sample entry need, colour
+//! signalling included. Parsers stop or return `None` on malformed input.
 
+use super::colour::Colour;
 use super::nal::Bits;
 
 pub const OBU_SEQUENCE_HEADER: u8 = 1;
@@ -126,6 +127,9 @@ pub struct SequenceHeader {
     pub chroma_sample_position: u8,
     pub width: u32,
     pub height: u32,
+    /// `color_config`: the description when `color_description_present_flag` is set, and
+    /// `color_range`.
+    pub colour: Colour,
 }
 
 impl SequenceHeader {
@@ -211,19 +215,18 @@ pub fn sequence_header(payload: &[u8]) -> Option<SequenceHeader> {
     let high_bitdepth = bits.flag()?;
     let twelve_bit = profile == 2 && high_bitdepth && bits.flag()?;
     let monochrome = profile != 1 && bits.flag()?;
-    let (mut primaries, mut transfer, mut matrix) = (2, 2, 2);
-    if bits.flag()? {
-        primaries = bits.u8(8)?;
-        transfer = bits.u8(8)?;
-        matrix = bits.u8(8)?;
-    }
-    let (subsampling_x, subsampling_y, mut chroma_sample_position) = if monochrome {
-        bits.flag()?;
-        (true, true, 0)
-    } else if primaries == 1 && transfer == 13 && matrix == 0 {
-        (false, false, 0)
+    let description = if bits.flag()? {
+        Some((bits.u8(8)?, bits.u8(8)?, bits.u8(8)?))
     } else {
-        bits.flag()?;
+        None
+    };
+    let (subsampling_x, subsampling_y, full_range) = if monochrome {
+        (true, true, bits.flag()?)
+    } else if description == Some((1, 13, 0)) {
+        // sRGB: full range and 4:4:4 are implied, not signalled.
+        (false, false, true)
+    } else {
+        let full_range = bits.flag()?;
         let (x, y) = match profile {
             0 => (true, true),
             1 => (false, false),
@@ -233,11 +236,13 @@ pub fn sequence_header(payload: &[u8]) -> Option<SequenceHeader> {
             }
             _ => (true, false),
         };
-        (x, y, 0)
+        (x, y, full_range)
     };
-    if !monochrome && subsampling_x && subsampling_y {
-        chroma_sample_position = bits.u8(2)?;
-    }
+    let chroma_sample_position = if !monochrome && subsampling_x && subsampling_y {
+        bits.u8(2)?
+    } else {
+        0
+    };
     Some(SequenceHeader {
         profile,
         level_idx,
@@ -250,5 +255,9 @@ pub fn sequence_header(payload: &[u8]) -> Option<SequenceHeader> {
         chroma_sample_position,
         width,
         height,
+        colour: Colour {
+            description,
+            full_range,
+        },
     })
 }

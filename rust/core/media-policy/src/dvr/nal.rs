@@ -1,7 +1,10 @@
 //! Annex-B byte streams for H.264 and HEVC: NAL unit iteration, emulation-prevention
 //! removal, an Exp-Golomb bit reader (shared with the AV1 parser), and the SPS fields the
-//! MP4 sample entries need: profile, level, chroma format, bit depth and the cropped
-//! picture size. Every parser returns `None` on truncated or invalid input.
+//! MP4 sample entries need: profile, level, chroma format, bit depth, the cropped picture
+//! size and the VUI colour signalling. Every parser returns `None` on truncated or invalid
+//! input; a VUI it cannot read leaves the colour unsignalled.
+
+use super::colour::{self, Colour};
 
 pub const H264_SEI: u8 = 6;
 pub const H264_SPS: u8 = 7;
@@ -199,6 +202,7 @@ pub struct H264Sps {
     /// Cropped picture size.
     pub width: u32,
     pub height: u32,
+    pub colour: Colour,
 }
 
 impl H264Sps {
@@ -292,6 +296,7 @@ pub fn h264_sps(unit: &[u8]) -> Option<H264Sps> {
     let width = (width_mbs * 16).checked_sub(crop_x * (crop[0] + crop[1]))?;
     let height =
         (field_factor * height_map_units * 16).checked_sub(crop_y * (crop[2] + crop[3]))?;
+    let colour = colour::vui(&mut bits).unwrap_or_default();
     Some(H264Sps {
         profile_idc,
         constraint_flags,
@@ -301,6 +306,7 @@ pub fn h264_sps(unit: &[u8]) -> Option<H264Sps> {
         bit_depth_chroma: u8::try_from(bit_depth_chroma).ok()?,
         width: u32::try_from(width).ok().filter(|&w| w > 0)?,
         height: u32::try_from(height).ok().filter(|&h| h > 0)?,
+        colour,
     })
 }
 
@@ -335,6 +341,7 @@ pub struct HevcSps {
     /// Picture size inside the conformance window.
     pub width: u32,
     pub height: u32,
+    pub colour: Colour,
 }
 
 /// Parses an HEVC SPS NAL unit (with its two-byte header).
@@ -395,6 +402,7 @@ pub fn hevc_sps(unit: &[u8]) -> Option<HevcSps> {
     }
     let width = width.checked_sub(sub_width * (window[0] + window[1]))?;
     let height = height.checked_sub(sub_height * (window[2] + window[3]))?;
+    let colour = colour::hevc(&mut bits, max_sub_layers_minus1).unwrap_or_default();
     Some(HevcSps {
         profile_space,
         tier,
@@ -409,5 +417,6 @@ pub fn hevc_sps(unit: &[u8]) -> Option<HevcSps> {
         bit_depth_chroma: u8::try_from(bit_depth_chroma).ok()?,
         width: u32::try_from(width).ok().filter(|&w| w > 0)?,
         height: u32::try_from(height).ok().filter(|&h| h > 0)?,
+        colour,
     })
 }

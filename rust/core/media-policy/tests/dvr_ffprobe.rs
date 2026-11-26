@@ -1,6 +1,7 @@
-//! Stream DVR clips and recordings read back by FFmpeg: short H.264, HEVC (SDR and 10-bit
-//! HDR10) and AV1 encodes with stereo and 5.1 Opus, split into access units and packets,
-//! pushed through the replay ring and the recorder, muxed, then probed and decoded.
+//! Stream DVR clips and recordings read back by FFmpeg: short H.264 (BT.709 and full-range
+//! BT.601), HEVC (SDR and 10-bit HDR10 and HLG) and AV1 encodes with stereo and 5.1 Opus,
+//! split into access units and packets, pushed through the replay ring and the recorder,
+//! muxed, then probed and decoded.
 //!
 //! Needs ffmpeg with libx264, libx265, libaom-av1 and libopus plus ffprobe:
 //! `BUTTERPOLLO_FFMPEG_DIR`, else `C:\msys64\ucrt64\bin`, else PATH. Run with
@@ -44,8 +45,10 @@ fn ffmpeg(args: &[&str], out: &Path) -> Vec<u8> {
 #[derive(Clone, Copy)]
 enum Video {
     H264,
+    H264Bt601Full,
     Hevc,
     HevcHdr10,
+    HevcHlg,
     Av1,
 }
 
@@ -60,16 +63,21 @@ fn encode_video(dir: &Path, video: Video) -> Vec<u8> {
         "{x265}:colorprim=bt2020:transfer=smpte2084:colormatrix=bt2020nc:\
          master-display={MASTER_DISPLAY}:max-cll=900,400"
     );
+    let hlg = format!("{x265}:colorprim=bt2020:transfer=arib-std-b67:colormatrix=bt2020nc");
+    let x264 = "keyint=15:min-keyint=15:scenecut=0:bframes=0:aud=1:log-level=error";
+    let bt601 =
+        format!("{x264}:fullrange=on:colorprim=smpte170m:transfer=smpte170m:colormatrix=smpte170m");
     let (size, pix_fmt, codec, format): (&str, &str, Vec<&str>, &str) = match video {
         Video::H264 => (
             "200x120",
             "yuv420p",
-            vec![
-                "-c:v",
-                "libx264",
-                "-x264-params",
-                "keyint=15:min-keyint=15:scenecut=0:bframes=0:aud=1:log-level=error",
-            ],
+            vec!["-c:v", "libx264", "-x264-params", x264],
+            "h264",
+        ),
+        Video::H264Bt601Full => (
+            "200x120",
+            "yuv420p",
+            vec!["-c:v", "libx264", "-x264-params", bt601.as_str()],
             "h264",
         ),
         Video::Hevc => (
@@ -82,6 +90,12 @@ fn encode_video(dir: &Path, video: Video) -> Vec<u8> {
             "202x118",
             "yuv420p10le",
             vec!["-c:v", "libx265", "-x265-params", hdr10.as_str()],
+            "hevc",
+        ),
+        Video::HevcHlg => (
+            "202x118",
+            "yuv420p10le",
+            vec!["-c:v", "libx265", "-x265-params", hlg.as_str()],
             "hevc",
         ),
         Video::Av1 => (
@@ -126,7 +140,7 @@ fn encode_video(dir: &Path, video: Video) -> Vec<u8> {
 fn access_units(video: Video, stream: &[u8]) -> Vec<(bool, Vec<u8>)> {
     let units: Vec<(bool, Vec<u8>)> = match video {
         Video::Av1 => split_obus(stream),
-        _ => split_annexb(stream, matches!(video, Video::H264)),
+        _ => split_annexb(stream, matches!(video, Video::H264 | Video::H264Bt601Full)),
     };
     assert_eq!(units.len() as u64, FRAMES);
     assert!(units[0].0, "starts on a keyframe");
@@ -497,12 +511,29 @@ fn ring_clip_h264_with_stereo_opus() {
         (Some(200), Some(120))
     );
     assert_eq!(video["color_primaries"], "bt709");
+    assert_eq!(video["color_range"], "tv");
 }
 
 #[test]
 #[ignore = "needs ffmpeg and ffprobe"]
-fn ring_clip_hevc_hdr10_carries_colour_metadata() {
+fn ring_clip_h264_full_range_bt601_keeps_its_signalling() {
     let dir = tempfile::tempdir().unwrap();
+    let info = info(VideoCodec::H264, None, None);
+    let video = ring_clip(
+        dir.path(),
+        "h264-bt601.mp4",
+        Video::H264Bt601Full,
+        info,
+        Vec::new(),
+    );
+    for key in ["color_primaries", "color_transfer", "color_space"] {
+        assert_eq!(video[key], "smpte170m", "{key}");
+    }
+    assert_eq!(video["color_range"], "pc");
+}
+
+/// What the host knows about the display the HDR stream was mastered for.
+fn hdr_with_metadata() -> HdrInfo {
     let metadata = Metadata {
         primaries: [[34000, 16000], [13250, 34500], [7500, 3000]],
         white: [15635, 16450],
@@ -512,10 +543,31 @@ fn ring_clip_hevc_hdr10_carries_colour_metadata() {
         max_fall: 400,
         full_frame_nits: 400,
     };
-    let hdr = HdrInfo {
+    HdrInfo {
         metadata: Some(metadata),
-    };
-    let info = info(VideoCodec::Hevc, Some(hdr), None);
+    }
+}
+
+#[test]
+#[ignore = "needs ffmpeg and ffprobe"]
+fn ring_clip_hevc_hlg_takes_no_static_metadata() {
+    let dir = tempfile::tempdir().unwrap();
+    let info = info(VideoCodec::Hevc, Some(hdr_with_metadata()), None);
+    let video = ring_clip(dir.path(), "hevc-hlg.mp4", Video::HevcHlg, info, Vec::new());
+    assert_eq!(video["color_primaries"], "bt2020");
+    assert_eq!(video["color_transfer"], "arib-std-b67");
+    assert_eq!(video["color_space"], "bt2020nc");
+    assert_eq!(video["color_range"], "tv");
+    let side_data = video["side_data_list"].to_string();
+    assert!(!side_data.contains("Mastering display"), "{side_data}");
+    assert!(!side_data.contains("Content light level"), "{side_data}");
+}
+
+#[test]
+#[ignore = "needs ffmpeg and ffprobe"]
+fn ring_clip_hevc_hdr10_carries_colour_metadata() {
+    let dir = tempfile::tempdir().unwrap();
+    let info = info(VideoCodec::Hevc, Some(hdr_with_metadata()), None);
     let video = ring_clip(
         dir.path(),
         "hevc-hdr10.mp4",

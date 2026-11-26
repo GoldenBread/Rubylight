@@ -10,6 +10,7 @@ use std::sync::Arc;
 
 pub mod av1;
 pub mod cadence;
+pub mod colour;
 pub mod fmp4;
 pub mod nal;
 pub mod params;
@@ -20,6 +21,7 @@ pub mod ring;
 pub mod slices;
 
 pub use cadence::{GOP_SECS, KeyframeCadence, gop};
+pub use colour::Colour;
 pub use fmp4::{ClipInfo, MuxError, write_clip};
 pub use params::ParamSets;
 pub use quota::{
@@ -51,8 +53,9 @@ impl VideoCodec {
     }
 }
 
-/// An HDR stream: BT.2020 primaries with the PQ (SMPTE ST 2084) transfer, plus the
-/// mastering display and content light levels when the host knows them.
+/// An HDR stream, plus the mastering display and content light levels when the host
+/// knows them. The bitstream's colour signalling picks the transfer (PQ or HLG; BT.2020 +
+/// PQ when it carries none), and the metadata is written for PQ only.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct HdrInfo {
     pub metadata: Option<crate::hdr::Metadata>,

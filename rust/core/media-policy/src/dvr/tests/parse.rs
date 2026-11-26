@@ -1,8 +1,9 @@
-//! Annex-B, SPS, OBU and sequence header parsing, parameter set extraction, and
-//! no-panic properties on arbitrary bytes.
+//! Annex-B, SPS, OBU and sequence header parsing, colour signalling, parameter set
+//! extraction, and no-panic properties on arbitrary bytes.
 
 use super::*;
 use crate::dvr::av1::{self, Obu};
+use crate::dvr::colour::{self, Colour};
 use crate::dvr::nal::{self, Bits};
 use crate::dvr::{ParamSets, fmp4};
 use proptest::prelude::*;
@@ -56,6 +57,7 @@ fn h264_sps_gives_profile_level_and_cropped_size() {
             bit_depth_chroma: 8,
             width: 200,
             height: 120,
+            colour: Colour::default(),
         }
     );
     assert!(sps.high_profile());
@@ -82,6 +84,10 @@ fn hevc_sps_gives_profile_tier_level_and_conformance_window() {
             bit_depth_chroma: 10,
             width: 202,
             height: 118,
+            colour: Colour {
+                description: Some((9, 16, 9)),
+                full_range: false,
+            },
         }
     );
     assert_eq!(nal::hevc_sps(HEVC_VPS), None);
@@ -107,10 +113,144 @@ fn av1_sequence_header_fields() {
             chroma_sample_position: 0,
             width: 200,
             height: 120,
+            colour: Colour::default(),
         }
     );
     assert_eq!(header.bit_depth(), 10);
     assert_eq!(av1::sequence_header(&obu.payload[..5]), None);
+}
+
+#[test]
+fn colour_signalling_comes_from_the_vui_and_color_config() {
+    let bt601 = nal::h264_sps(H264_SPS_BT601_FULL).unwrap();
+    assert_eq!((bt601.width, bt601.height), (200, 120));
+    assert_eq!(
+        bt601.colour,
+        Colour {
+            description: Some((6, 6, 6)),
+            full_range: true,
+        }
+    );
+    let hlg = Colour {
+        description: Some((9, 18, 9)),
+        full_range: false,
+    };
+    assert_eq!(nal::hevc_sps(HEVC_SPS_HLG).unwrap().colour, hlg);
+    let obu = av1::obus(AV1_SEQUENCE_HEADER_HLG_FULL).next().unwrap();
+    let header = av1::sequence_header(obu.payload).unwrap();
+    assert_eq!(
+        (header.width, header.height, header.bit_depth()),
+        (200, 120, 10)
+    );
+    assert_eq!(
+        header.colour,
+        Colour {
+            full_range: true,
+            ..hlg
+        }
+    );
+    // A VUI cut short leaves the colour unsignalled, not the SPS unreadable.
+    let cut = nal::hevc_sps(&HEVC_SPS_HLG[..33]).unwrap();
+    assert_eq!(cut.colour, Colour::default());
+    assert_eq!((cut.width, cut.height, cut.bit_depth_luma), (202, 118, 10));
+}
+
+#[test]
+fn colour_falls_back_per_unspecified_code_point() {
+    assert_eq!(Colour::default().resolve(false), (1, 1, 1));
+    assert_eq!(Colour::default().resolve(true), (9, 16, 9));
+    let partial = Colour {
+        description: Some((2, 2, 9)),
+        full_range: false,
+    };
+    assert_eq!(partial.resolve(false), (1, 1, 9));
+    assert_eq!(partial.resolve(true), (9, 16, 9));
+    let reserved = Colour {
+        description: Some((3, 0, 3)),
+        full_range: false,
+    };
+    assert_eq!(reserved.resolve(false), (1, 1, 1));
+    let gbr = Colour {
+        description: Some((1, 13, 0)),
+        full_range: true,
+    };
+    assert_eq!(gbr.resolve(true), (1, 13, 0));
+}
+
+/// MSB-first bit writer for synthetic syntax.
+#[derive(Default)]
+struct BitWriter {
+    bytes: Vec<u8>,
+    len: usize,
+}
+
+impl BitWriter {
+    fn put(&mut self, value: u64, count: u32) -> &mut Self {
+        for shift in (0..count).rev() {
+            if self.len.is_multiple_of(8) {
+                self.bytes.push(0);
+            }
+            if (value >> shift) & 1 == 1 {
+                *self.bytes.last_mut().unwrap() |= 0x80 >> (self.len % 8);
+            }
+            self.len += 1;
+        }
+        self
+    }
+
+    fn ue(&mut self, value: u32) -> &mut Self {
+        let code = u64::from(value) + 1;
+        let width = 64 - code.leading_zeros();
+        self.put(0, width - 1).put(code, width)
+    }
+}
+
+#[test]
+fn hevc_sps_tail_walks_scaling_lists_and_predicted_reference_sets() {
+    let mut w = BitWriter::default();
+    // POC LSB 8 bits; ordering info for both sub-layers; block sizes and depths.
+    w.ue(4).put(1, 1);
+    for _ in 0..2 * 3 + 6 {
+        w.ue(1);
+    }
+    // Scaling lists: predicted except one explicit 8x8 list with its DC (se 0 is "1").
+    w.put(0b11, 2);
+    for size in 0..4 {
+        let matrices = if size == 3 { 2 } else { 6 };
+        for matrix in 0..matrices {
+            if size == 2 && matrix == 0 {
+                w.put(1, 1).put(1, 1).put(u64::MAX, 64);
+            } else {
+                w.put(0, 1).ue(0);
+            }
+        }
+    }
+    // AMP, SAO; PCM with its depths, sizes and loop filter flag.
+    w.put(0b11, 2).put(1, 1).put(0x77, 8).ue(0).ue(1).put(1, 1);
+    // Set 0: S0 = {-1, -3}, S1 = {+2}.
+    w.ue(3).ue(2).ue(1);
+    w.ue(0).put(1, 1).ue(1).put(1, 1);
+    w.ue(1).put(0, 1);
+    // Set 1 from set 0 with deltaRps -1: four entries, two kept: S0 = {-1}, S1 = {+1}.
+    w.put(1, 1).put(1, 1).ue(0);
+    w.put(0b00, 2).put(0b00, 2).put(1, 1).put(0b01, 2);
+    // Set 2 from set 1 with deltaRps +2: three entries, all used.
+    w.put(1, 1).put(0, 1).ue(1).put(0b111, 3);
+    // Two long-term pictures (8-bit LSB and a flag each); temporal MVP, strong intra.
+    w.put(1, 1).ue(2).put(0x1ff, 9).put(0x1ff, 9).put(0b11, 2);
+    // VUI: extended SAR, overscan, then the signal type: full-range HLG.
+    w.put(0b11, 2).put(255, 8);
+    w.put(0x0001_0001, 32).put(0b11, 2);
+    w.put(1, 1).put(5, 3).put(0b11, 2);
+    w.put(9, 8).put(18, 8).put(9, 8);
+    w.put(0x80, 8);
+    assert_eq!(
+        colour::hevc(&mut Bits::new(&w.bytes), 1),
+        Some(Colour {
+            description: Some((9, 18, 9)),
+            full_range: true,
+        })
+    );
 }
 
 #[test]
@@ -215,6 +355,9 @@ proptest! {
         let _ = nal::hevc_sps(&hevc);
         let _ = av1::sequence_header(&bytes);
         let _ = av1::obus(&bytes).count();
+        let layers = bytes.first().map_or(0, |byte| byte & 7);
+        let _ = colour::hevc(&mut Bits::new(&bytes), layers);
+        let _ = colour::vui(&mut Bits::new(&bytes));
         for codec in [VideoCodec::H264, VideoCodec::Hevc, VideoCodec::Av1] {
             let _ = ParamSets::from_frame(codec, &bytes);
             let mut out = Vec::new();

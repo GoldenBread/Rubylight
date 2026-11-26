@@ -1,9 +1,11 @@
 //! Codec sample entries for the fragmented MP4 muxer: `avc1`+`avcC`, `hvc1`+`hvcC` and
-//! `av01`+`av1C` from the keyframe's parameter sets, the `colr` (nclx), `mdcv` and `clli`
-//! colour boxes, and `Opus`+`dOps` with the channel mapping permuted from WAVE order to
-//! the Vorbis order Opus mapping family 1 uses.
+//! `av01`+`av1C` from the keyframe's parameter sets, the `colr` (nclx, from the stream's
+//! own colour signalling), `mdcv` and `clli` (PQ only) colour boxes, and `Opus`+`dOps`
+//! with the channel mapping permuted from WAVE order to the Vorbis order Opus mapping
+//! family 1 uses.
 
 use super::boxes::Bmff;
+use crate::dvr::colour::{Colour, TRANSFER_PQ};
 use crate::dvr::nal::{H264Sps, HevcSps};
 use crate::dvr::{HdrInfo, OpusConfig, av1::SequenceHeader};
 
@@ -24,6 +26,16 @@ pub enum Config<'a> {
         sequence_header: &'a [u8],
         parsed: SequenceHeader,
     },
+}
+
+impl Config<'_> {
+    fn colour(&self) -> Colour {
+        match self {
+            Self::Avc { parsed, .. } => parsed.colour,
+            Self::Hevc { parsed, .. } => parsed.colour,
+            Self::Av1 { parsed, .. } => parsed.colour,
+        }
+    }
 }
 
 /// A complete visual sample entry box.
@@ -64,7 +76,7 @@ pub fn visual_entry(
             parsed,
         } => av1c(&mut b, sequence_header, parsed),
     }
-    colour(&mut b, hdr);
+    colour(&mut b, config.colour(), hdr);
     b.end();
     b.buf
 }
@@ -140,18 +152,22 @@ fn av1c(b: &mut Bmff, sequence_header: &[u8], parsed: &SequenceHeader) {
     b.end();
 }
 
-/// `colr` nclx (BT.709 for SDR; BT.2020 + PQ for HDR), then `mdcv` and `clli` when the
-/// HDR stream's metadata is known.
-fn colour(b: &mut Bmff, hdr: Option<&HdrInfo>) {
-    let (primaries, transfer, matrix) = if hdr.is_some() { (9, 16, 9) } else { (1, 1, 1) };
+/// `colr` nclx with the stream's own code points and range (see [`Colour::resolve`] for
+/// the fallback where it signals none), then `mdcv` and `clli` when the transfer is PQ
+/// and the host knows the mastering metadata. HLG carries no static metadata.
+fn colour(b: &mut Bmff, signalled: Colour, hdr: Option<&HdrInfo>) {
+    let (primaries, transfer, matrix) = signalled.resolve(hdr.is_some());
     b.begin(b"colr");
     b.bytes(b"nclx");
-    b.u16(primaries);
-    b.u16(transfer);
-    b.u16(matrix);
-    b.u8(0);
+    b.u16(u16::from(primaries));
+    b.u16(u16::from(transfer));
+    b.u16(u16::from(matrix));
+    b.u8(if signalled.full_range { 0x80 } else { 0 });
     b.end();
-    let Some(metadata) = hdr.and_then(|hdr| hdr.metadata) else {
+    let Some(metadata) = hdr
+        .and_then(|hdr| hdr.metadata)
+        .filter(|_| transfer == TRANSFER_PQ)
+    else {
         return;
     };
     b.begin(b"mdcv");
