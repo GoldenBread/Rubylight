@@ -533,6 +533,10 @@ impl Config {
             }
         }
     }
+    /// Whether a device may ask for a launch curtain (`launch_curtain`, off by default).
+    pub fn launch_curtain(&self) -> bool {
+        self.boolean("launch_curtain", false)
+    }
     /// 7.1.4 surround sound (on by default).
     pub fn audio_surround_714(&self) -> bool {
         self.boolean("audio_surround_714", true)

@@ -39,6 +39,16 @@ export const settings: Setting[] = [
     default: 'off',
   },
   {
+    key: 'launch_curtain',
+    label: 'Launch curtain',
+    description: "While a game starts, a device that asks for it shows the game's cover instead of the PC's desktop, store windows and splash screens, and the PC brings the game to the front when its store covers it. The PC checks its windows four times a second during a start, for at most 45 seconds; leave it off to watch every start yourself.",
+    details: "Only Nightjar asks for it; Moonlight and other clients see the stream as before. A launcher that wants a sign in or an update, or a Windows administrator prompt, shows on the device with a button that shows the PC's screen; the PC never clicks them. When Steam is not running yet, it starts in the tray for such a launch.",
+    category: 'library',
+    group: 'App behavior',
+    control: { kind: 'toggle' },
+    default: false,
+  },
+  {
     key: 'steam_enabled',
     label: 'Steam library',
     description: 'Adds your Steam games to the library, with their covers, and ends a stream when the game it started exits. Off adds no more games; added ones stay.',

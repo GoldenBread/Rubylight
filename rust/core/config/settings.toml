@@ -400,6 +400,7 @@ keys = [
   "remote_monitor_terminate_on_first_request",
   "exit_timeout",
   "quick_suspend",
+  "launch_curtain",
   "library_auto_sync",
   "library_autosync_remove_uninstalled",
   "library_sync_all_installed",
@@ -596,6 +597,7 @@ global_order = [
   "terminate_on_pause",
   "exit_timeout",
   "quick_suspend",
+  "launch_curtain",
   "guest_join",
   "guest_permission",
   "virtual_sink",
@@ -4895,6 +4897,20 @@ details = "When a device asks, the game's own processes are paused from the devi
 control = { kind = "select", options = [{ value = "off", label = "Off" }, { value = "manual", label = "When a device asks" }] }
 console = { group = "App behavior", label = "Quick Suspend (when a device asks pauses the running game until it is resumed; off never pauses one)", control = "choice", choices = ["off", "manual"] }
 rust_accessor = { kind = "enum_ci", method = "quick_suspend", ret = "QuickSuspendMode", variants = [["off", "QuickSuspendMode::Off"], ["manual", "QuickSuspendMode::Manual"]], doc = "Quick Suspend: `off` (default) or `manual`, a device pauses the running game until it is resumed." }
+
+[[setting]]
+key = "launch_curtain"
+part = "library"
+type = "bool"
+default = false
+category = "library"
+group = "App behavior"
+label = "Launch curtain"
+description = "While a game starts, a device that asks for it shows the game's cover instead of the PC's desktop, store windows and splash screens, and the PC brings the game to the front when its store covers it. The PC checks its windows four times a second during a start, for at most 45 seconds; leave it off to watch every start yourself."
+details = "Only Nightjar asks for it; Moonlight and other clients see the stream as before. A launcher that wants a sign in or an update, or a Windows administrator prompt, shows on the device with a button that shows the PC's screen; the PC never clicks them. When Steam is not running yet, it starts in the tray for such a launch."
+control = { kind = "toggle" }
+console = { group = "App behavior", label = "Launch curtain (a device shows the game's cover until its window is in front)", control = "bool" }
+rust_accessor = { kind = "bool", method = "launch_curtain", doc = "Whether a device may ask for a launch curtain (`launch_curtain`, off by default)." }
 
 [[setting]]
 key = "steam_enabled"

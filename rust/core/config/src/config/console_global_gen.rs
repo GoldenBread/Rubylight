@@ -55,6 +55,7 @@ pub const GLOBAL: &[Setting] = console_settings! {
         "terminate_on_pause", "Close the app when the last device disconnects", Bool;
         "exit_timeout", "App shutdown timeout (seconds; apps without their own; default 10)", Number;
         "quick_suspend", "Quick Suspend (when a device asks pauses the running game until it is resumed; off never pauses one)", Choice(&["off", "manual"]);
+        "launch_curtain", "Launch curtain (a device shows the game's cover until its window is in front)", Bool;
         "guest_join", "Another device joining the running game (default off)", Choice(&["off", "ask", "allow"]);
         "guest_permission", "What a guest may do", Choice(&["view", "controller", "controller-keyboard-mouse"]);
     ]
