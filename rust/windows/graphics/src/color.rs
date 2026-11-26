@@ -53,9 +53,17 @@ pub(crate) fn hlg_light(signal: [f64; 3]) -> [f64; 3] {
 /// 170M, 1 BT.709, 2 BT.2020). ITU-R BT.2446-1 Method B, ported from
 /// Foundation Sunshine's MethodBScRgbToSdr and LimitSdrGamut
 /// (AlkaidLab/foundation-sunshine, commit 9d761ba, PR #1387). Copyright (c)
-/// Foundation Sunshine authors, GPL-3.0.
+/// Foundation Sunshine authors, GPL-3.0. For a 1000-nit source, as
+/// section 5.2.1 has it; [`method_b_peak`] takes the source's peak.
 #[cfg(test)]
 pub(crate) fn method_b(light: [f64; 3], color_matrix: u8) -> [f64; 3] {
+    method_b_peak(light, color_matrix, 1000.)
+}
+/// [`method_b`] for a source of `peak` nits: the HLG reference OOTF it
+/// inverts is a `peak`-nit display's, at BT.2100's system gamma
+/// 1.2 + 0.42 log10(peak / 1000), so `peak` maps to SDR white.
+#[cfg(test)]
+pub(crate) fn method_b_peak(light: [f64; 3], color_matrix: u8, peak: f64) -> [f64; 3] {
     type Matrix = [[f64; 3]; 3];
     const RGB709_TO_LMS: Matrix = [
         [0.295809355, 0.623101305, 0.081089341],
@@ -137,7 +145,8 @@ pub(crate) fn method_b(light: [f64; 3], color_matrix: u8) -> [f64; 3] {
     if y <= 0. {
         return [0.; 3];
     }
-    let bridge = 291. * (y * 80. / 1000.).powf(1. / 1.2);
+    let system_gamma = 1.2 + 0.42 * (peak / 1000.).log10();
+    let bridge = 291. * (y * 80. / peak).powf(1. / system_gamma);
     let (knee, width) = (55.0842, 16.44899);
     let nits = if bridge <= knee {
         bridge
@@ -509,6 +518,27 @@ mod tests {
         assert!(grey.iter().all(|v| (v - 1.).abs() < 0.01), "{grey:?}");
         assert_eq!(scrgb_pq10([0.; 3]), [0; 3]);
         assert_eq!(scrgb_pq10([125.; 3]), [1023; 3]);
+    }
+    #[test]
+    fn method_b_maps_the_sources_peak_to_sdr_white() {
+        let grey = |nits: f64, peak| method_b_peak([nits / 80.; 3], 1, peak)[0];
+        for light in [[0.5; 3], [2.5; 3], [2., 0.75, 0.25], [10., 1., 5.]] {
+            assert_eq!(method_b_peak(light, 1, 1000.), method_b(light, 1));
+        }
+        for peak in [400., 600., 1000., 1500., 2000.] {
+            assert!((grey(peak, peak) - 1.).abs() < 1e-4, "{peak}");
+            assert!(grey(peak * 0.9, peak) < 1., "{peak}");
+        }
+        // A brighter display's 203-nit white is a lower signal, a dimmer
+        // one's a higher, and black stays black.
+        assert!(grey(203., 400.) > grey(203., 1000.));
+        assert!(grey(203., 1000.) > grey(203., 2000.));
+        assert!(
+            (grey(203., 2000.) - 0.761).abs() < 0.002,
+            "{}",
+            grey(203., 2000.)
+        );
+        assert_eq!(method_b_peak([0.; 3], 1, 400.), [0.; 3]);
     }
     #[test]
     fn method_b_matches_its_fixed_points() {

@@ -1,7 +1,7 @@
 //! HDR desktop to SDR stream (BT.2446-1 Method B) GPU tests.
 
 use super::*;
-use crate::color::{METHOD_B_PATCHES, method_b, pq_scrgb, scrgb_pq10};
+use crate::color::{METHOD_B_PATCHES, method_b, method_b_peak, pq_scrgb, scrgb_pq10};
 
 /// [`make_image`] as an HDR10 desktop hands it over: 10-bit PQ BT.2020.
 fn make_pq_image(colors: &[[f32; 3]], patch: usize, height: usize) -> Image {
@@ -241,6 +241,75 @@ fn gpu_sdr_tone_map_maps_an_hdr10_capture_like_the_cpu_reference() -> Result<()>
                         "{path} csc={csc_mode} ten={ten_bit} patch {patch}: {actual}, wanted {wanted}"
                     );
                 }
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn the_tone_mapping_follows_the_displays_reported_peak() {
+    let peak = |nits| f32::from_bits(tone_map_peak(nits)).exp2();
+    for (reported, wanted) in [
+        (0, 1000.),
+        (270, 400.),
+        (600, 600.),
+        (1499, 1499.),
+        (10000, 2000.),
+    ] {
+        assert!((peak(reported) - wanted).abs() < 0.01, "{reported}");
+    }
+    let config = butterpollo_media_policy::rtsp::Negotiated {
+        sdr_tone_map: true,
+        ..Default::default()
+    };
+    // Whatever the display, the words start at Method B's 1000 nits.
+    let values = constants(&config, (64, 64, Pixel::Rgba10Pq), [240., 1.], None);
+    assert_eq!(values[17..], [1, 0, tone_map_peak(1000)]);
+}
+
+#[test]
+#[ignore = "requires a D3D12 compute GPU"]
+fn gpu_sdr_tone_map_follows_the_source_peak() -> Result<()> {
+    let _com = ComGuard::new()?;
+    let gpu = Device::new("")?;
+    let colours: Vec<[f32; 3]> = METHOD_B_PATCHES.iter().map(|(rgb, _)| *rgb).collect();
+    let image = make_image(&colours, 64, 64);
+    let (width, height) = (image.width as usize, image.height as usize);
+    let source = (image.width, image.height, image.pixel);
+    let uploaded = GpuImage::upload_settled(&gpu, &image)?;
+    let queue = crate::compute::Compute::for_device(&gpu.device)?;
+    let config = butterpollo_media_policy::rtsp::Negotiated {
+        width: image.width,
+        height: image.height,
+        codec: 1,
+        sdr_10bit: true,
+        csc_mode: 2,
+        sdr_tone_map: true,
+        ..Default::default()
+    };
+    for peak in [400u16, 1500, 2000] {
+        let mut converter =
+            crate::compute::Converter::new(queue.clone(), image.width, image.height, true)?;
+        converter.values = constants(&config, source, [240., 1.], None);
+        converter.values[19] = tone_map_peak(peak);
+        let opened = queue.open(&uploaded.texture)?;
+        let converted = converter.convert(
+            &opened,
+            crate::compute::format(image.pixel),
+            None,
+            &uploaded,
+        )?;
+        converted.wait()?;
+        let output = readback_compute(&queue, &converted.texture)?;
+        for (patch, actual) in picture(&output, width, height).into_iter().enumerate() {
+            let light = colours[patch].map(f64::from);
+            let rgb = method_b_peak(light, config.color_matrix(), f64::from(peak));
+            for (actual, wanted) in actual.into_iter().zip(codes(&config, rgb)) {
+                assert!(
+                    (actual - wanted).abs() <= 4.,
+                    "peak {peak} patch {patch}: {actual}, wanted {wanted}"
+                );
             }
         }
     }

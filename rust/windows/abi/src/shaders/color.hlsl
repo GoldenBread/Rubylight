@@ -9,7 +9,8 @@ cbuffer Config : register(b0) {
     uint pointerMode;
     // SDR streams of FP16 and PQ captures: `toneMap` is `hdr_sdr_tone_map`,
     // and `sdrDesktop` marks an FP16 capture whose display is not in HDR.
-    uint toneMap; uint sdrDesktop; uint pointerPadding;
+    // `toneMapPeak` is log2 of the source's peak in nits (`method_b`).
+    uint toneMap; uint sdrDesktop; float toneMapPeak;
 };
 float4 vertex(uint id : SV_VertexID) : SV_Position {
     float2 p = float2((id << 1) & 2, id & 2);
@@ -125,9 +126,13 @@ float3 method_b(float3 rgb) {
     // negative ones included.
     float y = dot(rgb, float3(0.212639, 0.715169, 0.072192));
     if (y <= 0) return float3(0, 0, 0);
-    // Invert the 1000-nit HLG reference OOTF (gamma 1.2), then render the
-    // same scene light at 291 nits with gamma 1.0 (section 5.2.1).
-    float bridge = 291.0 * pow(y * (80.0 / 1000.0), 1.0 / 1.2);
+    // Invert the HLG reference OOTF of a display of the source's peak L_W,
+    // at BT.2100's system gamma 1.2 + 0.42 log10(L_W / 1000), then render
+    // the same scene light at 291 nits with gamma 1.0 (section 5.2.1, which
+    // fixes L_W at 1000 nits). With `toneMapPeak` = log2(L_W) that is
+    // 291 (80 y / L_W)^(1 / gamma), the peak mapping to SDR white.
+    float systemGamma = 1.2 + 0.1264326 * (toneMapPeak - 9.9657843);
+    float bridge = 291.0 * exp2((log2(y * 80.0) - toneMapPeak) / systemGamma);
     // 78 % BT.1886 signal is 55.0842 nits. The log shoulder's width joins it
     // with unit slope and maps 291 to nominal SDR white.
     const float knee = 55.0842;
