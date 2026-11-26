@@ -1,6 +1,9 @@
 //! Stream Doctor trials and snapshots without a host: apply, undo, replaced and refused.
 use super::*;
 
+/// No `max_bitrate` and a codec that takes any rate.
+const OPEN: u32 = u32::MAX;
+
 fn encoder(live_bitrate_kbps: u32) -> EncoderFacts {
     EncoderFacts {
         backend: "amf".into(),
@@ -18,6 +21,8 @@ fn facts(owner: bool, live: u32) -> Facts {
     Facts {
         session_active: true,
         owner,
+        may_change: true,
+        ceiling_kbps: OPEN,
         encoder: Some(encoder(live)),
         stages: None,
     }
@@ -31,9 +36,9 @@ fn a_step_down_takes_a_fifth_off_and_undoes_to_the_rate_it_left() {
     assert!(remedy.configurable && remedy.reason.is_none());
     assert_eq!(remedy.target_kbps, Some(36_000));
     let target = trials
-        .check_apply(true, RemedyId::BitrateStepdown, 45_000)
+        .check_apply(true, RemedyId::BitrateStepdown, 45_000, OPEN)
         .unwrap();
-    let id = trials.applied(45_000, target);
+    let id = trials.applied(45_000, 20, target);
     let applied = snapshot(facts(true, 36_000), &trials);
     assert_eq!(applied.active_trials.len(), 1);
     assert!(applied.active_trials[0].can_undo);
@@ -43,8 +48,9 @@ fn a_step_down_takes_a_fifth_off_and_undoes_to_the_rate_it_left() {
         Some("trial_active")
     );
     assert_eq!(
-        trials.begin_undo(true, RemedyId::BitrateStepdown, Some(&id), 36_000),
-        Ok(45_000)
+        trials.begin_undo(true, RemedyId::BitrateStepdown, Some(&id), 36_000, OPEN),
+        Ok((45_000, 20)),
+        "the bitrate and the launch's FEC share inside it"
     );
     trials.undone();
     assert!(
@@ -57,7 +63,7 @@ fn a_step_down_takes_a_fifth_off_and_undoes_to_the_rate_it_left() {
 #[test]
 fn a_change_since_the_trial_wins_over_its_undo() {
     let mut trials = Trials::default();
-    let id = trials.applied(20_000, 16_000);
+    let id = trials.applied(20_000, 0, 16_000);
     // The player moved the bitrate slider to 12 Mbps.
     let replaced = snapshot(facts(true, 12_000), &trials);
     assert!(!replaced.active_trials[0].can_undo);
@@ -66,7 +72,7 @@ fn a_change_since_the_trial_wins_over_its_undo() {
         "a replaced trial blocks nothing"
     );
     assert_eq!(
-        trials.begin_undo(true, RemedyId::BitrateStepdown, Some(&id), 12_000),
+        trials.begin_undo(true, RemedyId::BitrateStepdown, Some(&id), 12_000, OPEN),
         Err(Refusal::Replaced)
     );
     assert_eq!(Refusal::Replaced.code(), ErrorCode::NotWritable);
@@ -80,6 +86,38 @@ fn a_change_since_the_trial_wins_over_its_undo() {
 }
 
 #[test]
+fn the_pcs_limit_caps_the_step_and_holds_an_undo_it_would_break() {
+    let mut trials = Trials::default();
+    // PyroWave at 1.4 Gbps under its 2 Gbps cap: a fifth off, as offered.
+    let mut pyrowave = facts(true, 1_400_000);
+    pyrowave.ceiling_kbps = 2_000_000;
+    let offer = &snapshot(pyrowave, &trials).eligible_remedies[0];
+    assert_eq!(offer.target_kbps, Some(1_120_000));
+    assert_eq!(
+        trials.check_apply(true, RemedyId::BitrateStepdown, 1_400_000, 2_000_000),
+        Ok(1_120_000)
+    );
+    // `max_bitrate` lowered mid-stream below the step: the offer says what the PC applies.
+    let mut capped = facts(true, 45_000);
+    capped.ceiling_kbps = 30_000;
+    assert_eq!(
+        snapshot(capped, &trials).eligible_remedies[0].target_kbps,
+        Some(30_000)
+    );
+    // An undo above the limit is refused, and the trial stays to undo later.
+    let id = trials.applied(45_000, 20, 36_000);
+    assert_eq!(
+        trials.begin_undo(true, RemedyId::BitrateStepdown, Some(&id), 36_000, 40_000),
+        Err(Refusal::Capped)
+    );
+    assert_eq!(Refusal::Capped.code(), ErrorCode::NotWritable);
+    assert_eq!(
+        trials.begin_undo(true, RemedyId::BitrateStepdown, Some(&id), 36_000, OPEN),
+        Ok((45_000, 20))
+    );
+}
+
+#[test]
 fn guests_floors_and_unknown_rates_are_refused_with_their_reason() {
     let trials = Trials::default();
     let cases = [
@@ -89,7 +127,7 @@ fn guests_floors_and_unknown_rates_are_refused_with_their_reason() {
     ];
     for (owner, live, refusal) in cases {
         assert_eq!(
-            trials.check_apply(owner, RemedyId::BitrateStepdown, live),
+            trials.check_apply(owner, RemedyId::BitrateStepdown, live, OPEN),
             Err(refusal)
         );
         let remedy = &snapshot(facts(owner, live), &trials).eligible_remedies[0];
@@ -99,7 +137,7 @@ fn guests_floors_and_unknown_rates_are_refused_with_their_reason() {
     }
     assert_eq!(Refusal::NotOwner.code(), ErrorCode::NotSessionOwner);
     assert_eq!(
-        trials.check_apply(true, RemedyId::Unknown, 45_000),
+        trials.check_apply(true, RemedyId::Unknown, 45_000, OPEN),
         Err(Refusal::UnknownRemedy)
     );
     assert_eq!(
@@ -107,14 +145,20 @@ fn guests_floors_and_unknown_rates_are_refused_with_their_reason() {
         TRIAL_FLOOR_KBPS,
         "never below the floor"
     );
+    // A device that may only watch is told so before it asks.
+    let mut viewer = facts(true, 45_000);
+    viewer.may_change = false;
+    let remedy = &snapshot(viewer, &trials).eligible_remedies[0];
+    assert_eq!(remedy.reason.as_deref(), Some("permission_required"));
+    assert_eq!(Refusal::NoPermission.code(), ErrorCode::PermissionRequired);
     let mut other = Trials::default();
-    let id = other.applied(20_000, 16_000);
+    let id = other.applied(20_000, 0, 16_000);
     assert_eq!(
-        other.begin_undo(true, RemedyId::BitrateStepdown, Some("t-9"), 16_000),
+        other.begin_undo(true, RemedyId::BitrateStepdown, Some("t-9"), 16_000, OPEN),
         Err(Refusal::NoTrial)
     );
     assert_eq!(
-        other.begin_undo(false, RemedyId::BitrateStepdown, Some(&id), 16_000),
+        other.begin_undo(false, RemedyId::BitrateStepdown, Some(&id), 16_000, OPEN),
         Err(Refusal::NotOwner)
     );
 }
@@ -122,11 +166,13 @@ fn guests_floors_and_unknown_rates_are_refused_with_their_reason() {
 #[test]
 fn without_a_stream_nothing_is_offered() {
     let mut trials = Trials::default();
-    trials.applied(20_000, 16_000);
+    trials.applied(20_000, 0, 16_000);
     let idle = snapshot(
         Facts {
             session_active: false,
             owner: false,
+            may_change: true,
+            ceiling_kbps: OPEN,
             encoder: None,
             stages: None,
         },

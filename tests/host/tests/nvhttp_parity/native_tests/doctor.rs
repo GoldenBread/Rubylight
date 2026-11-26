@@ -82,6 +82,34 @@ async fn the_owner_steps_the_bitrate_down_and_undoes_it() {
 }
 
 #[tokio::test]
+async fn pyrowave_steps_down_above_the_other_codecs_cap_and_undoes_exactly() {
+    let s = Setup::new();
+    let launch = s.f.launch(s.client.clone(), Role::Stream);
+    let pyrowave = butterpollo_media_policy::rtsp::Negotiated {
+        codec: 3,
+        ..Default::default()
+    };
+    let session = Session::new(launch, pyrowave);
+    session.set_client_encoder_bitrate(1_400_000);
+    s.host()
+        .sessions
+        .lock()
+        .unwrap()
+        .active
+        .insert(session.launch.id.clone(), session.clone());
+    let read = snapshot(&s.get("/stream/doctor").await);
+    assert_eq!(read.eligible_remedies[0].target_kbps, Some(1_120_000));
+    let applied = snapshot(&apply(&s, &s.connection, STEP_DOWN).await);
+    assert_eq!(session.bitrate.load(Ordering::Acquire), 1_120_000);
+    let undo = format!(
+        r#"{{"action":"undo","remedy":"bitrate_stepdown","trial_id":"{}"}}"#,
+        applied.active_trials[0].trial_id
+    );
+    snapshot(&apply(&s, &s.connection, &undo).await);
+    assert_eq!(session.bitrate.load(Ordering::Acquire), 1_400_000);
+}
+
+#[tokio::test]
 async fn a_change_since_the_trial_keeps_its_bitrate() {
     let s = Setup::new();
     let session = s.streaming();
@@ -146,7 +174,14 @@ async fn guests_bodies_and_permissions_are_refused() {
     .await
     .assert_error(422, "invalid_value");
     assert_eq!(guest.bitrate.load(Ordering::Acquire), 20_000);
+    // A device that may only watch its stream is told why before it asks.
     let viewer = Setup::with(LIST | VIEW_BIT);
+    viewer.streaming().set_client_encoder_bitrate(20_000);
+    let read = snapshot(&viewer.get("/stream/doctor").await);
+    assert_eq!(
+        read.eligible_remedies[0].reason.as_deref(),
+        Some("permission_required")
+    );
     apply(&viewer, &viewer.connection, STEP_DOWN)
         .await
         .assert_error(403, "permission_required");

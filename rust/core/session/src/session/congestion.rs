@@ -26,18 +26,46 @@ impl<P, A> Session<P, A> {
     pub fn set_client_encoder_bitrate(&self, kbps: u32) {
         self.take_client_bitrate(kbps, 0);
     }
+    /// The client's bitrate and the launch's FEC share inside it, read as
+    /// one pair, as [`Self::encoder_bitrate`] reads them.
+    pub fn client_bitrate(&self) -> (u32, u32) {
+        loop {
+            let launch = self.fec_split_launch.load(Ordering::Acquire);
+            let bitrate = self.bitrate.load(Ordering::Acquire);
+            if self.fec_split_launch.load(Ordering::Acquire) == launch {
+                return (bitrate, launch);
+            }
+        }
+    }
+    /// Stream Doctor's bitrate step-down and its undo: `kbps` with
+    /// `launch_share` of the launch's FEC inside it, so the encoder's rate
+    /// moves by the same fraction and an undo gives back exactly what it had.
+    /// Only while the bitrate is still `expected`, checked under the locks
+    /// every client and controller write takes: false, with nothing changed,
+    /// when something moved it meanwhile.
+    pub fn set_client_bitrate_from(&self, expected: u32, kbps: u32, launch_share: u32) -> bool {
+        self.take_client_bitrate_if(Some(expected), kbps, launch_share)
+    }
     /// `launch_share` is the FEC share of the launch's that is inside `kbps`.
     fn take_client_bitrate(&self, kbps: u32, launch_share: u32) {
+        self.take_client_bitrate_if(None, kbps, launch_share);
+    }
+    fn take_client_bitrate_if(&self, expected: Option<u32>, kbps: u32, launch_share: u32) -> bool {
         let mut controller = self.adaptive_bitrate.lock().unwrap();
-        controller.client_takeover();
-        self.adaptive_video_pacing_bps.store(0, Ordering::Release);
         {
             // The link controller's own writes take this lock too, so none
             // lands after the client's value.
             let mut link = self.link_rate.lock().unwrap();
+            let mut congestion = self.congestion.lock().unwrap();
+            if expected.is_some_and(|expected| self.bitrate.load(Ordering::Acquire) != expected) {
+                return false;
+            }
+            controller.client_takeover();
+            self.adaptive_video_pacing_bps.store(0, Ordering::Release);
             link.takeover();
             self.link_sent.set_live(false);
-            self.congestion.lock().unwrap().takeover();
+            congestion.takeover();
+            drop(congestion);
             self.transport_sent.disable();
             self.congestion_pacing_bps.store(0, Ordering::Release);
             // The encoder reads these without the lock. In this order a frame in between
@@ -53,6 +81,7 @@ impl<P, A> Session<P, A> {
         self.launch.warnings.clear("host_bitrate_budget");
         self.launch.warnings.clear(LINK_WARNING);
         self.link_notices.note_full(kbps);
+        true
     }
     pub fn adaptive_pacing_bps(&self, configured_bps: u64) -> u64 {
         let limit = self.adaptive_video_pacing_bps.load(Ordering::Acquire);

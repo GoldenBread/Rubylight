@@ -28,9 +28,10 @@ pub struct Stats {
     /// after each one. The send path never takes this lock; the console and the
     /// teardown read it, with the pictures recorded since in `performance`.
     pub stutter: std::sync::Mutex<butterpollo_media_policy::stutter_report::Totals>,
-    /// The reports of the last [`STUTTER_HISTORY`] published windows, newest
-    /// last, so the stream doctor can name the stage of its last 30 seconds:
-    /// one small copy per five-second window, none per picture.
+    /// The published reports of the last [`STUTTER_RECENT`] and the newest one
+    /// before it, newest last (at most [`STUTTER_HISTORY`]), so the stream doctor
+    /// can name the stage of its last 30 seconds: one small copy per five-second
+    /// window or mode change, none per picture.
     pub stutter_history: std::sync::Mutex<
         std::collections::VecDeque<(Instant, butterpollo_media_policy::stutter_report::Report)>,
     >,
@@ -41,26 +42,49 @@ pub struct Stats {
     /// Socket read to injected for ENet input passes, for the `stream timings` line.
     pub input_latency: std::sync::Mutex<butterpollo_input_policy::input_latency::InputLatency>,
 }
-/// Published stutter reports kept for [`Stats::stutter_recent`]: 40 seconds of
-/// five-second windows.
-pub const STUTTER_HISTORY: usize = 8;
+/// The most published stutter reports kept for [`Stats::stutter_recent`]. They are
+/// kept by age; this bounds a burst of mode changes, which publish between the
+/// five-second windows too.
+pub const STUTTER_HISTORY: usize = 32;
 /// The span of `stutter_recent` in the console's session info, the stream doctor's window.
 pub const STUTTER_RECENT: Duration = Duration::from_secs(30);
+/// Adds the report published `at` and forgets those the window no longer
+/// needs: every report since [`STUTTER_RECENT`] ago stays, with the newest
+/// one before it, up to [`STUTTER_HISTORY`].
+fn keep_stutter(
+    history: &mut std::collections::VecDeque<(
+        Instant,
+        butterpollo_media_policy::stutter_report::Report,
+    )>,
+    at: Instant,
+    report: butterpollo_media_policy::stutter_report::Report,
+) {
+    history.push_back((at, report));
+    while history.len() > STUTTER_HISTORY
+        || history
+            .get(1)
+            .is_some_and(|(then, _)| at.saturating_duration_since(*then) >= STUTTER_RECENT)
+    {
+        history.pop_front();
+    }
+}
 impl Stats {
     /// The video thread publishes its stutter totals after each window, so a
     /// reader never does the medians while holding the lock the send path
     /// records under.
     pub fn publish_stutter(&self, totals: &butterpollo_media_policy::stutter_report::Totals) {
         *self.stutter.lock().unwrap() = totals.clone();
-        let mut history = self.stutter_history.lock().unwrap();
-        if history.len() == STUTTER_HISTORY {
-            history.pop_front();
-        }
-        history.push_back((Instant::now(), totals.report()));
+        let report = totals.report();
+        keep_stutter(
+            &mut self.stutter_history.lock().unwrap(),
+            Instant::now(),
+            report,
+        );
     }
     /// The stutter report of about the last `window`: the stream so far less
     /// the newest published report at least `window` old. A stream younger
-    /// than that has its whole report.
+    /// than that has its whole report; after a burst of mode changes filled the
+    /// history, the oldest report kept stands in.
     pub fn stutter_recent(
         &self,
         period: Duration,
@@ -83,6 +107,7 @@ impl Stats {
             .find(|(at, _)| now.saturating_duration_since(*at) >= window)
         {
             Some((_, earlier)) => report.since(earlier),
+            None if history.len() == STUTTER_HISTORY => report.since(&history[0].1),
             None => report.clone(),
         }
     }
@@ -221,5 +246,41 @@ mod tests {
             stats.publish_stutter(&totals);
         }
         assert_eq!(stats.stutter_history.lock().unwrap().len(), STUTTER_HISTORY);
+    }
+
+    #[test]
+    fn mode_changes_inside_the_window_keep_the_report_from_before_it() {
+        let stats = Stats::default();
+        let period = Duration::from_millis(8);
+        let usual = Picture::new(2_000, 1_000, 4_000, 500, 500);
+        let mut stalled = vec![usual; 30];
+        stalled[3] = Picture::new(2_000, 1_000, 30_000, 500, 500);
+        let mut totals = Totals::default();
+        let start = Instant::now();
+        let publish = |totals: &Totals, seconds: u64| {
+            let at = start + Duration::from_secs(seconds);
+            keep_stutter(
+                &mut stats.stutter_history.lock().unwrap(),
+                at,
+                totals.report(),
+            );
+        };
+        // A stall 60 seconds into a long stream, then quiet five-second windows
+        // and two mode changes inside the last 30 seconds.
+        totals.add(&stalled, period);
+        publish(&totals, 60);
+        for seconds in [65, 70, 75, 80, 85, 90, 92, 94, 95, 100, 105] {
+            totals.add(&vec![usual; 30], period);
+            publish(&totals, seconds);
+        }
+        let now = start + Duration::from_secs(106);
+        let recent = stats.stutter_since(&totals.report(), STUTTER_RECENT, now);
+        assert_eq!(
+            recent.late_pictures(),
+            0,
+            "the stall is older than the window"
+        );
+        assert!(recent.pictures() > 0 && recent.pictures() < totals.report().pictures());
+        assert!(stats.stutter_history.lock().unwrap().len() < STUTTER_HISTORY);
     }
 }

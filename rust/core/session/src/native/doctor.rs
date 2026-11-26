@@ -67,6 +67,12 @@ pub enum Refusal {
     Replaced,
     /// A remedy this host does not apply.
     UnknownRemedy,
+    /// The caller may watch but not change streams (no Launch permission).
+    NoPermission,
+    /// The PC's bitrate limit is now below the bitrate an undo returns to.
+    Capped,
+    /// The bitrate moved between reading it and setting it.
+    Moved,
 }
 
 impl Refusal {
@@ -81,6 +87,9 @@ impl Refusal {
             Refusal::NoTrial => "no_trial",
             Refusal::Replaced => "trial_replaced",
             Refusal::UnknownRemedy => "unknown_remedy",
+            Refusal::NoPermission => "permission_required",
+            Refusal::Capped => "capped",
+            Refusal::Moved => "bitrate_changed",
         }
     }
 
@@ -96,6 +105,13 @@ impl Refusal {
                 "The bitrate changed since the trial, so undo was cancelled to keep that change."
             }
             Refusal::UnknownRemedy => "This PC does not offer that remedy.",
+            Refusal::NoPermission => {
+                "This device may watch streams on this PC but not change them."
+            }
+            Refusal::Capped => {
+                "The PC's bitrate limit is now below the bitrate from before the trial, so it cannot go back."
+            }
+            Refusal::Moved => "The bitrate changed just now. Look again and retry.",
         }
     }
 
@@ -103,11 +119,14 @@ impl Refusal {
         match self {
             Refusal::NoSession => ErrorCode::NoSession,
             Refusal::NotOwner => ErrorCode::NotSessionOwner,
+            Refusal::NoPermission => ErrorCode::PermissionRequired,
             Refusal::UnknownRemedy | Refusal::NoTrial => ErrorCode::InvalidValue,
             Refusal::AtMinimum
             | Refusal::TrialActive
             | Refusal::BitrateUnknown
-            | Refusal::Replaced => ErrorCode::NotWritable,
+            | Refusal::Replaced
+            | Refusal::Capped
+            | Refusal::Moved => ErrorCode::NotWritable,
         }
     }
 }
@@ -121,6 +140,8 @@ pub fn stepdown_kbps(live_kbps: u32) -> u32 {
 struct BitrateTrial {
     id: String,
     previous_kbps: u32,
+    /// The launch's FEC share inside `previous_kbps` (`Session::client_bitrate`).
+    previous_share: u32,
     applied_kbps: u32,
 }
 
@@ -152,12 +173,14 @@ impl Trials {
             .collect()
     }
 
-    /// What a step-down would ask for, or why not.
+    /// What a step-down would ask for, or why not. `ceiling_kbps` is the most
+    /// a client may set now (`max_bitrate` and the codec's runtime cap).
     pub fn check_apply(
         &self,
         owner: bool,
         remedy: RemedyId,
         live_kbps: u32,
+        ceiling_kbps: u32,
     ) -> Result<u32, Refusal> {
         if remedy != RemedyId::BitrateStepdown {
             return Err(Refusal::UnknownRemedy);
@@ -174,11 +197,23 @@ impl Trials {
         if live_kbps <= TRIAL_FLOOR_KBPS {
             return Err(Refusal::AtMinimum);
         }
-        Ok(stepdown_kbps(live_kbps))
+        Ok(stepdown_kbps(live_kbps).min(ceiling_kbps))
     }
 
-    pub fn eligible(&self, owner: bool, live_kbps: u32) -> Vec<EligibleRemedy> {
-        let remedy = match self.check_apply(owner, RemedyId::BitrateStepdown, live_kbps) {
+    /// The remedies on offer; `may_change` is the caller's Launch permission.
+    pub fn eligible(
+        &self,
+        may_change: bool,
+        owner: bool,
+        live_kbps: u32,
+        ceiling_kbps: u32,
+    ) -> Vec<EligibleRemedy> {
+        let offer = if may_change {
+            self.check_apply(owner, RemedyId::BitrateStepdown, live_kbps, ceiling_kbps)
+        } else {
+            Err(Refusal::NoPermission)
+        };
+        let remedy = match offer {
             Ok(target) => EligibleRemedy {
                 id: RemedyId::BitrateStepdown,
                 configurable: true,
@@ -197,28 +232,38 @@ impl Trials {
         vec![remedy]
     }
 
-    /// Records the step-down the host applied, from `previous_kbps`; a trial
-    /// something else replaced is forgotten. Returns its ID.
-    pub fn applied(&mut self, previous_kbps: u32, applied_kbps: u32) -> String {
+    /// Records the step-down the host applied, from `previous_kbps` with the
+    /// launch's FEC share `previous_share` inside it; a trial something else
+    /// replaced is forgotten. Returns its ID.
+    pub fn applied(
+        &mut self,
+        previous_kbps: u32,
+        previous_share: u32,
+        applied_kbps: u32,
+    ) -> String {
         self.issued += 1;
         let id = format!("t-{}", self.issued);
         self.bitrate = Some(BitrateTrial {
             id: id.clone(),
             previous_kbps,
+            previous_share,
             applied_kbps,
         });
         id
     }
 
-    /// The bitrate an undo returns to. A trial something else replaced is
-    /// dropped and refused, so the change that replaced it stays.
+    /// The bitrate an undo returns to, with the launch's FEC share inside it.
+    /// A trial something else replaced is dropped and refused, so the change
+    /// that replaced it stays; one the PC's limit (`ceiling_kbps`) now holds
+    /// below its old bitrate is refused and kept.
     pub fn begin_undo(
         &mut self,
         owner: bool,
         remedy: RemedyId,
         trial_id: Option<&str>,
         live_kbps: u32,
-    ) -> Result<u32, Refusal> {
+        ceiling_kbps: u32,
+    ) -> Result<(u32, u32), Refusal> {
         if remedy != RemedyId::BitrateStepdown {
             return Err(Refusal::UnknownRemedy);
         }
@@ -234,7 +279,10 @@ impl Trials {
             self.bitrate = None;
             return Err(Refusal::Replaced);
         }
-        Ok(trial.previous_kbps)
+        if trial.previous_kbps > ceiling_kbps {
+            return Err(Refusal::Capped);
+        }
+        Ok((trial.previous_kbps, trial.previous_share))
     }
 
     /// The undo went through.
@@ -247,6 +295,10 @@ impl Trials {
 pub struct Facts {
     pub session_active: bool,
     pub owner: bool,
+    /// The caller has the Launch permission, which a remedy needs.
+    pub may_change: bool,
+    /// The most a client may set now (`max_bitrate` and the codec's runtime cap).
+    pub ceiling_kbps: u32,
     pub encoder: Option<EncoderFacts>,
     pub stages: Option<HostStages>,
 }
@@ -271,7 +323,7 @@ pub fn snapshot(facts: Facts, trials: &Trials) -> DoctorSnapshot {
             Vec::new()
         },
         eligible_remedies: if streaming {
-            trials.eligible(facts.owner, live)
+            trials.eligible(facts.may_change, facts.owner, live, facts.ceiling_kbps)
         } else {
             Vec::new()
         },

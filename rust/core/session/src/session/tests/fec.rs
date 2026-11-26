@@ -2,6 +2,41 @@
 use super::*;
 
 #[test]
+fn stream_doctors_step_keeps_the_launch_share_so_its_undo_restores_the_encoder() {
+    use butterpollo_media_policy::extensions::FecChoice;
+    let mut stream = Negotiated {
+        configured_bitrate_kbps: 20_000,
+        audio_quality: true,
+        ..Default::default()
+    };
+    butterpollo_media_policy::stream_policy::apply(
+        &mut stream,
+        60_000,
+        &butterpollo_config::config::Config::default(),
+    );
+    let s = Session::new(launch("doctor-fec", Role::Stream), stream);
+    s.configure_fec_choice(FecChoice::Fixed(20), false, 20, 80);
+    let before = s.encoder_bitrate(true);
+    let (live, share) = s.client_bitrate();
+    assert!(
+        share > 0,
+        "the launch took the host's share off the user's bitrate"
+    );
+    let step = live * 4 / 5;
+    assert!(s.set_client_bitrate_from(live, step, share));
+    let after = i64::from(s.encoder_bitrate(false));
+    assert!(
+        (after - i64::from(before) * 4 / 5).abs() <= 1,
+        "{after} is a fifth below {before}"
+    );
+    // A bitrate that moved meanwhile is left as it is.
+    assert!(!s.set_client_bitrate_from(live, live, share));
+    assert_eq!(s.client_bitrate(), (step, share));
+    assert!(s.set_client_bitrate_from(step, live, share));
+    assert_eq!(s.encoder_bitrate(false), before);
+}
+
+#[test]
 fn client_fec_is_exposed_as_telemetry_without_changing_stream_decisions() {
     let session = Session::new(launch("fec", Role::Stream), Negotiated::default());
     session.idr.store(false, Ordering::Relaxed);

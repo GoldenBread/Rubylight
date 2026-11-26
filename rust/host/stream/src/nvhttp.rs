@@ -586,13 +586,18 @@ async fn bitrate(
 /// read before the sessions are locked). The stream's card says so, and the
 /// client's bitrate takes over from the host's own controllers.
 pub fn set_client_bitrate(s: &Session, requested: u32, applied: u32) {
+    s.set_client_encoder_bitrate(applied);
+    client_bitrate_set(s, requested, applied);
+}
+/// The stream card's notes once a client's bitrate is in force: `applied` is
+/// `requested` after the caps (Stream Doctor's step-down passes the same twice).
+pub fn client_bitrate_set(s: &Session, requested: u32, applied: u32) {
     butterpollo_media_policy::stream_policy::report_bitrate(
         &s.launch.warnings,
         requested,
         applied,
         "max_bitrate and the 500 Mbps runtime cap",
     );
-    s.set_client_encoder_bitrate(applied);
     // The card warns about a PyroWave stream below the level where the project's test
     // scenes kept detail at launch; a runtime change sets or clears it the same way.
     // `applied` is the client's new rate itself, not scaled down from a launch setting.

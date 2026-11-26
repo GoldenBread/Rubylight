@@ -36,10 +36,12 @@ use std::{
 pub async fn read(State(h): State<Shared>, Extension(c): Extension<Connection>) -> Reply {
     let client = caller(&h, &c)?;
     require_view_or_launch(&client)?;
-    let snapshot =
-        tokio::task::spawn_blocking(move || snapshot(own_stream(&h, &client).as_deref()))
-            .await
-            .map_err(|error| Failure::internal("read the stream doctor", error))?;
+    let snapshot = tokio::task::spawn_blocking(move || {
+        let own = own_stream(&h, &client);
+        snapshot(&h, client.allows(LAUNCH), own.as_deref())
+    })
+    .await
+    .map_err(|error| Failure::internal("read the stream doctor", error))?;
     Ok(json(StatusCode::OK, &snapshot))
 }
 
@@ -76,36 +78,55 @@ fn run(
 ) -> Result<DoctorSnapshot, Failure> {
     let s = own_stream(h, client).ok_or_else(|| refused(Refusal::NoSession))?;
     let owner = owns(&s);
+    let ceiling = ceiling_kbps(h, &s);
     let mut trials = s.doctor.lock().unwrap_or_else(PoisonError::into_inner);
-    let live = s.bitrate.load(Ordering::Acquire);
-    let (target, undo) = match request.action {
-        DoctorAction::Apply => (trials.check_apply(owner, request.remedy, live), false),
-        DoctorAction::Undo => (
-            trials.begin_undo(owner, request.remedy, request.trial_id.as_deref(), live),
-            true,
-        ),
-    };
-    let target = target.map_err(refused)?;
-    let applied = butterpollo_media_policy::stream_policy::runtime_bitrate_kbps(
-        &h.config.read().unwrap_or_else(PoisonError::into_inner),
-        target,
-    );
-    nvhttp::set_client_bitrate(&s, target, applied);
+    // The bitrate with the launch's FEC share inside it: the step keeps the share,
+    // so the encoder's rate moves by the same fifth and an undo gives back the same.
+    let (live, share) = s.client_bitrate();
+    let undo = request.action == DoctorAction::Undo;
+    let (kbps, launch_share) = if undo {
+        trials.begin_undo(
+            owner,
+            request.remedy,
+            request.trial_id.as_deref(),
+            live,
+            ceiling,
+        )
+    } else {
+        trials
+            .check_apply(owner, request.remedy, live, ceiling)
+            .map(|target| (target, share))
+    }
+    .map_err(refused)?;
+    if !s.set_client_bitrate_from(live, kbps, launch_share) {
+        return Err(refused(Refusal::Moved));
+    }
+    nvhttp::client_bitrate_set(&s, kbps, kbps);
     if undo {
         trials.undone();
     } else {
-        trials.applied(live, applied);
+        trials.applied(live, share, kbps);
     }
     tracing::info!(
         client = %client.name,
         undo,
         from_kbps = live,
-        to_kbps = applied,
+        to_kbps = kbps,
         "stream doctor: bitrate step-down {}",
         if undo { "undone" } else { "applied" }
     );
     drop(trials);
-    Ok(snapshot(Some(&s)))
+    Ok(snapshot(h, true, Some(&s)))
+}
+
+/// The most a client may set on `s` now: `max_bitrate` and its codec's
+/// runtime cap (PyroWave's is higher than the others').
+fn ceiling_kbps(h: &Shared, s: &Session) -> u32 {
+    butterpollo_media_policy::stream_policy::runtime_bitrate_kbps_for(
+        &h.config.read().unwrap_or_else(PoisonError::into_inner),
+        s.config.codec,
+        u32::MAX,
+    )
 }
 
 /// The caller's live stream, a Stream before a monitor or input session.
@@ -126,11 +147,14 @@ fn owns(s: &Session) -> bool {
     s.launch.guest().is_none()
 }
 
-fn snapshot(s: Option<&Session>) -> DoctorSnapshot {
+/// The caller's snapshot; `may_change` is its Launch permission.
+fn snapshot(h: &Shared, may_change: bool, s: Option<&Session>) -> DoctorSnapshot {
     let Some(s) = s else {
         let idle = Facts {
             session_active: false,
             owner: false,
+            may_change,
+            ceiling_kbps: 0,
             encoder: None,
             stages: None,
         };
@@ -159,6 +183,8 @@ fn snapshot(s: Option<&Session>) -> DoctorSnapshot {
     let facts = Facts {
         session_active: true,
         owner: owns(s),
+        may_change,
+        ceiling_kbps: ceiling_kbps(h, s),
         encoder: Some(encoder),
         stages: doctor::stages(&report, rates.as_ref()),
     };
