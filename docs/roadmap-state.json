@@ -418,15 +418,16 @@
       "depends_on": [
         "02"
       ],
-      "hw_required": false,
+      "hw_required": true,
       "visual_review": true,
-      "status": "in_progress",
-      "phase": "implement",
+      "status": "merged",
+      "phase": "awaiting_hw_and_wave_review",
       "branch": "wip/roadmap/12-phone-safe-area",
       "worktree": null,
-      "commit_sha": null,
+      "commit_sha": "c5e99e38aa",
       "quarantine_reason": null,
-      "hw_verified": false
+      "hw_verified": false,
+      "worker_branch": "RamazanKara/r70-12-safe-area"
     },
     {
       "id": "23",
