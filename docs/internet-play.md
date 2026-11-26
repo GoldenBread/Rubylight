@@ -57,6 +57,22 @@ A sleeping PC publishes nothing and answers no punch. With **Away wake relay** o
 
 The relay forwards no port: like the PC for internet play it uses one UDP socket for the DHT, STUN and punches, and sends the magic packets from its own interface addresses.
 
+**Running a relay.** Any always-on box on the PC's network with Nightjar's desktop client can be the relay, such as a Linux mini PC or server. Pair it with the PC once in Nightjar's window (add the PC and type the PIN, or open the console's pairing link with `nightjar 'rubylight://pair?…'`, which asks in the window before it pairs; a box without a screen needs a desktop session for that once). In the Rubylight console turn on **Host control** for it, and **Away wake relay** with Play over the internet. Then keep `nightjar wake-relay` running (`--name "Living room NUC"` is how the PC lists it when it enrolls). It enrolls with every paired PC that offers a relay, prints a line for each change (the PCs it serves and their devices, its public address and NAT, STUN or DHT trouble, each wake), and stops on Ctrl-C or SIGTERM with its enrollments kept. It saves the assignments, which hold its secrets, in `wake-relay.json` in Nightjar's config directory (`~/.config/nightjar` on Linux, readable by its owner only), so a relay started again while the PC sleeps still wakes it. A PC that cannot be reached keeps its enrollment; a PC that refuses the relay (revoked, the setting off, Host control off, unpaired) is dropped at once and not enrolled again until `nightjar wake-relay --enroll`. `nightjar wake-relay --leave` leaves every PC and deletes the file. As a systemd user service, with `loginctl enable-linger` so it runs without a login:
+
+```ini
+# ~/.config/systemd/user/nightjar-wake-relay.service, then: systemctl --user enable --now nightjar-wake-relay
+[Unit]
+Description=Nightjar wake relay
+
+[Service]
+ExecStart=/usr/bin/nightjar wake-relay
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=default.target
+```
+
 ## Limits
 
 - A tunnelled device reaches the host's ports from this PC, yet the host treats it as a device on the internet: every connection and media socket the tunnel opens is marked as tunnelled before it sends, and 127.77.0.0/16 and 127.78.0.0/16 always count as the internet. It gets `wan_encryption_mode`, never `lan_encryption_mode`, none of what serverinfo shows only programs on this PC (session counts, the host's profile), no browser-on-this-PC trust and no LAN-only guest play. The path is sealed with the device's keys.
