@@ -93,6 +93,8 @@ pub fn for_code(code: ErrorCode) -> Option<Explanation> {
         PairingUnconfirmed => says("The new device did not finish pairing", None),
         PairingEnded => says("Too many wrong PINs", None),
         PairingCooldown => says("A wrong PIN just came from this device", None),
+        // The message names the reason (the feature is off, the disk is full, ...).
+        DvrRefused => says("Instant Replay can't do that right now", None),
         NotFound | InvalidRequest | InvalidValue | NotWritable | LengthRequired | NotStreaming
         | Unknown => None,
     }

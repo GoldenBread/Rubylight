@@ -55,6 +55,7 @@ const EVERY_CODE: &[ErrorCode] = &[
     ErrorCode::PairingUnconfirmed,
     ErrorCode::PairingEnded,
     ErrorCode::PairingCooldown,
+    ErrorCode::DvrRefused,
     ErrorCode::Unknown,
 ];
 
