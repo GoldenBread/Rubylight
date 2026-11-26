@@ -2,7 +2,7 @@
   "schema_version": 1,
   "release_target": "7.0.0",
   "integration_branch": "roadmap/redesign-and-waves-1-5",
-  "updated_at": "2026-11-26T12:33:55Z",
+  "updated_at": "2026-11-26T13:28:39Z",
   "waves": {
     "0": {
       "status": "in_progress",
@@ -117,7 +117,7 @@
       "hw_required": false,
       "visual_review": true,
       "status": "in_progress",
-      "phase": "implement",
+      "phase": "implement (Opus continues from hand-over)",
       "branch": "RamazanKara/r70-02-nightjar-ui",
       "worktree": "C:/Users/ramaz/orca/workspaces/rubylight-rel/r70-02-nightjar-ui",
       "commit_sha": null,
@@ -445,7 +445,7 @@
       "phase": "awaiting_hw_and_wave_review",
       "branch": "RamazanKara/r70-24-usb-desktop",
       "worktree": null,
-      "commit_sha": "80e7373951",
+      "commit_sha": "dbfdb1e363",
       "quarantine_reason": null,
       "hw_verified": false
     },
