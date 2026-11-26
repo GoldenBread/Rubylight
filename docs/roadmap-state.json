@@ -138,13 +138,14 @@
       ],
       "hw_required": true,
       "visual_review": true,
-      "status": "pending",
-      "phase": "not_started",
+      "status": "in_progress",
+      "phase": "implement",
       "branch": "wip/roadmap/03-launch-curtain",
       "worktree": null,
       "commit_sha": null,
       "quarantine_reason": null,
-      "hw_verified": false
+      "hw_verified": false,
+      "worker_branch": "RamazanKara/r70-03-launch-curtain"
     },
     {
       "id": "04",
@@ -401,13 +402,14 @@
       ],
       "hw_required": true,
       "visual_review": true,
-      "status": "pending",
-      "phase": "not_started",
+      "status": "in_progress",
+      "phase": "implement",
       "branch": "wip/roadmap/11-stream-doctor",
       "worktree": null,
       "commit_sha": null,
       "quarantine_reason": null,
-      "hw_verified": false
+      "hw_verified": false,
+      "worker_branch": "RamazanKara/r70-11-stream-doctor"
     },
     {
       "id": "12",
@@ -496,13 +498,14 @@
       ],
       "hw_required": true,
       "visual_review": true,
-      "status": "pending",
-      "phase": "not_started",
+      "status": "in_progress",
+      "phase": "implement",
       "branch": "wip/roadmap/13-client-input-deck",
       "worktree": null,
       "commit_sha": null,
       "quarantine_reason": null,
-      "hw_verified": false
+      "hw_verified": false,
+      "worker_branch": "RamazanKara/r70-13-controller-editor"
     },
     {
       "id": "14",
