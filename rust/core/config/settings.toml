@@ -1700,7 +1700,7 @@ default = false
 category = "network"
 group = "Discovery and internet"
 label = "Away wake relay"
-description = "Lets another always-on device on your network that runs Nightjar wake this PC when you are away, without port forwarding. Wake requests are encrypted and signed, and only your paired devices can send them."
+description = "An always-on device on your network that runs Nightjar wakes this PC when you are away, without port forwarding. Only your paired devices can ask it, with signed requests."
 details = "The relay is a paired device with Host control on this PC's network, such as a mini PC running Nightjar's wake relay. It sends Wake-on-LAN only to this PC's network cards, at most once every ten seconds, and only for devices that may launch apps here. Unpairing a device ends its access at the relay's next check, within five minutes."
 inactive_hint = "Turn on Play over the internet to use this setting."
 control = { kind = "toggle" }
