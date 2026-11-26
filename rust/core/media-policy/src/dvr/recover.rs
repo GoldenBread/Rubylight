@@ -289,7 +289,7 @@ fn video_track(trak: &[u8]) -> Option<(u32, u32)> {
 fn run_duration(trun: &[u8], default_duration: u32) -> Option<u64> {
     let flags = be32(trun, 0)? & 0x00FF_FFFF;
     let count = usize::try_from(be32(trun, 4)?).ok()?;
-    let mut at = 8;
+    let mut at = 8usize;
     at += if flags & 0x01 != 0 { 4 } else { 0 };
     at += if flags & 0x04 != 0 { 4 } else { 0 };
     let entry = [0x100, 0x200, 0x400, 0x800]
