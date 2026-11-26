@@ -346,9 +346,11 @@ fn surround_fallback_drops_714_to_71_and_rechecks_cleanly() -> Result<()> {
         channels: BTreeMap::from([(1, 8)]),
     });
     let calls_before = policy.set_calls.borrow().len();
-    set_channels_with(&mut active, 1, "{virtual}", dir.path(), 12, &policy, |_| {
+    let applied = set_channels_with(&mut active, 1, "{virtual}", dir.path(), 12, &policy, |_| {
         Ok(())
     })?;
+    // The caller learns the sink took less than it asked for.
+    assert_eq!(applied, 8);
     // Only tried 12ch candidates, then recognized 8ch is already active and applied.
     assert!(
         policy.set_calls.borrow()[calls_before..]

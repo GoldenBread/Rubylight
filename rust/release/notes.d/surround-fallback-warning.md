@@ -1,0 +1,1 @@
+- **Surround fallback warning.** The console now says when the PC's audio device took a smaller surround layout than the client asked for.

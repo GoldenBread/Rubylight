@@ -31,6 +31,40 @@ pub(crate) fn open_audio_encoder(
 
 type Route = butterpollo_win_io::audio_route::Route;
 
+/// The `audio_surround` warning when the device has fewer channels (`applied`)
+/// than the capture `requested`. They differ from the client's own layout only
+/// for headphone surround, which captures surround for a stereo client.
+fn surround_shortfall(requested: usize, applied: usize, client: usize) -> Option<String> {
+    if applied >= requested {
+        return None;
+    }
+    // A device the host does not format can have any channel count.
+    let name = |channels| match channels {
+        1 => "mono".into(),
+        2 => "stereo".into(),
+        6 => "5.1".into(),
+        8 => "7.1".into(),
+        12 => "7.1.4".into(),
+        other => format!("{other} channels"),
+    };
+    let (wanted, got) = (name(requested), name(applied));
+    Some(if client < requested {
+        format!(
+            "The PC's audio device took {got} instead of {wanted}; headphone surround mixes from {got}. Pick a device or driver that takes {wanted}."
+        )
+    } else {
+        // Offer only a layout a client can choose.
+        let choose = if matches!(applied, 2 | 6 | 8) {
+            format!(", or choose {got}")
+        } else {
+            String::new()
+        };
+        format!(
+            "The PC's audio device took {got} instead of {wanted}; the client hears {got}. Pick a device or driver that takes {wanted}{choose}."
+        )
+    })
+}
+
 /// The `audio_cadence_trace` ring, written to `logs\audio-cadence-<unix seconds>.csv` when the
 /// audio thread ends, however it ends.
 struct CadenceDump {
@@ -407,11 +441,25 @@ impl Media {
                     // default. Even a fixed endpoint must reopen after a
                     // driver reset, format change or temporary disconnect.
                     if capture.is_none() {
-                        match route.set_channels(capture_channels) {
-                            Ok(()) => s.launch.warnings.clear("audio_surround"),
+                        let formatted = route.set_channels(capture_channels);
+                        let opened = Loopback::new_sink_traced(capture_channels, &sink, trace);
+                        match formatted {
+                            Ok(applied) => {
+                                // A sink the host does not format reports the request;
+                                // Loopback maps whatever its mix format has to it.
+                                let device =
+                                    opened.as_ref().map_or(applied, |value| value.source().0);
+                                match surround_shortfall(capture_channels, device, client_channels)
+                                {
+                                    Some(message) => {
+                                        s.launch.warnings.set("audio_surround", message)
+                                    }
+                                    None => s.launch.warnings.clear("audio_surround"),
+                                }
+                            }
                             Err(error) => s.launch.warnings.set("audio_surround", format!("Virtual surround format could not be applied ({error:#}); channels may be downmixed. Select stereo or check the virtual audio driver.")),
                         }
-                        match Loopback::new_sink_traced(capture_channels, &sink, trace) {
+                        match opened {
                             Ok(value) => {
                                 tracing::info!(
                                     channels = capture_channels,
@@ -558,6 +606,7 @@ mod tests {
     use super::audio_sink::{
         AudioCapture, AudioPace, ChunkAssembler, HAPTICS_TAP_FRAMES, Packets, collect_chunked_into,
     };
+    use super::surround_shortfall;
     use anyhow::Result;
     use butterpollo_input_policy::audio_haptics::{Arbiter, Settings, Tap};
     use butterpollo_input_policy::haptics;
@@ -666,5 +715,37 @@ mod tests {
         }
         assert_eq!(emitted_positions, [0, 1536, 3072, 4608, 6144]);
         assert!(haptics_frames >= 25, "got only {haptics_frames} frames");
+    }
+
+    #[test]
+    fn a_smaller_layout_than_requested_is_warned_about_and_names_both() {
+        for requested in [2, 6, 8, 12] {
+            assert_eq!(surround_shortfall(requested, requested, requested), None);
+        }
+        // Another stream on the shared sink asked for more.
+        assert_eq!(surround_shortfall(6, 8, 6), None);
+        assert_eq!(
+            surround_shortfall(12, 6, 12).unwrap(),
+            "The PC's audio device took 5.1 instead of 7.1.4; the client hears 5.1. Pick a device or driver that takes 7.1.4, or choose 5.1."
+        );
+        assert!(
+            surround_shortfall(12, 8, 12)
+                .unwrap()
+                .contains("took 7.1 instead of 7.1.4")
+        );
+        // Headphone surround: the client is stereo, so it never hears 5.1.
+        assert_eq!(
+            surround_shortfall(8, 6, 2).unwrap(),
+            "The PC's audio device took 5.1 instead of 7.1; headphone surround mixes from 5.1. Pick a device or driver that takes 7.1."
+        );
+        // A device the host does not format reports any count in its mix format.
+        for (device, got) in [(1, "mono"), (4, "4 channels")] {
+            assert_eq!(
+                surround_shortfall(6, device, 6).unwrap(),
+                format!(
+                    "The PC's audio device took {got} instead of 5.1; the client hears {got}. Pick a device or driver that takes 5.1."
+                )
+            );
+        }
     }
 }

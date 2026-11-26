@@ -545,10 +545,13 @@ impl Route {
         let current = defaults()?;
         Ok(current[0].clone().unwrap_or_else(|| self.sink.clone()))
     }
-    pub fn set_channels(&self, channels: usize) -> Result<()> {
+    /// Format the managed sink for `channels` and return the channels it now
+    /// has: fewer when the device refused them, more when another stream on it
+    /// asked for more. A sink the host does not format returns `channels`.
+    pub fn set_channels(&self, channels: usize) -> Result<usize> {
         let mut active = ACTIVE.lock().unwrap();
         if !self.virtual_sink || self.capture_only {
-            return Ok(());
+            return Ok(channels);
         }
         let policy = Policy::new()?;
         set_channels_with(
@@ -571,7 +574,7 @@ fn set_channels_with(
     channels: usize,
     policy: &dyn FormatPolicy,
     mark_audio: impl Fn(bool) -> Result<()>,
-) -> Result<()> {
+) -> Result<usize> {
     let target = match active.as_ref() {
         Some(shared) => {
             let mut next = shared.channels.clone();
@@ -586,7 +589,7 @@ fn set_channels_with(
         if let Some(shared) = active.as_mut() {
             shared.channels.insert(route_id, channels);
         }
-        return Ok(());
+        return Ok(current_channels);
     }
     let mut journal: Journal = serde_json::from_slice(&std::fs::read(path(directory))?)?;
     if journal.format.is_none() {
@@ -604,7 +607,7 @@ fn set_channels_with(
     if let Some(shared) = active.as_mut() {
         shared.channels.insert(route_id, applied.min(channels));
     }
-    Ok(())
+    Ok(applied)
 }
 impl Drop for Route {
     fn drop(&mut self) {
