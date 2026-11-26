@@ -476,13 +476,14 @@
       ],
       "hw_required": false,
       "visual_review": false,
-      "status": "in_progress",
-      "phase": "implement",
+      "status": "merged",
+      "phase": "awaiting_hw_and_wave_review",
       "branch": "wip/roadmap/25-ps-speaker-pcm-and-bt",
       "worktree": null,
-      "commit_sha": null,
+      "commit_sha": "78f29d0087",
       "quarantine_reason": null,
-      "hw_verified": false
+      "hw_verified": false,
+      "worker_branch": "RamazanKara/r70-25-ps-speaker"
     },
     {
       "id": "13",
