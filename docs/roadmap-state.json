@@ -2,7 +2,7 @@
   "schema_version": 1,
   "release_target": "7.0.0",
   "integration_branch": "roadmap/redesign-and-waves-1-5",
-  "updated_at": "2026-11-26T11:46:23Z",
+  "updated_at": "2026-11-26T12:32:18Z",
   "waves": {
     "0": {
       "status": "in_progress",
@@ -153,11 +153,11 @@
       "depends_on": [],
       "hw_required": true,
       "visual_review": false,
-      "status": "in_progress",
-      "phase": "implement",
+      "status": "merged",
+      "phase": "awaiting_hw_and_wave_review",
       "branch": "RamazanKara/r70-04-frame-warp-2",
       "worktree": "C:/Users/ramaz/orca/workspaces/rubylight-rel/r70-04-frame-warp-2",
-      "commit_sha": null,
+      "commit_sha": "b4cee4ae6e",
       "quarantine_reason": null,
       "hw_verified": false
     },
