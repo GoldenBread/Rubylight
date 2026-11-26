@@ -259,7 +259,7 @@ fn ffmpeg_dolby_frames_go_out_in_numbered_chunks_and_never_as_opus_packets() {
     for _ in 0..3 {
         assert_eq!(
             ac3.send(&mut sink, &samples, Instant::now(), 0, &Default::default())
-            .unwrap(),
+                .unwrap(),
             AudioSendLoss::default()
         );
     }
