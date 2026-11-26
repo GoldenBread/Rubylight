@@ -1,1 +1,0 @@
-- **HDR10 only per device.** Nightjar can ask for a stream without HDR10+ and HDR Vivid metadata, whatever the PC's HDR dynamic metadata setting is for other devices.
