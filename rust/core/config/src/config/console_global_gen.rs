@@ -157,6 +157,7 @@ pub const GLOBAL: &[Setting] = console_settings! {
         "nvenc_frame_budget_guard", "Frame time guard (a faster preset when frames would be late)", Bool;
         "nvenc_realtime_hags", "Realtime GPU priority under hardware-accelerated GPU scheduling", Bool;
         "nvenc_latency_over_power", "Full GPU clocks while streaming", Bool;
+        "nvidia_virtual_display_vsync", "Force VSync on for virtual display streams", Bool;
         "nvenc_vbv_increase", "Frame size headroom (%)", Number;
         "nvenc_weighted_prediction", "Weighted prediction", Bool;
         "nvenc_h264_cavlc", "Use CAVLC for H.264", Bool;

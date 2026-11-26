@@ -677,6 +677,7 @@ global_order = [
   "nvenc_frame_budget_guard",
   "nvenc_realtime_hags",
   "nvenc_latency_over_power",
+  "nvidia_virtual_display_vsync",
   "nvenc_vbv_increase",
   "nvenc_weighted_prediction",
   "nvenc_h264_cavlc",
@@ -3967,6 +3968,22 @@ inactive_hint = "Applies when NVIDIA NVENC encodes, as Automatic does on NVIDIA 
 control = { kind = "toggle" }
 visible_when = { ref = "nvenc" }
 console = { group = "NVIDIA encoding", label = "Full GPU clocks while streaming", control = "bool" }
+
+[[setting]]
+key = "nvidia_virtual_display_vsync"
+part = "video_encoders"
+type = "bool"
+default = false
+advanced = true
+category = "encoders"
+group = "NVIDIA NVENC"
+label = "Force VSync on for virtual display streams"
+description = "Full frames for games that miss some on a virtual display, as with DLSS frame generation. Sets NVIDIA's global VSync on for the stream; a running game needs a restart."
+details = "Turn it on when a stream shows fewer frames than the game renders. VSync is put back when the session ends; a suspended session keeps it until its grace period ends. A game's own driver preset wins, and a custom value is left alone."
+inactive_hint = "Applies when NVIDIA NVENC encodes, as Automatic does on NVIDIA graphics cards."
+control = { kind = "toggle" }
+visible_when = { ref = "nvenc" }
+console = { group = "NVIDIA encoding", label = "Force VSync on for virtual display streams", control = "bool" }
 
 [[setting]]
 key = "nvenc_vbv_increase"

@@ -47,6 +47,12 @@ impl Preparation<StreamPreparation> for StreamPreparation {
 }
 
 impl StreamPreparation {
+    /// The stream shows Rubylight's virtual display, its own or a running game's.
+    pub fn on_virtual_display(&self) -> bool {
+        let prepared = self.display._state.lock().unwrap();
+        prepared.virtual_mode || prepared.joined
+    }
+
     pub fn report_limiter(
         &self,
         warnings: &butterpollo_session::session::Warnings,

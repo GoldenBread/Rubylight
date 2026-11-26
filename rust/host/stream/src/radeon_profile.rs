@@ -181,8 +181,7 @@ pub fn launched(h: &Shared, device: &str, app: Option<&App>, fps: Option<u32>) {
         }
         // Another device's settings go back first: its restore must not run after this write
         // and undo it, and the journal must take the PC's own values as the originals.
-        h.radeon
-            .release_missing(&h.devices_after_launch(&device), RELEASE_WAIT);
+        h.release_replaced_settings(&device, RELEASE_WAIT);
         if !earlier.is_empty() {
             restore_earlier(h, &device, &earlier);
         }

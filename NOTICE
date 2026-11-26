@@ -109,6 +109,9 @@ follows its docs/native_sideload_components.md, and the NGX adapter's set-up in 
 data and feature paths, the device's multithread protection, the scratch-memory check
 and the 400 to 2000 nit peak) follows its
 src/platform/windows/image_enhancement/rtx_hdr/adapter/src/truehdr_adapter.cpp.
+Forcing NVIDIA's global Vertical sync on while a stream shows the virtual display
+(nvidia_virtual_display_vsync, rust/host/stream/src/radeon_session/release.rs) follows its
+nvenc_vdd_force_vsync (AlkaidLab/foundation-sunshine PR #1155, commit 04d9188, GPL-3.0).
 Copyright (c) Foundation Sunshine authors, GPL-3.0.
 
 mac-precision-touchpad

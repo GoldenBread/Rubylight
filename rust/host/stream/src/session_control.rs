@@ -278,8 +278,10 @@ impl Host {
         );
         let present = || self.devices_present(&control.machine);
         let mut seen = None;
-        self.radeon
-            .sync(|| settled.then(|| seen.get_or_insert_with(present).clone()));
+        self.radeon.sync(
+            || locked(&self.sessions).launching_devices(),
+            || settled.then(|| seen.get_or_insert_with(present).clone()),
+        );
         self.game_files.sync(&self.directory, || {
             settled.then(|| seen.get_or_insert_with(present).clone())
         });
@@ -310,6 +312,15 @@ impl Host {
         present.insert(device.to_owned());
         present.extend(now.game.map(|(_, owner)| owner).filter(|o| !o.is_empty()));
         present
+    }
+    /// Before `device`'s launch writes its game's driver settings: put back what devices
+    /// that lost the session to it changed, and wait at most `wait`.
+    pub fn release_replaced_settings(&self, device: &str, wait: std::time::Duration) {
+        self.radeon.release_missing(
+            || locked(&self.sessions).launching_devices(),
+            || self.devices_after_launch(device),
+            wait,
+        );
     }
     /// How long the owner's retained display survives without a stream.
     fn grace_ms(&self, owner: Option<&str>) -> Option<u64> {

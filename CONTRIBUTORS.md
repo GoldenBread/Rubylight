@@ -19,7 +19,7 @@ People who reported issues, tested builds and gave feedback on [Rubylight's issu
 - [Vibepollo](https://github.com/Nonary/Vibepollo) by [Nonary](https://github.com/Nonary), which Rubylight began as a fork of, including its native AMF encoder
 - [Apollo](https://github.com/ClassicOldSong/Apollo) by [ClassicOldSong](https://github.com/ClassicOldSong)
 - [Sunshine](https://github.com/LizardByte/Sunshine) by [LizardByte](https://github.com/LizardByte) and its contributors
-- [Foundation Sunshine](https://github.com/AlkaidLab/foundation-sunshine) by [AlkaidLab](https://github.com/AlkaidLab), [qiin2333](https://github.com/qiin2333) and contributors, for the AMD encoder's low-latency defaults, statistical video FEC, dynamic HDR metadata, HDR luminance statistics and the HLG curve
+- [Foundation Sunshine](https://github.com/AlkaidLab/foundation-sunshine) by [AlkaidLab](https://github.com/AlkaidLab), [qiin2333](https://github.com/qiin2333) and contributors, for the AMD encoder's low-latency defaults, statistical video FEC, dynamic HDR metadata, HDR luminance statistics and the HLG curve, and forcing VSync on for virtual display streams
 - [Moonlight V+](https://github.com/qiin2333/moonlight-vplus) by [qiin2333](https://github.com/qiin2333), for the clipboard sync frame
 - [PyroWave](https://github.com/Themaister/pyrowave) and [Granite](https://github.com/Themaister/Granite) by [Themaister](https://github.com/Themaister), with the PyroWave Moonlight protocol and clients by [joemossjr16](https://github.com/joemossjr16), and [volk](https://github.com/zeux/volk) by [zeux](https://github.com/zeux)
 - [dovi_tool](https://github.com/quietvoid/dovi_tool) by [quietvoid](https://github.com/quietvoid), the reference for the Dolby Vision RPU writer

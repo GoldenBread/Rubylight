@@ -492,6 +492,9 @@ fn launch_back_half(
     if let Some(session) = &session {
         session.app_starting();
     }
+    // Before the game starts: it reads Vertical sync then.
+    let vsync = (role == Role::Stream && launch.guest().is_none() && launch.nucleus.is_none())
+        .then(|| force_vsync(h, args, app.as_ref(), &launch));
     let prepared_app = if launch.nucleus.is_some() {
         // Nucleus Co-op started the game when it admitted the launch.
         Ok(None)
@@ -543,6 +546,9 @@ fn launch_back_half(
     if launch.nucleus.is_none() {
         retain_launch_app(h, &launch, prepared_app);
     }
+    if let Some(vsync) = vsync {
+        vsync.keep();
+    }
     drop(preparing);
     let mode = args.get("mode").map_or("", String::as_str);
     let hdr = args.get("hdrMode").is_some_and(|v| v == "1");
@@ -582,6 +588,43 @@ fn launch_back_half(
         );
     }
     Ok(launch)
+}
+/// `nvidia_virtual_display_vsync` for this launch. A failure is shown and the stream starts.
+fn force_vsync<'a>(
+    h: &'a Shared,
+    args: &Args,
+    app: Option<&App>,
+    launch: &Launch,
+) -> crate::radeon_session::VsyncHold<'a> {
+    let config = crate::stream::effective_config(h, launch).ok();
+    let enabled = config
+        .as_ref()
+        .is_some_and(|c| c.boolean("nvidia_virtual_display_vsync", false));
+    let adapter = config.as_ref().map_or("", |c| c.get("adapter_name", ""));
+    // Off, the launch's preparation is not looked at.
+    let virtual_display = enabled
+        && launch
+            .preparation
+            .lock()
+            .unwrap()
+            .as_ref()
+            .is_some_and(|preparation| preparation.prepared().on_virtual_display());
+    let fps = args
+        .get("mode")
+        .and_then(|mode| crate::radeon_profile::stream_fps(mode));
+    let wanted = crate::radeon_session::wants_vsync(enabled, virtual_display, app, fps);
+    let (hold, result) = h.hold_vsync(&launch.client.uuid, adapter, wanted);
+    match result {
+        Ok(()) => launch.warnings.clear("driver_vsync"),
+        Err(error) => {
+            tracing::error!(%error, "Vertical sync is not forced on for the virtual display");
+            launch.warnings.set(
+                "driver_vsync",
+                format!("Vertical sync could not be forced on for the virtual display: {error}"),
+            );
+        }
+    }
+    hold
 }
 /// The width and height a launch asks for (`mode`, else `fallback_mode`),
 /// even like the stream's.

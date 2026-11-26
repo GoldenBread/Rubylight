@@ -212,6 +212,15 @@ impl<P, A> Sessions<P, A> {
             .map(|s| s.launch.client.uuid.clone())
             .collect()
     }
+    /// The devices whose non-guest stream launch waits for its client or is still being
+    /// prepared. [`Sessions::start`] moves one to the streaming devices under the same lock.
+    pub fn launching_devices(&self) -> std::collections::BTreeSet<String> {
+        self.pending
+            .values()
+            .filter(|p| p.role == Role::Stream && p.live() && p.guest().is_none())
+            .map(|p| p.client.uuid.clone())
+            .collect()
+    }
     /// A new session over one transport ends the sessions of the other in the same role: a
     /// WebRTC stream and a Moonlight stream never run together, whichever came first. Sessions
     /// of the same transport follow the per-client rules of `supersede`. A Nucleus Co-op stream
@@ -406,6 +415,7 @@ mod tests {
             .insert(crate::multiclient::LAUNCH_OPTION.into(), "1".into());
         let _ = sessions.queue(owner.clone()).unwrap();
         let _ = sessions.queue(guest.clone()).unwrap();
+        assert_eq!(sessions.launching_devices(), ["owner".to_owned()].into());
         let _owner_session = sessions.start(owner, Negotiated::default()).unwrap();
         let _guest_session = sessions.start(guest, Negotiated::default()).unwrap();
 

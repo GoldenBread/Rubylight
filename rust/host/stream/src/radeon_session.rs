@@ -93,8 +93,17 @@ pub fn locked<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
+mod release;
+pub use release::{VSYNC_SESSION, VsyncHold, wants_vsync};
+
 #[derive(Default)]
 pub struct Inner {
+    /// The devices whose virtual-display streams hold Vertical sync forced on ([`VSYNC_SESSION`]).
+    vsync_holders: Mutex<BTreeSet<String>>,
+    /// The adapter the last hold named, to force Vertical sync again after a restore.
+    vsync_adapter: Mutex<String>,
+    /// The PC's own Vertical sync value the force replaced or waits for, since the first hold.
+    vsync_original: Mutex<Option<model::Value>>,
     worker: OnceLock<WorkerRef>,
     /// Whose driver the worker controls; Radeon until the host's worker starts.
     driver: OnceLock<Driver>,
@@ -269,95 +278,6 @@ impl Inner {
         }
     }
 
-    /// The session machine moved. `present` makes the devices still part of the session (a
-    /// stream, the owner, a retained display), or `None` while the session has not settled (a
-    /// launch or a teardown runs): nothing is restored then, because a launch that fails hands
-    /// the session back to its owner. Every device that wrote settings and is not present gets
-    /// them restored: that is an ended session, whichever way it ended. A suspended session
-    /// keeps its owner, so Disconnect restores nothing. `present` is not called when no device
-    /// wrote anything.
-    pub fn sync(&self, present: impl FnOnce() -> Option<BTreeSet<String>>) {
-        let ended: Vec<String> = {
-            let mut written = locked(&self.written);
-            if written.is_empty() {
-                return;
-            }
-            let Some(present) = present() else {
-                return;
-            };
-            let ended: Vec<String> = written
-                .iter()
-                .filter(|device| !present.contains(*device))
-                .cloned()
-                .collect();
-            for device in &ended {
-                written.remove(device);
-            }
-            ended
-        };
-        for device in ended {
-            self.dispatch(device);
-        }
-    }
-    /// Hand on the restore of every device that changed settings and is not in `present`, and
-    /// wait (at most `wait`) until those, and any restore already handed on, are done. For a launch that takes the game over: the new
-    /// game's settings are written only after the old ones are gone, so a late restore cannot
-    /// undo them and the journal's originals are the PC's own.
-    pub fn release_missing(&self, present: &BTreeSet<String>, wait: Duration) {
-        let gone: Vec<String> = {
-            let mut written = locked(&self.written);
-            let gone: Vec<String> = written
-                .iter()
-                .filter(|device| !present.contains(*device))
-                .cloned()
-                .collect();
-            for device in &gone {
-                written.remove(device);
-            }
-            gone
-        };
-        for device in gone {
-            self.dispatch(device);
-        }
-        // Also when nothing new was handed on: a session that ended a moment ago may have its
-        // restore queued or running, and the new write must not overtake it.
-        if !self.flush(wait) {
-            tracing::error!(
-                wait_seconds = wait.as_secs(),
-                "the Radeon settings of the earlier session were still being put back; the new game's settings follow them in the worker's queue"
-            );
-        }
-    }
-    /// A device was unpaired or turned off: its settings go back even though its session may
-    /// linger until the grace period ends.
-    pub fn release_device(&self, device: &str) {
-        if locked(&self.written).remove(device) {
-            self.dispatch(device.to_owned());
-        }
-    }
-    /// Every device's settings go back, whatever its session is doing (unpair all, shutdown).
-    pub fn release_all(&self) {
-        let devices: Vec<String> = std::mem::take(&mut *locked(&self.written))
-            .into_iter()
-            .collect();
-        for device in devices {
-            self.dispatch(device);
-        }
-    }
-    /// A clean shutdown: put back everything this run changed and wait for it, at most `wait`.
-    pub fn shutdown(&self, wait: Duration) {
-        self.release_all();
-        let Some(restorer) = self.restorer.get() else {
-            return;
-        };
-        let (ack, done) = mpsc::channel();
-        if restorer.send(Message::Flush(ack)).is_ok() && done.recv_timeout(wait).is_err() {
-            tracing::error!(
-                wait_seconds = wait.as_secs(),
-                "Radeon settings were still being restored at shutdown; what is left stays journaled and the next host start restores it"
-            );
-        }
-    }
     /// Put `device`'s settings back now and wait for the worker. The session goes on: its next
     /// write notes the device again.
     pub fn restore_now(&self, device: &str) -> anyhow::Result<RestoreReport> {
@@ -423,6 +343,7 @@ impl Inner {
         }
         drop(failures);
         self.forget();
+        self.after_restore(device, result);
     }
     /// Whether `device` may have settings changed that its session has not restored.
     pub fn holds(&self, device: &str) -> bool {
@@ -507,9 +428,19 @@ pub fn start(
         directory,
         driver,
         crate::win_bridge::user_launcher(),
-    )?;
+    );
+    adopt(radeon, driver, worker.map(WorkerRef::Host))
+}
+
+/// Record whose GPU the host found, even when its worker did not start: a feature that needs
+/// the worker then says so instead of taking the PC for a Radeon one.
+fn adopt(
+    radeon: &Radeon,
+    driver: Driver,
+    worker: Result<WorkerRef, BackendError>,
+) -> Result<(), BackendError> {
     let _ = radeon.driver.set(driver);
-    radeon.attach(WorkerRef::Host(worker));
+    radeon.attach(worker?);
     Ok(())
 }
 
