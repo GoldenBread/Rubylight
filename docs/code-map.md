@@ -159,7 +159,7 @@ The host says what it offers in three places: serverinfo fields ([`serverinfo_fi
 | Console warnings | `rust/host/stream/src/host_warnings.rs`, kept in `host-warnings.json` until dismissed |
 | Support bundle | `rust/host/stream/src/maintenance/support_bundle.rs` writes it with the logs redacted by `rust/core/session/src/log_redact.rs`; the crash memory dump only on request (`include_dump`). |
 | Per-frame timings | `BUTTERPOLLO_TIMING_RECORD` writes the [timing record](timing-record.md); `rust/release/timing_report.py` turns host and receiver records into a stage table. |
-| Which stage lost the stream's time | The console's **Stream details & performance**, the end-of-stream `stream stutter report` line, and `rust/core/media-policy/src/stutter_report.rs` over the stage samples `rust/core/media-policy/src/performance.rs` keeps. |
+| Which stage lost the stream's time | The console's **Stream details & performance**, the end-of-stream `stream stutter report` line, and `rust/core/media-policy/src/stutter_report.rs` over the stage samples `rust/core/media-policy/src/performance.rs` keeps. Its last 30 seconds (`Stats::stutter_recent` in `rust/core/session/src/session/stats.rs`) feed the console's live stage and Nightjar's Stream Doctor: `GET /stream/doctor` and its bitrate step-down in `rust/host/web/src/native_api/doctor.rs` over `rust/core/session/src/native/doctor.rs`. |
 | A stream run | `rust/release/e2e.py` leaves `result.json`, `frames.csv` and the host's record in the run's folder. |
 | Faults on purpose | `rust/host/stream/src/soak_fault.rs` (debug hosts only) and the send switches `BUTTERPOLLO_TEST_SEND_LOSS`, `BUTTERPOLLO_TEST_SEND_JITTER` and `BUTTERPOLLO_TEST_SEND_OUTAGE` |
 

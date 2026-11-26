@@ -9,6 +9,7 @@
 //! next request.
 mod audio;
 pub mod coop;
+mod doctor;
 pub mod dvr;
 pub mod files;
 mod folders;
@@ -176,6 +177,11 @@ pub fn router() -> Router<Shared> {
                 .fallback(unknown),
         )
         .route(&path("/wake"), get(wake::read).fallback(unknown))
+        .route(&path("/stream/doctor"), get(doctor::read).fallback(unknown))
+        .route(
+            &path("/stream/doctor/apply"),
+            post(doctor::apply).fallback(unknown),
+        )
         .route(&path("/dvr"), get(dvr::status).fallback(unknown))
         .route(&path("/dvr/clip"), post(dvr::clip).fallback(unknown))
         .route(&path("/dvr/record"), post(dvr::record).fallback(unknown))
@@ -433,6 +439,10 @@ async fn capabilities(State(h): State<Shared>, Extension(c): Extension<Connectio
             .chain(
                 (couch_menu && (client.allows(VIEW) || client.allows(LAUNCH)))
                     .then_some(feature::COUCH_MENU),
+            )
+            // Stream Doctor 2.0, for a device that may see its stream.
+            .chain(
+                (client.allows(VIEW) || client.allows(LAUNCH)).then_some(feature::STREAM_DOCTOR_V2),
             )
             // While this host can run Nucleus Co-op sessions.
             .chain(coop.then_some(feature::COOP))

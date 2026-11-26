@@ -179,6 +179,18 @@ impl Report {
         }
     }
 
+    /// What happened after `earlier`, an earlier report of the same stream:
+    /// the pictures, late pictures and lost time since then. The totals only
+    /// grow, so a report from before is never larger.
+    pub fn since(&self, earlier: &Report) -> Report {
+        Report {
+            windows: self.windows.saturating_sub(earlier.windows),
+            pictures: self.pictures.saturating_sub(earlier.pictures),
+            late: self.late.saturating_sub(earlier.late),
+            lost: std::array::from_fn(|stage| self.lost[stage].saturating_sub(earlier.lost[stage])),
+        }
+    }
+
     /// The report as the session API and the console read it.
     pub fn snapshot(&self) -> serde_json::Value {
         let mut stages: Vec<(Stage, u64)> = Stage::ALL

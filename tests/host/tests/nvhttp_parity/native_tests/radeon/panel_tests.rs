@@ -202,6 +202,7 @@ async fn capabilities_list_the_radeon_features_only_with_a_worker() {
             "radeon.write",
             "radeon.profile",
             "session.couch_menu",
+            "stream.doctor_v2",
             "pairing.approve",
             "session.guest-invites",
             "clipboard.image",

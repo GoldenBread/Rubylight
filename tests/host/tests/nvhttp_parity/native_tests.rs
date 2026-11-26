@@ -41,6 +41,8 @@ mod continue_here;
 mod coop;
 #[path = "native_tests/couch_menu.rs"]
 mod couch_menu;
+#[path = "native_tests/doctor.rs"]
+mod doctor;
 #[path = "native_tests/files.rs"]
 mod files;
 #[path = "native_tests/folders.rs"]

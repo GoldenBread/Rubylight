@@ -66,6 +66,7 @@ GET /api/native/v1/capabilities
 | `folders` | while the host shares at least one folder | [Shared folders](#shared-folders) |
 | `stream.dvr` | always on a host with Stream DVR (whether the replay buffer runs is in `GET /dvr`) | [Stream DVR](#stream-dvr-streamdvr) |
 | `wake.relay` | while `away_wake_relay` and `internet_play` are on | [Away wake relay](#away-wake-relay-wakerelay) |
+| `stream.doctor_v2` | for a device with View or Launch | [Stream Doctor](#stream-doctor-streamdoctor_v2) |
 
 - `permissions` belongs to the calling device. `list`, `view` and `launch` are the List apps, View streams and Launch apps bits. `host_control` is the device's **Host control** grant (see [The host control permission](#the-host-control-permission)), and `usb` and `shared_folders` are described with their features. `file_upload` and `file_download` (bits `1 << 18` and `1 << 19`) are missing from hosts before file transfer and decode as `false`. `coop_join` is whether the device may join co-op games (Launch apps and its **Can join co-op games** setting, which follows Launch apps until set), never a permission bit; hosts before 3.0 leave it out, which decodes as `false`. `restart_shutdown` is the device's **Restart and shut down PC** grant (see Power and update); older hosts leave it out. `pairing_approve` is the device's **Approve new devices** grant (see Approve a device), which is not implied by Host control and is reported apart from it; older hosts leave it out. With a feature listed but its permission off, the client shows the control disabled, with the sentence from the matching error (for example "Turn on Host control for this device in the Rubylight console").
 
@@ -114,6 +115,8 @@ All paths start with `/api/native/v1`. "Owner" means the caller owns the current
 | POST | `/pairing/approve` `{"id", "pin"}` | **approve new devices** or **host control** | PairingApproved `{"name"}` once the device has paired. 403 `permission_required`, 404 `not_found`, 409 `pairing_ended`, `pairing_cooldown` or `pairing_unconfirmed`, 422 `wrong_pin` or `invalid_value` |
 | POST | `/pairing/deny` `{"id"}` | **approve new devices** or **host control** | PairingRequests: those still waiting. 404 `not_found` |
 | POST | `/coop/join` `{"session": N}` | Launch; **Can join co-op games** to take another device's free slot | Joined `{"session", "slot", "app_id"}`: the slot is held until this device launches `app_id`. 403 `permission_required`, 409 `no_session` or `coop_refused`, 503 `temporarily_unavailable` while Nucleus Co-op cannot run |
+| GET | `/stream/doctor` | View or Launch | DoctorSnapshot (feature `stream.doctor_v2`, see [Stream Doctor](#stream-doctor-streamdoctor_v2)) |
+| POST | `/stream/doctor/apply` `{"action", "remedy", "trial_id"?}` | Launch, the stream's owner | DoctorSnapshot after it. 409 `no_session` or `not_session_owner`, 422 `not_writable` (`message` says why) or `invalid_value` |
 | GET | `/usb/tunnel` | `usb`, a token from `0x553A` | 101, then USB/IP (feature `usb`, see [USB forwarding](#usb-forwarding)) |
 
 Permission bits are the existing ones: List `1 << 24`, View `1 << 25`, Launch `1 << 26`, Upload files `1 << 18`, Download files `1 << 19`. Host control and Approve new devices are separate per-device flags (see below).
@@ -734,6 +737,28 @@ Instant replay and recording on the host, without re-encoding: while `dvr_enable
 
 `state` is `off` (the feature is off: `reason` `disabled`; nothing streams: `not_streaming`), `armed`, `recording`, `saving`, `unsupported` (`pyrowave`: PyroWave streams cannot be remuxed; `audio_codec_unsupported`: the stream's audio is PCM, AC3 or E-AC3 passthrough) or `error` (`disk_full`, `quota_exceeded`, `io_error`). Clients treat an unknown state as `unsupported` and an unknown reason as `unknown`. A clip a client asks for while another is being written is refused with `busy`, and one asked for before the first keyframe with `no_keyframe_yet` (the host asks the encoder for one). A clip summary (`ClipSummary`) has `id` (`[A-Za-z0-9_-]{8,64}`), `app_title`, `created_unix_ms`, `duration_ms`, `width`, `height`, `fps`, `codec` (`h264`, `hevc`, `av1`), `hdr`, `container` (`mp4`), `size_bytes`, `kind` (`replay` or `manual`) and `recovered` (kept from a recording the host could not finish). When the quota is full the host deletes the oldest replay clips, never recordings.
 
+## Stream Doctor (`stream.doctor_v2`)
+
+Which stage of the host lost the caller's stream time, and the remedies the host can try for this stream only. Nightjar fuses it with its own network, decode and display measurements into one plain-language finding; it reads `GET /stream/doctor` about once a second while its Stream Doctor card is open, and never otherwise. The host computes nothing new for it: `host_stages` is the stutter report the console shows (`stutter`), over the last `window_seconds` (30), and `pipeline_rates` are the console's frame rates of the last second.
+
+```json
+{ "schema_version": 1, "session_active": true, "caller_is_owner": true, "window_seconds": 30,
+  "encoder": { "backend": "amf", "codec": "hevc", "hdr": false, "width": 2560, "height": 1440,
+               "fps": 120, "live_bitrate_kbps": 36000, "fec_percent": 20 },
+  "host_stages": { "pictures": 3560, "late_pictures": 94, "dominant_stage": "encode",
+                   "lost_us": { "capture": 18200, "convert": 11400, "encode": 642500, "packetize": 4100, "send": 22000 },
+                   "pipeline_rates": { "source_mhz": 118400, "capture_mhz": 118400, "submit_mhz": 102100,
+                                       "output_mhz": 101800, "repeat_mhz": 1200 } },
+  "active_trials": [ { "trial_id": "t-3", "remedy": "bitrate_stepdown", "applied_value": 36000,
+                       "previous_value": 45000, "can_undo": true } ],
+  "eligible_remedies": [ { "id": "bitrate_stepdown", "configurable": false, "target_kbps": null,
+                           "reason": "trial_active", "message": "A lower bitrate is already being tried. Undo it first." } ] }
+```
+
+The caller's stream is the one its device plays or watches; without one, `session_active` is false and `encoder`, `host_stages` and both lists are empty. `host_stages` is null before the first measured picture, and `dominant_stage` null when too little time was lost to name a stage. A stage is `capture`, `convert`, `encode`, `packetize` or `send` (clients read an unknown one as `unknown`).
+
+The one remedy is `bitrate_stepdown`: the encoder's live bitrate a fifth lower, never below 500 kbps, through the same path as `/bitrate` (so it caps at `max_bitrate`, and the client's bitrate takes over from the host's own bitrate controllers for the rest of the stream, as a manual change does). `POST /stream/doctor/apply` with `{"action": "apply", "remedy": "bitrate_stepdown"}` applies it; `{"action": "undo", "remedy": "bitrate_stepdown", "trial_id": "t-3"}` returns to `previous_value`. Trials live in the stream and end with it; nothing is saved. A trial whose bitrate something else changed since (the player, or another client request) has `can_undo` false, and its undo is refused with 422 `not_writable` so that change stays. Only the stream's owner applies a remedy: a guest reads the snapshot with `caller_is_owner` false and each remedy's `reason` `not_owner`. Other refusals name `at_minimum`, `trial_active`, `bitrate_unknown`, `no_trial` (422 `invalid_value`) and `unknown_remedy` (422 `invalid_value`).
+
 ## Reserved features
 
 These are defined in `rubylight-native-api` but no host serves them yet, so none lists their features. Until one does, the routes below answer 404 `not_found` like any unknown path under `/api/native/v1`.
@@ -830,6 +855,7 @@ Modules (serde shapes as in the examples above, all `snake_case`; the source is 
 | `dvr` | `DvrStatus`, `DvrState`, `DvrReason`, `ClipRequest`, `ClipSaved`, `RecordRequest`, `RecordAction`, `RecordResult`, `ClipSummary`, `ClipKind`, `ClipList` |
 | `power` | `Power`, `Availability`, `PowerRequest`, `PowerAccepted`, `Update` |
 | `pairing` | `PairingRequests`, `PairingRequest`, `PairingApprove`, `PairingDeny`, `PairingApproved` |
+| `doctor` | `DoctorSnapshot`, `EncoderFacts`, `HostStages`, `HostStage`, `StageTimes`, `PipelineRates`, `ActiveTrial`, `EligibleRemedy`, `RemedyId`, `DoctorApplyRequest`, `DoctorAction` |
 | `quick_suspend` | `QuickSuspendStatus`, `SuspendState`, `QuickSuspendRequest` |
 | `usb` | `TUNNEL_PATH`, `UPGRADE`, `TOKEN_HEADER`, `TOKEN_BYTES`, `TOKEN_TTL_SECS` |
 | `error` | `ErrorBody`, `ApiError`, `ErrorCode` with `ErrorCode::status()`, the table in [Errors](#errors) |

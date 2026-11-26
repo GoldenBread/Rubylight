@@ -672,6 +672,8 @@ pub fn session_view(snapshot: &SessionSnapshot, caller: &Client) -> Session {
     }
 }
 
+pub mod doctor;
+
 #[cfg(test)]
 mod store_tests;
 #[cfg(test)]

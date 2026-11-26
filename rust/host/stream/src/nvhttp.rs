@@ -1,5 +1,5 @@
 use crate::{
-    state::{AppStop, Launch, PendingPin, Sessions, Shared},
+    state::{AppStop, Launch, PendingPin, Session, Sessions, Shared},
     tls::Connection,
 };
 use anyhow::{Context, Result, bail, ensure};
@@ -563,32 +563,8 @@ async fn bitrate(
     let mut count = 0;
     for s in sessions.active.values() {
         if s.launch.client.uuid == client.uuid {
-            butterpollo_media_policy::stream_policy::report_bitrate(
-                &s.launch.warnings,
-                requested,
-                applied,
-                "max_bitrate and the 500 Mbps runtime cap",
-            );
-            s.set_client_encoder_bitrate(applied);
+            set_client_bitrate(s, requested, applied);
             count += 1;
-            // The card warns about a PyroWave stream below the level where the project's test
-            // scenes kept detail at launch; a runtime change sets or clears it the same way.
-            // `applied` is the client's new rate itself, not scaled down from a launch setting.
-            let mut stream = s.config.clone();
-            stream.bitrate_kbps = applied;
-            stream.configured_bitrate_kbps = 0;
-            crate::rtsp_server::note_pyrowave_minimum(&s.launch.warnings, &stream);
-            let minimum = butterpollo_media_policy::link_rate::pyrowave_floor_kbps(&stream);
-            let recommended =
-                butterpollo_media_policy::link_rate::pyrowave_recommended_kbps(&stream);
-            if s.config.codec == 3 && applied >= minimum && applied < recommended {
-                tracing::warn!(
-                    bitrate_kbps = applied,
-                    minimum_kbps = minimum,
-                    recommended_kbps = recommended,
-                    "PyroWave bitrate is below recommended: text and textures may lose detail. Quality depends on the picture; raise the bitrate in Moonlight with network headroom, or use HEVC or AV1"
-                );
-            }
         }
     }
     if count == 0 {
@@ -603,6 +579,37 @@ async fn bitrate(
         ],
         None,
     )
+}
+/// Runs a client's bitrate request on its stream, as `/bitrate` does:
+/// `applied` is `requested` capped by `max_bitrate` and the runtime cap
+/// ([`runtime_bitrate_kbps`](butterpollo_media_policy::stream_policy::runtime_bitrate_kbps),
+/// read before the sessions are locked). The stream's card says so, and the
+/// client's bitrate takes over from the host's own controllers.
+pub fn set_client_bitrate(s: &Session, requested: u32, applied: u32) {
+    butterpollo_media_policy::stream_policy::report_bitrate(
+        &s.launch.warnings,
+        requested,
+        applied,
+        "max_bitrate and the 500 Mbps runtime cap",
+    );
+    s.set_client_encoder_bitrate(applied);
+    // The card warns about a PyroWave stream below the level where the project's test
+    // scenes kept detail at launch; a runtime change sets or clears it the same way.
+    // `applied` is the client's new rate itself, not scaled down from a launch setting.
+    let mut stream = s.config.clone();
+    stream.bitrate_kbps = applied;
+    stream.configured_bitrate_kbps = 0;
+    crate::rtsp_server::note_pyrowave_minimum(&s.launch.warnings, &stream);
+    let minimum = butterpollo_media_policy::link_rate::pyrowave_floor_kbps(&stream);
+    let recommended = butterpollo_media_policy::link_rate::pyrowave_recommended_kbps(&stream);
+    if s.config.codec == 3 && applied >= minimum && applied < recommended {
+        tracing::warn!(
+            bitrate_kbps = applied,
+            minimum_kbps = minimum,
+            recommended_kbps = recommended,
+            "PyroWave bitrate is below recommended: text and textures may lose detail. Quality depends on the picture; raise the bitrate in Moonlight with network headroom, or use HEVC or AV1"
+        );
+    }
 }
 async fn abr(State(h): State<Shared>, Extension(c): Extension<Connection>) -> Response {
     if authenticated_viewer(&h, &c).is_err() {

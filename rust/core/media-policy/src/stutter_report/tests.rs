@@ -280,3 +280,28 @@ fn a_picture_groups_the_nine_stage_samples_the_video_thread_takes() {
     );
     assert_eq!(Picture::of(&[]), Picture::default());
 }
+
+#[test]
+fn a_report_since_an_earlier_one_names_only_what_came_after() {
+    let usual = picture(2_000, 1_000, 4_000, 500, 500);
+    let mut totals = Totals::default();
+    add(&mut totals, &steady(60, usual));
+    // An encode stall early in the stream.
+    let mut stalled = steady(60, usual);
+    stalled[10] = picture(2_000, 1_000, 40_000, 500, 500);
+    add(&mut totals, &stalled);
+    let early = totals.report();
+    assert_eq!(early.dominant(), Some(Stage::Encode));
+    // Later, a send stall only.
+    let mut sending = steady(60, usual);
+    sending[20] = picture(2_000, 1_000, 4_000, 500, 30_500);
+    add(&mut totals, &sending);
+    let recent = totals.report().since(&early);
+    assert_eq!(
+        (recent.windows(), recent.pictures(), recent.late_pictures()),
+        (1, 60, 1)
+    );
+    assert_eq!(recent.dominant(), Some(Stage::Send));
+    assert_eq!(recent.lost_us(Stage::Encode), 0);
+    assert_eq!(totals.report().since(&totals.report()).dominant(), None);
+}

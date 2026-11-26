@@ -194,6 +194,8 @@ pub struct Session<P = (), A = ()> {
     /// their switches and answers, sent by the control loop. Take after `reconfigure`.
     pub rate_changes: butterpollo_media_policy::rate_change::RateChanges,
     pub stats: Stats,
+    /// The stream doctor's session-only remedies (`native::doctor`), which end with the stream.
+    pub doctor: std::sync::Mutex<crate::native::doctor::Trials>,
     pub started: Instant,
     pub output: std::sync::RwLock<String>,
     /// Whether the stream is currently sending HDR; starts at `config.hdr`,
@@ -325,6 +327,7 @@ impl<P, A> Session<P, A> {
             reconfigure: std::sync::Mutex::new(reconfigure),
             rate_changes: Default::default(),
             stats: Stats::default(),
+            doctor: Default::default(),
             started,
             output: std::sync::RwLock::new(String::new()),
             hdr_active: AtomicBool::new(hdr),

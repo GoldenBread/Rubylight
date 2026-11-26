@@ -28,6 +28,12 @@ pub struct Stats {
     /// after each one. The send path never takes this lock; the console and the
     /// teardown read it, with the pictures recorded since in `performance`.
     pub stutter: std::sync::Mutex<butterpollo_media_policy::stutter_report::Totals>,
+    /// The reports of the last [`STUTTER_HISTORY`] published windows, newest
+    /// last, so the stream doctor can name the stage of its last 30 seconds:
+    /// one small copy per five-second window, none per picture.
+    pub stutter_history: std::sync::Mutex<
+        std::collections::VecDeque<(Instant, butterpollo_media_policy::stutter_report::Report)>,
+    >,
     /// The stages `frames` doesn't count, for the pipeline frame rates.
     pub pipeline: butterpollo_media_policy::pipeline_rates::Counters,
     /// The console's pipeline frame rates, over `pipeline_rates::CONSOLE_WINDOW`.
@@ -35,12 +41,50 @@ pub struct Stats {
     /// Socket read to injected for ENet input passes, for the `stream timings` line.
     pub input_latency: std::sync::Mutex<butterpollo_input_policy::input_latency::InputLatency>,
 }
+/// Published stutter reports kept for [`Stats::stutter_recent`]: 40 seconds of
+/// five-second windows.
+pub const STUTTER_HISTORY: usize = 8;
+/// The span of `stutter_recent` in the console's session info, the stream doctor's window.
+pub const STUTTER_RECENT: Duration = Duration::from_secs(30);
 impl Stats {
     /// The video thread publishes its stutter totals after each window, so a
     /// reader never does the medians while holding the lock the send path
     /// records under.
     pub fn publish_stutter(&self, totals: &butterpollo_media_policy::stutter_report::Totals) {
         *self.stutter.lock().unwrap() = totals.clone();
+        let mut history = self.stutter_history.lock().unwrap();
+        if history.len() == STUTTER_HISTORY {
+            history.pop_front();
+        }
+        history.push_back((Instant::now(), totals.report()));
+    }
+    /// The stutter report of about the last `window`: the stream so far less
+    /// the newest published report at least `window` old. A stream younger
+    /// than that has its whole report.
+    pub fn stutter_recent(
+        &self,
+        period: Duration,
+        window: Duration,
+        now: Instant,
+    ) -> butterpollo_media_policy::stutter_report::Report {
+        self.stutter_since(&self.stutter_window().report(period), window, now)
+    }
+    /// `report`, the stream's report so far, less what it held `window` ago.
+    pub fn stutter_since(
+        &self,
+        report: &butterpollo_media_policy::stutter_report::Report,
+        window: Duration,
+        now: Instant,
+    ) -> butterpollo_media_policy::stutter_report::Report {
+        let history = self.stutter_history.lock().unwrap();
+        match history
+            .iter()
+            .rev()
+            .find(|(at, _)| now.saturating_duration_since(*at) >= window)
+        {
+            Some((_, earlier)) => report.since(earlier),
+            None => report.clone(),
+        }
     }
     /// The stream's stutter report so far: the totals the video thread last
     /// published, plus the pictures it has not counted yet, copied under the
@@ -87,7 +131,7 @@ impl<P, A> Session<P, A> {
     }
 
     /// The console's pipeline frame rates; `None` until a window is complete.
-    fn console_pipeline_rates(
+    pub fn console_pipeline_rates(
         &self,
     ) -> Option<butterpollo_media_policy::pipeline_rates::PipelineRates> {
         let counts = self.pipeline_counts();
@@ -132,7 +176,50 @@ impl<P, A> Session<P, A> {
             performance.window(Instant::now())
         };
         let performance = performance.snapshot();
-        let stutter = self.stats.stutter_window().report(mode.period()).snapshot();
-        serde_json::json!({"warnings":warnings,"encoder":*self.encoder.read().unwrap(),"uuid":self.launch.client.uuid,"device_name":self.launch.client.name,"width":width,"height":height,"display_width":requested.width,"display_height":requested.height,"fps":fps,"requested_fps":requested_fps,"video_format":self.config.codec,"hdr":self.hdr_active(),"vrr":self.config.vrr_low_latency,"encoder_bitrate_kbps":self.bitrate.load(Ordering::Relaxed),"adaptive_bitrate":self.adaptive_bitrate.lock().unwrap().snapshot(),"link_rate":self.link_rate_snapshot(),"congestion":self.congestion_snapshot(),"packet_pacing":self.automatic_pacing.lock().unwrap().snapshot(),"fec_percent":self.fec_percent(),"pyrowave_minimum_kbps":(self.config.codec == 3).then(|| butterpollo_media_policy::link_rate::pyrowave_floor_kbps(&self.config)),"pyrowave_recommended_kbps":(self.config.codec == 3).then(|| butterpollo_media_policy::link_rate::pyrowave_recommended_kbps(&self.config)),"audio_channels":self.config.audio_channels,"state":if self.stopping(){"STOPPING"}else{"RUNNING"},"frames_sent":self.stats.frames.load(Ordering::Relaxed),"frames_replaced":self.stats.frames_replaced.load(Ordering::Relaxed),"packets_sent":self.stats.packets.load(Ordering::Relaxed),"bytes_sent":self.stats.bytes.load(Ordering::Relaxed),"idr_requests":self.stats.idr_requests.load(Ordering::Relaxed),"reference_invalidations":self.stats.reference_invalidations.load(Ordering::Relaxed),"send_loss_recoveries":self.stats.send_loss_recoveries.load(Ordering::Relaxed),"frames_lost_on_send":self.stats.frames_lost_on_send.load(Ordering::Relaxed),"keyframes_past_fec":self.stats.keyframes_past_fec.load(Ordering::Relaxed),"slice_delivery_overflows":self.stats.slice_delivery_overflows.load(Ordering::Relaxed),"encode_latency_ms":self.stats.latency_us.load(Ordering::Relaxed) as f64/1000.,"performance":performance,"stutter":stutter,"pipeline_rates":self.console_pipeline_rates(),"uptime_seconds":self.started.elapsed().as_secs_f64(),"role":self.launch.role,"guest":self.launch.guest()})
+        let stutter = self.stats.stutter_window().report(mode.period());
+        // The last 30 seconds, as Nightjar's stream doctor reads them (`native::doctor`).
+        let stutter_recent = self
+            .stats
+            .stutter_since(&stutter, STUTTER_RECENT, Instant::now())
+            .snapshot();
+        let stutter = stutter.snapshot();
+        serde_json::json!({"warnings":warnings,"encoder":*self.encoder.read().unwrap(),"uuid":self.launch.client.uuid,"device_name":self.launch.client.name,"width":width,"height":height,"display_width":requested.width,"display_height":requested.height,"fps":fps,"requested_fps":requested_fps,"video_format":self.config.codec,"hdr":self.hdr_active(),"vrr":self.config.vrr_low_latency,"encoder_bitrate_kbps":self.bitrate.load(Ordering::Relaxed),"adaptive_bitrate":self.adaptive_bitrate.lock().unwrap().snapshot(),"link_rate":self.link_rate_snapshot(),"congestion":self.congestion_snapshot(),"packet_pacing":self.automatic_pacing.lock().unwrap().snapshot(),"fec_percent":self.fec_percent(),"pyrowave_minimum_kbps":(self.config.codec == 3).then(|| butterpollo_media_policy::link_rate::pyrowave_floor_kbps(&self.config)),"pyrowave_recommended_kbps":(self.config.codec == 3).then(|| butterpollo_media_policy::link_rate::pyrowave_recommended_kbps(&self.config)),"audio_channels":self.config.audio_channels,"state":if self.stopping(){"STOPPING"}else{"RUNNING"},"frames_sent":self.stats.frames.load(Ordering::Relaxed),"frames_replaced":self.stats.frames_replaced.load(Ordering::Relaxed),"packets_sent":self.stats.packets.load(Ordering::Relaxed),"bytes_sent":self.stats.bytes.load(Ordering::Relaxed),"idr_requests":self.stats.idr_requests.load(Ordering::Relaxed),"reference_invalidations":self.stats.reference_invalidations.load(Ordering::Relaxed),"send_loss_recoveries":self.stats.send_loss_recoveries.load(Ordering::Relaxed),"frames_lost_on_send":self.stats.frames_lost_on_send.load(Ordering::Relaxed),"keyframes_past_fec":self.stats.keyframes_past_fec.load(Ordering::Relaxed),"slice_delivery_overflows":self.stats.slice_delivery_overflows.load(Ordering::Relaxed),"encode_latency_ms":self.stats.latency_us.load(Ordering::Relaxed) as f64/1000.,"performance":performance,"stutter":stutter,"stutter_recent":stutter_recent,"pipeline_rates":self.console_pipeline_rates(),"uptime_seconds":self.started.elapsed().as_secs_f64(),"role":self.launch.role,"guest":self.launch.guest()})
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use butterpollo_media_policy::stutter_report::{Picture, Stage, Totals};
+
+    #[test]
+    fn the_recent_report_leaves_out_what_came_before_the_window() {
+        let stats = Stats::default();
+        let period = Duration::from_millis(8);
+        let usual = Picture::new(2_000, 1_000, 4_000, 500, 500);
+        let mut totals = Totals::default();
+        totals.add(&vec![usual; 30], period);
+        let mut stalled = vec![usual; 30];
+        stalled[3] = Picture::new(2_000, 1_000, 30_000, 500, 500);
+        totals.add(&stalled, period);
+        stats.publish_stutter(&totals);
+        let window = Duration::from_secs(30);
+        let young = stats.stutter_recent(period, window, Instant::now());
+        assert_eq!(
+            young.dominant(),
+            Some(Stage::Encode),
+            "a young stream has its whole report"
+        );
+        // The stall's window was published 35 seconds ago; a quiet one since.
+        let stalled_at = stats.stutter_history.lock().unwrap()[0].0;
+        totals.add(&vec![usual; 30], period);
+        *stats.stutter.lock().unwrap() = totals.clone();
+        let later = stats.stutter_recent(period, window, stalled_at + Duration::from_secs(35));
+        assert_eq!((later.pictures(), later.late_pictures()), (30, 0));
+        assert_eq!(later.dominant(), None, "the stall is older than the window");
+        for _ in 0..STUTTER_HISTORY + 2 {
+            stats.publish_stutter(&totals);
+        }
+        assert_eq!(stats.stutter_history.lock().unwrap().len(), STUTTER_HISTORY);
     }
 }
