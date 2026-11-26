@@ -23,7 +23,8 @@ use std::time::{Duration, Instant};
 mod control;
 mod save;
 mod worker;
-pub(crate) use control::{handle_control, send_outgoing};
+pub(crate) use control::handle_control;
+pub(in crate::stream) use control::send_outgoing;
 
 /// How long a native API or console request waits for a clip to be written.
 pub const API_WAIT: Duration = Duration::from_secs(120);
