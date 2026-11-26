@@ -66,6 +66,8 @@ import type {
 } from './api/types-network';
 import { dvrEndpoints } from './api/dvr';
 
+import { neutral } from './neutral';
+
 export * from './api/types-core';
 export * from './api/types-sessions';
 export * from './api/types-network';
@@ -78,7 +80,8 @@ export class ApiError extends Error {
     /** The refusal's machine-readable `reason` when the body has one (Stream DVR's 409s). */
     readonly reason?: string,
   ) {
-    super(message);
+    // The host's words, without the name of a third-party component (lib/neutral.ts).
+    super(neutral(message));
   }
 }
 
