@@ -217,6 +217,8 @@ pub fn start(h: Shared, connection: Connection, args: Args, resume: bool) -> Res
         // A refused `rlFecPercentage` fails the launch rather than streaming
         // with protection the client did not ask for.
         butterpollo_media_policy::extensions::fec_choice(&launch.options)?;
+        // And a refused `rlHdrDynamic`.
+        butterpollo_media_policy::extensions::hdr_dynamic_choice(&launch.options)?;
         // So does a refused `rlRateChange`, rather than a stream without 0x553C.
         butterpollo_media_policy::rate_change::launch_choice(&launch.options)?;
         // And a display scale Windows does not offer (`rlDisplayScale`).

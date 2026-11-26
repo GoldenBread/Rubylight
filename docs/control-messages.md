@@ -385,6 +385,7 @@ Each is absent until the host offers it.
 | `ANNOUNCE` | `x-nv-audio.surround.numChannels:12`, `x-nv-audio.surround.channelMask:63039` | 7.1.4 (FL FR FC LFE BL BR SL SR TFL TFR TBL TBR); the launch says `surroundAudioInfo` = 0xF63F << 16 \| 12, Moonlight V+'s `AUDIO_CONFIGURATION_714_SURROUND`. The host reads the channel count only |
 | serverinfo | `BandwidthProbeVersion` | the host serves `GET /bandwidth-probe?bytes=N` on the paired port |
 | serverinfo | `NvidiaEnhancements` | the NVIDIA image enhancements this PC can run, as bits: 1 RTX HDR, 2 RTX Video enhancement; absent or 0 without the NVIDIA components and where neither runs |
+| serverinfo | `HdrDynamicControl` | `1`: the host reads `rlHdrDynamic` |
 | serverinfo | `DisplayScaleVersion` | the host reads `rlDisplayScale` |
 | serverinfo | `SecondScreenVersion` | the host reads `rlSecondScreen` |
 | serverinfo | `RustHostInternetPlayVersion` | paired only: `1` while `internet_play` is on (else `0`): the host serves `GET /internet-play/v1` on the paired port and answers hole punches ([Play over the internet](internet-play.md)) |
@@ -394,6 +395,7 @@ Each is absent until the host offers it.
 | `/launch` | `rlDisplayScale` | the Windows scale (text and interface size) of the stream's virtual display in percent, one of 100, 125, 150, 175, 200, 225, 250, 300, 350, 400, 450 or 500; anything else is refused. Sent with or without `virtualDisplay=1`, since the host may make a virtual display of its own; ignored for a stream on a physical display. It comes before the device, app and host `dd_virtual_display_scale`, is lowered, with a warning, to the largest the display's resolution allows, and a scale Windows refuses is a warning, not a failed stream. `scaleFactor` is the render size, not this |
 | `/launch`, `/resume` | `rlFecPercentage` | `host` or absent keeps the host's settings, `auto` follows the `0x5539` reports, 0-255 fixes the share; anything else is refused |
 | `/launch` | `rlRtxHdr`, `rlRtxVideo` | `1` turns RTX HDR or RTX Video enhancement on for this stream and `0` off, over the app's setting; anything else or absent follows the app. Send each only when its `NvidiaEnhancements` bit is set |
+| `/launch`, `/resume` | `rlHdrDynamic` | `0` leaves HDR10+ and HDR Vivid metadata out of this stream, over `hdr_dynamic_metadata`; `1` or absent keeps the host's setting; anything else is refused. Dolby Vision RPUs still carry per-frame values. Send it only with `HdrDynamicControl` |
 | `/launch` | `rlConfirmReplace` | `1` closes the running game for this launch, as the user's answer to the host's 410 prompt; any other value never closes it and asks again. Absent keeps Vibepollo's rule: the same launch again within 60 seconds confirms |
 
 A host refuses an `ANNOUNCE` that picks something it did not offer, with 400 and the attribute's name.

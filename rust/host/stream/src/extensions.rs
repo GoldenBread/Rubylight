@@ -125,6 +125,8 @@ fn offer(h: &Shared, config: &Config, dolby: u8) -> Offered {
             .load(std::sync::atomic::Ordering::Acquire),
         // The most this host accepts at all; `stream_offered` has the path's own.
         max_video_packet: rubylight_protocol::video_packet::MAX_VIDEO_PACKET,
+        // `rlHdrDynamic` is read on every launch.
+        hdr_dynamic_control: true,
     }
 }
 
