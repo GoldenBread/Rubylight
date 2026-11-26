@@ -19,6 +19,7 @@ mod power;
 mod quick_suspend;
 pub mod radeon;
 pub mod wake;
+mod wake_relay;
 
 use axum::{
     Extension, Router,
@@ -182,6 +183,14 @@ pub fn router() -> Router<Shared> {
         .route(
             &path("/dvr/clips/{id}"),
             axum::routing::delete(dvr::delete).fallback(unknown),
+        )
+        .route(
+            &path("/wake/relay"),
+            get(wake_relay::read).fallback(unknown),
+        )
+        .route(
+            &path("/wake/relay/enroll"),
+            post(wake_relay::enroll).fallback(unknown),
         )
         .route(&path("/audio"), get(audio::read).fallback(unknown))
         .route(

@@ -501,6 +501,10 @@ pub(crate) async fn api(
                 displays::handle(&h, method.as_str(), &uri, &data)?
             }
             ("GET", "/api/internet-play") => butterpollo_stream::internet_play::console_status(&h)?,
+            ("GET", "/api/wake-relay")
+            | ("POST", "/api/wake-relay/revoke" | "/api/wake-relay/rotate") => {
+                butterpollo_stream::wake_relay::console(&h, method.as_str(), path, &data)?
+            }
             ("GET", "/api/rtss/status" | "/api/frame-limiter/status") => {
                 session::handle(&h, method.as_str(), path)?
             }

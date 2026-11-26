@@ -65,6 +65,8 @@ mod reply;
 mod usb;
 #[path = "native_tests/wake.rs"]
 mod wake;
+#[path = "native_tests/wake_relay.rs"]
+mod wake_relay;
 
 use reply::{HOST_VERSION, Reply, paired_device as device};
 

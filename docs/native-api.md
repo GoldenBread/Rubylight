@@ -65,6 +65,7 @@ GET /api/native/v1/capabilities
 | `clipboard.image` | while `clipboard_image` is on (the default) | [Image clipboard](#image-clipboard) |
 | `folders` | while the host shares at least one folder | [Shared folders](#shared-folders) |
 | `stream.dvr` | always on a host with Stream DVR (whether the replay buffer runs is in `GET /dvr`) | [Stream DVR](#stream-dvr-streamdvr) |
+| `wake.relay` | while `away_wake_relay` and `internet_play` are on | [Away wake relay](#away-wake-relay-wakerelay) |
 
 - `permissions` belongs to the calling device. `list`, `view` and `launch` are the List apps, View streams and Launch apps bits. `host_control` is the device's **Host control** grant (see [The host control permission](#the-host-control-permission)), and `usb` and `shared_folders` are described with their features. `file_upload` and `file_download` (bits `1 << 18` and `1 << 19`) are missing from hosts before file transfer and decode as `false`. `coop_join` is whether the device may join co-op games (Launch apps and its **Can join co-op games** setting, which follows Launch apps until set), never a permission bit; hosts before 3.0 leave it out, which decodes as `false`. `restart_shutdown` is the device's **Restart and shut down PC** grant (see Power and update); older hosts leave it out. `pairing_approve` is the device's **Approve new devices** grant (see Approve a device), which is not implied by Host control and is reported apart from it; older hosts leave it out. With a feature listed but its permission off, the client shows the control disabled, with the sentence from the matching error (for example "Turn on Host control for this device in the Rubylight console").
 
@@ -93,6 +94,8 @@ All paths start with `/api/native/v1`. "Owner" means the caller owns the current
 | GET | `/neural?app=` | View | Neural: the game's switches, each with its state, and the job (feature `neural.frame_generation`) |
 | POST | `/neural/settings` `{"app", "switch", "on", "accept_notice"?}` | View + **host control**, no stream running | 202 Neural. 409 `host_in_use` while a stream runs, 422 `not_writable` (the notice, or this PC can't run it) or `invalid_value` (a switch the host doesn't have), 503 `temporarily_unavailable` while busy with the game |
 | GET | `/wake` | List, View or Launch | Wake (feature `wake`) |
+| GET | `/wake/relay` | Launch or **host control** | WakeRelayInfo: the relays, and with Launch the caller's keys (feature `wake.relay`) |
+| POST | `/wake/relay/enroll` `{"action", ...}` | **host control**; `enroll` and `refresh` also from the PC's own network | RelayEnrolled. 403 `forbidden` off or not on the PC's network, 404 `not_found` for a relay that is not enrolled |
 | GET | `/audio` | View or Launch | Audio (features `audio.night_mode`, `audio.headphone_surround`) |
 | POST | `/audio/settings` | View or Launch, owner of a `streaming` or `suspended` session | Audio |
 | GET | `/files` | Download files, File transfer on | FileList |
@@ -419,6 +422,43 @@ GET /api/native/v1/wake
 - `idle_sleep` is the host's own sleep after idle: `state` is `off`, `armed`, `blocked` or `unsupported`, `minutes` is `sleep_after_idle_minutes` (0 when off), and `reason` says what blocks it or why it is unsupported (`null` otherwise).
 - Clients send to every target's MAC and every `broadcasts` address, on top of the serverinfo MAC and their own interfaces' broadcasts. Unknown fields are ignored, and unknown `kind`, `state`, `sleep`, `fast_startup` and `shutdown_wake` values decode as `Unknown`. A client shows a check id it doesn't know by its `state`.
 - The endpoint only reads. NIC settings are changed only with consent, from the installer or the admin console, never through this API.
+
+## Away wake relay (`wake.relay`)
+
+Status: served since 7.0 ([design](designs/15-away-wake-relay.md)). Types in `rubylight_native_api::wake_relay`, fixtures `wake_relay.json` and `wake_relay_enrolled.json`. Serverinfo carries `<AwayWakeRelayVersion>1</AwayWakeRelayVersion>` while it is on; a client offers the relay only with both.
+
+A sleeping PC cannot answer from the internet. An always-on paired device on its network (a relay: Nightjar's desktop client on a mini PC or server) enrolls while the PC is awake, and a paired device that is away asks it over a punched Traverse path to send the PC's magic packets ([Play over the internet](internet-play.md#away-wake-relay)).
+
+```http
+GET /api/native/v1/wake/relay
+```
+
+```json
+{ "enabled": true, "target_id": "<the PC's uniqueid>", "epoch": 1,
+  "relays": [ { "id": "<relay device id>", "name": "Living room NUC", "enrolled_unix": 1795000000, "last_seen_unix": 1795000300 } ],
+  "bundle": { "target_id": "<the PC's uniqueid>", "epoch": 1, "device": "<caller device id>",
+              "relays": [ { "id": "<relay device id>", "name": "Living room NUC", "secret": "<64 hex digits>" } ] } }
+```
+
+- A device id is the SHA-256 of the device's certificate (trimmed PEM), in hex.
+- `bundle` is there only for a caller with Launch apps. Each relay's `secret` is the caller's own key for that relay (HKDF of the relay's secret, the PC's id, the caller's id and the epoch); the caller signs its wake requests with it, and the relay derives it again. With the feature off the answer is `{"enabled": false}` with no relays and no bundle.
+
+```http
+POST /api/native/v1/wake/relay/enroll
+{ "action": "enroll", "name": "Living room NUC" }
+```
+
+```json
+{ "assignment": { "target_id": "<the PC's uniqueid>", "target_name": "Desktop", "epoch": 1,
+                  "secret": "<64 hex digits>", "macs": ["10:7B:44:00:00:01"], "broadcasts": ["192.168.4.255"],
+                  "address": "192.168.4.20", "http_port": 47989,
+                  "devices": ["<device id>"], "refresh_seconds": 300 },
+  "relays": [ ... ] }
+```
+
+- `action` is `enroll` (`name` optional, the device's name otherwise), `refresh`, `leave`, `revoke` (`relay`: a relay id) or `rotate_epoch`. Every action needs Host control. `enroll` and `refresh` also need a caller on one of the PC's own private subnets (not through a tunnel); `refresh` never enrolls, so a revoked relay gets 404 and stops. Only `enroll` and `refresh` return an `assignment`.
+- `macs` and `broadcasts` are the PC's physical adapters' (at most four each, private broadcasts only), `address` is the PC's own address on the relay's subnet, and `devices` are the paired devices that are turned on and may launch apps. A relay refreshes every `refresh_seconds`, which is how an unpaired device, a revoked relay or a rotated epoch reaches it.
+- At most eight relays. `rotate_epoch` gives every relay a new secret, which ends every device's keys until it reads `GET /wake/relay` again.
 
 ## Audio processing (`audio.night_mode`, `audio.headphone_surround`)
 
@@ -782,6 +822,7 @@ Modules (serde shapes as in the examples above, all `snake_case`; the source is 
 | `session` | `Session`, `State`, `Owner`, `Action`, `ActionId`, `SessionApp`, `LauncherNotice`, `LauncherKind`, `RadeonProfile`, `ProfileState`, `PlayingOn`, `MovedTo`, `CouchMenuRequest`, `CouchMenu` |
 | `radeon` | `Radeon`, `Gpu`, `Setting`, `ControlState`, `Kind`, `Value`, `Range`, `Choice`, `Restore`, `SettingsWrite`, `Change` |
 | `wake` | `Wake`, `Target`, `AdapterKind`, `TargetState`, `Check`, `CheckState`, `System`, `Sleep`, `FastStartup`, `ShutdownWake`, `IdleSleep`, `IdleSleepState`; check ids in `wake::check` |
+| `wake_relay` | `WakeRelayInfo`, `WakeRelayBundle`, `RelayCredential`, `RelayPeer`, `RelayEnroll`, `RelayEnrolled`, `RelayAssignment` |
 | `audio` | `Audio`, `AudioWrite` (Radeon `Setting` and `Change`), the ids `NIGHT_MODE` and `HEADPHONE_SURROUND`, `GROUP`; reasons in `audio::reason` |
 | `files` | `FileList`, `FileEntry`, `Uploaded` |
 | `folders` | `FolderList`, `SharedFolder`, `FolderAccess`, `FolderEntries`, `FolderEntry`, `EntryKind` |

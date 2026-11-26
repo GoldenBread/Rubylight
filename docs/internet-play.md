@@ -44,6 +44,19 @@ Both sides send authenticated punches to every endpoint the other published, eve
 
 Punching works for IPv4 when at least one side has a cone NAT, or both are port-restricted cones. Two symmetric NATs, or a symmetric NAT opposite a port-restricted one, cannot be punched; then only a forwarded port or IPv6 reaches the PC.
 
+## Away wake relay
+
+A sleeping PC publishes nothing and answers no punch. With **Away wake relay** on (`away_wake_relay`, besides `internet_play`), an always-on paired device on the PC's network, a relay, wakes it for a paired device that is away. The same records, punches and sealed datagrams carry it, and the relay only ever sends Wake-on-LAN on its own network.
+
+- **Enrolling.** A device with Host control on one of the PC's own private subnets, never through a tunnel, enrolls over its paired HTTPS connection (`POST /api/native/v1/wake/relay/enroll`, [Native API](native-api.md#away-wake-relay-wakerelay)) and gets a 32-byte secret, the PC's physical MACs and its subnets' broadcast addresses, and the devices that may wake it: those paired, turned on and allowed to launch apps. It fetches them again every five minutes while the PC is awake, so an unpaired device, a revoked relay or new keys reach it then. A revoked relay is not enrolled again by its refresh.
+- **Keys.** A device's key for a relay is HKDF-SHA256 over the relay's secret, the PC's ID, the device's ID (the SHA-256 of its certificate) and the key epoch. The PC hands each device that may launch apps its keys (`GET /wake/relay`); the relay derives the same ones and never learns more. **Rotate keys** in the console raises the epoch and ends every key until the next fetch.
+- **Meeting.** For every device it may wake for, the relay publishes a record under that device's key (role *wake relay*) every 30 minutes and polls the device's record (role *wake requester*) every 15 seconds, as the PC does for internet play. The device looks the relay's record up, publishes its own and punches; only a punch stamped within two minutes opens a path.
+- **The request.** One sealed datagram of 148 bytes: version, epoch, the device's clock, a random 16-byte nonce, the device's ID and a hash of the PC's ID, signed with an Ed25519 key derived from the device's key. The relay checks, in this order: a device it may wake for, the signature, the PC, the epoch, a clock within two minutes, a nonce it has not seen (512 kept; when full it refuses rather than forgets), and its limits: one burst every ten seconds per PC and per device, at most ten per device and twenty per PC in ten minutes. Anything that fails before the signature gets no answer at all.
+- **The burst.** At most three magic packets (102 bytes, UDP port 9) per MAC and broadcast, only to the PC's registered MACs and to the broadcast addresses of the relay's own private subnets that the PC registered: at most 60 small packets on the local network for one request, none anywhere else. A repeated request gets its answer again, never a second burst.
+- **The answer.** A sealed status: sent, rate limited (with seconds to wait), refused, then *awake* when the PC answers on its HTTP port within 45 seconds, or *timed out*. The device then connects as usual.
+
+The relay forwards no port: like the PC for internet play it uses one UDP socket for the DHT, STUN and punches, and sends the magic packets from its own interface addresses.
+
 ## Limits
 
 - A tunnelled device reaches the host's ports from this PC, yet the host treats it as a device on the internet: every connection and media socket the tunnel opens is marked as tunnelled before it sends, and 127.77.0.0/16 and 127.78.0.0/16 always count as the internet. It gets `wan_encryption_mode`, never `lan_encryption_mode`, none of what serverinfo shows only programs on this PC (session counts, the host's profile), no browser-on-this-PC trust and no LAN-only guest play. The path is sealed with the device's keys.

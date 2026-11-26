@@ -270,6 +270,7 @@ pub fn native_features(h: &Shared, config: &Config) -> Vec<&'static str> {
             .unwrap_or_default(),
         // Stream DVR's routes answer with its state whether or not it is on.
         vec![rubylight_native_api::feature::STREAM_DVR],
+        wake_relay_feature(config),
     ]
     .concat()
 }
@@ -278,6 +279,16 @@ pub fn native_features(h: &Shared, config: &Config) -> Vec<&'static str> {
 /// while `quick_suspend` is on (off by default).
 pub fn quick_suspend(config: &Config) -> bool {
     config.quick_suspend() == butterpollo_config::config::QuickSuspendMode::Manual
+}
+
+/// The away wake relay: `wake.relay`, while the setting and Play over the internet are on.
+/// Reading a device's keys needs Launch applications, enrolling as a relay Host control.
+fn wake_relay_feature(config: &Config) -> Vec<&'static str> {
+    if crate::wake_relay::offered(config) {
+        vec![feature::WAKE_RELAY]
+    } else {
+        Vec::new()
+    }
 }
 
 /// USB forwarding (C): `usb`, while `usb_forwarding` is on and the USB/IP

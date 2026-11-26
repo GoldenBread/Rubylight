@@ -234,7 +234,7 @@ fn locked<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 }
 
 impl Wake {
-    fn power(&self) -> Arc<dyn PowerSystem> {
+    pub(crate) fn power(&self) -> Arc<dyn PowerSystem> {
         self.power
             .read()
             .unwrap_or_else(PoisonError::into_inner)
