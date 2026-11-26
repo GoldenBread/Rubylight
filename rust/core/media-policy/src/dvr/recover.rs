@@ -163,7 +163,7 @@ fn children(data: &[u8]) -> impl Iterator<Item = ([u8; 4], &[u8], usize)> {
 }
 
 fn child<'a>(data: &'a [u8], kind: &[u8; 4]) -> Option<(&'a [u8], usize)> {
-    children(data).find_map(|(found, body, at)| (&found == kind).then_some((body, at)))
+    children(data).find_map(|(found, body, at)| (found == *kind).then_some((body, at)))
 }
 
 fn be32(data: &[u8], at: usize) -> Option<u32> {
@@ -235,7 +235,7 @@ impl Movie {
         let (video_id, _) = self.video?;
         let mut fragment_end = end;
         for (kind, traf, _) in children(moof) {
-            if &kind != b"traf" {
+            if kind != *b"traf" {
                 continue;
             }
             let (tfhd, _) = child(traf, b"tfhd")?;
@@ -261,7 +261,7 @@ impl Movie {
             };
             let mut total = 0u64;
             for (kind, trun, _) in children(traf) {
-                if &kind == b"trun" {
+                if kind == *b"trun" {
                     total = total.saturating_add(run_duration(trun, default_duration)?);
                 }
             }

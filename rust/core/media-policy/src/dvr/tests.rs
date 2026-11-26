@@ -157,6 +157,6 @@ pub(super) fn frames(
 ) -> Vec<VideoFrame> {
     (from_us..to_us)
         .step_by(step_us as usize)
-        .map(|pts| frame(codec, pts, (pts - from_us) % gop_us == 0))
+        .map(|pts| frame(codec, pts, (pts - from_us).is_multiple_of(gop_us)))
         .collect()
 }

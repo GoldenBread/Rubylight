@@ -232,7 +232,7 @@ fn salvage_rejects_files_without_an_init_segment() {
     let mut swapped = recording.file[..tree[1].end].to_vec();
     swapped.extend_from_slice(&recording.file[tree[3].start..tree[3].end]);
     swapped.extend_from_slice(&recording.file[tree[2].start..tree[2].end]);
-    assert_eq!(salvage(&mut Cursor::new(&swapped)).unwrap().fragments, 0);
+    assert_eq!(salvage(&mut Cursor::new(swapped)).unwrap().fragments, 0);
     assert_eq!(
         salvage(&mut Cursor::new(&[] as &[u8])).unwrap(),
         Default::default()

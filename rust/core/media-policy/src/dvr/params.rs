@@ -66,7 +66,7 @@ impl ParamSets {
 }
 
 fn push_unique(list: &mut Vec<Vec<u8>>, unit: &[u8]) {
-    if !list.iter().any(|known| known == unit) {
+    if !list.iter().any(|known| known.as_slice() == unit) {
         list.push(unit.to_vec());
     }
 }

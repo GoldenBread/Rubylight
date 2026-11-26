@@ -166,7 +166,7 @@ fn split_annexb(stream: &[u8], h264: bool) -> Vec<(bool, Vec<u8>)> {
     cuts.iter()
         .zip(cuts[1..].iter().chain([&stream.len()]))
         .map(|(&from, &to)| {
-            let kinds = starts.iter().filter(|&&(at, _)| at >= from && at < to);
+            let kinds = starts.iter().filter(|&&(at, _)| (from..to).contains(&at));
             let idr = kinds.map(|&(_, kind)| kind).any(|kind| {
                 if h264 {
                     kind == 5

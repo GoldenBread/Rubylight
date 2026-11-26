@@ -19,9 +19,6 @@ pub mod recover;
 pub mod ring;
 pub mod slices;
 
-#[cfg(test)]
-mod tests;
-
 pub use cadence::{GOP_SECS, KeyframeCadence, gop};
 pub use fmp4::{ClipInfo, MuxError, write_clip};
 pub use params::ParamSets;
@@ -135,3 +132,6 @@ pub(crate) fn ticks(us: u64, timescale: u32) -> u64 {
     let scaled = (u128::from(us) * u128::from(timescale) + 500_000) / 1_000_000;
     u64::try_from(scaled).unwrap_or(u64::MAX)
 }
+
+#[cfg(test)]
+mod tests;
