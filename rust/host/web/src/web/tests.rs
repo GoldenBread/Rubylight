@@ -432,3 +432,54 @@ async fn basic_auth_reuses_a_recent_verification_until_the_password_changes() {
     assert!(!authenticated(&f.host, &basic("cache-user", "never-verified"), Some(peer)).await);
     assert!(authenticated(&f.host, &basic("cache-user", "right-password"), Some(peer)).await);
 }
+
+#[tokio::test]
+async fn parallel_valid_basic_requests_coalesce_and_parallel_wrong_guesses_stop_at_limit() {
+    use base64::Engine;
+    let f = butterpollo_stream::state::test_support::Fixture::new();
+    let stored = Credentials::new("burst-user".into(), "right-password").unwrap();
+    f.host.save_credentials(&stored).unwrap();
+    *f.host.credentials.write().unwrap() = Some(stored.clone());
+    let basic = |user: &str, pass: &str| {
+        let mut headers = HeaderMap::new();
+        let encoded =
+            base64::engine::general_purpose::STANDARD.encode(format!("{user}:{pass}").as_bytes());
+        headers.insert(
+            header::AUTHORIZATION,
+            format!("Basic {encoded}").parse().unwrap(),
+        );
+        headers
+    };
+
+    // 15 concurrent valid Basic requests on a cold cache must all pass via SIGN_IN_VERIFY + cache.
+    let valid_peer: std::net::IpAddr = "198.51.100.72".parse().unwrap();
+    let valid_headers = basic("burst-user", "right-password");
+    let mut valid_set = tokio::task::JoinSet::new();
+    for _ in 0..15 {
+        let host = f.host.clone();
+        let headers = valid_headers.clone();
+        valid_set.spawn(async move { authenticated(&host, &headers, Some(valid_peer)).await });
+    }
+    while let Some(res) = valid_set.join_next().await {
+        assert!(res.unwrap(), "concurrent valid Basic request failed");
+    }
+    let key = BasicCache::key(&stored, "burst-user", "right-password");
+    assert!(BASIC_CACHE.lock().unwrap().hit(&key, Instant::now()));
+
+    // 15 concurrent wrong guesses serialize against the 10-attempt limit and lock out the peer.
+    let brute_peer: std::net::IpAddr = "198.51.100.73".parse().unwrap();
+    let wrong_headers = basic("burst-user", "wrong-password");
+    let mut brute_set = tokio::task::JoinSet::new();
+    for _ in 0..15 {
+        let host = f.host.clone();
+        let headers = wrong_headers.clone();
+        brute_set.spawn(async move { authenticated(&host, &headers, Some(brute_peer)).await });
+    }
+    while let Some(res) = brute_set.join_next().await {
+        assert!(!res.unwrap(), "wrong password must be rejected");
+    }
+    assert!(
+        !authenticated(&f.host, &valid_headers, Some(brute_peer)).await,
+        "peer must remain locked out after hitting SignIns::LIMIT"
+    );
+}

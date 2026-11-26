@@ -112,6 +112,11 @@ pub(super) static BASIC_CACHE: std::sync::LazyLock<std::sync::Mutex<BasicCache>>
         })
     });
 
+/// Serializes uncached PBKDF2 checks so concurrent bursts with the same valid
+/// Basic credentials verify once and coalesce onto [`BASIC_CACHE`] instead of
+/// tripping the failed-attempt limiter while the first hash is in flight.
+static SIGN_IN_VERIFY: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 impl BasicCache {
     pub(super) const TTL: Duration = Duration::from_secs(300);
     pub(super) const CAPACITY: usize = 64;
@@ -188,21 +193,28 @@ fn rehash_if_needed(h: &Shared, stored: &Credentials, password: &str) {
 
 /// Check `user`/`pass` against the stored credentials on the blocking pool,
 /// as one sign-in attempt from `peer`, and upgrade a legacy hash that
-/// passes. The attempt counts before PBKDF2 runs, so parallel guesses cannot
-/// all slip under the limit meanwhile; a success clears the count.
+/// passes. Concurrent uncached attempts wait on `SIGN_IN_VERIFY` so parallel
+/// guesses still count sequentially against [`SIGN_INS`] without holding the
+/// mutex across `.await`, while matching valid requests coalesce onto
+/// [`BASIC_CACHE`].
 async fn sign_in(h: &Shared, peer: std::net::IpAddr, user: &str, pass: &str) -> bool {
+    if !SIGN_INS.lock().unwrap().allowed(peer, Instant::now()) {
+        return false;
+    }
+    let _verify = SIGN_IN_VERIFY.lock().await;
     let now = Instant::now();
-    {
-        let mut sign_ins = SIGN_INS.lock().unwrap();
-        if !sign_ins.allowed(peer, now) {
-            return false;
-        }
-        sign_ins.failed(peer, now);
+    if !SIGN_INS.lock().unwrap().allowed(peer, now) {
+        return false;
     }
     let Some(stored) = h.credentials.read().unwrap().clone() else {
+        SIGN_INS.lock().unwrap().failed(peer, now);
         return false;
     };
     let key = BasicCache::key(&stored, user, pass);
+    if !stored.needs_rehash() && BASIC_CACHE.lock().unwrap().hit(&key, now) {
+        SIGN_INS.lock().unwrap().succeeded(peer);
+        return true;
+    }
     let (user, pass) = (user.to_owned(), pass.to_owned());
     let verified = tokio::task::spawn_blocking({
         let stored = stored.clone();
@@ -212,6 +224,7 @@ async fn sign_in(h: &Shared, peer: std::net::IpAddr, user: &str, pass: &str) -> 
     .await
     .unwrap_or(false);
     if !verified {
+        SIGN_INS.lock().unwrap().failed(peer, Instant::now());
         return false;
     }
     SIGN_INS.lock().unwrap().succeeded(peer);

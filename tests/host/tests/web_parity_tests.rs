@@ -8,8 +8,14 @@ use butterpollo_session::{session::Role, state, state::Credentials};
 use butterpollo_stream::state::{PendingPin, test_support::Fixture};
 use butterpollo_web::web::router;
 use serde_json::{Value, json};
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 use tower::ServiceExt;
+
+fn parity_credentials() -> &'static Credentials {
+    static CREDENTIALS: OnceLock<Credentials> = OnceLock::new();
+    CREDENTIALS.get_or_init(|| Credentials::new("parity".into(), "parity-test").unwrap())
+}
 
 async fn request(f: &Fixture, method: &str, path: &str, data: Value) -> Response {
     request_with(f, method, path, data, &[]).await
@@ -23,9 +29,11 @@ async fn request_with(
     headers: &[(&str, &str)],
 ) -> Response {
     // On disk too: the host takes up the sign-in the file holds.
-    let credentials = Credentials::new("parity".into(), "parity-test").unwrap();
-    f.host.save_credentials(&credentials).unwrap();
-    *f.host.credentials.write().unwrap() = Some(credentials);
+    let credentials = parity_credentials();
+    if f.host.credentials.read().unwrap().as_ref() != Some(credentials) {
+        f.host.save_credentials(credentials).unwrap();
+        *f.host.credentials.write().unwrap() = Some(credentials.clone());
+    }
     let mut builder = Request::builder()
         .method(method)
         .uri(path)

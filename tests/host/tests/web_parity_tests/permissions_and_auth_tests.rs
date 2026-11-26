@@ -99,6 +99,8 @@ async fn both_metadata_routes_require_authentication_and_preserve_gpu_inventory(
         "gpu_error": null,
         "capture_status": {"displays": [], "error": null}
     });
+    // Warm the auth verification cache before stamping the 5s metadata cache.
+    let _ = request(&f, "GET", "/api/config", Value::Null).await;
     for path in ["/api/metadata", "/api/meta"] {
         // Populate the cache without opening GPU devices or probing encoders.
         *f.host.metadata.lock().unwrap() = Some((Instant::now(), expected.clone()));

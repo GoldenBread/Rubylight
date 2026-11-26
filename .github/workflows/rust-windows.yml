@@ -333,8 +333,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh api --paginate --slurp "repos/$env:GITHUB_REPOSITORY/releases?per_page=100" `
-            --jq '[.[][] | select((.prerelease | not) or (.assets | any(.name | test("-windows-x64\\.zip$"))))]' > "$env:RUNNER_TEMP\releases.json"
+          [Console]::OutputEncoding = $OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+          $raw = gh api --paginate --slurp "repos/$env:GITHUB_REPOSITORY/releases?per_page=100"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $raw | python -c "import json, sys; pages = json.load(sys.stdin.buffer); json.dump([r for p in pages for r in p if not r.get('prerelease') or any(a.get('name', '').endswith('-windows-x64.zip') for a in r.get('assets', []))], open(sys.argv[1], 'w', encoding='utf-8'))" "$env:RUNNER_TEMP\releases.json"
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           "BUTTERPOLLO_RELEASES_JSON=$env:RUNNER_TEMP\releases.json" >> $env:GITHUB_ENV
       - name: Build and package Rust

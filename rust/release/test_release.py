@@ -723,6 +723,7 @@ class PreviousService(unittest.TestCase):
         workflow = (ROOT / '.github/workflows/rust-windows.yml').read_text(encoding='utf-8')
         steps = dict(re.findall(r'(?ms)^      - name: ([^\n]+)\n(.*?)(?=^      - |\Z)', workflow))
         self.assertIn('--paginate --slurp', steps['List releases'])
+        self.assertNotIn('--jq', steps['List releases'])
         self.assertIn('-windows-x64', steps['List releases'])
 
 

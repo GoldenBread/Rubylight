@@ -347,11 +347,9 @@ async fn library_restore_takes_chosen_or_all_removed_games_and_refuses_a_bad_lis
 #[tokio::test]
 async fn library_discovery_and_import_require_authentication_and_validate_identities() {
     let f = Fixture::new();
-    f.host
-        .save_credentials(&Credentials::new("parity".into(), "parity-test").unwrap())
-        .unwrap();
-    *f.host.credentials.write().unwrap() =
-        Some(Credentials::new("parity".into(), "parity-test").unwrap());
+    let credentials = parity_credentials();
+    f.host.save_credentials(credentials).unwrap();
+    *f.host.credentials.write().unwrap() = Some(credentials.clone());
     for (method, path) in [
         ("GET", "/api/library/discovery"),
         ("POST", "/api/library/import"),
