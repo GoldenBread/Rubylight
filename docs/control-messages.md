@@ -175,6 +175,7 @@ The host also takes and sends these, with the wire formats of the projects that 
 | `0x5504` | host to client | Steam Controller haptic report | A Steam Controller arrival with capability `0x800` (Vibepollo's format, `steam_controller::SteamHaptic`) |
 | `0x5505` | host to client | Steam Controller settings write | A Steam Controller arrival with capability `0x2000` (`steam_controller::SteamSettings`) |
 | `0x5601` | host to client | DualSense waveform haptics | Connection feature `0x04` and controller capability `0x8000` ([DualSense haptics](dualsense-haptics.md)) |
+| `0x5602` | host to client | PlayStation controller speaker PCM | Connection feature `0x08`, an encrypted control stream (`x-nv-general.useReliableUdp` 13) and a [speaker binding](#controller-speaker-binding-input-packet-0x55000009-20-bytes) before a PlayStation arrival with capability `0x4000` (Nonary's format, `ps_speaker_pcm::SpeakerBlock`) |
 
 ## Error correction reports
 
@@ -220,6 +221,7 @@ The second line appears only when the host offers something, and stock clients i
 | `0x5546` | Frame Warp HUD mask | `frame_warp::Mask` | host to client | with `0x5543` | `FrameWarpProtocol` |
 | `0x5549` | Frame Warp meta | `frame_warp_v2::FrameWarpV2Meta` | host to client | with `0x5543` | `FrameWarpProtocol` |
 | `0x5547` | Transport feedback | `transport_feedback::TransportFeedback` | client to host | while `bitrate_adaptation` is `delay` (not the default) | none |
+| `0x554B` | Quick Suspend | `quick_suspend::ClientRequest`, `quick_suspend::HostState` | both | while `quick_suspend` is `manual` (not the default) | `QuickSuspendVersion` |
 
 `0x5508` (clipboard sync, above) goes on the same second line. `0x5542` is reserved. `0x5506`-`0x5510` belong to other clients and hosts: Rubylight takes `0x5508` with Moonlight V+'s frame unchanged and defines nothing else there. Nightjar sends `0x5510` (FEC summary, Moonlight V+'s format) only to a host whose `DESCRIBE` has `x-ss-video[0].fecControlVersion`, which Rubylight does not send.
 
@@ -327,6 +329,21 @@ As [Frame Warp](frame-warp.md) and Nightjar's [protocol document](../client/docs
 
 [Protocol](../client/docs/protocol/frame-warp.md#0x5549-meta-host-to-client-40-bytes-unreliable). The host lists `FrameWarpProtocol` 2 and `0x5549` beside `0x5543` to `0x5546`; the client's request names the gyro's controller and axes, and the host then sends one meta per tagged frame after its tags, unreliable and unsequenced: the camera confidence, HUD stability, the gyro packet the frame reflects and the gyro's gain, the measured turn rate and the fill hints. Versions do not mix: a host ignores an older client's 8-byte version 1 request and sends nothing for it, and no longer lists `FrameWarpVersion`, so an older client sees no Frame Warp; a current client sends nothing to a host without `0x5549`. The id is the first of the 7.0 range `0x5548` to `0x554F`.
 
+### 0x554B Quick Suspend (9 or 20 bytes)
+
+Pausing the running game's processes on the host and resuming them ([configuration](configuration.md#quick-suspend)). A host lists `QuickSuspendVersion` `1` and `0x554B` while `quick_suspend` is `manual`; a client sends it only then, reliable and encrypted (a plaintext one is dropped). Every frame starts with the same 8 bytes:
+
+| Bytes | Field | Meaning |
+| --- | --- | --- |
+| 0 | `version` | `1` |
+| 1 | `kind` | `1` client request, `2` host state |
+| 2-3 | `flags u16` | reserved, 0 |
+| 4-7 | `request_id u32` | the client's request; the host echoes it, and pushes a change no request caused with 0 |
+
+A client request adds `op` at byte 8: `1` query the state, `2` suspend, `3` resume. A host state adds 12 bytes: `state` (`0` unavailable, `1` ready, `2` suspended, `3` resuming, `4` refused), `reason` (`0` none, `1` off on the host, `2` no game process the host launched, or only a launcher, `3` anti-cheat, `4` a protected process, `5` a system process or the host, `6` guests, `7` co-op, `8` not the session's owner, `9` a launch or session end under way, `10` no game, `11` Windows failed), the suspended process count (`u16`) and since when (Unix ms, `u64`), both 0 unless suspended. A reason a client does not know reads as `11`.
+
+The host answers each request on a worker of its own, never on the control loop, and after a device's first request also tells it each change another device or the console made. Only the device that owns the session, or one with Host control, may suspend or resume; the stream stays connected and shows the game's last frame. The next stream of the game, the session's end, the game's stop, the grace period running out and the host's shutdown resume it first. A host crash leaves the journal `quick-suspend.json` in the profile, which a watchdog beside the host, or the next host start, resumes.
+
 ### 0x5547 transport feedback (20 bytes and the entries)
 
 Per-packet arrival times of the video stream, for the host's congestion control ([configuration](configuration.md#adapt-to-network-congestion)). The client sends them only to a host that lists `0x5547` in `a=x-rl-control`, unreliable and unsequenced, about every 50 ms while video arrives, and drops a report rather than queue it behind a backlog.
@@ -369,6 +386,12 @@ A device's physical touchpad (a tablet's keyboard cover, a laptop's precision to
 
 Events are Moonlight's touch events (1 down, 2 up, 3 move, 4 cancel, 5 the button only, 7 cancel all). A size of 0 means unknown; the host then uses 105 x 70 mm. The host replays the fingers on a virtual Windows precision touchpad over USB/IP (`butterpollo_core::virtual_hid::PrecisionTouchpad`) and lifts what a device still holds when its stream ends or loses focus. Nightjar sends frames from Android (`SOURCE_TOUCHPAD` with pointer capture) and the desktop (Raw Input on Windows, evdev on Linux, the trackpad on macOS).
 
+### Controller speaker binding (input packet `0x55000009`, 20 bytes)
+
+Nonary's Moonlight and other clients of Vibepollo's format play a PlayStation controller's speaker from `0x5602` blocks instead of Rubylight's `0x5533`. Such a client sets `0x08` in `x-ml-general.featureFlags` and, right before the controller's arrival on the same reliable input channel, sends a binding: the big-endian length 16, the magic `0x55000009` (little-endian), slot u16 (below 16), version u16 (1) and a nonzero owner u64, all little-endian after the length. The arrival carries capability `0x4000`, which means speaker PCM only on a PlayStation arrival (type 2); on a Steam Controller (type 4) it stays `LI_CCAP_STEAM_ATTRIBUTES`.
+
+The magic is also the single-contact touchpad packet's above. The host tells them apart by exact length before decoding: 20 bytes with length 16 is a binding, 40 bytes with length 36 a touchpad contact, and any other length is neither (`rubylight-wire`'s `input_shared_magic_tests` prove no packet is both). A binding counts only on a session that negotiated `0x08` over encrypted control with ENet channel 8, only for a slot without a controller, and only once, at that slot's next arrival. A PlayStation arrival without one loses `0x4000`. A bound controller gets a USB DualSense on the host even without `0x8000`, plays the game's speaker channels within the same controller speaker policy as `0x5533`, and gets its sound as `0x5602` blocks on channel 8 (unreliable): version 2, format 1 (48 kHz S16LE stereo), controller, a generation that changes with each binding, sequence, sample position, frame count (at most 240), flags (bit 0 a gap) and the owner, then the samples. Such a controller never gets `0x5533` or `0x5535` too, and the host ignores `0x5535` for it. Nightjar uses the binding only with a host that offers neither `0x5533` in `a=x-rl-control` nor touchpad packets (`x-ss-general.featureFlags` `0x10`).
+
 ### Stream negotiation
 
 Each is absent until the host offers it.
@@ -390,15 +413,18 @@ Each is absent until the host offers it.
 | `ANNOUNCE` | `x-nv-audio.surround.numChannels:12`, `x-nv-audio.surround.channelMask:63039` | 7.1.4 (FL FR FC LFE BL BR SL SR TFL TFR TBL TBR); the launch says `surroundAudioInfo` = 0xF63F << 16 \| 12, Moonlight V+'s `AUDIO_CONFIGURATION_714_SURROUND`. The host reads the channel count only |
 | serverinfo | `BandwidthProbeVersion` | the host serves `GET /bandwidth-probe?bytes=N` on the paired port |
 | serverinfo | `NvidiaEnhancements` | the NVIDIA image enhancements this PC can run, as bits: 1 RTX HDR, 2 RTX Video enhancement; absent or 0 without the NVIDIA components and where neither runs |
+| serverinfo | `HdrDynamicControl` | `1`: the host reads `rlHdrDynamic` |
 | serverinfo | `DisplayScaleVersion` | the host reads `rlDisplayScale` |
 | serverinfo | `SecondScreenVersion` | the host reads `rlSecondScreen` |
 | serverinfo | `RustHostInternetPlayVersion` | paired only: `1` while `internet_play` is on (else `0`): the host serves `GET /internet-play/v1` on the paired port and answers hole punches ([Play over the internet](internet-play.md)) |
 | serverinfo | `ExternalIP` | paired only: the router's public IPv4 address, while `upnp` or `internet_play` is on and the host knows it (Moonlight's remote address) |
+| serverinfo | `QuickSuspendVersion` | `1` while `quick_suspend` is `manual`: the host takes `0x554B` and serves `/api/native/v1/session/suspend` and `/session/resume` (feature `session.quick_suspend`) |
 | serverinfo | `FrameWarpProtocol` | `2` while `frame_warp` is on: the host takes the 12-byte `0x5543` and sends `0x5544` to `0x5546` and `0x5549`. Hosts before 7.0 listed `FrameWarpVersion` `1` instead, which a current host no longer sends |
 | every HTTPS request | `rlSecondScreen` | `1` marks a request of a paired device's second screen (Nightjar's Dual screen mode). On `/launch` and `/resume` it starts or resumes that screen's stream, which the host keeps beside the device's first stream as a device of its own under the same pairing, and lays the two displays out as the user left them. The second screen always has a display of its own: a virtual display beside the first screen's, also when it resumes the game the first screen plays (it never joins the game's display), or, when the device's streams show physical displays, the PC's other monitor (the same one only when there is no other). The second screen's process sends it on every other request too (`/bitrate`, `/api/abr/capabilities`, `/api/network-path`, `/api/hardware-metrics`, `/actions/clipboard`, the native API), so each reaches its own stream; without it a request is the device's first screen's. Permissions, the enabled switch and the device's settings are the device's for both screens, except the resolution and scale kept from a stream, which each screen keeps for itself; a second screen takes no Nucleus Co-op seat. Unpairing or turning the device off ends both and releases what both held. Any other value is the device itself |
 | `/launch` | `rlDisplayScale` | the Windows scale (text and interface size) of the stream's virtual display in percent, one of 100, 125, 150, 175, 200, 225, 250, 300, 350, 400, 450 or 500; anything else is refused. Sent with or without `virtualDisplay=1`, since the host may make a virtual display of its own; ignored for a stream on a physical display. It comes before the device, app and host `dd_virtual_display_scale`, is lowered, with a warning, to the largest the display's resolution allows, and a scale Windows refuses is a warning, not a failed stream. `scaleFactor` is the render size, not this |
 | `/launch`, `/resume` | `rlFecPercentage` | `host` or absent keeps the host's settings, `auto` follows the `0x5539` reports, 0-255 fixes the share; anything else is refused |
 | `/launch` | `rlRtxHdr`, `rlRtxVideo` | `1` turns RTX HDR or RTX Video enhancement on for this stream and `0` off, over the app's setting; anything else or absent follows the app. Send each only when its `NvidiaEnhancements` bit is set |
+| `/launch`, `/resume` | `rlHdrDynamic` | `0` leaves HDR10+ and HDR Vivid metadata out of this stream, over `hdr_dynamic_metadata`; `1` or absent keeps the host's setting; anything else is refused. Dolby Vision RPUs still carry per-frame values. Send it only with `HdrDynamicControl` |
 | `/launch` | `rlConfirmReplace` | `1` closes the running game for this launch, as the user's answer to the host's 410 prompt; any other value never closes it and asks again. Absent keeps Vibepollo's rule: the same launch again within 60 seconds confirms |
 
 A host refuses an `ANNOUNCE` that picks something it did not offer, with 400 and the attribute's name.

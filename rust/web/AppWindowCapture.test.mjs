@@ -42,7 +42,7 @@ test('the host setting streams the display by default and its window options fol
   const what = settings.get('capture_window');
   assert.equal(what.default, 'display');
   assert.equal(what.group, 'Capture');
-  assert.deepEqual(what.control.options.map(option => option.value), ['display', 'window']);
+  assert.deepEqual(what.control.options.map(option => option.value), ['display', 'window', 'window_focus']);
   assert.equal(settings.get('capture_window_closed').default, 'display');
   assert.equal(settings.get('capture_window_frame').default, 'full');
   assert.deepEqual(
@@ -53,6 +53,7 @@ test('the host setting streams the display by default and its window options fol
     const setting = settings.get(key);
     assert.equal(setting.visibleWhen({}), false, key);
     assert.equal(setting.visibleWhen({ capture_window: 'window' }), true, key);
+    assert.equal(setting.visibleWhen({ capture_window: 'window_focus' }), true, key);
     assert.equal(setting.visibleWhen({ capture_window: 'Display' }), false, key);
   }
 });

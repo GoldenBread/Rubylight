@@ -366,6 +366,8 @@ pub(super) fn replace_launch_app(
         // running app, so not under its lock.
         drop(current);
         h.settle_move();
+        // Frozen, a paused game cannot close itself: it runs again first.
+        crate::quick_suspend::resume_for(h, "another app replaces the game");
         current = h.current_app.lock().unwrap();
         let (canceled, stopped) = {
             let mut sessions = h.sessions.lock().unwrap();
@@ -397,6 +399,10 @@ pub(super) fn replace_launch_app(
     // seconds; serverinfo and the app list read current_app meanwhile.
     // Launches and stops stay serialized by launch_transition.
     drop(current);
+    // A stream of a paused game runs it again before its display is prepared.
+    if launch.role == Role::Stream {
+        crate::quick_suspend::resume_for(h, "a stream of the game starts");
+    }
     Ok(())
 }
 /// Launch parameter of Rubylight clients: `1` when this request is the user's
@@ -572,6 +578,10 @@ pub(super) fn prepare_launch_app(
     if resume && launch.role == Role::Stream && h.current_app.lock().unwrap().is_none() {
         bail!(NOTHING_TO_RESUME);
     }
+    // A stream of a paused game runs it again before its capture starts.
+    if launch.role == Role::Stream {
+        crate::quick_suspend::resume_for(h, "a stream of the game starts");
+    }
     #[cfg(any(test, feature = "test-support"))]
     if let Some(fixture) = &h.reconnect_fixture {
         return fixture.prepare_app(h, app, launch);
@@ -746,4 +756,41 @@ pub fn launch_response(
             xml(status, &[(reply, "0".into())], Some(format!("{error:#}")))
         }
     }
+}
+/// `nvidia_virtual_display_vsync` for this launch. A failure is shown and the stream starts.
+pub fn force_vsync<'a>(
+    h: &'a Shared,
+    args: &Args,
+    app: Option<&App>,
+    launch: &Launch,
+) -> crate::radeon_session::VsyncHold<'a> {
+    let config = crate::stream::effective_config(h, launch).ok();
+    let enabled = config
+        .as_ref()
+        .is_some_and(|c| c.boolean("nvidia_virtual_display_vsync", false));
+    let adapter = config.as_ref().map_or("", |c| c.get("adapter_name", ""));
+    // Off, the launch's preparation is not looked at.
+    let virtual_display = enabled
+        && launch
+            .preparation
+            .lock()
+            .unwrap()
+            .as_ref()
+            .is_some_and(|preparation| preparation.prepared().on_virtual_display());
+    let fps = args
+        .get("mode")
+        .and_then(|mode| crate::radeon_profile::stream_fps(mode));
+    let wanted = crate::radeon_session::wants_vsync(enabled, virtual_display, app, fps);
+    let (hold, result) = h.hold_vsync(&launch.client.uuid, adapter, wanted);
+    match result {
+        Ok(()) => launch.warnings.clear("driver_vsync"),
+        Err(error) => {
+            tracing::error!(%error, "Vertical sync is not forced on for the virtual display");
+            launch.warnings.set(
+                "driver_vsync",
+                format!("Vertical sync could not be forced on for the virtual display: {error}"),
+            );
+        }
+    }
+    hold
 }

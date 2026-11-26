@@ -119,12 +119,15 @@ fn offer(h: &Shared, config: &Config, dolby: u8) -> Offered {
         rate_change: false,
         clipboard_sync: false,
         transport_feedback: transport_feedback(config),
+        quick_suspend: quick_suspend(config),
         // Probed with the NVIDIA component installed (`nvidia_enhance`).
         nvidia_enhancements: h
             .nvidia_enhancements
             .load(std::sync::atomic::Ordering::Acquire),
         // The most this host accepts at all; `stream_offered` has the path's own.
         max_video_packet: rubylight_protocol::video_packet::MAX_VIDEO_PACKET,
+        // `rlHdrDynamic` is read on every launch.
+        hdr_dynamic_control: true,
     }
 }
 
@@ -258,8 +261,17 @@ pub fn native_features(h: &Shared, config: &Config) -> Vec<&'static str> {
         usb_feature(h, config),
         clipboard_image_feature(h, config),
         folders_features(h, config),
+        quick_suspend(config)
+            .then_some(vec![feature::QUICK_SUSPEND])
+            .unwrap_or_default(),
     ]
     .concat()
+}
+
+/// Quick Suspend (0x554B, `QuickSuspendVersion` and `session.quick_suspend`),
+/// while `quick_suspend` is on (off by default).
+pub fn quick_suspend(config: &Config) -> bool {
+    config.quick_suspend() == butterpollo_config::config::QuickSuspendMode::Manual
 }
 
 /// USB forwarding (C): `usb`, while `usb_forwarding` is on and the USB/IP

@@ -394,6 +394,7 @@ keys = [
   "terminate_on_pause",
   "remote_monitor_terminate_on_first_request",
   "exit_timeout",
+  "quick_suspend",
   "library_auto_sync",
   "library_autosync_remove_uninstalled",
   "library_sync_all_installed",
@@ -588,6 +589,7 @@ grips = ["none", "a", "b", "x", "y", "lb", "rb", "lt", "rt", "l3", "r3", "back",
 global_order = [
   "terminate_on_pause",
   "exit_timeout",
+  "quick_suspend",
   "guest_join",
   "guest_permission",
   "virtual_sink",
@@ -2886,11 +2888,11 @@ override_allowed = true
 category = "video"
 group = "Capture"
 label = "What to stream"
-description = "Streams the whole display, or only the launched app’s window. Leave it on The display unless you want one app alone in the stream; apps and devices can choose their own."
-details = "While the window is minimised, before it appears, or after it closes, the stream shows the display and the device says why. The app’s window is found among the programs the app started, or by the program name and title an app sets. It keeps its shape, with black bars if needed, and mouse and touch input land on the window. Windows Graphics Capture captures the window, whatever the capture method."
-control = { kind = "select", options = [{ value = "display", label = "The display" }, { value = "window", label = "The app’s window" }] }
-aliases = { match = "case", spellings = { 1 = "window", app = "window", true = "window", on = "window", yes = "window", enabled = "window" } }
-doc_summary = "The display, or only the launched app’s window. Apps and devices can choose their own. See [The app's window in place of a display](#the-apps-window-in-place-of-a-display)."
+description = "Streams the whole display, or only the launched app’s window. Leave it on The display unless you want one app alone in the stream."
+details = "Apps and devices can choose their own. The app’s window, the display while it’s in the background, streams the window while it is in front and the display while another program is. While the window is minimised, before it appears, or after it closes, the stream shows the display and the device says why. The app’s window is found among the programs the app started, or by the program name and title an app sets. It keeps its shape, with black bars if needed, and mouse and touch input land on the window. Windows Graphics Capture captures the window, whatever the capture method. With the display while it’s in the background, Alt+Tab or a click outside the game shows the display about a second later, and the game in front again shows its window at once, without restarting the stream."
+control = { kind = "select", options = [{ value = "display", label = "The display" }, { value = "window", label = "The app’s window" }, { value = "window_focus", label = "The app’s window, the display while it’s in the background" }] }
+aliases = { match = "case", spellings = { 1 = "window", app = "window", true = "window", on = "window", yes = "window", enabled = "window", focus = "window_focus" } }
+doc_summary = "The display, the launched app’s window, or the app’s window while it is in front and the display while another program is (`window_focus`). Apps and devices can choose their own. See [The app's window in place of a display](#the-apps-window-in-place-of-a-display)."
 
 [[setting]]
 key = "capture_window_closed"
@@ -4791,6 +4793,20 @@ details = "Applies to every app without its own exit timeout under Behavior, inc
 control = { kind = "number", min = 0, max = 300, step = 1, unit = "s" }
 caution_when = { when = { str_trim_eq = "exit_timeout", default = "", value = "0" }, message = "Apps are ended by force at once, with no time to close by themselves." }
 console = { group = "App behavior", label = "App shutdown timeout (seconds; apps without their own; default 10)", control = "number" }
+
+[[setting]]
+key = "quick_suspend"
+part = "library"
+type = "enum"
+default = "off"
+category = "library"
+group = "App behavior"
+label = "Quick Suspend"
+description = "Lets a device pause the running game and resume it later, also from another device. Nothing is paused while anti-cheat runs; leave it off for online games."
+details = "When a device asks, the game's own processes are paused from the device's stream menu or the console, and resumed by Resume, by the next stream of the game, or when the session ends; after a disconnect a paused game keeps its session for the paused-display timeout. A launcher, a system process and anything the game did not start keep running, and nothing is paused while anti-cheat runs on the PC. If Rubylight stops while a game is paused, the game is resumed."
+control = { kind = "select", options = [{ value = "off", label = "Off" }, { value = "manual", label = "When a device asks" }] }
+console = { group = "App behavior", label = "Quick Suspend (when a device asks pauses the running game until it is resumed; off never pauses one)", control = "choice", choices = ["off", "manual"] }
+rust_accessor = { kind = "enum_ci", method = "quick_suspend", ret = "QuickSuspendMode", variants = [["off", "QuickSuspendMode::Off"], ["manual", "QuickSuspendMode::Manual"]], doc = "Quick Suspend: `off` (default) or `manual`, a device pauses the running game until it is resumed." }
 
 [[setting]]
 key = "steam_enabled"

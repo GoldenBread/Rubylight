@@ -44,6 +44,10 @@ pub(in crate::stream) struct ControlPeer {
     pub(super) steam_attributes_refused: bool,
     pub(super) controller_audio: [u8; 16],
     pub(super) controller_pcm: controller_audio::PcmTraffic,
+    /// Controllers bound to Nonary's speaker PCM (0x5602) instead of `controller_audio`.
+    pub(in crate::stream) ps_speaker: butterpollo_input_policy::ps_speaker::Speakers,
+    /// When the bound controllers' speaker status last went to the injector.
+    pub(super) ps_speaker_status_at: Option<Instant>,
     pub(super) rumble: RumbleForwarded,
     pub(super) command_at: Option<Instant>,
     /// Whether the session is in the control socket's roaming table.
@@ -61,6 +65,8 @@ pub(in crate::stream) struct ControlPeer {
     pub(super) focus_watch: Option<butterpollo_win_io::text_focus::FocusWatch>,
     /// Clipboard sync (0x5508), from the device's first frame; its worker ends with the peer.
     pub(super) clipboard_sync: clipboard_sync::PeerSync,
+    /// Quick Suspend (0x554B), from the device's first request.
+    pub(super) quick_suspend: super::quick_suspend::PeerSuspend,
     /// The session's settings for control packets that read them.
     pub(super) config: PeerConfig,
     /// The display scale a client-drawn cursor's shapes are sized for, read off this thread.
@@ -116,6 +122,8 @@ impl ControlPeer {
             steam_attributes_refused: false,
             controller_audio: [0; 16],
             controller_pcm: Default::default(),
+            ps_speaker: Default::default(),
+            ps_speaker_status_at: None,
             rumble: Default::default(),
             command_at: None,
             roaming: false,
@@ -125,6 +133,7 @@ impl ControlPeer {
             cursor_owner: peer_id.0,
             focus_watch: None,
             clipboard_sync: Default::default(),
+            quick_suspend: Default::default(),
             config: Default::default(),
             cursor_scale: Default::default(),
             pre_active_packets: std::collections::VecDeque::new(),
