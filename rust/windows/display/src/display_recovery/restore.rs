@@ -344,9 +344,16 @@ fn recover_inline(path: &Path) -> Result<()> {
         }
     }
     if !scales.is_empty() {
-        let outcome = dpi::settle(&scales);
+        if !stale_only {
+            // The dead host's virtual display can still be listed for a few
+            // seconds, and Windows can move a scale again as it leaves.
+            dpi::wait_for_virtual_displays(dpi::LEAVE_AFTER_CRASH, || false);
+        }
+        let outcome = dpi::settle(&scales, |_| true);
+        // One attempt: a scale that will not stay is reported, not set again
+        // at every start.
         for entry in kept.entries.values_mut().filter(|e| !stale_only || e.stale) {
-            dpi::keep_drifted(&mut entry.dpi_baseline, &outcome);
+            entry.dpi_baseline = None;
         }
         if !outcome.drifted.is_empty() {
             step(

@@ -65,7 +65,7 @@ pub struct VirtualDisplay {
     pub switched_on: bool,
     /// Dropped after [`Drop`] removed the display: the last virtual display
     /// gone puts the physical displays' scales back (issue #129).
-    _dpi_baseline: crate::display_recovery::DpiBaseline,
+    dpi_baseline: crate::display_recovery::DpiBaseline,
 }
 impl VirtualDisplay {
     pub fn create(stable_id: &str, width: u32, height: u32, fps: u32) -> Result<Self> {
@@ -137,7 +137,7 @@ impl VirtualDisplay {
             resolved_target: None,
             driver_route: None,
             switched_on: false,
-            _dpi_baseline: dpi_baseline,
+            dpi_baseline,
         };
         display.resolve(&result)?;
         display.check_hotplug("created")?;
@@ -663,6 +663,7 @@ impl VirtualDisplay {
 }
 impl Drop for VirtualDisplay {
     fn drop(&mut self) {
+        self.dpi_baseline.removing();
         DisplayProvider::remove(&self.driver, self.id);
         rubylight_vdd::unregister_registration(self.registration);
     }

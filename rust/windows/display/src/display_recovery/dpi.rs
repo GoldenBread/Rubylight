@@ -6,18 +6,32 @@
 
 use super::{Journal, PATH, dpi_settle, lock, read_journal};
 use anyhow::{Context, Result};
-use std::{collections::BTreeMap, sync::Mutex};
+use std::{
+    collections::BTreeMap,
+    sync::Mutex,
+    time::{Duration, Instant},
+};
 
 /// The journal entry that holds the baseline.
 pub(super) const ID: &str = "physical-dpi-baseline";
+/// How long a restore waits for the virtual displays to leave Windows after
+/// they were removed (a clean end) or their host died (the driver drops them
+/// when the host's handles close, or after ten silent seconds).
+pub(super) const LEAVE_AFTER_REMOVAL: Duration = Duration::from_secs(5);
+pub(super) const LEAVE_AFTER_CRASH: Duration = Duration::from_secs(12);
 
 /// How many virtual displays hold the baseline now.
 static USERS: Mutex<usize> = Mutex::new(0);
+/// One restore at a time; a new virtual display never waits for one.
+static RESTORE: Mutex<()> = Mutex::new(());
+/// The physical displays' scales just before the last virtual display was
+/// removed ([`DpiBaseline::removing`]).
+static BEFORE_REMOVAL: Mutex<Option<BTreeMap<String, u32>>> = Mutex::new(None);
 
 /// Held by every virtual display for its lifetime. The first one records each
 /// physical display's scale before the virtual display is added; when the last
-/// one is dropped, after its display was removed, the scales are put back and
-/// checked. Nothing changes for a display whose scale stayed.
+/// one is dropped, after its display was removed, the scales Windows moved are
+/// put back and checked. Nothing changes for a display whose scale stayed.
 pub struct DpiBaseline(());
 
 impl DpiBaseline {
@@ -31,18 +45,34 @@ impl DpiBaseline {
         *users += 1;
         Self(())
     }
+
+    /// Called just before the virtual display is removed: when it is the
+    /// last, read what the physical displays show now, so a scale changed
+    /// during the stream (by the user) is told apart from one Windows moves
+    /// as the display leaves.
+    pub fn removing(&self) {
+        if *crate::lock_unpoisoned(&USERS) != 1 || PATH.get().is_none() {
+            return;
+        }
+        *crate::lock_unpoisoned(&BEFORE_REMOVAL) = physical_scales().ok();
+    }
 }
 
 impl Drop for DpiBaseline {
     fn drop(&mut self) {
-        let mut users = crate::lock_unpoisoned(&USERS);
-        *users = users.saturating_sub(1);
-        if *users == 0
-            && let Err(error) = restore()
-        {
+        let last = {
+            let mut users = crate::lock_unpoisoned(&USERS);
+            *users = users.saturating_sub(1);
+            *users == 0
+        };
+        if last && let Err(error) = restore() {
             tracing::warn!(error = %format!("{error:#}"), "could not put the physical displays' Windows scale back");
         }
     }
+}
+
+fn in_use() -> bool {
+    *crate::lock_unpoisoned(&USERS) > 0
 }
 
 /// Record the scales unless display recovery is not set up, as in a probe.
@@ -90,23 +120,31 @@ pub(super) fn forget(journal: &mut Journal, id: &str) {
     }
 }
 
-/// What stays in the baseline after a settle: the displays still at another
-/// scale. A display that is not connected is dropped: Windows keeps its own
-/// scale for it, and a later restore could undo one the user chose meanwhile.
-pub(super) fn keep_drifted(
-    baseline: &mut Option<BTreeMap<String, u32>>,
-    outcome: &dpi_settle::Settled,
-) {
-    if let Some(scales) = baseline {
-        scales.retain(|id, _| outcome.drifted.contains(id));
-        if scales.is_empty() {
-            *baseline = None;
-        }
-    }
+/// The displays a clean end puts back: those whose scale was still the
+/// recorded one just before the virtual display left, or that were off then.
+/// A display at another scale then was changed during the stream, by the user
+/// or as the virtual display joined, and keeps it.
+pub(super) fn to_restore(
+    baseline: &BTreeMap<String, u32>,
+    before_removal: Option<&BTreeMap<String, u32>>,
+) -> BTreeMap<String, u32> {
+    baseline
+        .iter()
+        .filter(|(id, percent)| {
+            before_removal
+                .and_then(|scales| scales.get(*id))
+                .is_none_or(|before| before == *percent)
+        })
+        .map(|(id, percent)| (id.clone(), *percent))
+        .collect()
 }
 
-/// The last virtual display is gone: put the recorded scales back.
+/// The last virtual display is gone: put the recorded scales back. A new
+/// virtual display that arrives meanwhile takes the baseline over, and a
+/// display a stream leases meanwhile is that stream's.
 fn restore() -> Result<()> {
+    let _serial = crate::lock_unpoisoned(&RESTORE);
+    let before_removal = crate::lock_unpoisoned(&BEFORE_REMOVAL).take();
     let Some(path) = PATH.get().filter(|p| p.exists()) else {
         return Ok(());
     };
@@ -121,11 +159,37 @@ fn restore() -> Result<()> {
     if baseline.is_empty() {
         return Ok(());
     }
-    let outcome = settle(&baseline);
+    let expected = to_restore(&baseline, before_removal.as_ref());
+    if expected.len() < baseline.len() {
+        tracing::info!(
+            kept = ?baseline.keys().filter(|id| !expected.contains_key(*id)).collect::<Vec<_>>(),
+            "leaving the Windows scale a display took during the stream"
+        );
+    }
+    let wanted = |id: &str| {
+        !in_use()
+            && lock(path)
+                .and_then(|_guard| read_journal(path))
+                .is_ok_and(|journal| {
+                    journal
+                        .entries
+                        .get(ID)
+                        .and_then(|entry| entry.dpi_baseline.as_ref())
+                        .is_some_and(|baseline| baseline.contains_key(id))
+                })
+    };
+    let outcome = crate::desktop::on_input_desktop(|| {
+        wait_for_virtual_displays(LEAVE_AFTER_REMOVAL, in_use);
+        settle(&expected, wanted)
+    });
+    if in_use() {
+        // A new stream's virtual display holds the baseline now.
+        return Ok(());
+    }
     super::change_journal(|journal| {
         if let Some(entry) = journal.entries.get_mut(ID) {
             entry.stale = false;
-            keep_drifted(&mut entry.dpi_baseline, &outcome);
+            entry.dpi_baseline = None;
         }
     })?;
     if outcome.drifted.is_empty() {
@@ -138,12 +202,40 @@ fn restore() -> Result<()> {
     }
 }
 
-/// [`dpi_settle::settle`] on the connected physical displays, logged.
-pub(super) fn settle(expected: &BTreeMap<String, u32>) -> dpi_settle::Settled {
+/// Wait, up to `bound`, until Windows lists no Rubylight virtual display, or
+/// `abort` says to stop. Windows can move a scale again as one leaves.
+pub(super) fn wait_for_virtual_displays(bound: Duration, abort: impl Fn() -> bool) {
+    let started = Instant::now();
+    while started.elapsed() < bound && !abort() {
+        let listed = crate::display::monitors()
+            .map(|all| all.iter().any(|m| m.is_rubylight()))
+            .unwrap_or(false);
+        if !listed {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    if !abort() {
+        tracing::info!(
+            waited_ms = started.elapsed().as_millis() as u64,
+            "a virtual display is still listed; checking the scales anyway"
+        );
+    }
+}
+
+/// [`dpi_settle::settle`] on the connected physical displays, logged. A
+/// display is set only while `wanted` says so.
+pub(super) fn settle(
+    expected: &BTreeMap<String, u32>,
+    wanted: impl Fn(&str) -> bool,
+) -> dpi_settle::Settled {
     let outcome = dpi_settle::settle(
         expected,
         physical_scales,
         |id, percent| {
+            if !wanted(id) {
+                return Ok(());
+            }
             let monitors = crate::display::monitors()?;
             let monitor = monitors
                 .iter()
@@ -173,9 +265,12 @@ pub(super) fn settle(expected: &BTreeMap<String, u32>) -> dpi_settle::Settled {
 }
 
 /// Check that a display a stream scaled keeps the scale put back at its end,
-/// and put it back again within the bound when Windows moved it.
+/// and put it back again within the bound when Windows moved it; a stream
+/// that leases the display's scale meanwhile has it.
 pub fn settle_scale(id: &str, percent: u32) -> Result<()> {
-    let outcome = settle(&BTreeMap::from([(id.to_owned(), percent)]));
+    let outcome = settle(&BTreeMap::from([(id.to_owned(), percent)]), |id| {
+        super::pending(id).scale.is_none()
+    });
     if outcome.drifted.is_empty() {
         Ok(())
     } else {
@@ -241,18 +336,18 @@ mod tests {
     }
 
     #[test]
-    fn only_displays_still_at_another_scale_stay_after_a_settle() {
-        let mut baseline = Some(scales(&[("primary", 150), ("side", 100), ("tv", 200)]));
-        let outcome = dpi_settle::Settled {
-            settled: false,
-            absent: vec!["tv".into()],
-            drifted: vec!["side".into()],
-            ..Default::default()
-        };
-        keep_drifted(&mut baseline, &outcome);
-        assert_eq!(baseline, Some(scales(&[("side", 100)])));
-        keep_drifted(&mut baseline, &dpi_settle::Settled::default());
-        assert_eq!(baseline, None);
+    fn a_scale_changed_during_the_stream_is_left_alone() {
+        let baseline = scales(&[("primary", 150), ("side", 100), ("tv", 200)]);
+        // The user set the side display to 125 % during the stream; the
+        // primary still had its scale as the virtual display left; the TV was
+        // off (an exclusive layout not yet restored).
+        let before_removal = scales(&[("primary", 150), ("side", 125)]);
+        assert_eq!(
+            to_restore(&baseline, Some(&before_removal)),
+            scales(&[("primary", 150), ("tv", 200)])
+        );
+        // Without a reading (it failed, or after a crash) every display counts.
+        assert_eq!(to_restore(&baseline, None), baseline);
     }
 
     #[test]

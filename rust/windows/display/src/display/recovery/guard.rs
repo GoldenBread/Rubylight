@@ -540,6 +540,8 @@ impl Drop for Guard {
             return;
         }
         let settings = all.remove(&self.identity).unwrap();
+        // A scale put back is checked once the settings lock is free.
+        let scale_put_back = std::cell::Cell::new(None);
         // A physical display that is off or unplugged now keeps its journal
         // entry: Windows remembers HDR and modes per display, and the next
         // stream on it or host start restores them once it is back.
@@ -589,13 +591,20 @@ impl Drop for Guard {
                     applied,
                     |previous| {
                         set_dpi_scale(monitor, previous)?;
-                        crate::display_recovery::settle_scale(&self.identity, previous)
+                        scale_put_back.set(Some(previous));
+                        Ok(())
                     },
                 )
             },
         );
         if restored && let Err(e) = crate::display_recovery::release(&self.identity) {
             tracing::warn!(error=%e,"display recovery journal cleanup failed");
+        }
+        drop(all);
+        if let Some(previous) = scale_put_back.get()
+            && let Err(e) = crate::display_recovery::settle_scale(&self.identity, previous)
+        {
+            tracing::warn!(output = %self.output, error = %format!("{e:#}"), "a display's Windows scale did not stay after the stream");
         }
     }
 }

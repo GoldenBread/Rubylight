@@ -87,6 +87,7 @@ def main():
     parser.add_argument('--seconds', type=int, default=8, help='stream length per cycle')
     parser.add_argument('--settle-seconds', type=float, default=6, help='how long the scales may take to come back')
     parser.add_argument('--mode', default='1280x720x60')
+    parser.add_argument('--encoder', default='', help="the host's encoder setting (amf, nvenc); empty keeps its default")
     parser.add_argument('--port', type=int, default=48623)
     args = parser.parse_args()
     if args.read_scales:
@@ -112,7 +113,8 @@ def main():
     case = work / f'dpi-soak-{int(time.time())}'
     profile = case / 'config'; (profile / 'logs').mkdir(parents=True)
     (profile / 'sunshine.conf').write_text('\n'.join([
-        f'port = {args.port}', 'encoder = amf', 'capture = wgc', 'virtual_display_mode = per_client',
+        f'port = {args.port}', *([f'encoder = {args.encoder}'] if args.encoder else []), 'capture = wgc',
+        'virtual_display_mode = per_client',
         f'virtual_display_layout = {args.layout}', 'stream_audio = false', 'install_steam_audio_drivers = false',
         'upnp = false', 'enable_discovery = false', 'vulkan_hdr_layer = false', 'system_tray = false',
         'updates = off', '']))
