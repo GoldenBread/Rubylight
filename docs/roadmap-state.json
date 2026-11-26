@@ -2,7 +2,7 @@
   "schema_version": 1,
   "release_target": "7.0.0",
   "integration_branch": "roadmap/redesign-and-waves-1-5",
-  "updated_at": "2026-11-26T07:56:06Z",
+  "updated_at": "2026-11-26T09:39:23Z",
   "waves": {
     "0": {
       "status": "in_progress",
@@ -190,11 +190,11 @@
       "depends_on": [],
       "hw_required": true,
       "visual_review": false,
-      "status": "in_progress",
-      "phase": "implement",
+      "status": "merged",
+      "phase": "awaiting_hw_and_wave_review",
       "branch": "RamazanKara/r70-06-hdr-sdr",
       "worktree": "C:/Users/ramaz/orca/workspaces/rubylight-rel/r70-06-hdr-sdr",
-      "commit_sha": null,
+      "commit_sha": "ffb0e9ae55",
       "quarantine_reason": null,
       "hw_verified": false
     },
