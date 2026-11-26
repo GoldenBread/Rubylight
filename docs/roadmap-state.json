@@ -2,7 +2,7 @@
   "schema_version": 1,
   "release_target": "7.0.0",
   "integration_branch": "roadmap/redesign-and-waves-1-5",
-  "updated_at": "2026-11-26T14:27:49Z",
+  "updated_at": "2026-11-26T15:01:47Z",
   "waves": {
     "0": {
       "status": "in_progress",
@@ -361,13 +361,14 @@
       ],
       "hw_required": false,
       "visual_review": true,
-      "status": "in_progress",
-      "phase": "implement (narrowed)",
+      "status": "merged",
+      "phase": "awaiting_hw_and_wave_review",
       "branch": "wip/roadmap/09-host-hub-sync",
       "worktree": null,
-      "commit_sha": null,
+      "commit_sha": "8feac5b6b8",
       "quarantine_reason": null,
-      "hw_verified": false
+      "hw_verified": false,
+      "worker_branch": "RamazanKara/r70-09-recall-library"
     },
     {
       "id": "10",
