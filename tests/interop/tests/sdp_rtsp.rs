@@ -42,6 +42,8 @@ fn sdp_for(
         audio_codec_accept: None,
         video_fec_percentage: None,
         max_video_packet: 0,
+        host_control_messages: &[],
+        host_feature_flags: 0,
     })
     .text
 }

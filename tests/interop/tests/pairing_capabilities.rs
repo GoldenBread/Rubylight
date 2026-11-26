@@ -422,6 +422,8 @@ fn expected(feature: Feature) -> Availability {
         Feature::PairingApprove => Unsupported(Some(Reason::PairingApprovePermission)),
         // Update installation requires Host control, which this client lacks.
         Feature::HostUpdate => Unsupported(None),
+        // Quick Suspend is off by default.
+        Feature::QuickSuspend => Unsupported(None),
     }
 }
 
