@@ -169,6 +169,8 @@ pub(super) struct Recording {
     recorder: Recorder,
     pub(super) since: Instant,
     written: u64,
+    /// A fragment was refused or failed to write: the part ends at the one before it.
+    broken: bool,
 }
 
 impl Recording {
@@ -231,6 +233,7 @@ impl Recording {
             recorder,
             since,
             written: init.len() as u64,
+            broken: false,
         })
     }
 
@@ -258,6 +261,8 @@ impl Recording {
             RecPush::AwaitingKeyframe => Ok(RecordingStep::AwaitKeyframe),
             RecPush::Fragment(bytes) => {
                 let fragment = bytes.len() as u64;
+                // Until this fragment is written, the part ends at the one before it.
+                self.broken = true;
                 store
                     .make_room(
                         &self.dir,
@@ -275,6 +280,7 @@ impl Recording {
                     .and_then(|()| self.out.flush())
                     .map_err(|e| io_reason(&e))?;
                 self.written += fragment;
+                self.broken = false;
                 Ok(RecordingStep::Continue)
             }
         }
@@ -289,7 +295,9 @@ impl Recording {
         self.recorder.discontinuity();
     }
 
-    /// Finishes the file: its last fragment, its length, its sidecar and its name.
+    /// Finishes the file: its last fragment, its length, its sidecar and its name. After a
+    /// fragment that was refused or failed to write, the file is cut back to the fragment
+    /// before it and finished without a tail.
     pub(super) fn finish(self) -> Result<ClipSummary, Reason> {
         let Self {
             id,
@@ -297,15 +305,25 @@ impl Recording {
             title,
             mut out,
             recorder,
+            broken,
             ..
         } = self;
         let temp = dvr_store::temp_path(&dir, &id);
-        let finished = recorder.finish();
         let result = (|| -> io::Result<ClipSummary> {
-            out.write_all(&finished.tail)?;
-            let mut file = out
-                .into_inner()
-                .map_err(|e| io::Error::other(e.to_string()))?;
+            let (finished, mut file) = if broken {
+                let finished = recorder.finish_written();
+                // Whatever of the failed fragment is still buffered is dropped, not written.
+                let (file, _unwritten) = out.into_parts();
+                file.set_len(finished.info.bytes)?;
+                (finished, file)
+            } else {
+                let finished = recorder.finish();
+                out.write_all(&finished.tail)?;
+                let file = out
+                    .into_inner()
+                    .map_err(|e| io::Error::other(e.to_string()))?;
+                (finished, file)
+            };
             if let Some((offset, bytes)) = &finished.duration_patch {
                 file.seek(SeekFrom::Start(*offset))?;
                 file.write_all(bytes)?;
