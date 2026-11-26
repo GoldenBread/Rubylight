@@ -106,6 +106,9 @@ pub fn launch_curtain_stream(config: &Config, launch: &Launch) -> bool {
         && launch.guest().is_none()
         && launch.nucleus.is_none()
         && launch.background != Some(true)
+        // A device's second screen (Dual screen) shows the same start: the curtain is its main
+        // screen's alone.
+        && butterpollo_session::state::device_uuid(&launch.client.uuid) == launch.client.uuid
 }
 
 fn offer(h: &Shared, config: &Config, dolby: u8) -> Offered {

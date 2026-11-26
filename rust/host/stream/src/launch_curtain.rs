@@ -206,7 +206,11 @@ pub fn begin_for(h: &Shared, launch: &crate::state::Launch, resume: bool) {
         return;
     }
     let (generation, waits) = match h.current_app.lock().unwrap().as_ref() {
-        Some(app) => (app.generation.clone(), app.curtain_waits()),
+        // An app started long ago (a reused one past the launcher watch) has no start to follow.
+        Some(app) => (
+            app.generation.clone(),
+            app.curtain_waits() && app.launch_progress().is_some(),
+        ),
         None => (String::new(), false),
     };
     if resume

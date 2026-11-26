@@ -44,12 +44,13 @@ pub(super) fn send(
     if p.launch_curtain.revision == Some(revision) {
         return;
     }
-    p.launch_curtain.revision = Some(revision);
     let state = h.curtain.state_for(&s.launch.id);
     if p.launch_curtain.sent == Some(state.sequence) {
+        p.launch_curtain.revision = Some(revision);
         return;
     }
     let Some(frame) = state.encode() else {
+        p.launch_curtain.revision = Some(revision);
         tracing::warn!("launch curtain state does not fit its frame");
         return;
     };
@@ -68,6 +69,9 @@ pub(super) fn send(
             return;
         }
     }
+    // Only a state that went is done with: a failed send, the lifted one included, is tried
+    // again on the next poll.
+    p.launch_curtain.revision = Some(revision);
     p.launch_curtain.sent = Some(state.sequence);
     p.launch_curtain.done = state.phase.lifts();
 }

@@ -179,3 +179,22 @@ fn launch_curtain_follows_a_resume_of_the_same_game_by_its_owner() {
     );
     assert_eq!(f.host.curtain.state_for("launch-1").phase, Phase::Ready);
 }
+
+#[test]
+fn launch_curtain_is_its_main_screens_alone() {
+    use butterpollo_session::session::Role;
+    use rubylight_protocol::launch_curtain::LAUNCH_PARAMETER;
+    let f = Fixture::new();
+    let on = butterpollo_config::config::Config::parse("launch_curtain = true\n").unwrap();
+    let mut launch = f.launch(f.client(u32::MAX), Role::Stream);
+    launch
+        .options
+        .insert(LAUNCH_PARAMETER.to_owned(), "1".to_owned());
+    assert!(crate::extensions::launch_curtain_stream(&on, &launch));
+    // Dual screen's second screen asks too, but the curtain stays its main screen's.
+    launch.client.uuid = butterpollo_session::state::second_screen_uuid(&launch.client.uuid);
+    assert!(!crate::extensions::launch_curtain_stream(&on, &launch));
+    let off = butterpollo_config::config::Config::parse("").unwrap();
+    launch.client.uuid = "parity-device".into();
+    assert!(!crate::extensions::launch_curtain_stream(&off, &launch));
+}

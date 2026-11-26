@@ -262,3 +262,18 @@ Strictly non-overlapping file lists for Phase 3 `parallel()`:
 
 - **Silent Store Launcher Startup (`#131`, Slices 03-A/03-B/03-D):** Deliver the missing silent-launcher half of `#131` alongside fullscreen focus recovery: add an opt-in `silent_launchers` host/app launch policy that pre-starts cold storefronts quietly where supported (`steam.exe -silent -nochatui -nofriendsui -applaunch <appid>` alongside Epic's existing `silent=true` and safe URI fallbacks) and minimizes leftover store windows immediately once `Phase::Ready` hands focus to the game.
 - **Expanded Launcher & Anti-Cheat Bootstrapper Detection (`launcher_prompt.rs`):** Extend `launcher_prompt::launcher_of` beyond Steam/Epic/EA/Ubisoft/Xbox to classify Battle.net (`battle.net.exe`), GOG Galaxy (`galaxyclient.exe`), Rockstar (`launcher.exe`/`rockstarservice.exe`), Riot (`riotclientux.exe`), and HoYoPlay (`hoyoplay.exe`/`hyp.exe`), and treat known anti-cheat bootstrappers (`start_protected_game.exe`, `EAAntiCheat.GameServiceLauncher.exe`) as transient pre-game stages rather than premature exits during `WaitingWindow`. (Locked-PC `#117` display-power wake is owned directly by [`28-host-capture-gpu-and-power.md`](28-host-capture-gpu-and-power.md).)
+
+## 9. As built (2026-11-26)
+
+What shipped differs from the plan above in these points; later waves build on this list, not on the plan:
+
+- **Ready gate:** the curtain lifts once the game's window has been in front for two host looks, 250 ms apart. There is no encoded-frame count.
+- **Administrator prompts:** detected through the existing `butterpollo_win_io::input::secure_desktop_shown`, which is also true on the lock screen. There is no separate `uac_probe.rs`.
+- **Steam `-silent`:** not built. The app start path does not carry the launch's curtain request, and changing how Steam's URI starts needs a hardware run first. Epic's links already ask for a silent start (`silent=true`).
+- **Launcher ids:** Battle.net, GOG Galaxy, the Riot Client and the Xbox app were added. Rockstar and HoYoPlay were not, because their executable names are too generic.
+- **Clients:** both apps ask for the curtain on every game launch. There is no client setting: the host's `launch_curtain` setting, off by default, decides. Dual screen's second screen never gets a curtain.
+- **Client rules:** the client side lives in `nightjar_policy::launch_curtain`, shared by desktop and Android:
+  - The curtain lifts after 10 s of picture without a word from the host, or 60 s after the start.
+  - A lifting phase lifts it whatever its sequence.
+  - It also lifts at once when the stream's DESCRIBE did not offer 0x5548.
+- **Not built:** input glyphs on the curtain, and host locale strings for the setting (settings labels are English-only, as for Quick Suspend).
