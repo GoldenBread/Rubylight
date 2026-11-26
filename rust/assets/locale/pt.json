@@ -781,7 +781,8 @@
     "dd_validation_resolution": "Formato inválido. Use LARGURAxALTURA, por ex., {example} (x ou ×).",
     "dd_validation_refresh_rate": "Taxa de atualização inválida. Use um número positivo, por ex., 60 ou 59.94.",
     "dd_manual_enforcement_notice": "As substituições abaixo ficam desativadas enquanto estiver a ser imposta uma resolução ou taxa de atualização manual. As taxas manuais são aplicadas à força e sobrepõem-se à mudança de taxa baseada no jogo nos ecrãs virtuais.",
-    "background_stream": "Transmitir em segundo plano (divisor cooperativo, só comandos)"
+    "background_stream": "Transmitir em segundo plano (divisor cooperativo, só comandos)",
+    "away_wake_relay": "Relé de despertar remoto (outro dispositivo nesta rede acorda o PC quando está fora de casa)"
   },
   "index": {
     "description": "O sol é um anfitrião de jogos auto-hospedado para o Moonlight.",

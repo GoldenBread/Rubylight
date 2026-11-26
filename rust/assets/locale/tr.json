@@ -781,7 +781,8 @@
     "dd_validation_resolution": "Geçersiz biçim. GENİŞLİKxYÜKSEKLİK kullanın, örn. {example} (x veya ×).",
     "dd_validation_refresh_rate": "Geçersiz yenileme hızı. 60 veya 59.94 gibi pozitif bir sayı kullanın.",
     "dd_manual_enforcement_notice": "El ile ayarlanan bir çözünürlük veya yenileme hızı zorlandığında aşağıdaki geçersiz kılmalar devre dışı bırakılır. El ile ayarlanan yenileme hızları zorla uygulanır ve sanal ekranlarda oyuna göre yenileme hızı geçişini geçersiz kılar.",
-    "background_stream": "Arka planda yayınla (ortak oyun bölücü, yalnızca oyun kumandaları)"
+    "background_stream": "Arka planda yayınla (ortak oyun bölücü, yalnızca oyun kumandaları)",
+    "away_wake_relay": "Uzaktan uyandırma rölesi (bu ağdaki başka bir cihaz, siz evde değilken bilgisayarı uyandırır)"
   },
   "index": {
     "description": "Rubylight, Moonlight için kendi kendine barındırılan bir oyun akışı sunucusudur.",

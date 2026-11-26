@@ -781,7 +781,8 @@
     "dd_validation_resolution": "Formato non valido. Usa LARGHEZZAxALTEZZA, ad es. {example} (x o ×).",
     "dd_validation_refresh_rate": "Frequenza di aggiornamento non valida. Usa un numero positivo, ad es. 60 o 59.94.",
     "dd_manual_enforcement_notice": "Le sostituzioni riportate di seguito sono disabilitate quando viene imposta una risoluzione o una frequenza di aggiornamento manuale. Le frequenze manuali vengono applicate forzatamente e sostituiscono il cambio di frequenza basato sul gioco sui display virtuali.",
-    "background_stream": "Streaming in background (divisore cooperativo, solo controller)"
+    "background_stream": "Streaming in background (divisore cooperativo, solo controller)",
+    "away_wake_relay": "Relay di riattivazione a distanza (un altro dispositivo di questa rete riattiva il PC da fuori casa)"
   },
   "index": {
     "description": "Rubylight è una piattaforma autonoma di game stream per Moonlight.",

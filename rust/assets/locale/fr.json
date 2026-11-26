@@ -781,7 +781,8 @@
     "dd_validation_resolution": "Format invalide. Utilisez LARGEURxHAUTEUR, p. ex. {example} (x ou ×).",
     "dd_validation_refresh_rate": "Fréquence de rafraîchissement invalide. Utilisez un nombre positif, p. ex. 60 ou 59.94.",
     "dd_manual_enforcement_notice": "Les substitutions ci-dessous sont désactivées lorsqu’une résolution ou une fréquence de rafraîchissement manuelle est imposée. Les fréquences manuelles sont appliquées de force et remplacent le changement de fréquence adapté au jeu sur les écrans virtuels.",
-    "background_stream": "Diffuser en arrière-plan (séparateur coopératif, manettes uniquement)"
+    "background_stream": "Diffuser en arrière-plan (séparateur coopératif, manettes uniquement)",
+    "away_wake_relay": "Relais de réveil à distance (un autre appareil de ce réseau réveille le PC quand vous n’êtes pas chez vous)"
   },
   "index": {
     "description": "Rubylight est un serveur de streaming auto-hébergé pour Moonlight.",

@@ -177,6 +177,23 @@ export interface InternetPlayStatus {
   } | null;
   notes: string[];
 }
+/** A device enrolled as an away wake relay. No secret leaves the host. */
+export interface WakeRelayPeer {
+  /** The relay's device id: the SHA-256 of its certificate, 64 hex digits. */
+  id: string;
+  name: string;
+  enrolled_unix: number;
+  /** When it last fetched its keys; 0 when never since enrolling. */
+  last_seen_unix: number;
+}
+/** `GET /api/wake-relay`; `POST /api/wake-relay/revoke` and `/rotate` answer it too. */
+export interface WakeRelayStatus {
+  /** Play over the internet and Away wake relay are both on. */
+  enabled: boolean;
+  /** The key generation; Rotate keys raises it. */
+  epoch: number;
+  relays: WakeRelayPeer[];
+}
 export interface VulkanLayerStatus {
   status: true;
   installed: boolean;

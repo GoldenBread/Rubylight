@@ -22,6 +22,7 @@
   import VulkanPanel from '../components/maintenance/VulkanPanel.svelte';
   import NvidiaPanel from '../components/maintenance/NvidiaPanel.svelte';
   import InternetPlayPanel from '../components/maintenance/InternetPlayPanel.svelte';
+  import WakeRelayPanel from '../components/network/WakeRelayPanel.svelte';
   import { reason } from '../components/maintenance/util';
   import { matchesWords, searchWords } from '../components/settings/search';
   import * as page from '../components/settings/settings-page';
@@ -561,8 +562,9 @@
           </Disclosure>
         {/if}
         {#if active.id === 'network'}
-          <!-- Status, not settings keys: what the router mapped and how devices reach this PC. -->
+          <!-- Status, not settings keys: what the router mapped, how devices reach this PC and its wake relays. -->
           <InternetPlayPanel />
+          <WakeRelayPanel saved={stored} />
         {/if}
         {#if active.id === 'advanced'}
           <Disclosure

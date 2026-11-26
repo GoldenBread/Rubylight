@@ -60,6 +60,7 @@ import type {
   SessionGuestsStatus,
   UpdatesState,
   VulkanLayerStatus,
+  WakeRelayStatus,
   WebhookList,
   WebhookSave,
   WebhookStatus,
@@ -518,6 +519,13 @@ export const api = {
     crash: () => get<CrashStatus>('/api/health/crashdump'),
     dismissCrash: (filename: string, captured_at: string) =>
       post<Ok>('/api/health/crashdump/dismiss', { filename, captured_at }),
+  },
+  /** Away wake relays: each answers the status after it; an unknown relay is refused with a reason. */
+  wakeRelay: {
+    status: () => get<WakeRelayStatus>('/api/wake-relay'),
+    revoke: (id: string) => post<WakeRelayStatus>('/api/wake-relay/revoke', { id }),
+    /** Ends every device's and relay's keys until they next fetch them. */
+    rotate: () => post<WakeRelayStatus>('/api/wake-relay/rotate'),
   },
   backup: {
     /** The settings as a ZIP archive; `secrets` adds the pairing identity and credentials. */

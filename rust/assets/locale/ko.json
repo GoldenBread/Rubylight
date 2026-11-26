@@ -781,7 +781,8 @@
     "dd_validation_resolution": "형식이 잘못되었습니다. 너비x높이를 사용하세요. 예: {example}(x 또는 ×).",
     "dd_validation_refresh_rate": "새로 고침 빈도가 잘못되었습니다. 60 또는 59.94 같은 양수를 사용하세요.",
     "dd_manual_enforcement_notice": "수동 해상도 또는 새로 고침 빈도가 강제되는 동안 아래 재정의는 비활성화됩니다. 수동 새로 고침 빈도는 강제로 적용되며 가상 디스플레이의 게임 인식 새로 고침 전환보다 우선합니다.",
-    "background_stream": "백그라운드에서 스트리밍 (협동 분할, 컨트롤러만)"
+    "background_stream": "백그라운드에서 스트리밍 (협동 분할, 컨트롤러만)",
+    "away_wake_relay": "외부 깨우기 릴레이 (이 네트워크의 다른 기기가 외출 중에 PC를 깨웁니다)"
   },
   "index": {
     "description": "Rubylight은 Moonlight의 게임 스트리밍 프로그램입니다.",

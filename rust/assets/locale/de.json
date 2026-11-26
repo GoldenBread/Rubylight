@@ -784,7 +784,8 @@
     "dd_validation_resolution": "Ungültiges Format. Verwenden Sie BREITExHÖHE, z. B. {example} (x oder ×).",
     "dd_validation_refresh_rate": "Ungültige Bildwiederholrate. Verwenden Sie eine positive Zahl, z. B. 60 oder 59.94.",
     "dd_manual_enforcement_notice": "Die unten aufgeführten Überschreibungen sind deaktiviert, solange eine manuelle Auflösung oder Bildwiederholrate erzwungen wird. Manuelle Bildwiederholraten werden erzwungen angewendet und überschreiben die spielabhängige Umschaltung der Bildwiederholrate auf virtuellen Bildschirmen.",
-    "background_stream": "Im Hintergrund streamen (Koop-Aufteilung, nur Controller)"
+    "background_stream": "Im Hintergrund streamen (Koop-Aufteilung, nur Controller)",
+    "away_wake_relay": "Aufweck-Relay für unterwegs (ein anderes Gerät in diesem Netzwerk weckt den PC, wenn Sie unterwegs sind)"
   },
   "index": {
     "description": "Rubylight ist ein selbst gehosteter Game-Stream-Host für Moonlight.",

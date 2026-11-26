@@ -781,7 +781,8 @@
     "dd_validation_resolution": "Formato inválido. Use LARGURAxALTURA, por exemplo, {example} (x ou ×).",
     "dd_validation_refresh_rate": "Taxa de atualização inválida. Use um número positivo, por exemplo, 60 ou 59.94.",
     "dd_manual_enforcement_notice": "As substituições abaixo ficam desativadas enquanto uma resolução ou taxa de atualização manual estiver sendo forçada. As taxas manuais são aplicadas à força e substituem a mudança de taxa baseada no jogo em telas virtuais.",
-    "background_stream": "Transmitir em segundo plano (divisor cooperativo, apenas controles)"
+    "background_stream": "Transmitir em segundo plano (divisor cooperativo, apenas controles)",
+    "away_wake_relay": "Relé para acordar à distância (outro dispositivo nesta rede acorda o PC quando você está fora de casa)"
   },
   "index": {
     "description": "O Rubylight é um host de fluxo de jogos auto-hospedado para o Moonlight.",

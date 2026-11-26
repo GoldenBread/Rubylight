@@ -851,7 +851,8 @@
     "limit_framerate": "Limit frame rate",
     "packet_pacing": "Packet pacing",
     "packetsize": "Network packet size",
-    "background_stream": "Stream in the background (co-op helper, controllers only)"
+    "background_stream": "Stream in the background (co-op helper, controllers only)",
+    "away_wake_relay": "Away wake relay (another device on this network wakes the PC from away)"
   },
   "index": {
     "description": "Rubylight is a self-hosted game stream host for Moonlight.",

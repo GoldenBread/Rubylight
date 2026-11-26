@@ -781,7 +781,8 @@
     "dd_validation_resolution": "Érvénytelen formátum. Használja a SZÉLESSÉGxMAGASSÁG formátumot, pl. {example} (x vagy ×).",
     "dd_validation_refresh_rate": "Érvénytelen frissítési gyakoriság. Használjon pozitív számot, pl. 60 vagy 59.94.",
     "dd_manual_enforcement_notice": "Az alábbi felülbírálások le vannak tiltva, amíg kézi felbontás vagy frissítési gyakoriság van kikényszerítve. A kézi frissítési gyakoriságok kényszerítve kerülnek alkalmazásra, és felülírják a játékhoz igazodó frissítésváltást a virtuális kijelzőkön.",
-    "background_stream": "Streamelés a háttérben (kooperatív megosztó, csak kontrollerek)"
+    "background_stream": "Streamelés a háttérben (kooperatív megosztó, csak kontrollerek)",
+    "away_wake_relay": "Távoli ébresztési közvetítő (egy másik eszköz ezen a hálózaton felébreszti a gépet, amikor nem vagy otthon)"
   },
   "index": {
     "description": "A Rubylight saját üzemeltetésű játékstream-host a Moonlight-hoz.",

@@ -773,7 +773,8 @@
     "dd_validation_resolution": "Invalid format. Use WIDTHxHEIGHT, e.g., {example} (x or ×).",
     "dd_validation_refresh_rate": "Invalid refresh rate. Use a positive number, e.g., 60 or 59.94.",
     "dd_manual_enforcement_notice": "Overrides below are disabled while manual resolution or refresh rate is enforced. Manual refresh rates are applied forcefully and override game-aware refresh switching on virtual displays.",
-    "background_stream": "Stream in the background (co-op helper, controllers only)"
+    "background_stream": "Stream in the background (co-op helper, controllers only)",
+    "away_wake_relay": "Away wake relay (another device on this network wakes the PC from away)"
   },
   "index": {
     "description": "Rubylight is a self-hosted game stream host for Moonlight.",

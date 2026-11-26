@@ -781,7 +781,8 @@
     "dd_validation_resolution": "Định dạng không hợp lệ. Dùng RỘNGxCAO, ví dụ: {example} (x hoặc ×).",
     "dd_validation_refresh_rate": "Tần số quét không hợp lệ. Dùng số dương, ví dụ: 60 hoặc 59.94.",
     "dd_manual_enforcement_notice": "Các tùy chọn ghi đè bên dưới bị vô hiệu hóa khi độ phân giải hoặc tần số quét thủ công đang được áp dụng bắt buộc. Tần số quét thủ công được áp dụng cưỡng chế và ghi đè việc chuyển tần số theo trò chơi trên màn hình ảo.",
-    "background_stream": "Phát trực tuyến trong nền (bộ chia chơi chung, chỉ tay cầm)"
+    "background_stream": "Phát trực tuyến trong nền (bộ chia chơi chung, chỉ tay cầm)",
+    "away_wake_relay": "Chuyển tiếp đánh thức từ xa (một thiết bị khác trong mạng này đánh thức PC khi bạn vắng nhà)"
   },
   "index": {
     "description": "Rubylight là một nền tảng phát trực tiếp game tự chủ cho Moonlight.",
