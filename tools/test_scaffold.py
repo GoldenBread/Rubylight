@@ -26,6 +26,8 @@ EXPECTED_SKILLS = (
     'check-nvenc',
     'isolated-e2e',
     'release-prep',
+    'issue-triage',
+    'device-checks',
 )
 
 
