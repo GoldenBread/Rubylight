@@ -408,7 +408,12 @@ def generate_setting_stub(
         if category != 'encoders':
             raise ValueError('--vendor applies only to --category encoders')
         console_group = VENDOR_CONSOLE_GROUPS[vendor]
-    # 3.0 settings are extensions.
+    # 3.0 settings are extensions, and every extensions row is a 3.0 setting
+    # (settings30.rs requires extensions.gen.ts to list exactly SETTINGS_30).
+    if extension and not settings_30:
+        raise ValueError('--extension needs --settings-30: every extensions entry is a 3.0 setting')
+    if vendor and settings_30:
+        raise ValueError('--vendor picks a console group; a 3.0 setting has no console row')
     extension = extension or settings_30
     accessor = None
     console = {'group': console_group, 'label': label}
@@ -456,6 +461,7 @@ def generate_setting_stub(
     if override_allowed:
         entry['override_allowed'] = True
     if settings_30:
+        entry['pending'] = True  # until its feature ships (settings30.rs LIVE)
         entry['settings_30'] = True
         entry['settings_30_default'] = default.lower() if kind == 'bool' else str(value)
     entry.update(category=category, group=group, label=label, description=description, control=control)
@@ -497,6 +503,12 @@ def generate_setting_stub(
     )
     if settings_30:
         steps.append('Update the count test in rust/core/config/src/config/settings30.rs')
+        steps.append('The entry is pending until its feature ships: raise `pending.length` in '
+                     'rust/web/SettingsSchema.test.mjs; once it ships, drop `pending` and list the key in LIVE '
+                     '(settings30.rs) and `live` (SettingsSchema.test.mjs)')
+        if override_allowed:
+            steps.append(f'Add "{key}" to PER_DEVICE in rust/core/config/src/config/settings30.rs')
+    steps.append('Raise `parts.length` in rust/web/SettingsSchema.test.mjs (one row per catalog entry)')
     if restart:
         steps.append(f'Add "{key}" to the hand-written RESTART_KEYS in rust/host/web/src/web/config.rs (catalog_parity.rs compares them)')
     steps.append('[web] tier lists: only for a non-everyday setting (everyday settings need none)')

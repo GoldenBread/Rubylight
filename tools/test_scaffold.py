@@ -223,6 +223,16 @@ class ScaffoldTests(unittest.TestCase):
             scaffold.generate_setting_stub('x', 'bool', 'true', 'X', 'Y', group='G', category='basics')
         with self.assertRaises(ValueError):
             scaffold.generate_setting_stub('x', 'bool', 'true', 'X', 'Y', group='G', category='extensions')
+        # Every extensions row is a 3.0 setting, and a 3.0 setting has no console group to pick.
+        with self.assertRaises(ValueError):
+            scaffold.generate_setting_stub('x', 'bool', 'true', 'X', 'Y', group='G', extension=True)
+        with self.assertRaises(ValueError):
+            scaffold.generate_setting_stub('x', 'bool', 'true', 'X', 'Y', group='G', category='encoders',
+                                           vendor='amd', settings_30=True)
+        rendered, _ = scaffold.generate_setting_stub('x', 'bool', 'true', 'X', 'Y', group='G', settings_30=True)
+        self.assertIn('pending = true', rendered)
+        self.assertIn('pending.length', rendered)
+        self.assertIn('parts.length', rendered)
         rc, _, _ = run_cli([
             '--root', str(self.root), 'setting', 'BadKey',
             '--type', 'bool', '--default', 'true', '--group', 'G', '--label', 'X', '--description', 'Y',

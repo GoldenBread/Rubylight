@@ -23,7 +23,7 @@ Use this skill when adding, changing, renaming, or retiring a setting in Rubylig
    ```
 2. **Catalog:** Add the `[[setting]]` entry (key, part, type, default, UI text, control) in `rust/core/config/settings.toml`. For a no-JS console row add its `console` field and insert the key in `[console]` `global_order` next to the other keys of its console group (groups are contiguous; app/device rows: `[[console.app]]` / `[[console.client]]`).
    - Docs table: add the key to the `keys` of the `[[docs.sections]]` entry matching its category; these lists alone drive the All settings tables in `docs/configuration.md`.
-   - Counts: raise the hard-coded counts in `rust/core/config/src/config/tests/catalog_parity.rs`.
+   - Counts: raise the hard-coded counts in `rust/core/config/src/config/tests/catalog_parity.rs` and `parts.length` in `rust/web/SettingsSchema.test.mjs` (a 3.0 setting: also `pending = true` and `pending.length`, or `LIVE`/`live` once it ships, and `PER_DEVICE` when overridable).
    - 3.0 extension: `settings_30` fields and `[rust]` `settings_30_order` (generates `SETTINGS_30`; update the count test in `rust/core/config/src/config/settings30.rs`).
    - Per-app/device override: `override_allowed` and `[rust]` `override_order` (read by `override_allowed` in `rust/core/config/src/config/overrides.rs`; resolution lives in `rust/core/session/src/device_overrides.rs`).
    - Read only at startup: `restart` and `[rust]` `restart_order`, plus the hand-written `RESTART_KEYS` in `rust/host/web/src/web/config.rs`.
