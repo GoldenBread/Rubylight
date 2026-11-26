@@ -1,2 +1,3 @@
 # HDR10 desktop on SDR streams
 - **HDR highlights kept from HDR10 captures too.** With *Keep HDR highlights in SDR streams* on, an HDR desktop captured as 10-bit HDR10 now streams to an SDR client with its highlights compressed, as an FP16 capture already did; before, the stream refused such a capture. With the option off, an HDR10 capture on an SDR stream still fails with a message that names the option.
+- **The virtual display reports a full HDR luminance range.** Besides its peak (*HDR peak brightness*), Rubylight's virtual display now tells Windows and games a full-frame brightness of two fifths of the peak and a black level of 0.05 nits, instead of leaving both unknown.
