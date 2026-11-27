@@ -127,8 +127,8 @@ pub fn on_linux() -> bool {
 
 /// Takes from `offered` what the Linux host cannot do, so a client never offers a player
 /// something that then fails. Each is a feature whose code answers "not available on a Linux
-/// host yet": HDR (no capture gives an HDR picture), text focus and keyboard layouts, native
-/// pen and touch (pen barrel roll), the client-drawn cursor (Desktop Duplication), Frame Warp's
+/// host yet": HDR (no capture gives an HDR picture), keyboard layouts, pen barrel roll, the
+/// client-drawn cursor (Desktop Duplication), Frame Warp's
 /// GPU passes, the virtual display's scale, the NVIDIA component's RTX HDR and RTX Video, and
 /// USB forwarding; and the second screen (Dual screen mode), which a Linux host would stream
 /// the first screen's picture to, as it has no virtual display and does not pick another
@@ -142,7 +142,6 @@ pub fn for_platform(offered: Offered, linux: bool) -> Offered {
         // HDR10+ control is for HDR streams, which a Linux host does not offer.
         hdr_dynamic_control: false,
         usb: false,
-        text_input: false,
         keyboard_layout: false,
         pen_barrel_roll: false,
         cursor_shape: false,
@@ -439,7 +438,6 @@ mod tests {
                 hdr_formats: 0,
                 hdr_dynamic_control: false,
                 usb: false,
-                text_input: false,
                 keyboard_layout: false,
                 pen_barrel_roll: false,
                 cursor_shape: false,

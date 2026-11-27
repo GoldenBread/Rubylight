@@ -12,6 +12,7 @@ Test PC: an RX 7800 XT on CachyOS, KDE Plasma 6.8 on Wayland, Mesa's VA-API, Pip
 | What is streamed | A game in a gamescope session of its own, the user's desktop through the ScreenCast portal, and a virtual display for a desktop stream on KDE (Rubylight's VKMS pool). |
 | Libraries | Steam, Heroic and Lutris games, with their covers (JPEG, PNG and BMP). The client's quit ends the game, and the stream ends when the game does. |
 | Input | Keyboard and mouse; Xbox 360 pads through `uinput`; DualSense, DualShock 4, Switch Pro, Steam Deck and Steam Controller through `uhid`, with rumble. |
+| Keyboard follows the focused text field | Through AT-SPI, the desktop's accessibility bus: the host turns accessibility on for the watch (and off after if it was off), hears the toolkits' focus events and gives the client the field's kind (text, password, number, email, URL, search, phone, multi-line) and, when asked, the text around the cursor, never a password's. Qt and GTK applications and browsers publish their fields; a game that draws its own text box does not. |
 | Native touch and pen | On the desktop, a virtual multitouch touchscreen (16 fingers) and a pen tablet with pressure, tilt, two barrel buttons and the eraser, both on `uinput` and tied to the streamed monitor through KWin (`outputName`). In a gamescope session, whose X server has no touch, the first finger and the pen move the pointer and hold its left button. Offered when `native_pen_touch` is on and the user can write `/dev/uinput`. |
 | Audio | Stereo from a PipeWire sink per stream (surround not yet streamed to a client); the client's microphone as a PipeWire source. |
 | Around the stream | Clipboard, sleep inhibit and power actions (logind), Wake-on-LAN targets in `/serverinfo` and `/wake`, hardware metrics from `amdgpu`'s sysfs, the tray icon in Plasma's system tray with the Windows menu and notifications, the web console. |
@@ -25,7 +26,7 @@ Each of these could come to Linux; the reason says what stands in the way.
 | --- | --- |
 | HDR | No capture gives an HDR picture: gamescope 3.17's PipeWire stream and KWin 6.8's screen sharing are 8-bit SDR. The 10-bit encoders are there. |
 | Native 4:4:4 | VA-API on this GPU encodes 4:2:0 only. Packed 4:4:4 and PyroWave 4:4:4 give full chroma instead. |
-| Text input that follows the focused field, the client's keyboard layout | Not built. Typed text arrives as the keys of the PC's own layout. |
+| The client's keyboard layout | Not built. Typed text arrives as the keys of the PC's own layout. |
 | The client-drawn cursor, display scale, pen barrel roll | Not built; not offered to clients. |
 | Frame Warp, the frame limiter | Not built; not offered to clients. |
 | Dual screen mode | Not offered: a launch has no second display to give a second screen. |
@@ -53,6 +54,7 @@ Out of the Linux host's scope, as they rest on Windows or a vendor's Windows dri
 
 - 10-bit HEVC and AV1 streamed to a client (encode and decode tests only).
 - Native touch and pen from a client (device tests and KWin's mapping only).
+- The keyboard following text fields on a client (a live test of a GTK entry only).
 - Lutris games (not installed on the test PC).
 - Waking the PC with Wake-on-LAN (the NIC's own wake setting is not read; it needs `CAP_NET_ADMIN`).
 - Remote Monitor, and the controllers' buttons from Nightjar for Android (tested from the headless client).
