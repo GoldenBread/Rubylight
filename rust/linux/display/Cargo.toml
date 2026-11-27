@@ -12,6 +12,7 @@ serde_json.workspace = true
 tracing.workspace = true
 butterpollo-config = { path = "../../core/config" }
 butterpollo-crypto = { path = "../../core/crypto" }
+butterpollo-linux-io = { path = "../io" }
 butterpollo-media-policy = { path = "../../core/media-policy" }
 butterpollo-session = { path = "../../core/session" }
 rubylight-vdisplay-proto = { path = "../../drivers/rubylight-vdisplay-proto" }

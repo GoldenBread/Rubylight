@@ -635,6 +635,7 @@ dependencies = [
  "anyhow",
  "butterpollo-config",
  "butterpollo-crypto",
+ "butterpollo-linux-io",
  "butterpollo-media-policy",
  "butterpollo-session",
  "libc",

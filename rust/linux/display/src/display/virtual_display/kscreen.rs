@@ -190,9 +190,17 @@ pub fn apply_failed(exited_ok: bool, text: &str) -> Option<String> {
     }
 }
 
+/// `kscreen-doctor` with the desktop's display: the host may have started at boot, before
+/// the desktop ([`butterpollo_linux_io::seat::for_desktop`]).
+fn kscreen_doctor() -> Command {
+    let mut command = Command::new("kscreen-doctor");
+    butterpollo_linux_io::seat::for_desktop(&mut command);
+    command
+}
+
 /// The current layout, from `kscreen-doctor -j`.
 pub fn query() -> Result<Layout> {
-    let mut command = Command::new("kscreen-doctor");
+    let mut command = kscreen_doctor();
     command.arg("-j");
     query_with(command, TOOL_TIMEOUT)
 }
@@ -207,7 +215,7 @@ pub fn query_with(command: Command, timeout: Duration) -> Result<Layout> {
 
 /// Apply `args` with one `kscreen-doctor` run. An empty list changes nothing.
 pub fn apply(args: &[String]) -> Result<()> {
-    let mut command = Command::new("kscreen-doctor");
+    let mut command = kscreen_doctor();
     command.args(args);
     apply_with(command, args.is_empty())
 }
