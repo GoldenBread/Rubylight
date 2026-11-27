@@ -36,6 +36,11 @@ struct RtssChange {
     /// ([`follow_queue_clamp`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     clamped: Option<BTreeMap<String, Option<u32>>>,
+    /// Previously live queue-clamp rate retained in the recovery journal while a new clamp or
+    /// stand-down is being applied to RTSS, so a failed write or crash mid-transition still
+    /// recognizes the profile value as host-owned.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    previous_clamped: Option<BTreeMap<String, Option<u32>>>,
 }
 impl RtssChange {
     /// Whether the profile's `key` still holds a value this host wrote. A user's edit made
@@ -49,6 +54,11 @@ impl RtssChange {
                 .is_some_and(|value| current.get(key) == Some(value))
             || self
                 .clamped
+                .as_ref()
+                .and_then(|values| values.get(key))
+                .is_some_and(|value| current.get(key) == Some(value))
+            || self
+                .previous_clamped
                 .as_ref()
                 .and_then(|values| values.get(key))
                 .is_some_and(|value| current.get(key) == Some(value))
@@ -437,12 +447,14 @@ impl Lease {
                 Ok(unsupported) => {
                     state.active = "rtss".into();
                     state.rate = Some(policy.rate);
-                    state.follow = policy.follows_display.then(|| Follow {
+                    let clamp_on = queue_clamp_enabled(config);
+                    state.follow = (policy.follows_display || clamp_on).then(|| Follow {
                         id: next_follow(),
                         root: root.clone(),
                         rate: policy.rate,
+                        follows_display: policy.follows_display,
                         standing_down: false,
-                        queue_clamp: queue_clamp_enabled(config),
+                        queue_clamp: clamp_on,
                         clamped_rate: None,
                         changing: false,
                         failed: false,
@@ -546,6 +558,7 @@ fn apply_cap(
         disabled: reply.flags & 4 != 0,
         stood_down: None,
         clamped: None,
+        previous_clamped: None,
     };
     journal.rtss = Some(change.clone());
     persist(directory, journal)?;

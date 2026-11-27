@@ -452,6 +452,10 @@ pub(super) fn wgc_drain_to_newest(config: &Config) -> bool {
     config.boolean("wgc_drain_to_newest", false)
 }
 
+pub(super) fn wgc_cursor_capture(config: &Config) -> bool {
+    config.boolean("wgc_cursor_capture", true)
+}
+
 pub(super) fn wgc_helper_streaming_scope(config: &Config) -> bool {
     config.boolean("wgc_helper_streaming_scope", false)
 }

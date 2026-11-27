@@ -67,18 +67,20 @@ pub(super) fn switch_on_device_with_vdd(
             window::require_capture(crate::process_info::windows_build())?;
             window::check(target.handle())?;
         }
+        let cursor = if window.is_some() {
+            window_cursor(config)
+        } else {
+            config.boolean("wgc_cursor_capture", true)
+        };
         let mut capture = Wgc::new_device(
             current.gpu.clone(),
             hdr,
             config.boolean("wgc_high_rate_capture", false),
             window,
-            window_cursor(config),
+            cursor,
             client,
         )?;
         capture.drain_to_newest = config.boolean("wgc_drain_to_newest", false);
-        if !config.boolean("wgc_cursor_capture", true) {
-            let _ = capture.set_cursor_capture(false);
-        }
         Ok(capture)
     })();
     Some(opened.map(|mut capture| {

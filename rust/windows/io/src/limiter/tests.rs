@@ -36,6 +36,7 @@ fn the_automatic_cap_follows_one_streams_display() {
             id: 1,
             root: PathBuf::new(),
             rate: Rate(60_000),
+            follows_display: true,
             standing_down: false,
             queue_clamp: false,
             clamped_rate: None,
@@ -86,6 +87,7 @@ fn a_followed_display_is_read_every_live_tick() {
             id: 1,
             root: PathBuf::new(),
             rate: Rate(60_000),
+            follows_display: true,
             standing_down: false,
             queue_clamp: false,
             clamped_rate: None,
@@ -166,6 +168,7 @@ fn a_stood_down_limit_is_restored_like_the_cap() {
                 disabled: false,
                 stood_down: Some(no_limit()),
                 clamped: None,
+                previous_clamped: None,
             }),
             nvidia: Vec::new(),
         };
@@ -385,4 +388,35 @@ fn a_stream_cap_rtss_cannot_report_is_not_confirmed() {
     assert!(message.contains("SyncLimiter"), "{message}");
     let warning = limiter_warning(true, true, "rtss", &message, (None, None)).unwrap();
     assert!(warning.contains("not fully applied"), "{warning}");
+}
+
+#[test]
+fn staged_clamp_transitions_preserve_ownership_of_previously_live_clamp() {
+    let pair = |limit, denom| {
+        BTreeMap::from([
+            ("Limit".to_string(), Some(limit)),
+            ("LimitDenominator".to_string(), Some(denom)),
+        ])
+    };
+    let c1 = pair(873, 10);
+    let c2 = pair(750, 10);
+    let change = RtssChange {
+        root: PathBuf::new(),
+        before: pair(0, 1),
+        applied: BTreeMap::from([
+            ("Limit".into(), Some(120)),
+            ("LimitDenominator".into(), Some(1)),
+            ("SyncLimiter".into(), Some(1)),
+        ]),
+        disabled: false,
+        stood_down: Some(no_limit()),
+        clamped: Some(c2.clone()),
+        previous_clamped: Some(c1.clone()),
+    };
+    // If `rtss::apply` failed or crashed while stepping C1 -> C2 or standing down, C1 is still ours.
+    assert!(change.ours("Limit", &c1));
+    assert!(change.ours("LimitDenominator", &c1));
+    assert!(change.ours("Limit", &c2));
+    assert!(change.ours("Limit", &no_limit()));
+    assert!(!change.ours("Limit", &pair(144, 1)));
 }

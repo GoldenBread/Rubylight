@@ -481,19 +481,21 @@ impl Capture {
             Ok(duplication)
         };
         let wgc = |gpu: Device| -> Result<Wgc> {
+            let cursor = if window.is_some() {
+                window_cursor(config)
+            } else {
+                config.boolean("wgc_cursor_capture", true)
+            };
             let mut capture = Wgc::new_device(
                 gpu,
                 hdr,
                 config.boolean("wgc_high_rate_capture", false),
                 window,
-                window_cursor(config),
+                cursor,
                 client,
             )?;
             capture.owned.warnings = warnings.clone();
             capture.drain_to_newest = config.boolean("wgc_drain_to_newest", false);
-            if !config.boolean("wgc_cursor_capture", true) {
-                let _ = capture.set_cursor_capture(false);
-            }
             // The pool's textures can be shared with D3D12 on supported AMD
             // and NVIDIA drivers. The same fenced handoff used by DDX keeps the
             // copy and the AMF or NVENC conversion off a busy graphics queue. Keep an independent

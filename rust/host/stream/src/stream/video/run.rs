@@ -48,6 +48,7 @@ impl SessionThread<'_> {
             capture_wake,
             mut focus,
             focus_verify,
+            gpu_adapter,
         } = capture;
         let mut staging = None;
         let Started {
@@ -222,7 +223,7 @@ impl SessionThread<'_> {
         // Pipeline frame rates: the capture slot's counts this stream
         // has taken, and the 5 s timing log's own window.
         let mut pipeline_follow = butterpollo_media_policy::pipeline_rates::Follow::default();
-        let mut timings = TimingsWindow::new(&s, stream_period);
+        let mut timings = TimingsWindow::new(&s, stream_period, gpu_adapter);
         // Identity only: a weak reference releases the previous capture's
         // texture and ring slot once it is encoded, while the live `Weak`
         // still pins the allocation so its address can't be reused by a new

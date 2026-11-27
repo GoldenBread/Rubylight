@@ -69,6 +69,7 @@ pub(super) struct CaptureKey {
     wgc_user_helper: bool,
     wgc_high_rate: bool,
     wgc_drain: bool,
+    wgc_cursor: bool,
     wgc_helper_scheduling: bool,
     idd_fence_ring: bool,
     background: bool,
@@ -104,6 +105,7 @@ impl CaptureKey {
             wgc_user_helper: config::wgc_user_helper(config),
             wgc_high_rate: !matches!(kind, "ddx" | "dxgi") && config::wgc_high_rate_capture(config),
             wgc_drain: !matches!(kind, "ddx" | "dxgi") && config::wgc_drain_to_newest(config),
+            wgc_cursor: !matches!(kind, "ddx" | "dxgi") && config::wgc_cursor_capture(config),
             wgc_helper_scheduling: !matches!(kind, "ddx" | "dxgi")
                 && config::wgc_helper_streaming_scope(config),
             idd_fence_ring: config.idd_push_fence_ring(),

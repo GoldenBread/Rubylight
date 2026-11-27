@@ -23,6 +23,7 @@ pub(super) struct StreamDisplay {
 /// The open capture and the encoder's focus. Fields in reverse order of creation, as in
 /// [`Configured`].
 pub(super) struct Captured<'a> {
+    pub(super) gpu_adapter: String,
     pub(super) focus_verify: Option<u32>,
     pub(super) focus: crate::stream_focus::Focus,
     pub(super) capture_wake: Arc<capture::Consumer>,
@@ -273,6 +274,7 @@ impl SessionThread<'_> {
             prepared.note_hdr_fallback();
         }
         s.source_checked.store(true, Ordering::Release);
+        let gpu_adapter = first.gpu.display.adapter.clone();
         m.configure_encoder(&s, &c, &first, &prepared, &mut encoder)
             .map_err(|error| error.context(EncoderFailure("the encoder could not be created")))?;
         drop(first);
@@ -295,7 +297,7 @@ impl SessionThread<'_> {
         let focus_verify = c
             .boolean("encoder_focus_verify", false)
             .then(|| s.config.fps.max(1));
-        Ok(Some(Captured { focus_verify, focus, capture_wake, latest }))
+        Ok(Some(Captured { gpu_adapter, focus_verify, focus, capture_wake, latest }))
     }
 
     /// Starts the client commands and audio, applies the FEC, bitrate and pacing settings,

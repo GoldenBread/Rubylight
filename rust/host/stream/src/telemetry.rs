@@ -13,13 +13,15 @@ use std::{
 };
 
 type Error = (StatusCode, &'static str);
-/// Packed `(unix_ms << 8) | (gpu_busy_percent + 1)` from the latest telemetry worker sample;
-/// `0` when no sample has recorded `gpu_usage_percent`.
+/// Packed `(unix_ms << 8) | (gpu_busy_percent + 1)` from the latest telemetry worker sample for
+/// the active queue-clamped stream's GPU adapter; `0` when no fresh sample is cached.
 static LAST_GPU_BUSY: AtomicU64 = AtomicU64::new(0);
-const GPU_BUSY_MAX_AGE_MS: u64 = 15_000;
+const GPU_BUSY_MAX_AGE_MS: u64 = 3_000;
+const INTERNAL_GPU_INTERVAL: Duration = Duration::from_secs(1);
 
 pub struct Request {
     client: String,
+    gpu_adapter: String,
     internal_gpu_only: bool,
     reply: Option<tokio::sync::oneshot::Sender<Result<Value, Error>>>,
 }
@@ -31,14 +33,50 @@ fn unix_ms_now() -> u64 {
         .as_millis() as u64
 }
 
-fn max_gpu_usage_percent(value: &Value) -> Option<u8> {
-    value["gpus"]
-        .as_array()?
-        .iter()
-        .filter_map(|gpu| gpu["metrics"]["gpu_usage_percent"].as_f64())
-        .filter(|pct| pct.is_finite() && *pct >= 0.0)
-        .map(|pct| pct.round().clamp(0.0, 100.0) as u8)
-        .max()
+fn gpu_usage_for_adapter(value: &Value, adapter_name: &str) -> Option<u8> {
+    let gpus = value["gpus"].as_array()?;
+    let pct_of = |gpu: &Value| {
+        gpu["metrics"]["gpu_usage_percent"]
+            .as_f64()
+            .filter(|pct| pct.is_finite() && *pct >= 0.0)
+            .map(|pct| pct.round().clamp(0.0, 100.0) as u8)
+    };
+    let target = adapter_name.trim();
+    if !target.is_empty() {
+        let matched = gpus
+            .iter()
+            .filter(|gpu| {
+                gpu["name"]
+                    .as_str()
+                    .is_some_and(|name| name.trim().eq_ignore_ascii_case(target))
+            })
+            .filter_map(pct_of)
+            .max();
+        if matched.is_some() || gpus.iter().any(|gpu| gpu["name"].as_str().is_some()) {
+            return matched;
+        }
+    }
+    gpus.iter().filter_map(pct_of).max()
+}
+
+fn filter_client_metrics(mut value: Value, client_selected: &[String]) -> Value {
+    if client_selected.is_empty() || client_selected.iter().any(|m| m == "gpu_usage_percent") {
+        return value;
+    }
+    if !client_selected.iter().any(|m| m.starts_with("gpu_")) {
+        value["gpus"] = json!([]);
+        return value;
+    }
+    if let Some(gpus) = value["gpus"].as_array_mut() {
+        gpus.retain_mut(|gpu| {
+            if let Some(metrics) = gpu["metrics"].as_object_mut() {
+                metrics.remove("gpu_usage_percent");
+                return !metrics.is_empty() || gpu["id"].as_i64().is_some_and(|id| id >= 0);
+            }
+            true
+        });
+    }
+    value
 }
 
 fn pack_gpu_busy(unix_ms: u64, pct: u8) -> u64 {
@@ -54,10 +92,21 @@ fn unpack_gpu_busy_at(packed: u64, now_unix_ms: u64) -> Option<u8> {
     (now_unix_ms.saturating_sub(at_ms) <= GPU_BUSY_MAX_AGE_MS).then_some(raw - 1)
 }
 
+/// Clears any cached internal GPU utilization reading once dynamic queue clamping turns off.
+pub fn clear_gpu_busy() {
+    if LAST_GPU_BUSY.load(Ordering::Relaxed) != 0 {
+        LAST_GPU_BUSY.store(0, Ordering::Release);
+    }
+}
+
 /// Non-blocking: triggers an off-thread `gpu_usage_percent` sample on the telemetry worker for
-/// `client` (throttled to ~1 Hz when a fresh sample is already cached) and returns the freshest
-/// recent reading (within 15 s), if any.
-pub fn poll_and_read_gpu_busy(h: &Shared, client: &str) -> Option<u8> {
+/// `client` and `gpu_adapter` (throttled to ~1 Hz when a fresh sample is already cached) and
+/// returns the freshest recent reading (within 3 s), if any.
+pub fn poll_and_read_gpu_busy(h: &Shared, client: &str, gpu_adapter: &str) -> Option<u8> {
+    if !butterpollo_win_io::limiter::queue_clamping() {
+        clear_gpu_busy();
+        return None;
+    }
     let now_ms = unix_ms_now();
     let packed = LAST_GPU_BUSY.load(Ordering::Acquire);
     if (packed & 0xFF) != 0 && now_ms.saturating_sub(packed >> 8) < 900 {
@@ -66,6 +115,7 @@ pub fn poll_and_read_gpu_busy(h: &Shared, client: &str) -> Option<u8> {
     if let Ok(mut worker) = h.hardware_metrics.try_lock() {
         let req = || Request {
             client: client.to_owned(),
+            gpu_adapter: gpu_adapter.to_owned(),
             internal_gpu_only: true,
             reply: None,
         };
@@ -131,6 +181,7 @@ pub async fn sample(h: &Shared, client: String) -> Result<Value, Error> {
         let mut worker = h.hardware_metrics.lock().unwrap();
         let request = Request {
             client: client.clone(),
+            gpu_adapter: String::new(),
             internal_gpu_only: false,
             reply: Some(reply),
         };
@@ -194,6 +245,7 @@ fn run(host: Weak<Host>, requests: mpsc::Receiver<Request>) {
     let mut selected = Vec::new();
     let mut cached: Option<(Instant, Value)> = None;
     let mut requester = String::new();
+    let mut target_adapter = String::new();
     loop {
         let received = if collector.is_some() {
             requests.recv_timeout(Duration::from_millis(250))
@@ -211,34 +263,35 @@ fn run(host: Weak<Host>, requests: mpsc::Receiver<Request>) {
         if h.stop.load(Ordering::Acquire) {
             return;
         }
+        let clamping = butterpollo_win_io::limiter::queue_clamping();
+        if !clamping {
+            clear_gpu_busy();
+        }
         let Some(request) = request else {
             // Retain the collector while either the opted-in client API or dynamic queue clamp
             // still needs samples for this active video stream.
             let still_valid = options(&h, &requester).is_ok()
-                || (active_video_stream(&h, &requester)
-                    && butterpollo_win_io::limiter::queue_clamping());
+                || (active_video_stream(&h, &requester) && clamping);
             if !still_valid {
                 collector = None;
                 cached = None;
-                LAST_GPU_BUSY.store(0, Ordering::Release);
+                clear_gpu_busy();
             }
             continue;
         };
         if request.reply.as_ref().is_some_and(|r| r.is_closed()) {
             continue;
         }
-        let (interval, mut metrics) = if request.internal_gpu_only {
+        if !request.gpu_adapter.is_empty() {
+            target_adapter = request.gpu_adapter;
+        }
+        let (client_interval, client_selected) = if request.internal_gpu_only {
             if !active_video_stream(&h, &request.client) {
                 continue;
             }
             match options(&h, &request.client) {
-                Ok((interval, mut metrics)) => {
-                    if !metrics.is_empty() && !metrics.iter().any(|m| m == "gpu_usage_percent") {
-                        metrics.push("gpu_usage_percent".into());
-                    }
-                    (interval, metrics)
-                }
-                Err(_) => (Duration::from_secs(1), vec!["gpu_usage_percent".into()]),
+                Ok((interval, metrics)) => (interval, metrics),
+                Err(_) => (INTERNAL_GPU_INTERVAL, vec!["gpu_usage_percent".into()]),
             }
         } else {
             match options(&h, &request.client) {
@@ -251,37 +304,44 @@ fn run(host: Weak<Host>, requests: mpsc::Receiver<Request>) {
                 }
             }
         };
-        if butterpollo_win_io::limiter::queue_clamping()
-            && !metrics.is_empty()
-            && !metrics.iter().any(|m| m == "gpu_usage_percent")
+        let mut collector_metrics = client_selected.clone();
+        if (request.internal_gpu_only || clamping)
+            && !collector_metrics.is_empty()
+            && !collector_metrics.iter().any(|m| m == "gpu_usage_percent")
         {
-            metrics.push("gpu_usage_percent".into());
+            collector_metrics.push("gpu_usage_percent".into());
         }
+        let sample_interval = if request.internal_gpu_only || clamping {
+            client_interval.min(INTERNAL_GPU_INTERVAL)
+        } else {
+            client_interval
+        };
         requester = request.client;
-        if collector.is_none() || selected != metrics {
+        if collector.is_none() || selected != collector_metrics {
             // ADLX has one process-wide lifetime; release it before reopening.
             drop(collector.take());
-            collector = Some(Collector::new(&metrics));
-            selected = metrics;
+            collector = Some(Collector::new(&collector_metrics));
+            selected = collector_metrics;
             cached = None;
         }
         if cached
             .as_ref()
-            .is_none_or(|(at, _)| at.elapsed() >= interval)
+            .is_none_or(|(at, _)| at.elapsed() >= sample_interval)
         {
             let sample = collector.as_mut().unwrap().sample();
             let now_ms = unix_ms_now();
             let mut value = serde_json::to_value(sample).unwrap();
             value["version"] = json!(1);
             value["sampled_at_unix_ms"] = json!(now_ms);
-            if let Some(busy) = max_gpu_usage_percent(&value) {
+            if clamping && let Some(busy) = gpu_usage_for_adapter(&value, &target_adapter) {
                 LAST_GPU_BUSY.store(pack_gpu_busy(now_ms, busy), Ordering::Release);
             }
             cached = Some((Instant::now(), value));
         }
         if let Some(reply) = request.reply {
-            let mut value = cached.as_ref().unwrap().1.clone();
-            value["interval_ms"] = json!(interval.as_millis() as u64);
+            let mut value =
+                filter_client_metrics(cached.as_ref().unwrap().1.clone(), &client_selected);
+            value["interval_ms"] = json!(client_interval.as_millis() as u64);
             let _ = reply.send(Ok(value));
         }
     }
@@ -293,18 +353,50 @@ mod tests {
     use crate::state::test_support::Fixture;
 
     #[test]
-    fn gpu_busy_pack_and_max_extraction_bound_age_and_percent() {
+    fn gpu_busy_matches_stream_adapter_filters_unrequested_metrics_and_bounds_age() {
         let val = json!({
+            "cpu": { "cpu_usage_percent": 21.0 },
             "gpus": [
-                { "metrics": { "gpu_usage_percent": 42.2 } },
-                { "metrics": { "gpu_usage_percent": 98.6 } }
+                {
+                    "id": 0,
+                    "name": "AMD Radeon 780M Graphics",
+                    "metrics": { "gpu_usage_percent": 99.2, "gpu_temperature_c": 52.0 }
+                },
+                {
+                    "id": -10,
+                    "name": "NVIDIA GeForce RTX 4070 Laptop GPU",
+                    "metrics": { "gpu_usage_percent": 61.4 }
+                }
             ]
         });
-        assert_eq!(max_gpu_usage_percent(&val), Some(99));
+        // Matches the active stream's dGPU rather than taking 99% from the iGPU.
+        assert_eq!(
+            gpu_usage_for_adapter(&val, "NVIDIA GeForce RTX 4070 Laptop GPU"),
+            Some(61)
+        );
+        assert_eq!(
+            gpu_usage_for_adapter(&val, "AMD Radeon 780M Graphics"),
+            Some(99)
+        );
+        assert_eq!(gpu_usage_for_adapter(&val, "Unknown Adapter"), None);
+        assert_eq!(gpu_usage_for_adapter(&val, ""), Some(99));
+
+        // Strips unrequested `gpu_usage_percent` from external API responses.
+        let cpu_only = filter_client_metrics(val.clone(), &["cpu_usage_percent".into()]);
+        assert_eq!(cpu_only["gpus"], json!([]));
+        let temp_only = filter_client_metrics(val.clone(), &["gpu_temperature_c".into()]);
+        assert_eq!(temp_only["gpus"].as_array().unwrap().len(), 1);
+        assert!(
+            temp_only["gpus"][0]["metrics"]
+                .get("gpu_usage_percent")
+                .is_none()
+        );
+        assert_eq!(temp_only["gpus"][0]["metrics"]["gpu_temperature_c"], 52.0);
+
         let packed = pack_gpu_busy(100_000, 99);
-        assert_eq!(unpack_gpu_busy_at(packed, 105_000), Some(99));
-        assert_eq!(unpack_gpu_busy_at(packed, 115_000), Some(99));
-        assert_eq!(unpack_gpu_busy_at(packed, 115_001), None);
+        assert_eq!(unpack_gpu_busy_at(packed, 102_500), Some(99));
+        assert_eq!(unpack_gpu_busy_at(packed, 103_000), Some(99));
+        assert_eq!(unpack_gpu_busy_at(packed, 103_001), None);
         assert_eq!(unpack_gpu_busy_at(0, 100_000), None);
     }
 

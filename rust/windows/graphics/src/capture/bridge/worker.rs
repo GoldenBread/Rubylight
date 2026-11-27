@@ -171,18 +171,20 @@ fn worker(pipe: &dyn HelperPipe) -> Result<()> {
     );
     let _ = crate::gpu_priority::configure(&gpu, &config);
     let client = super::super::window_client(&config);
+    let cursor = if window.is_some() {
+        super::super::window_cursor(&config)
+    } else {
+        config.boolean("wgc_cursor_capture", true)
+    };
     let mut capture = Wgc::new_device(
         gpu.clone(),
         hdr,
         config.boolean("wgc_high_rate_capture", false),
         window,
-        super::super::window_cursor(&config),
+        cursor,
         client,
     )?;
     capture.drain_to_newest = config.boolean("wgc_drain_to_newest", false);
-    if !config.boolean("wgc_cursor_capture", true) {
-        let _ = capture.set_cursor_capture(false);
-    }
     if let Err(error) = capture.enable_notifications() {
         tracing::debug!(%error, "WGC idle notifications unavailable; retaining capture polling");
     }

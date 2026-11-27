@@ -6,6 +6,7 @@ use super::super::*;
 /// State for the 5-second timing/stutter window and source frame-rate warnings.
 pub(super) struct TimingsWindow {
     session: Arc<Session>,
+    gpu_adapter: String,
     stream_period: Duration,
     timing_due: Instant,
     pipeline_log: butterpollo_media_policy::pipeline_rates::Sampler,
@@ -19,7 +20,7 @@ pub(super) struct TimingsWindow {
 }
 
 impl TimingsWindow {
-    pub(super) fn new(s: &Arc<Session>, stream_period: Duration) -> Self {
+    pub(super) fn new(s: &Arc<Session>, stream_period: Duration, gpu_adapter: String) -> Self {
         let timing_due = Instant::now() + Duration::from_secs(5);
         let mut pipeline_log = butterpollo_media_policy::pipeline_rates::Sampler::default();
         // Baseline the rate sampler at the instant the first window starts,
@@ -33,6 +34,7 @@ impl TimingsWindow {
         );
         Self {
             session: s.clone(),
+            gpu_adapter,
             stream_period,
             timing_due,
             pipeline_log,
@@ -124,9 +126,12 @@ impl TimingsWindow {
                 display_mhz.map(butterpollo_media_policy::framegen::Rate),
             );
         }
-        let gpu_busy = butterpollo_win_io::limiter::queue_clamping()
-            .then(|| crate::telemetry::poll_and_read_gpu_busy(h, &s.launch.client.uuid))
-            .flatten();
+        let gpu_busy = if butterpollo_win_io::limiter::queue_clamping() {
+            crate::telemetry::poll_and_read_gpu_busy(h, &s.launch.client.uuid, &self.gpu_adapter)
+        } else {
+            crate::telemetry::clear_gpu_busy();
+            None
+        };
         if !window_due {
             return;
         }
@@ -618,7 +623,7 @@ mod tests {
         }
         .sent(at(1000), at(1100), at(1500), at(2000));
         {
-            let _timings = TimingsWindow::new(&s, period);
+            let _timings = TimingsWindow::new(&s, period, String::new());
             let mut perf = s.stats.performance.lock().unwrap();
             let count = butterpollo_media_policy::stutter_report::MIN_PICTURES;
             for _ in 0..count {

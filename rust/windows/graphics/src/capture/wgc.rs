@@ -270,6 +270,9 @@ impl Wgc {
         {
             self.session
                 .SetIsCursorCaptureEnabled(enabled)
+                .inspect_err(|error| {
+                    tracing::warn!(%error, enabled, "WGC cursor capture toggle failed");
+                })
                 .context("Windows Graphics Capture cursor capture")?;
             self.cursor = enabled;
         }
@@ -279,19 +282,18 @@ impl Wgc {
         Self::new_format(name, false)
     }
     pub fn new_format(name: &str, hdr: bool) -> Result<Self> {
-        Self::new_device(Device::new(name)?, hdr, false, None, false, false)
+        Self::new_device(Device::new(name)?, hdr, false, None, true, false)
     }
     /// Captures `window` (an HWND) instead of the display when given; the
-    /// display still chooses the GPU and colour space. A display's capture
-    /// draws the pointer; a window's only with `window_cursor` (an app's
-    /// window streamed alone, never a co-op player's). `window_client` keeps
+    /// display still chooses the GPU and colour space. `cursor` sets initial
+    /// OS pointer compositing prior to `StartCapture()`. `window_client` keeps
     /// only the window's client area, without its title bar and borders.
     pub(super) fn new_device(
         gpu: Device,
         hdr: bool,
         high_rate: bool,
         window: Option<usize>,
-        window_cursor: bool,
+        cursor: bool,
         window_client: bool,
     ) -> Result<Self> {
         // SAFETY: `output` and `gpu.device` are live, `d.Monitor` is that output's monitor, and
@@ -355,7 +357,6 @@ impl Wgc {
             } else {
                 DirectXPixelFormat::B8G8R8A8UIntNormalized
             };
-            let cursor = window.is_none() || window_cursor;
             let (pool, session) = open_session(
                 &gpu,
                 &item,

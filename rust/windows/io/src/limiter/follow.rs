@@ -14,8 +14,9 @@ static FOLLOWING: AtomicBool = AtomicBool::new(false);
 static QUEUE_CLAMPING: AtomicBool = AtomicBool::new(false);
 
 pub(super) fn sync_flags(state: &State) {
+    let tracked = tracked_single_stream(state);
     let is_following = follows(state);
-    let is_clamping = is_following
+    let is_clamping = tracked
         && state
             .follow
             .as_ref()
@@ -24,12 +25,14 @@ pub(super) fn sync_flags(state: &State) {
     QUEUE_CLAMPING.store(is_clamping, Ordering::Release);
 }
 
-/// A virtual display's automatic cap, applied through RTSS.
+/// A single stream's dynamic RTSS cap state (`follow_display` and/or `frame_limiter_queue_clamp`).
 pub(super) struct Follow {
     /// Which stream's cap this is: a change on its way belongs to one.
     pub(super) id: u64,
     pub(super) root: PathBuf,
     pub(super) rate: Rate,
+    /// Whether slow display refresh modes stand down the automatic virtual-display cap.
+    pub(super) follows_display: bool,
     /// The cap is off: the stream's display refreshes too slowly for it.
     pub(super) standing_down: bool,
     /// Whether `frame_limiter_queue_clamp` allows lowering the cap during GPU-bound dips.
@@ -113,13 +116,21 @@ pub fn queue_clamping() -> bool {
     QUEUE_CLAMPING.load(Ordering::Acquire)
 }
 
-pub(super) fn follows(state: &State) -> bool {
+fn tracked_single_stream(state: &State) -> bool {
     state.users == 1
         && state.active == "rtss"
         && state
             .follow
             .as_ref()
             .is_some_and(|follow| !follow.failed && !follow.shared)
+}
+
+pub(super) fn follows(state: &State) -> bool {
+    tracked_single_stream(state)
+        && state
+            .follow
+            .as_ref()
+            .is_some_and(|follow| follow.follows_display)
 }
 
 /// Whether the stream reads its display's mode at this live tick: with every timing window,
@@ -133,12 +144,7 @@ pub fn display_read_due(window_due: bool, following: bool) -> bool {
 /// cap one stream's display decides.
 pub(super) fn wanted_change(state: &State, display: Rate) -> Option<bool> {
     let follow = state.follow.as_ref()?;
-    if state.users != 1
-        || state.active != "rtss"
-        || follow.changing
-        || follow.failed
-        || follow.shared
-    {
+    if !follows(state) || follow.changing {
         return None;
     }
     let stand_down = !butterpollo_media_policy::framegen::cap_suits_display(follow.rate, display);
@@ -215,7 +221,7 @@ pub fn follow_queue_clamp(rendered_fps_milli: u32, gpu_busy_percent: Option<u8>)
     }
 }
 
-/// Desired queue-clamp target when `follow_display` is active, `frame_limiter_queue_clamp`
+/// Desired queue-clamp target when a single stream owns RTSS, `frame_limiter_queue_clamp`
 /// is enabled, and the cap is not stood down; `None` if no change is needed.
 pub(super) fn wanted_clamp(
     state: &State,
@@ -223,7 +229,11 @@ pub(super) fn wanted_clamp(
     gpu_busy_percent: Option<u8>,
 ) -> Option<Option<Rate>> {
     let follow = state.follow.as_ref()?;
-    if !follows(state) || !follow.queue_clamp || follow.standing_down || follow.changing {
+    if !tracked_single_stream(state)
+        || !follow.queue_clamp
+        || follow.standing_down
+        || follow.changing
+    {
         return None;
     }
     let next = queue_clamp_step(
@@ -286,7 +296,6 @@ fn retarget(directory: &Path, root: &Path, stand_down: bool) -> Result<()> {
         bail!("RTSS's {key} was changed during the stream");
     }
     if stand_down && change.stood_down.is_none() {
-        change.clamped = None;
         change.stood_down = Some(wanted.clone());
         persist(directory, &journal)?;
     }
@@ -298,13 +307,18 @@ fn retarget(directory: &Path, root: &Path, stand_down: bool) -> Result<()> {
     let unsupported = confirmed(&wanted, &reply.values, !stand_down)
         .map_err(|key| anyhow::anyhow!("RTSS did not confirm {key}"))?;
     warn_unsupported(&unsupported);
-    // The cap is back, so no limit is no longer this host's value: one that somebody
-    // turns off from here on is theirs. A journal that cannot be written keeps the claim.
-    if !stand_down
-        && (journal.rtss.as_mut().is_some_and(|change| {
-            change.stood_down.take().is_some() | change.clamped.take().is_some()
-        }))
-    {
+    // Prune superseded host values only after RTSS confirmed the new profile state, so a
+    // failed write or crash mid-transition still recognizes the previously live value.
+    let pruned = journal.rtss.as_mut().is_some_and(|change| {
+        if stand_down {
+            change.clamped.take().is_some() | change.previous_clamped.take().is_some()
+        } else {
+            change.stood_down.take().is_some()
+                | change.clamped.take().is_some()
+                | change.previous_clamped.take().is_some()
+        }
+    });
+    if pruned {
         let _ = persist(directory, &journal);
     }
     Ok(())
@@ -339,6 +353,11 @@ fn retarget_clamp(directory: &Path, root: &Path, clamped: Option<Rate>) -> Resul
         bail!("RTSS's {key} was changed during the stream");
     }
     if clamped.is_some() {
+        if let Some(prev) = change.clamped.take()
+            && prev != wanted
+        {
+            change.previous_clamped = Some(prev);
+        }
         change.clamped = Some(wanted.clone());
         persist(directory, &journal)?;
     }
@@ -349,12 +368,14 @@ fn retarget_clamp(directory: &Path, root: &Path, clamped: Option<Rate>) -> Resul
     let unsupported = confirmed(&wanted, &reply.values, true)
         .map_err(|key| anyhow::anyhow!("RTSS did not confirm {key}"))?;
     warn_unsupported(&unsupported);
-    if clamped.is_none()
-        && journal
-            .rtss
-            .as_mut()
-            .is_some_and(|change| change.clamped.take().is_some())
-    {
+    let pruned = journal.rtss.as_mut().is_some_and(|change| {
+        if clamped.is_none() {
+            change.clamped.take().is_some() | change.previous_clamped.take().is_some()
+        } else {
+            change.previous_clamped.take().is_some()
+        }
+    });
+    if pruned {
         let _ = persist(directory, &journal);
     }
     Ok(())
@@ -373,6 +394,7 @@ mod tests {
                 id: 1,
                 root: PathBuf::new(),
                 rate: Rate(120_000),
+                follows_display: true,
                 standing_down: false,
                 queue_clamp,
                 clamped_rate: None,
@@ -433,5 +455,16 @@ mod tests {
         let mut inactive = followed_state(true);
         inactive.active = "none".into();
         assert_eq!(wanted_clamp(&inactive, 90_000, Some(99)), None);
+
+        // Explicit physical-monitor RTSS caps (`follows_display == false`) do not stand down for
+        // display refresh, yet still allow opt-in dynamic queue clamping for single-stream RTSS.
+        let mut explicit_cap = followed_state(true);
+        explicit_cap.follow.as_mut().unwrap().follows_display = false;
+        assert!(!follows(&explicit_cap));
+        assert_eq!(wanted_change(&explicit_cap, Rate(60_000)), None);
+        assert_eq!(
+            wanted_clamp(&explicit_cap, 90_000, Some(99)),
+            Some(Some(Rate(87_300)))
+        );
     }
 }
