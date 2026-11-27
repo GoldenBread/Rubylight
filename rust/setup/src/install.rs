@@ -6,7 +6,9 @@ mod side_by_side;
 mod staging;
 
 pub use driver_repair::{Driver, RepairRun, repair_drivers};
-pub(crate) use driver_repair::{display_driver_declined, repair_drivers_in};
+pub(crate) use driver_repair::{
+    display_driver_declined, gamepad_driver_declined, repair_drivers_in,
+};
 pub(crate) use drivers::{
     LIBVIRTUALDISPLAY, LIBVIRTUALGAMEPAD, RUBYLIGHT_DISPLAY_SCRIPT, RUBYLIGHT_GAMEPAD_SCRIPT,
     install_drivers,

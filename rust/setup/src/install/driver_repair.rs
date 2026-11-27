@@ -151,14 +151,33 @@ pub(super) fn remember_driver_choice(profile: &Path, display_driver: bool, gamep
     let record = profile.join(REPAIR_RECORD);
     let _ = match choices(display_driver, gamepad_driver) {
         None => std::fs::remove_file(&record),
-        Some(choices) => std::fs::create_dir_all(profile)
-            .and_then(|()| std::fs::write(&record, serde_json::to_vec(&choices)?)),
+        Some(choices) => {
+            std::fs::create_dir_all(profile).and_then(|()| write_record(&record, &choices))
+        }
     };
 }
 /// Whether setup ran with --no-display-driver.
 pub(crate) fn display_driver_declined() -> bool {
-    let record = read_record(std::fs::read(profile().join(REPAIR_RECORD)).ok().as_deref());
-    entry(&record, Driver::Display)["declined"] == true
+    declined(&recorded(), Driver::Display)
+}
+/// Whether setup ran with --no-gamepad-driver.
+pub(crate) fn gamepad_driver_declined() -> bool {
+    declined(&recorded(), Driver::Gamepad)
+}
+fn recorded() -> Value {
+    read_record(std::fs::read(profile().join(REPAIR_RECORD)).ok().as_deref())
+}
+/// Whether `record` says the installation left `driver` out.
+pub(super) fn declined(record: &Value, driver: Driver) -> bool {
+    entry(record, driver)["declined"] == true
+}
+/// Writes the record whole or not at all: a torn file would read as no choice
+/// and lose a driver the user left out.
+fn write_record(path: &Path, record: &Value) -> std::io::Result<()> {
+    let temp = path.with_extension("json.tmp");
+    std::fs::write(&temp, serde_json::to_vec(record)?)?;
+    std::fs::File::open(&temp)?.sync_all()?;
+    std::fs::rename(&temp, path)
 }
 
 /// What a driver repair did.
@@ -264,7 +283,7 @@ pub(crate) fn repair_drivers_in(
     for driver in &due {
         record = record_attempt(record, *driver, version, now);
     }
-    std::fs::write(&path, serde_json::to_vec(&record)?)?;
+    write_record(&path, &record)?;
     let mut notes = Vec::new();
     let mut failed = Vec::new();
     let mut restart = false;

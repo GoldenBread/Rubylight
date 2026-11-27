@@ -333,6 +333,8 @@ fn an_installation_records_only_the_drivers_it_left_out() {
         for (driver, left_out) in [Display, Gamepad].into_iter().zip(left_out) {
             let skipped = repair_skipped(&record, driver, "7.0.0", 1, RepairRun::Service);
             assert_eq!(skipped.is_some(), left_out, "{record} {driver:?}");
+            // An in-app update reads the same choice and leaves the driver out too.
+            assert_eq!(declined(&record, driver), left_out, "{record} {driver:?}");
         }
     }
     assert_eq!(Driver::parse("Gamepad"), Some(Gamepad));

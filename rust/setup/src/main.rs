@@ -302,7 +302,7 @@ fn main() {
                         restart_needed |= install::install_drivers(
                             &folder,
                             !install::display_driver_declined(),
-                            true,
+                            !install::gamepad_driver_declined(),
                             usbip_driver,
                             &progress,
                             &mut notes,
