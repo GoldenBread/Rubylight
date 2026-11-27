@@ -549,26 +549,26 @@ mod tests {
     fn ffmpeg_beside_the_host_comes_first_and_is_never_passed_over() {
         let folder = std::env::temp_dir().join(format!("rubylight-ffmpeg-{}", std::process::id()));
         std::fs::create_dir_all(&folder).unwrap();
-        // Nothing there: the system's FFmpeg 9, then 8, by soname.
+        // Nothing there: the system's FFmpeg 9, then 8, by soname; none at all for the host's
+        // tests (`test-ffmpeg`, which a workspace build turns on here too).
         let system = candidates(&folder).unwrap();
-        assert_eq!(
-            system
-                .iter()
-                .map(|(majors, avutil, avcodec)| (*majors, avutil.clone(), avcodec.clone()))
-                .collect::<Vec<_>>(),
+        let expected: Vec<Candidate> = if cfg!(feature = "test-ffmpeg") {
+            vec![]
+        } else {
             vec![
                 (
                     (61, 63),
                     "libavutil.so.61".into(),
-                    "libavcodec.so.63".into()
+                    "libavcodec.so.63".into(),
                 ),
                 (
                     (60, 62),
                     "libavutil.so.60".into(),
-                    "libavcodec.so.62".into()
+                    "libavcodec.so.62".into(),
                 ),
             ]
-        );
+        };
+        assert_eq!(system, expected);
         // An FFmpeg 8 beside the host is the only one tried, by its absolute path, and its
         // failure is the error: a broken copy there does not fall back to the system's.
         let broken = folder.join("libavutil.so.60");
