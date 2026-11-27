@@ -85,11 +85,13 @@ const DESKTOP_TARGET: &str = "desktop";
 /// through Rubylight's KMS broker.
 const SCREEN_TARGET: &str = "kms";
 
-/// Whether the user's own desktop is on the PC's screen. Always on Windows, which does not ask.
+/// Whether the user's own desktop is on the PC's screen, as far as the host can tell: false
+/// only when logind says the login screen or another session is (`seat::desktop_elsewhere`),
+/// so a PC that cannot be asked streams and launches as before. Always on Windows.
 pub(crate) fn own_desktop_shown() -> bool {
     #[cfg(target_os = "linux")]
     {
-        butterpollo_win_io::seat::own_desktop_shown()
+        !butterpollo_win_io::seat::desktop_elsewhere()
     }
     #[cfg(not(target_os = "linux"))]
     {

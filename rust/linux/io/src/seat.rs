@@ -4,9 +4,11 @@
 //! desktop through the portal only while that desktop is on screen; otherwise a Desktop stream
 //! shows the screen through Rubylight's KMS broker (target `kms`), whatever owns it.
 //!
-//! The answer is kept for [`FRESH`], as a stream asks ten times a second. Without logind or a
-//! seat (a container, a headless box) the answer is [`Shown::Unknown`] and the host goes by its
-//! environment as before.
+//! The answer is kept for [`FRESH`], as a stream asks ten times a second. Without logind, a
+//! seat or a session on it (a container, a headless box, a CI runner, a text console before
+//! anyone signs in) the answer is [`Shown::Unknown`] and the host goes by its environment as
+//! before. `RUBYLIGHT_SEAT` (`own`, `login`, `other` or `unknown`) sets the answer instead, for
+//! tests and to try the login screen's behaviour.
 use crate::power::logind;
 use anyhow::{Context, Result};
 use std::{
@@ -27,11 +29,11 @@ const SEAT: &str = "/org/freedesktop/login1/seat/seat0";
 pub enum Shown {
     /// This user's graphical session.
     Own,
-    /// The login screen, or no session at all.
+    /// The login screen.
     LoginScreen,
     /// Another user's session, or a session of this user that is not graphical.
     Other,
-    /// logind or the seat cannot be asked.
+    /// logind or the seat cannot be asked, or the seat has no session.
     Unknown,
 }
 
@@ -46,7 +48,7 @@ struct Active {
 
 fn classify(active: Option<&Active>, me: u32) -> Shown {
     let Some(active) = active else {
-        return Shown::LoginScreen;
+        return Shown::Unknown;
     };
     match active.class.as_str() {
         "greeter" => Shown::LoginScreen,
@@ -59,7 +61,23 @@ fn classify(active: Option<&Active>, me: u32) -> Shown {
     }
 }
 
+/// Runs a blocking D-Bus call on a thread of its own. Built with tokio (as when the client's
+/// crates share the build), zbus's blocking calls start a runtime, which panics on a thread
+/// that already drives one; the host asks from its async handlers and the programs it starts.
+fn off_runtime<T: Send>(call: impl FnOnce() -> Result<T> + Send) -> Result<T> {
+    std::thread::scope(|scope| {
+        scope
+            .spawn(call)
+            .join()
+            .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+    })
+}
+
 fn ask() -> Result<Option<Active>> {
+    off_runtime(ask_logind)
+}
+
+fn ask_logind() -> Result<Option<Active>> {
     let connection = Connection::system().context("connecting to the system D-Bus")?;
     let seat = Proxy::new(
         &connection,
@@ -99,8 +117,20 @@ pub fn shown() -> Shown {
     }
     // SAFETY: getuid cannot fail.
     let me = unsafe { libc::getuid() };
-    let shown = match ask() {
-        Ok(active) => classify(active.as_ref(), me),
+    let forced = std::env::var("RUBYLIGHT_SEAT")
+        .ok()
+        .and_then(|value| match value.as_str() {
+            "own" => Some(Shown::Own),
+            "login" => Some(Shown::LoginScreen),
+            "other" => Some(Shown::Other),
+            "unknown" => Some(Shown::Unknown),
+            _ => None,
+        });
+    let shown = match forced
+        .map(Ok)
+        .unwrap_or_else(|| ask().map(|active| classify(active.as_ref(), me)))
+    {
+        Ok(shown) => shown,
         Err(error) => {
             tracing::debug!(error = %format!("{error:#}"), "what the seat shows is unknown");
             Shown::Unknown
@@ -112,6 +142,13 @@ pub fn shown() -> Shown {
     }
     *last = Some((Instant::now(), shown));
     shown
+}
+
+/// Whether logind says something else than this user's desktop is on screen: the login screen
+/// or another session. What the host may stream and launch is narrowed only then, never on a
+/// PC that cannot be asked.
+pub fn desktop_elsewhere() -> bool {
+    matches!(shown(), Shown::LoginScreen | Shown::Other)
 }
 
 /// Whether this user's desktop is the one on screen: logind's answer, or with none, whether
@@ -130,6 +167,10 @@ pub fn own_desktop_shown() -> bool {
 /// desktop session adds its display to when it starts: what a program the host starts for the
 /// desktop needs, as the host itself may have started before the desktop did.
 pub fn user_environment() -> Result<Vec<(String, String)>> {
+    off_runtime(user_manager_environment)
+}
+
+fn user_manager_environment() -> Result<Vec<(String, String)>> {
     let bus = logind::session_bus()?;
     let manager = Proxy::new(
         &bus,
@@ -208,7 +249,7 @@ mod tests {
 
     #[test]
     fn the_screen_is_told_apart() {
-        assert_eq!(classify(None, 1000), Shown::LoginScreen);
+        assert_eq!(classify(None, 1000), Shown::Unknown);
         assert_eq!(
             classify(Some(&active(966, "greeter", "wayland")), 1000),
             Shown::LoginScreen
