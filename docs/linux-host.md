@@ -51,9 +51,7 @@ Out of the Linux host's scope, as they rest on Windows or a vendor's Windows dri
 ## Built, not yet run on Linux hardware
 
 - 10-bit HEVC and AV1 streamed to a client (encode and decode tests only).
-- Native touch and pen from a client (device tests and KWin's mapping only).
 - AC3 and E-AC3 streamed to a client (the system FFmpeg 9 encodes and decodes them in tests, and serverinfo offers them).
-- The keyboard following text fields on a client (a live test of a GTK entry only).
 - Lutris games (not installed on the test PC).
 - Waking the PC with Wake-on-LAN (the NIC's own wake setting is not read; it needs `CAP_NET_ADMIN`).
 - Remote Monitor, and the controllers' buttons from Nightjar for Android (tested from the headless client).

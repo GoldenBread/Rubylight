@@ -40,6 +40,9 @@ pub(super) enum Event {
     /// The window became active: a toolkit that gave a widget the focus before its window was
     /// active may never say so, so the watcher looks for it.
     Activated,
+    /// The window stopped being active: the focus went to another window, which may publish
+    /// nothing (a game, an application without accessibility).
+    Deactivated,
     /// Its text or caret changed.
     Text,
 }
@@ -74,7 +77,11 @@ impl Event {
     pub(super) fn from_parts(member: &str, detail: &str, detail1: i32) -> Option<Self> {
         match member {
             "StateChanged" if detail == "focused" => Some(Self::Focused(detail1 != 0)),
-            "StateChanged" if detail == "active" && detail1 != 0 => Some(Self::Activated),
+            "StateChanged" if detail == "active" => Some(if detail1 != 0 {
+                Self::Activated
+            } else {
+                Self::Deactivated
+            }),
             "TextChanged" | "TextCaretMoved" | "TextSelectionChanged" => Some(Self::Text),
             _ => None,
         }

@@ -40,6 +40,14 @@ fn events_are_told_apart() {
         Event::from_parts("StateChanged", "focused", 0),
         Some(Event::Focused(false))
     );
+    assert_eq!(
+        Event::from_parts("StateChanged", "active", 1),
+        Some(Event::Activated)
+    );
+    assert_eq!(
+        Event::from_parts("StateChanged", "active", 0),
+        Some(Event::Deactivated)
+    );
     assert_eq!(Event::from_parts("StateChanged", "showing", 1), None);
     assert_eq!(
         Event::from_parts("TextChanged", "insert", 3),
@@ -223,11 +231,24 @@ fn live_a_gtk_entry_is_reported() {
     let focused = seen.expect("no text field was reported");
     assert_eq!(focused.field.input_type, InputType::Text);
     assert_eq!(
-        focused.surrounding.map(|s| s.text).as_deref(),
+        focused.surrounding.as_ref().map(|s| s.text.as_str()),
         Some("rubylight")
     );
-    // The entry goes with its dialog.
-    let lowered = received.recv_timeout(std::time::Duration::from_secs(5));
-    eprintln!("after: {lowered:?}");
+    // The entry goes with its dialog: the focus leaves it, its window or its application. The
+    // same field may be reported again first (its focus and its window's activation), which the
+    // session sends once.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let mut lowered = false;
+    while let Some(left) = deadline.checked_duration_since(std::time::Instant::now()) {
+        match received.recv_timeout(left) {
+            Ok(None) => {
+                lowered = true;
+                break;
+            }
+            Ok(Some(again)) => assert_eq!(again.element, focused.element),
+            Err(_) => break,
+        }
+    }
+    assert!(lowered, "the keyboard was not lowered when the dialog went");
     drop(watch);
 }

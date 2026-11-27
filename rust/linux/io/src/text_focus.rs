@@ -169,9 +169,10 @@ fn run(control: &Control, report: &dyn Fn(Option<Focused>)) -> Result<()> {
             .call_method("RegisterEvent", &(event, Vec::<String>::new(), ""))
             .with_context(|| format!("asking for {event} events"))?;
     }
+    // Every signal: the toolkits' events, and the bus's NameOwnerChanged when an application
+    // goes, which says nothing else as it ends.
     let rule = zbus::MatchRule::builder()
         .msg_type(zbus::message::Type::Signal)
-        .interface(EVENTS)?
         .build();
     let events = MessageIterator::for_match_rule(rule, &bus, Some(256))?;
     *control.bus.lock().unwrap_or_else(PoisonError::into_inner) = Some(bus.clone());
@@ -205,6 +206,26 @@ fn run(control: &Control, report: &dyn Fn(Option<Focused>)) -> Result<()> {
             continue;
         };
         let (sender, path) = (sender.to_string(), path.to_string());
+        let interface = header
+            .interface()
+            .map(|i| i.to_string())
+            .unwrap_or_default();
+        if interface == "org.freedesktop.DBus" && member.as_str() == "NameOwnerChanged" {
+            let gone = message
+                .body()
+                .deserialize::<(String, String, String)>()
+                .ok()
+                .filter(|(_, _, owner)| owner.is_empty())
+                .map(|(name, ..)| name);
+            if gone.is_some() && followed.as_ref().map(|f| &f.sender) == gone.as_ref() {
+                followed = None;
+                report(None);
+            }
+            continue;
+        }
+        if interface != EVENTS {
+            continue;
+        }
         let Some(event) = atspi::Event::parse(member.as_str(), &message) else {
             continue;
         };
@@ -236,6 +257,12 @@ fn run(control: &Control, report: &dyn Fn(Option<Focused>)) -> Result<()> {
             // Only the field the watcher followed losing the focus lowers the keyboard: the
             // element gaining it reports itself.
             atspi::Event::Focused(false) if same => {
+                followed = None;
+                report(None);
+            }
+            // The followed field's window gave the focus to another window, which reports
+            // itself if it publishes anything.
+            atspi::Event::Deactivated if followed.as_ref().is_some_and(|f| f.sender == sender) => {
                 followed = None;
                 report(None);
             }
