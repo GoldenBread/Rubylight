@@ -6,12 +6,15 @@ use super::audio::handle_controller_audio;
 use super::clipboard::{handle_clipboard_and_focus_packet, send_clipboard_and_focus_updates};
 use super::extensions::{handle_extension_packet, send_extension_updates};
 use super::haptics::{haptics_negotiated, send_audio_haptics, send_pad_feedback};
-use super::input::{apply_input, ensure_input_ready, follow_session, handle_input_packet};
+use super::input::{
+    apply_input, ensure_input_ready, follow_session, handle_input_packet, inject_pending_inputs,
+};
 use super::peer::{ControlPeer, ReceiveScratch};
 use super::qos::{handle_qos_packet, send_clock_syncs, tick_and_send_qos};
 use super::socket::{
-    CONTROL_EVENT_LIMIT, ControlSocket, NOTICE_ACK_WAIT, UnattendedSweep, control_wait_timeout,
-    end_unattended_sessions, expire_controllers, follow_roam, tell_client_stopping,
+    CONTROL_EVENT_LIMIT, ControlLoopConfig, ControlSocket, NOTICE_ACK_WAIT, UnattendedSweep,
+    control_wait_timeout, end_unattended_sessions, expire_controllers, follow_roam,
+    tell_client_stopping,
 };
 
 impl Media {
@@ -74,6 +77,11 @@ impl Media {
         let mut controller_cleanup = Instant::now();
         let mut unattended_sweep = UnattendedSweep::new(Instant::now());
         let mut scratch: ReceiveScratch = Default::default();
+        let mut loop_config = ControlLoopConfig::load(&h);
+        host.socket_mut()
+            .roaming
+            .set_enabled(loop_config.client_roaming);
+        let mut injected_peers: Vec<PeerID> = Vec::new();
         while !h.stop.load(Ordering::Acquire) {
             while self.control_wake_receiver.recv(&mut [0]).is_ok() {}
             // The host stops before `h.stop` is set (Ctrl+C): every client hears it, as it
@@ -90,12 +98,12 @@ impl Media {
                 host.flush();
                 return Ok(());
             }
-            expire_controllers(&h, &mut controller_cleanup);
-            let (ping_timeout, client_roaming) = {
-                let c = h.config.read().unwrap();
-                (crate::network::ping_timeout(&c), c.client_roaming())
-            };
-            host.socket_mut().roaming.set_enabled(client_roaming);
+            if loop_config.refresh_on_version_change(&h) {
+                host.socket_mut()
+                    .roaming
+                    .set_enabled(loop_config.client_roaming);
+            }
+            let ping_timeout = loop_config.ping_timeout;
             // Whether a peer went, so roaming forgets its addresses.
             let mut peers_went = false;
             // Whether a peer came, so the unattended sweep runs at once.
@@ -149,30 +157,17 @@ impl Media {
                     }
                 }
             }
-            // Any guest that lost keyboard and mouse lets go before the new holder's input lands.
-            for p in peers.values_mut() {
-                let Some(s) = &p.session else { continue };
-                if let Some(i) = &mut p.injector
-                    && h.device_guests.take_release(s)
-                {
-                    i.release_keyboard_mouse();
-                }
-            }
-            // Input first, for every peer: none waits for another peer's housekeeping
-            // below (feedback, notices, cursor shapes, USB answers).
+            // Input first, for every peer: none waits for periodic feedback, QoS, clipboard,
+            // extension, or sweep work below.
             let received = host.socket().first_received;
-            for p in peers.values_mut() {
-                let Some(s) = p.session.clone() else { continue };
-                let ready = match s.launch.nucleus {
-                    Some(_) => p.coop.is_some(),
-                    None => p.injector.is_some(),
-                };
-                if p.inputs.is_empty() || !ready || s.stopping() {
-                    continue;
-                }
-                follow_session(&h, p, &s);
-                apply_input(&h, p, &s, &mut menus, received);
-            }
+            inject_pending_inputs(
+                &h,
+                &self.control_wake,
+                &mut peers,
+                &mut menus,
+                received,
+                &mut injected_peers,
+            );
             for commit in host.socket_mut().roaming.take_commits() {
                 follow_roam(&h, self, &mut host, &peers, &socket, commit);
             }
@@ -182,6 +177,7 @@ impl Media {
             }
             let mut remove = vec![];
             for (peer_id, p) in &mut peers {
+                let already_injected = injected_peers.contains(peer_id);
                 if !poll_peer(
                     &h,
                     &self.control_wake,
@@ -192,6 +188,7 @@ impl Media {
                     ping_timeout,
                     poll_feedback,
                     received,
+                    already_injected,
                     &mut menus,
                     &mut scratch,
                 ) {
@@ -215,6 +212,12 @@ impl Media {
             // leaves without haptics or rumble: after the input was applied
             // and the acks went out, so the analysis delays neither.
             send_audio_haptics(&mut host, &mut peers);
+            expire_controllers(&h, &mut controller_cleanup);
+            if loop_config.refresh_housekeeping(&h) {
+                host.socket_mut()
+                    .roaming
+                    .set_enabled(loop_config.client_roaming);
+            }
             if peers_went && host.socket().roaming.has_peers() {
                 let live: Vec<SocketAddr> = host
                     .peers()
@@ -550,6 +553,7 @@ fn poll_peer(
     ping_timeout: Duration,
     poll_feedback: bool,
     received: Option<Instant>,
+    already_injected: bool,
     menus: &mut crate::couch_menu::Workers,
     scratch: &mut ReceiveScratch,
 ) -> bool {
@@ -639,13 +643,6 @@ fn poll_peer(
     if !ensure_input_ready(h, control_wake, p, &s) {
         return true;
     }
-    follow_session(h, p, &s);
-    // A guest that lost the keyboard and mouse lets go of what it holds.
-    if let Some(i) = &mut p.injector
-        && h.device_guests.take_release(&s)
-    {
-        i.release_keyboard_mouse();
-    }
     p.audio_haptics.follow(
         h.config_version.load(Ordering::Acquire),
         &s.launch.warnings,
@@ -657,9 +654,18 @@ fn poll_peer(
             let _ = wake.send(&[1]);
         });
     }
-    // What the pass above left: input of a peer whose injector or
-    // co-op player was made just now, and the couch menu's timers.
-    apply_input(h, p, &s, menus, received);
+    if !already_injected || !p.inputs.is_empty() {
+        follow_session(h, p, &s);
+        // A guest that lost the keyboard and mouse lets go of what it holds.
+        if let Some(i) = &mut p.injector
+            && h.device_guests.take_release(&s)
+        {
+            i.release_keyboard_mouse();
+        }
+        // What the pass above left: input of a peer whose injector or
+        // co-op player was made just now, and the couch menu's timers.
+        apply_input(h, p, &s, menus, received);
+    }
     if !poll_feedback
         && let Some(i) = &mut p.injector
         && let Err(e) = i.flush_virtual_left_release().and_then(|()| i.due())

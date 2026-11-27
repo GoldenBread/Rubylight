@@ -277,6 +277,56 @@ pub(super) fn apply_input(
     p.inputs.clear();
 }
 
+/// Injects queued player input for every ready (or newly readiable) peer immediately after
+/// `host.service()`, before periodic feedback, QoS, clipboard, extension, or sweep work.
+/// Records peers injected in `injected` so `poll_peer` does not repeat `follow_session` and
+/// `apply_input` in the same pass.
+pub(super) fn inject_pending_inputs(
+    h: &Shared,
+    control_wake: &Arc<UdpSocket>,
+    peers: &mut HashMap<PeerID, ControlPeer>,
+    menus: &mut crate::couch_menu::Workers,
+    received: Option<Instant>,
+    injected: &mut Vec<PeerID>,
+) {
+    injected.clear();
+    // Any guest that lost keyboard and mouse lets go before the new holder's input lands.
+    for p in peers.values_mut() {
+        let Some(s) = &p.session else { continue };
+        if let Some(i) = &mut p.injector
+            && h.device_guests.take_release(s)
+        {
+            i.release_keyboard_mouse();
+        }
+    }
+    // Input first, for every peer: none waits for another peer's housekeeping
+    // (feedback, notices, cursor shapes, USB answers).
+    for (peer_id, p) in peers.iter_mut() {
+        let Some(s) = p.session.clone() else { continue };
+        if p.inputs.is_empty() || s.stopping() {
+            continue;
+        }
+        let is_ready = |p: &ControlPeer| match s.launch.nucleus {
+            Some(_) => p.coop.is_some(),
+            None => p.injector.is_some(),
+        };
+        if !is_ready(p) && !ensure_input_ready(h, control_wake, p, &s) {
+            continue;
+        }
+        if !is_ready(p) {
+            continue;
+        }
+        follow_session(h, p, &s);
+        if let Some(i) = &mut p.injector
+            && h.device_guests.take_release(&s)
+        {
+            i.release_keyboard_mouse();
+        }
+        apply_input(h, p, &s, menus, received);
+        injected.push(*peer_id);
+    }
+}
+
 /// The refused Steam Controller attributes to warn about: only the first per
 /// device, since a client that sends them malformed does so on every arrival.
 /// Other invalid input stays a debug line.

@@ -15,6 +15,58 @@ pub(in crate::stream) fn expire_controllers(h: &crate::state::Host, last: &mut I
     }
 }
 
+/// Cached control-loop settings read from `Host::config`, refreshed only when
+/// `config_version` moves or during post-input housekeeping so input wakes never block
+/// on `RwLock::read` before draining the UDP socket.
+pub(in crate::stream) struct ControlLoopConfig {
+    version: u64,
+    pub(in crate::stream) ping_timeout: Duration,
+    pub(in crate::stream) client_roaming: bool,
+}
+
+impl ControlLoopConfig {
+    pub(in crate::stream) fn load(h: &Shared) -> Self {
+        let version = h.config_version.load(Ordering::Acquire);
+        let c = h.config.read().unwrap();
+        Self {
+            version,
+            ping_timeout: crate::network::ping_timeout(&c),
+            client_roaming: c.client_roaming(),
+        }
+    }
+
+    /// Refreshes settings before `host.service()` only when `config_version` changed and
+    /// the config lock is uncontended, keeping input wakes lock-free.
+    pub(in crate::stream) fn refresh_on_version_change(&mut self, h: &Shared) -> bool {
+        let version = h.config_version.load(Ordering::Acquire);
+        if version == self.version {
+            return false;
+        }
+        let Ok(c) = h.config.try_read() else {
+            return false;
+        };
+        self.version = version;
+        self.ping_timeout = crate::network::ping_timeout(&c);
+        self.client_roaming = c.client_roaming();
+        true
+    }
+
+    /// Non-blocking refresh run in post-input housekeeping so direct config writes without
+    /// a `config_version` bump are picked up promptly without delaying input injection.
+    pub(in crate::stream) fn refresh_housekeeping(&mut self, h: &Shared) -> bool {
+        let Ok(c) = h.config.try_read() else {
+            return false;
+        };
+        self.version = h.config_version.load(Ordering::Acquire);
+        let ping_timeout = crate::network::ping_timeout(&c);
+        let client_roaming = c.client_roaming();
+        let changed = ping_timeout != self.ping_timeout || client_roaming != self.client_roaming;
+        self.ping_timeout = ping_timeout;
+        self.client_roaming = client_roaming;
+        changed
+    }
+}
+
 pub(in crate::stream) const CONTROL_EVENT_LIMIT: usize = 512;
 
 pub(in crate::stream) fn control_wait_timeout(remaining: Duration, events: usize) -> i32 {

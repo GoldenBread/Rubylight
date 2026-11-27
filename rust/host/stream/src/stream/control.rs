@@ -35,6 +35,7 @@ pub(super) use peer::{PeerConfig, ScaleLookup};
 pub(super) use socket::ControlSocket;
 #[cfg(test)]
 pub(super) use socket::{
-    CONTROL_EVENT_LIMIT, SWALLOWED_PER_RECEIVE, UNATTENDED_SWEEP, UnattendedSweep,
-    control_wait_timeout, end_unattended_sessions, expects_enet_control, expire_controllers,
+    CONTROL_EVENT_LIMIT, ControlLoopConfig, SWALLOWED_PER_RECEIVE, UNATTENDED_SWEEP,
+    UnattendedSweep, control_wait_timeout, end_unattended_sessions, expects_enet_control,
+    expire_controllers,
 };

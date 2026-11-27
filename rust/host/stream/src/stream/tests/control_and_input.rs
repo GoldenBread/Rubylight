@@ -626,3 +626,40 @@ fn control_seq_memory_preserves_sequence_and_replay_window_across_restarts() {
     let reset_b = memory.for_launch("launch-b", key_b);
     assert_eq!(reset_b.lock().unwrap().sequence, 0);
 }
+
+#[test]
+fn control_loop_config_cache_skips_config_lock_on_unchanged_version() {
+    use crate::state::test_support::Fixture;
+    use butterpollo_config::config::Config;
+
+    let f = Fixture::new();
+    let mut cached = crate::stream::control::ControlLoopConfig::load(&f.host);
+    let initial_timeout = cached.ping_timeout;
+    let initial_roaming = cached.client_roaming;
+
+    // Hold a write lock on config (simulating a console save); an unchanged config_version
+    // must not block or touch the RwLock before draining UDP input.
+    let mut writer = f.host.config.write().unwrap();
+    assert!(!cached.refresh_on_version_change(&f.host));
+    assert_eq!(cached.ping_timeout, initial_timeout);
+    assert_eq!(cached.client_roaming, initial_roaming);
+
+    // Modify config and bump config_version; while the write lock is still held,
+    // refresh_on_version_change returns false instead of blocking on the lock.
+    *writer = Config::parse("ping_timeout=15000\nclient_roaming=false\n").unwrap();
+    f.host.config_version.fetch_add(1, Ordering::Release);
+    assert!(!cached.refresh_on_version_change(&f.host));
+    drop(writer);
+
+    // Once uncontended, the version change refreshes both fields immediately.
+    assert!(cached.refresh_on_version_change(&f.host));
+    assert_eq!(cached.ping_timeout, Duration::from_millis(15000));
+    assert!(!cached.client_roaming);
+    // Subsequent unchanged wakes skip the lock again.
+    assert!(!cached.refresh_on_version_change(&f.host));
+
+    // Direct writes without a version bump are still picked up in post-input housekeeping.
+    *f.host.config.write().unwrap() = Config::parse("ping_timeout=22000\n").unwrap();
+    assert!(cached.refresh_housekeeping(&f.host));
+    assert_eq!(cached.ping_timeout, Duration::from_millis(22000));
+}
