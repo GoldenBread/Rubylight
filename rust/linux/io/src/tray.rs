@@ -329,7 +329,9 @@ pub fn open_web_page(port: u16, page: &str) -> Result<()> {
         bail!("not a console page: {page}");
     }
     let url = console_url(port, page);
-    let mut opener = std::process::Command::new("xdg-open")
+    let mut opener = std::process::Command::new("xdg-open");
+    crate::seat::for_desktop(&mut opener);
+    let mut opener = opener
         .arg(&url)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())

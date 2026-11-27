@@ -1,6 +1,7 @@
-//! The end of the user's session, heard by the host from systemd-logind: the PC shutting down
-//! or restarting (`PrepareForShutdown(true)`) and the user's own session being removed
-//! (`SessionRemoved`, a sign-out). Sleep is no end. The host's wait for it is the one
+//! The end of the host's run, heard from systemd-logind: the PC shutting down or restarting
+//! (`PrepareForShutdown(true)`). Sleep is no end, and neither is a sign-out: the host goes on
+//! with the login screen (`seat`), and where it does not run at boot (no linger), the user's
+//! service manager stops it with their last session. The host's wait for it is the one
 //! `Ending` is passed to; logind gives no word of critical endings, so `critical` and
 //! `close_app` stay false.
 
@@ -55,12 +56,6 @@ impl SessionEndWatch {
         let shutdown = manager
             .receive_signal("PrepareForShutdown")
             .context("subscribing to PrepareForShutdown")?;
-        let removed = manager
-            .receive_signal("SessionRemoved")
-            .context("subscribing to SessionRemoved")?;
-        let own = std::env::var("XDG_SESSION_ID")
-            .ok()
-            .filter(|id| !id.is_empty());
         let stopped = Arc::new(AtomicBool::new(false));
         let on_end: OnEnd = Arc::new(Mutex::new(Some(Box::new(on_end))));
         {
@@ -72,30 +67,6 @@ impl SessionEndWatch {
                     }
                     if logind::flag(&message) == Some(true) {
                         fire(&on_end, Ending::default());
-                    }
-                }
-            });
-        }
-        {
-            let stopped = stopped.clone();
-            std::thread::spawn(move || {
-                for message in removed {
-                    if stopped.load(Ordering::Relaxed) {
-                        break;
-                    }
-                    let id = message
-                        .body()
-                        .deserialize::<(String, zbus::zvariant::OwnedObjectPath)>()
-                        .ok()
-                        .map(|(id, _)| id);
-                    if id.is_some() && id == own {
-                        fire(
-                            &on_end,
-                            Ending {
-                                logoff: true,
-                                ..Ending::default()
-                            },
-                        );
                     }
                 }
             });

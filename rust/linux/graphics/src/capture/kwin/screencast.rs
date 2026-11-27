@@ -172,6 +172,24 @@ fn run(
     }
 }
 
+/// The desktop's Wayland display, which a host started at boot finds once the desktop has
+/// started ([`butterpollo_linux_io::seat::desktop_var`]).
+fn connect() -> Result<Connection> {
+    let name = butterpollo_linux_io::seat::desktop_var("WAYLAND_DISPLAY")
+        .context("the desktop is not on screen, or has no Wayland display")?;
+    let path = if name.starts_with('/') {
+        std::path::PathBuf::from(name)
+    } else {
+        std::path::PathBuf::from(
+            std::env::var_os("XDG_RUNTIME_DIR").context("XDG_RUNTIME_DIR is not set")?,
+        )
+        .join(name)
+    };
+    let socket = std::os::unix::net::UnixStream::connect(&path)
+        .with_context(|| format!("connecting to {}", path.display()))?;
+    Ok(Connection::from_socket(socket)?)
+}
+
 fn serve(
     wanted: &str,
     pointer: bool,
@@ -179,7 +197,7 @@ fn serve(
     shared: &Shared,
     tx: &mpsc::Sender<std::result::Result<u32, String>>,
 ) -> Result<()> {
-    let conn = Connection::connect_to_env().context("connecting to the Wayland display")?;
+    let conn = connect().context("connecting to the Wayland display")?;
     let (globals, mut queue) =
         registry_queue_init::<State>(&conn).context("reading the Wayland registry")?;
     let qh = queue.handle();

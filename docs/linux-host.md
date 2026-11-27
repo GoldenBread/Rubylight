@@ -9,14 +9,14 @@ Test PC: an RX 7800 XT on CachyOS, KDE Plasma 6.8 on Wayland, Mesa's VA-API, Pip
 | Area | On Linux |
 | --- | --- |
 | Codecs | H.264, HEVC and AV1 through VA-API; packed 4:4:4 (8-bit HEVC and AV1); PyroWave 4:2:0 and 4:4:4 on Vulkan; loss recovery by reference invalidation. |
-| What is streamed | A game in a gamescope session of its own, the user's desktop through the ScreenCast portal, and a virtual display for a desktop stream on KDE (Rubylight's VKMS pool). |
+| What is streamed | A game in a gamescope session of its own, the user's desktop through the ScreenCast portal, and a virtual display for a desktop stream on KDE (Rubylight's VKMS pool). Before the user signs in, or while another user's session is on screen, Desktop is the only app and shows the screen itself through Rubylight's KMS broker (`rubylight-kms.socket`, for the `rubylight` group), the login screen too, with its keyboard and mouse. |
 | Libraries | Steam, Heroic and Lutris games, with their covers (JPEG, WebP, PNG and BMP). The client's quit ends the game, and the stream ends when the game does. |
 | Input | Keyboard and mouse; Xbox 360 pads through `uinput`; DualSense, DualShock 4, Switch Pro, Steam Deck and Steam Controller through `uhid`, with rumble. |
 | Keyboard follows the focused text field | Through AT-SPI, the desktop's accessibility bus: the host turns accessibility on for the watch (and off after if it was off), hears the toolkits' focus events and gives the client the field's kind (text, password, number, email, URL, search, phone, multi-line) and, when asked, the text around the cursor, never a password's. Qt and GTK applications and browsers publish their fields; a game that draws its own text box does not. |
 | Native touch and pen | On the desktop, a virtual multitouch touchscreen (16 fingers) and a pen tablet with pressure, tilt, two barrel buttons and the eraser, both on `uinput` and tied to the streamed monitor through KWin (`outputName`). In a gamescope session, whose X server has no touch, the first finger and the pen move the pointer and hold its left button. Offered when `native_pen_touch` is on and the user can write `/dev/uinput`. |
 | Audio | Stereo from a PipeWire sink per stream (surround not yet streamed to a client); the client's microphone as a PipeWire source. AC3 and E-AC3 passthrough with FFmpeg 9 or 8, beside the host or the system's (`ffmpeg`). |
 | Around the stream | Clipboard, sleep inhibit and power actions (logind), Wake-on-LAN targets in `/serverinfo` and `/wake`, hardware metrics from `amdgpu`'s sysfs, the tray icon in Plasma's system tray with the Windows menu and notifications, the web console. |
-| Lifecycle | A systemd user unit, udev rules for input and the encoder clock, an Arch package. |
+| Lifecycle | A systemd user unit that starts with the user's service manager (at boot with `loginctl enable-linger`) and stays through sign-out, udev rules for input and the encoder clock, an Arch package. |
 
 ## Missing on Linux
 
@@ -55,3 +55,4 @@ Out of the Linux host's scope, as they rest on Windows or a vendor's Windows dri
 - Lutris games (not installed on the test PC).
 - Waking the PC with Wake-on-LAN (the NIC's own wake setting is not read; it needs `CAP_NET_ADMIN`).
 - Remote Monitor, and the controllers' buttons from Nightjar for Android (tested from the headless client).
+- A stream of the login screen. Its parts ran apart: the KMS capture on the test PC, the host started at boot, its app list and its input signing a user in at the login screen in a VM, which has no video encoder.

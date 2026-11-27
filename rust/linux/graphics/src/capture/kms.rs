@@ -44,6 +44,41 @@ const WAIT: Duration = Duration::from_millis(200);
 /// Surfaces kept for the compositor's buffers: a swapchain has two to four.
 const IMPORTED_LIMIT: usize = 16;
 
+/// How long a screen the compositor turned off has to light up once woken.
+const WAKE_WAIT: Duration = Duration::from_secs(4);
+
+/// The output to capture: `wanted`, or the first lit one, once it is lit. A screen turned off
+/// (the login screen does so after a minute) is woken first.
+fn lit(client: &Client, wanted: Option<&str>) -> Result<String> {
+    let find = || -> Result<Option<String>> {
+        let outputs = client.outputs()?;
+        Ok(match wanted {
+            Some(name) => outputs
+                .iter()
+                .any(|o| o.name == name)
+                .then(|| name.to_owned()),
+            None => outputs.into_iter().next().map(|o| o.name),
+        })
+    };
+    if let Some(found) = find()? {
+        return Ok(found);
+    }
+    if let Err(error) = butterpollo_linux_io::wake::wake_console("a dark screen to capture") {
+        tracing::warn!(error = %format!("{error:#}"), "the screen to capture could not be woken");
+    }
+    let deadline = Instant::now() + WAKE_WAIT;
+    while Instant::now() < deadline {
+        if let Some(found) = find()? {
+            return Ok(found);
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    match wanted {
+        Some(name) => bail!("{name} is not lit, even after waking the screen"),
+        None => bail!("no display is lit to capture, even after waking the screen"),
+    }
+}
+
 /// `kms` → `Some(None)`, `kms:DP-1` → `Some(Some("DP-1"))`, anything else `None`.
 pub fn parse(target: &str) -> Option<Option<&str>> {
     let rest = target.strip_prefix(TARGET)?;
@@ -132,17 +167,7 @@ impl KmsCapture {
     /// for `None`).
     pub fn open(output: Option<&str>, va: &Arc<Va>, picture: Picture) -> Result<Self> {
         let client = Client::connect(Path::new(protocol::SOCKET))?;
-        let output = match output {
-            Some(name) => name.to_owned(),
-            None => {
-                client
-                    .outputs()?
-                    .into_iter()
-                    .next()
-                    .context("no display is lit to capture")?
-                    .name
-            }
-        };
+        let output = lit(&client, output)?;
         let shared = Arc::new(Shared {
             latest: Mutex::new(None),
             ended: Mutex::new(None),

@@ -1,18 +1,19 @@
-# Rubylight's host for the user signed in at the PC: it captures that user's session (the
-# desktop through the portal, games inside a gamescope of their own), so it runs as a user
-# unit in their graphical session and is not a system service.
+# Rubylight's host for one user: it streams their desktop while it is on the PC's screen (the
+# desktop through the portal, games inside a gamescope of their own), and otherwise the screen
+# itself through the KMS broker (rubylight-kms.socket): the login screen, or another user's
+# session, with Desktop the only app. It is a user unit, started with the user's service
+# manager: at boot with linger, else at their first sign-in (an SSH one too). It finds the
+# desktop's display in the user manager once the desktop has started, and goes on when they
+# sign out; without linger the user manager stops it with their last session.
 #   systemctl --user enable --now rubylight.service
+#   loginctl enable-linger            (to stream the login screen after boot)
 # Its profile (settings, pairings, logs) is ~/.config/rubylight. The web console is on
 # https://localhost:47990 (the port is `port` + 1 in sunshine.conf; the default `port` is 47989).
 [Unit]
 Description=Rubylight game-streaming host
 Documentation=https://github.com/RamazanKara/Rubylight
-After=graphical-session.target pipewire.service
+After=pipewire.service
 Wants=pipewire.service
-PartOf=graphical-session.target
-# Without a display the host would stream nothing.
-ConditionEnvironment=|WAYLAND_DISPLAY
-ConditionEnvironment=|DISPLAY
 
 [Service]
 Type=simple
@@ -30,4 +31,4 @@ TimeoutStopSec=25
 KillMode=mixed
 
 [Install]
-WantedBy=graphical-session.target
+WantedBy=default.target

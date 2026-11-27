@@ -2,8 +2,8 @@ post_install() {
     echo "==> Rubylight is installed."
     echo "    Enable the host for your user (run as yourself, not root):"
     echo "      systemctl --user enable --now rubylight.service"
-    echo "    The service needs your graphical session's WAYLAND_DISPLAY or DISPLAY in the user"
-    echo "    manager: KDE, GNOME and Hyprland's uwsm import them; otherwise run"
+    echo "    It starts with your user's service manager and finds your desktop's display there"
+    echo "    once the desktop starts: KDE, GNOME and Hyprland's uwsm put it there; otherwise run"
     echo "      systemctl --user import-environment WAYLAND_DISPLAY DISPLAY"
     echo "    The web console is at https://localhost:47990 (create the sign-in on first visit)."
     echo "    Open TCP 47984, 47989, 47990, 48010 and UDP 47998-48000, 48002, 48010 for Moonlight clients."
@@ -20,6 +20,8 @@ post_install() {
     echo "    before anyone signs in; whoever may use it sees the screen, so only the rubylight"
     echo "    group may:"
     echo "      systemctl enable --now rubylight-kms.socket && usermod -aG rubylight USER"
+    echo "    and so that the host starts at boot, before you sign in (as yourself):"
+    echo "      loginctl enable-linger"
     systemd-sysusers rubylight-vdisplay.conf rubylight.conf >/dev/null 2>&1 || true
     systemctl daemon-reload >/dev/null 2>&1 || true
     udevadm control --reload 2>/dev/null || true
@@ -30,6 +32,8 @@ post_install() {
 post_upgrade() {
     post_install
     echo "==> Restart the host to run the new version: systemctl --user restart rubylight.service"
+    echo "    The host now starts with your service manager rather than your desktop; move it once:"
+    echo "      systemctl --user reenable rubylight.service"
 }
 
 post_remove() {

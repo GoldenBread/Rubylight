@@ -58,10 +58,10 @@ pub struct ScreenCast {
     pub token_offered: bool,
 }
 
-/// Whether a desktop session with a portal may be there: a Wayland (or X) display and a
-/// session bus. It does not ask the portal.
+/// Whether a desktop session with a portal may be there: the user's desktop on screen
+/// ([`crate::seat::own_desktop_shown`]) and a session bus. It does not ask the portal.
 pub fn desktop_session_present() -> bool {
-    (std::env::var_os("WAYLAND_DISPLAY").is_some() || std::env::var_os("DISPLAY").is_some())
+    crate::seat::own_desktop_shown()
         && (std::env::var_os("DBUS_SESSION_BUS_ADDRESS").is_some()
             || std::env::var_os("XDG_RUNTIME_DIR")
                 .is_some_and(|dir| std::path::Path::new(&dir).join("bus").exists()))

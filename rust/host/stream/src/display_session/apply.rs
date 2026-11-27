@@ -81,6 +81,49 @@ pub(crate) fn hold_off_wake_watch() -> display_arrangement::WakeWatchOff {
 const GAMESCOPE_TARGET: &str = "gamescope";
 /// The capture target of the user's own desktop on Linux, through the desktop portal.
 const DESKTOP_TARGET: &str = "desktop";
+/// The capture target of whatever the PC's screen shows on Linux, the login screen too,
+/// through Rubylight's KMS broker.
+const SCREEN_TARGET: &str = "kms";
+
+/// Whether the user's own desktop is on the PC's screen. Always on Windows, which does not ask.
+pub(crate) fn own_desktop_shown() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        butterpollo_win_io::seat::own_desktop_shown()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        true
+    }
+}
+
+/// Whether an app shows on Linux while the user's desktop is not on screen: the desktop app,
+/// which shows the screen. An imported game's launcher runs in the user's session.
+pub(crate) fn shown_at_login_screen(app: &butterpollo_session::state::App) -> bool {
+    app.cmd.trim().is_empty()
+}
+
+/// Whether an app streams the user's desktop on Linux rather than a gamescope session of its
+/// own: the desktop app (no command), or a game imported from a library, whose launcher (Steam,
+/// Heroic, Lutris) runs on the user's desktop and starts it there (`library::launch`).
+pub(crate) fn streams_desktop(app: &butterpollo_session::state::App) -> bool {
+    let imported = app
+        .extra
+        .get("launcher-command")
+        .and_then(serde_json::Value::as_str);
+    app.cmd.trim().is_empty() || imported == Some(app.cmd.as_str())
+}
+
+/// What a Linux desktop stream captures: the desktop through the portal while the user's own
+/// desktop is on screen, the screen through the KMS broker otherwise (the login screen,
+/// another user's session).
+fn desktop_target(own_desktop: bool) -> &'static str {
+    if own_desktop {
+        DESKTOP_TARGET
+    } else {
+        SCREEN_TARGET
+    }
+}
 
 /// Prepare a stream's display. While Windows shows the lock or sign-in
 /// screen it allows display configuration only from that screen's desktop,
@@ -109,21 +152,25 @@ pub fn prepare_stream(
     }
     // Otherwise, on Linux, an app with a command draws into its own gamescope session
     // (`os_ext::game_command`), which the capture finds by itself once the game has started.
-    // The desktop app, and a game imported from a library, whose launcher (Steam, Heroic,
-    // Lutris) runs on the user's desktop and starts it there (`library::launch`), stream the
-    // desktop. No display of the system is prepared or changed either way.
+    // The desktop app and a game imported from a library stream the desktop
+    // ([`streams_desktop`]). No display of the system is prepared or changed either way.
     if cfg!(target_os = "linux") {
-        let desktop = crate::stream::launch_app(h, launch).is_none_or(|app| {
-            let imported = app
-                .extra
-                .get("launcher-command")
-                .and_then(serde_json::Value::as_str);
-            app.cmd.trim().is_empty() || imported == Some(app.cmd.as_str())
-        });
+        let app = crate::stream::launch_app(h, launch);
+        let desktop = app.as_ref().is_none_or(streams_desktop);
+        // Until the user signs in at the PC (or while another user's session is on screen) the
+        // host can show only the screen itself: a game would start in a session no one sees.
+        let own_desktop = own_desktop_shown();
+        if !own_desktop && !app.as_ref().is_none_or(shown_at_login_screen) {
+            anyhow::bail!(
+                "Sign in at the PC first: until then only Desktop streams, and it shows the login screen."
+            );
+        }
         // A desktop stream shows a virtual display of its own where one is asked for and the
         // PC has one: a monitor at the device's mode that KWin captures by name.
         #[cfg(target_os = "linux")]
-        if desktop && let Some(private) = super::linux_private::prepare(h, launch, stream, config)?
+        if desktop
+            && own_desktop
+            && let Some(private) = super::linux_private::prepare(h, launch, stream, config)?
         {
             let target = private.target.clone();
             tracing::info!(target = %target, "streaming a virtual display on Linux");
@@ -138,17 +185,31 @@ pub fn prepare_stream(
             );
         }
         let target = if desktop {
-            DESKTOP_TARGET
+            desktop_target(own_desktop)
         } else {
             GAMESCOPE_TARGET
         };
         tracing::info!(target, "streaming on Linux");
+        // A desktop stream whose desktop leaves the screen (a sign-out, another user) goes on
+        // with the screen. One on the screen stays there once the user signs in, as the screen
+        // shows their desktop too: the portal could ask for a permission no one sees.
+        let mut current = target;
+        let follow: Box<dyn FnMut() -> Result<String> + Send> = if desktop {
+            Box::new(move || {
+                if current == DESKTOP_TARGET && !own_desktop_shown() {
+                    current = SCREEN_TARGET;
+                }
+                Ok(current.into())
+            })
+        } else {
+            Box::new(move || Ok(target.into()))
+        };
         return Ready::window(
             h,
             stream,
             config,
             target.into(),
-            Box::new(move || Ok(target.into())),
+            follow,
             launch.warnings.clone(),
         );
     }

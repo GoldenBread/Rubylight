@@ -37,9 +37,9 @@ const UI_GET_SYSNAME: libc::c_ulong = ioc(2, 44, 64);
 
 pub(super) const EV_SYN: u16 = 0;
 pub(super) const EV_KEY: u16 = 1;
-const EV_REL: u16 = 2;
+pub(super) const EV_REL: u16 = 2;
 pub(super) const EV_ABS: u16 = 3;
-const REL_X: u16 = 0;
+pub(super) const REL_X: u16 = 0;
 const REL_Y: u16 = 1;
 const REL_HWHEEL: u16 = 6;
 const REL_WHEEL: u16 = 8;

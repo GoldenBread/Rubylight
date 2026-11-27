@@ -52,8 +52,15 @@ fn seconds(milliseconds: u64) -> u32 {
 /// Wakes the desktop's display: a simulated user activity, which KDE and others answer on
 /// `org.freedesktop.ScreenSaver`, and logind's idle hint cleared for the session. Succeeds
 /// when either took, and is a no-op while a gamescope session of this host runs, which has no
-/// physical display.
+/// physical display. While the user's desktop is not on screen (the login screen, another
+/// user's session) the pointer moves instead ([`crate::input::nudge_pointer`]).
 pub(super) fn wake_console(reason: &str) -> Result<()> {
+    // The login screen, or another user's session: only input reaches it.
+    if !crate::seat::own_desktop_shown() {
+        crate::input::nudge_pointer()?;
+        tracing::info!(reason, "moved the pointer to wake the PC's screen");
+        return Ok(());
+    }
     if crate::gamescope::current().is_some() {
         tracing::debug!(
             reason,

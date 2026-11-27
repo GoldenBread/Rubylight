@@ -36,6 +36,7 @@ pub mod portal;
 pub mod power;
 pub mod process;
 pub mod rtss;
+pub mod seat;
 pub mod service;
 pub mod session_end;
 pub mod shared_folder;

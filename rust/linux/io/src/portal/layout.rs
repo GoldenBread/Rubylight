@@ -71,10 +71,14 @@ pub fn monitors() -> Vec<(String, Rect)> {
 fn from_kscreen() -> Option<Vec<(String, Rect)>> {
     // With no display to ask (the login screen, before anyone signs in), kscreen-doctor aborts
     // and leaves a core dump each time.
-    if std::env::var_os("WAYLAND_DISPLAY").is_none() && std::env::var_os("DISPLAY").is_none() {
+    if crate::seat::desktop_var("WAYLAND_DISPLAY").is_none()
+        && crate::seat::desktop_var("DISPLAY").is_none()
+    {
         return None;
     }
-    let output = Command::new("kscreen-doctor").arg("-j").output().ok()?;
+    let mut command = Command::new("kscreen-doctor");
+    crate::seat::for_desktop(&mut command);
+    let output = command.arg("-j").output().ok()?;
     if !output.status.success() {
         return None;
     }

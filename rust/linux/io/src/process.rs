@@ -511,6 +511,8 @@ fn start(
 ) -> Result<Child> {
     use std::os::unix::process::CommandExt;
     check_target(target)?;
+    // The host may have started at boot, before the desktop it starts programs on.
+    crate::seat::for_desktop(&mut command);
     for (key, value) in extras {
         if key.is_empty() || key.contains(['=', '\0']) || value.contains('\0') {
             bail!("invalid process environment variable");

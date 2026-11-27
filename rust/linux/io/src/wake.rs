@@ -199,8 +199,8 @@ pub fn should_wake(idle_seconds: u32) -> bool {
     idle_seconds >= WAKE_IDLE_SECONDS
 }
 
-/// Wake an off console display: simulated user activity on the desktop, nothing for a headless
-/// gamescope session.
+/// Wake an off console display: simulated user activity on the desktop, a pointer move at the
+/// login screen, nothing for a headless gamescope session.
 pub fn wake_console(reason: &str) -> Result<()> {
     display::wake_console(reason)
 }

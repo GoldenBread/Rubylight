@@ -31,8 +31,8 @@ mod turn;
 mod virtual_dd;
 mod window_target;
 
-pub(crate) use apply::hold_off_wake_watch;
 pub use apply::{displays_settling, prepare_stream};
+pub(crate) use apply::{hold_off_wake_watch, own_desktop_shown, shown_at_login_screen};
 use baseline::GoldenLease;
 pub use lifecycle::{Ready, StreamPreparation, retime};
 use mode_report::ModeReport;

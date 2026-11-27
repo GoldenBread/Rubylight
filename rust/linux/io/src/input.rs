@@ -77,6 +77,22 @@ fn uinput_writable() -> bool {
     unsafe { libc::access(c"/dev/uinput".as_ptr(), libc::W_OK) == 0 }
 }
 
+/// Moves the pointer a pixel and back with a mouse of the host's own, made for this and gone
+/// after: input wakes a screen the compositor turned off, the login screen's too, which no
+/// session bus of this user reaches. Takes about a second, as the compositor needs a moment to
+/// take a new device in.
+pub fn nudge_pointer() -> Result<()> {
+    use evdev_desktop::{EV_REL, REL_X};
+    let mut devices = evdev_desktop::Devices::create()?;
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    for dx in [1, -1] {
+        devices.mouse.queue(EV_REL, REL_X, dx);
+        devices.mouse.flush()?;
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    Ok(())
+}
+
 /// How absolute input finds where it lands: the desktop rectangle of a streamed window's
 /// captured area, as `[left, top, right, bottom]`, and the display name of a display given
 /// by its device id.

@@ -23,13 +23,14 @@ const TIMEOUT: Duration = Duration::from_secs(5);
 /// How long a write waits for its own change to show in the count.
 const SETTLE: Duration = Duration::from_millis(300);
 
-/// The Wayland socket of the user's desktop: `WAYLAND_DISPLAY`, else the first `wayland-N`
-/// socket in the runtime folder (a service started outside the session).
+/// The Wayland socket of the user's desktop: its `WAYLAND_DISPLAY` ([`crate::seat::desktop_var`]),
+/// else the first `wayland-N` socket in the runtime folder (a service started outside the
+/// session). None while the desktop is not on screen.
 pub(super) fn desktop_socket() -> Option<String> {
-    if let Some(name) = std::env::var("WAYLAND_DISPLAY")
-        .ok()
-        .filter(|name| !name.is_empty())
-    {
+    if !crate::seat::own_desktop_shown() {
+        return None;
+    }
+    if let Some(name) = crate::seat::desktop_var("WAYLAND_DISPLAY") {
         return Some(name);
     }
     let folder = PathBuf::from(std::env::var_os("XDG_RUNTIME_DIR")?);

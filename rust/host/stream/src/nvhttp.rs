@@ -390,14 +390,23 @@ async fn applist(
     h.wait_for_startup_codecs(STARTUP_CODEC_WAIT).await;
     // ApolloSync or MoonDeckBuddy may have changed apps.json since the last list.
     h.reload_apps();
-    let apps = h.apps.read().unwrap().clone();
+    let mut apps = h.apps.read().unwrap().clone();
     let config = h.config.read().unwrap().clone();
+    // While the PC shows its login screen or another user's session (Linux), only Desktop
+    // streams: it shows that screen, and nothing else would start where anyone sees it.
+    let login_screen = tokio::task::spawn_blocking(|| !crate::display_session::own_desktop_shown())
+        .await
+        .unwrap_or(false);
+    if login_screen {
+        apps.retain(crate::display_session::shown_at_login_screen);
+    }
     // The co-op entries follow the user's apps; reading Nucleus Co-op's
     // handlers and games touches files.
     let coop = {
         let (h, apps) = (h.clone(), apps.clone());
         let configured = crate::nucleus::configured(&config);
         match tokio::task::spawn_blocking(move || h.nucleus.entries(&apps, &configured)).await {
+            Ok(_) if login_screen => Vec::new(),
             Ok(coop) => coop,
             // The user's apps still list; only the co-op entries are missing.
             Err(error) => {
