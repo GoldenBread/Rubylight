@@ -303,8 +303,8 @@ async function shoot(browser, base, name, { width, height: frame, scale, file })
     try { localStorage.setItem('butterpollo.theme', 'dark'); } catch { /* the console falls back to system */ }
   });
   const page = await context.newPage();
-  // Vite compiles a page's modules on first use, which can take a while.
-  page.setDefaultTimeout(30000);
+  // Vite compiles a page's modules on first use, which can take a while under parallel build load.
+  page.setDefaultTimeout(90000);
   const errors = [];
   page.on('pageerror', (error) => errors.push(error.message));
   const reply = answer(scene);

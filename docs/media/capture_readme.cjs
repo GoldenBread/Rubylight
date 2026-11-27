@@ -190,8 +190,8 @@ async function open(browser, base, { width, height, scale, theme }, state) {
     try { localStorage.setItem('butterpollo.theme', value); } catch { /* the console falls back to system */ }
   }, theme);
   const page = await context.newPage();
-  // Vite compiles a page's modules on first use, which can take a while.
-  page.setDefaultTimeout(30000);
+  // Vite compiles a page's modules on first use, which can take a while under parallel build load.
+  page.setDefaultTimeout(90000);
   const errors = [];
   page.on('pageerror', (error) => errors.push(process.env.TOUR_DEBUG ? error.stack : error.message));
   const reply = answer(state);
