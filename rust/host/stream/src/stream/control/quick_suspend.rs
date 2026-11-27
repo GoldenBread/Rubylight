@@ -5,10 +5,12 @@
 //!
 //! A peer has at most one worker at a time. What it asks meanwhile waits,
 //! folded into one next request: queries join it, the latest Suspend or Resume
-//! decides what it does, and every request it folded in is answered with the
-//! state it leaves. A device that repeats its query while a suspend holds the
-//! tracker so waits on one thread, not one each. However many queries wait, a
-//! Suspend or Resume is always answered.
+//! decides what it does, and up to [`MAX_WAITING`] requests it folded in are
+//! answered with the state it leaves. A device that repeats its query while a
+//! suspend holds the tracker so waits on one thread, not one each. However many
+//! queries wait, the latest Suspend or Resume is always answered; a query past
+//! the cap, or an action a later one overrode there, learns the outcome from
+//! the answers its device is sent anyway.
 
 use super::super::*;
 use super::peer::ControlPeer;
