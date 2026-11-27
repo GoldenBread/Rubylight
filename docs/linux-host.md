@@ -10,7 +10,7 @@ Test PC: an RX 7800 XT on CachyOS, KDE Plasma 6.8 on Wayland, Mesa's VA-API, Pip
 | --- | --- |
 | Codecs | H.264, HEVC and AV1 through VA-API; packed 4:4:4 (8-bit HEVC and AV1); PyroWave 4:2:0 and 4:4:4 on Vulkan; loss recovery by reference invalidation. |
 | What is streamed | A game in a gamescope session of its own, the user's desktop through the ScreenCast portal, and a virtual display for a desktop stream on KDE (Rubylight's VKMS pool). |
-| Libraries | Steam, Heroic and Lutris games, with their covers (JPEG, PNG and BMP). The client's quit ends the game, and the stream ends when the game does. |
+| Libraries | Steam, Heroic and Lutris games, with their covers (JPEG, WebP, PNG and BMP). The client's quit ends the game, and the stream ends when the game does. |
 | Input | Keyboard and mouse; Xbox 360 pads through `uinput`; DualSense, DualShock 4, Switch Pro, Steam Deck and Steam Controller through `uhid`, with rumble. |
 | Keyboard follows the focused text field | Through AT-SPI, the desktop's accessibility bus: the host turns accessibility on for the watch (and off after if it was off), hears the toolkits' focus events and gives the client the field's kind (text, password, number, email, URL, search, phone, multi-line) and, when asked, the text around the cursor, never a password's. Qt and GTK applications and browsers publish their fields; a game that draws its own text box does not. |
 | Native touch and pen | On the desktop, a virtual multitouch touchscreen (16 fingers) and a pen tablet with pressure, tilt, two barrel buttons and the eraser, both on `uinput` and tied to the streamed monitor through KWin (`outputName`). In a gamescope session, whose X server has no touch, the first finger and the pen move the pointer and hold its left button. Offered when `native_pen_touch` is on and the user can write `/dev/uinput`. |
@@ -35,7 +35,6 @@ Each of these could come to Linux; the reason says what stands in the way.
 | Window capture | Not built (`rust/linux/graphics/src/capture.rs`). |
 | Per-application audio routing | Not built: no program's sound can be moved to another device (`rust/linux/io/src/audio_app_route.rs`). |
 | Switch 2 Pro Controller | The kernel has no driver for it; it becomes a Switch Pro Controller, with a warning. |
-| WebP covers | Not decoded; no cover in this PC's Steam cache is WebP. |
 | GNOME, wlroots and X11 desktops | Not built or not run. A gamescope session works without the desktop's help; the desktop, virtual display and KWin capture are KDE Plasma's. |
 | NVIDIA and Intel GPUs | Not built or not run: the encoder is Mesa's VA-API, run on AMD only. |
 | Updates | The updater is off on Linux and says why; the package manager updates the host. Nightjar does not offer a Linux host the Windows release. |

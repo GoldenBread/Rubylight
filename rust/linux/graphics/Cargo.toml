@@ -21,6 +21,7 @@ ash = { version = "0.38", default-features = false, features = ["std", "loaded"]
 libc = "0.2"
 png = "0.18"
 zune-jpeg = "0.5"
+image-webp = "0.2"
 pipewire = "0.10"
 wayland-client = "0.31"
 wayland-protocols-plasma = { version = "0.3", features = ["client"] }

@@ -1,6 +1,7 @@
-//! Cover images, written as PNG for Moonlight. On Linux the size of a PNG, JPEG or BMP is read from its header, a PNG is taken as it is, and a JPEG (Steam's covers) and an uncompressed BMP are rewritten as PNG; decoding WebP or any other format is not available yet.
+//! Cover images, written as PNG for Moonlight. On Linux the size of a PNG, JPEG, WebP or BMP is read from its header, a PNG is taken as it is, and a JPEG (Steam's covers), a WebP (its first frame when animated) and an uncompressed BMP are rewritten as PNG; decoding any other format is not available yet.
 
 use anyhow::{Context, Result, bail, ensure};
+use image_webp::WebPDecoder;
 use std::path::Path;
 use zune_jpeg::JpegDecoder;
 use zune_jpeg::zune_core::{colorspace::ColorSpace, options::DecoderOptions};
@@ -114,14 +115,42 @@ fn jpeg_to_png(bytes: &[u8]) -> Result<((u32, u32), Vec<u8>)> {
         other => bail!("the JPEG decodes to {other:?}, not RGB or grey"),
     };
     let (width, height) = (width as u32, height as u32);
+    Ok(((width, height), write_png(width, height, color, &pixels)?))
+}
+
+/// A WebP decoded with `image-webp` (its first frame when animated) and written as an 8-bit
+/// RGB PNG, or RGBA when it has transparency.
+fn webp_to_png(bytes: &[u8]) -> Result<((u32, u32), Vec<u8>)> {
+    let mut decoder = WebPDecoder::new(std::io::Cursor::new(bytes))?;
+    let (width, height) = decoder.dimensions();
+    ensure!(
+        width > 0 && height > 0 && width <= LARGEST_SIDE && height <= LARGEST_SIDE,
+        "the WebP is {width}x{height}, not a picture's size"
+    );
+    let size = decoder
+        .output_buffer_size()
+        .context("the WebP is too large to decode")?;
+    decoder.set_memory_limit(size.saturating_add(1 << 20));
+    let mut pixels = vec![0; size];
+    decoder.read_image(&mut pixels)?;
+    let color = if decoder.has_alpha() {
+        png::ColorType::Rgba
+    } else {
+        png::ColorType::Rgb
+    };
+    Ok(((width, height), write_png(width, height, color, &pixels)?))
+}
+
+/// 8-bit pixels of `color` as a PNG.
+fn write_png(width: u32, height: u32, color: png::ColorType, pixels: &[u8]) -> Result<Vec<u8>> {
     let mut png = Vec::with_capacity(pixels.len() / 2);
     let mut encoder = png::Encoder::new(&mut png, width, height);
     encoder.set_color(color);
     encoder.set_depth(png::BitDepth::Eight);
     let mut writer = encoder.write_header()?;
-    writer.write_image_data(&pixels)?;
+    writer.write_image_data(pixels)?;
     writer.finish()?;
-    Ok(((width, height), png))
+    Ok(png)
 }
 
 /// An uncompressed bitmap's layout: where its rows are and how to read them.
@@ -171,6 +200,7 @@ fn bitmap(bytes: &[u8]) -> Result<Bitmap> {
 enum Format {
     Png,
     Jpeg,
+    WebP,
     Bmp,
     Other,
 }
@@ -179,6 +209,8 @@ fn format(bytes: &[u8]) -> Format {
         Format::Png
     } else if bytes.starts_with(&[0xFF, 0xD8]) {
         Format::Jpeg
+    } else if bytes.starts_with(b"RIFF") && bytes.get(8..12) == Some(b"WEBP") {
+        Format::WebP
     } else if bytes.starts_with(b"BM") {
         Format::Bmp
     } else {
@@ -186,12 +218,15 @@ fn format(bytes: &[u8]) -> Format {
     }
 }
 
-/// An image's width and height, read from the header of a PNG, JPEG or BMP file.
+/// An image's width and height, read from the header of a PNG, JPEG, WebP or BMP file.
 pub fn dimensions(path: &Path) -> Result<(u32, u32)> {
     let bytes = read(path)?;
     match format(&bytes) {
         Format::Png => png_size(&bytes),
         Format::Jpeg => jpeg_size(&bytes),
+        Format::WebP => WebPDecoder::new(std::io::Cursor::new(&bytes[..]))
+            .map(|decoder| decoder.dimensions())
+            .map_err(Into::into),
         Format::Bmp => bitmap(&bytes).map(|bitmap| (bitmap.width, bitmap.height)),
         Format::Other => Err(crate::unsupported("Reading this image format")),
     }
@@ -199,8 +234,8 @@ pub fn dimensions(path: &Path) -> Result<(u32, u32)> {
 }
 
 /// Write `source` to `destination` as a PNG, replacing it only once the new file is
-/// complete. A PNG is copied once its chunks check out, and a JPEG or an uncompressed BMP is
-/// encoded; any other format is an error, since Linux has no decoder for it yet.
+/// complete. A PNG is copied once its chunks check out, and a JPEG, a WebP or an uncompressed
+/// BMP is encoded; any other format is an error, since Linux has no decoder for it yet.
 pub fn to_png(source: &Path, destination: &Path) -> Result<(u32, u32)> {
     let bytes = read(source)?;
     let (size, png) = (|| match format(&bytes) {
@@ -214,6 +249,7 @@ pub fn to_png(source: &Path, destination: &Path) -> Result<(u32, u32)> {
             Ok(((bitmap.width, bitmap.height), Some(encode(&bitmap, &bytes))))
         }
         Format::Jpeg => jpeg_to_png(&bytes).map(|(size, png)| (size, Some(png))),
+        Format::WebP => webp_to_png(&bytes).map(|(size, png)| (size, Some(png))),
         Format::Other => Err(crate::unsupported("Converting this image format to PNG")),
     })()
     .with_context(|| format!("decoding {}", source.display()))?;
@@ -439,6 +475,36 @@ mod tests {
         assert_eq!(to_png(&grey, &grey_png).unwrap(), (30, 20));
         let value = pixel(&grey_png, 15, 10);
         assert!(near(value.clone(), [128; 3]), "{value:?}");
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    #[test]
+    fn a_webp_cover_becomes_a_png_of_the_same_picture() {
+        let folder = folder("webp");
+        let (source, png) = (folder.join("cover.webp"), folder.join("covers/cover.png"));
+        // Lossy, 60x90, red above and blue below.
+        std::fs::write(&source, include_bytes!("image_fixtures/cover.webp")).unwrap();
+        assert_eq!(dimensions(&source).unwrap(), (60, 90));
+        assert_eq!(to_png(&source, &png).unwrap(), (60, 90));
+        check_png(&std::fs::read(&png).unwrap()).unwrap();
+        let near = |got: Vec<u8>, want: &[u8]| {
+            got.len() == want.len() && got.iter().zip(want).all(|(g, w)| g.abs_diff(*w) <= 10)
+        };
+        assert!(near(pixel(&png, 30, 10), &[220, 30, 30]));
+        assert!(near(pixel(&png, 30, 80), &[30, 30, 220]));
+        // Lossless with transparency: green above, clear below, kept as RGBA.
+        let (alpha, alpha_png) = (folder.join("alpha.webp"), folder.join("alpha.png"));
+        std::fs::write(&alpha, include_bytes!("image_fixtures/alpha.webp")).unwrap();
+        assert_eq!(to_png(&alpha, &alpha_png).unwrap(), (20, 30));
+        assert_eq!(pixel(&alpha_png, 5, 5), vec![10, 200, 10, 255]);
+        assert_eq!(pixel(&alpha_png, 5, 25)[3], 0);
+        // A WebP cut short is refused and leaves nothing.
+        let mut cut = include_bytes!("image_fixtures/cover.webp").to_vec();
+        cut.truncate(cut.len() / 2);
+        let (broken, out) = (folder.join("broken.webp"), folder.join("broken.png"));
+        std::fs::write(&broken, cut).unwrap();
+        assert!(to_png(&broken, &out).is_err());
+        assert!(!out.exists());
         let _ = std::fs::remove_dir_all(&folder);
     }
 
