@@ -257,7 +257,7 @@ async fn connection(
                         launch.warnings.set("input_touch_pen", if cfg!(windows) {
                             "Native touch and pen unavailable: Windows does not expose synthetic pointer input. The client may emulate a mouse instead; update Windows or disable native touch/pen in Input settings."
                         } else {
-                            "Native touch and pen are not available on a Linux host yet. The client may emulate a mouse instead, or turn native touch/pen off in Input settings."
+                            "Native touch and pen unavailable: this user cannot write /dev/uinput. Install the package's 72-rubylight-input.rules udev rule and sign in again; the client may emulate a mouse meanwhile."
                         });
                     }
                     // Video encryption is offered unless turned off for this

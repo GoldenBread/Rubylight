@@ -4,8 +4,9 @@
 //! hid-playstation, a Switch Pro Controller on hid-nintendo, a Steam Deck and a Steam
 //! Controller on hid-steam), each with motion, touchpad and battery where the controller has
 //! them and with rumble, lights and trigger effects back to the client. `pad_choice` picks the
-//! pad as Windows does. Touch, pen and a tablet's touchpad are not injected yet, so the host
-//! offers clients none of them. The event and report types are the same as on Windows.
+//! pad as Windows does. Native touch and pen go to a virtual touchscreen and pen on the
+//! desktop (`touch_pen`), and move the pointer in a gamescope session; a tablet's touchpad is
+//! not injected yet. The event and report types are the same as on Windows.
 use anyhow::Result;
 use butterpollo_input_policy::input::Input as Event;
 use std::{sync::Arc, time::Instant};
@@ -26,6 +27,7 @@ mod pad_choice;
 mod pad_tests;
 #[cfg(test)]
 mod tests;
+mod touch_pen;
 mod uhid;
 mod uhid_pad;
 #[cfg(test)]
@@ -43,12 +45,20 @@ pub use gamepad_thread::{GamepadThread, PadReport};
 pub use usbip_pad::UsbipDriver;
 
 /// The input feature flags the host offers a client: native pen and touch (1), controller
-/// touch (2), touchpad events (0x10) and touchpad frames (0x20). On Linux only controller
-/// touch, which the virtual DualSense takes (a DualSense has one touch surface, a client's
-/// second touchpad goes on its right half), when `/dev/uhid` can be written and the `gamepad`
-/// setting does not force an Xbox pad. Pen, touch and tablet touchpads cannot be injected yet.
+/// touch (2), touchpad events (0x10) and touchpad frames (0x20). On Linux native pen and touch
+/// when the `mouse` and `native_pen_touch` settings are on and `/dev/uinput` can be written
+/// (the desktop's touchscreen and pen are made there; a gamescope session gets them as the
+/// pointer), and controller touch, which the virtual DualSense takes (a DualSense has one touch
+/// surface, a client's second touchpad goes on its right half), when `/dev/uhid` can be written
+/// and the `gamepad` setting does not force an Xbox pad. Tablet touchpads cannot be injected yet.
 pub fn capabilities(config: &butterpollo_config::config::Config) -> u32 {
     let mut flags = 0;
+    if config.boolean("mouse", true)
+        && config.boolean("native_pen_touch", true)
+        && uinput_writable()
+    {
+        flags |= 1;
+    }
     if config.boolean("controller", true)
         && !matches!(
             config.get("gamepad", "auto"),
@@ -59,6 +69,12 @@ pub fn capabilities(config: &butterpollo_config::config::Config) -> u32 {
         flags |= 2;
     }
     flags
+}
+
+/// Whether this user may write `/dev/uinput`, where the desktop's touchscreen and pen are made.
+fn uinput_writable() -> bool {
+    // SAFETY: a NUL-terminated path, read only by the call.
+    unsafe { libc::access(c"/dev/uinput".as_ptr(), libc::W_OK) == 0 }
 }
 
 /// How absolute input finds where it lands: the desktop rectangle of a streamed window's
@@ -78,7 +94,8 @@ pub fn set_rect_hooks(hooks: RectHooks) {
 
 /// One stream's keyboard, mouse and controller input. Keys and the mouse go into the game's
 /// gamescope session through XTEST, connected when a session runs; controllers are virtual
-/// pads of `/dev/uinput`. Touch and pen are not injected.
+/// pads of `/dev/uinput`. Touch and pen go to the desktop's touchscreen and pen, or move the
+/// pointer.
 pub struct Injector {
     /// The controllers a controller session lent ([`Self::use_gamepads`]), or the injector's
     /// own once a controller sends input.
@@ -122,7 +139,10 @@ impl Injector {
             policy: butterpollo_input_policy::input_policy::Policy::resolve(config)?,
             profile: butterpollo_input_policy::input_policy::gamepad_profile(profile),
             warnings,
-            keyboard_mouse: keyboard_mouse::KeyboardMouse::for_output(output),
+            keyboard_mouse: keyboard_mouse::KeyboardMouse::for_output(
+                output,
+                config.boolean("mouse", true) && config.boolean("native_pen_touch", true),
+            ),
             haptics: true,
             feedback_waker: None,
         })
@@ -173,8 +193,8 @@ impl Injector {
         errors.pop().map_or(Ok(()), Err)
     }
     /// Apply a pass of events in order; returns why events failed. Keyboard and mouse input
-    /// with no gamescope session to take it is dropped, not failed; touch, pen and controller
-    /// touchpads fail, as they cannot be injected.
+    /// with no gamescope session to take it is dropped, not failed; a tablet's touchpad fails,
+    /// as it cannot be injected.
     pub fn apply_all(&mut self, events: &[Event]) -> Vec<anyhow::Error> {
         let mut errors = Vec::new();
         for e in events {
@@ -188,9 +208,11 @@ impl Injector {
                 | Event::Scroll { .. }
                 | Event::Keyboard { .. }
                 | Event::Text(_) => self.keyboard_mouse.apply(e, &self.policy, &self.warnings),
-                Event::Touch { .. } | Event::Pen { .. } | Event::Touchpad { .. } => {
-                    Err(crate::unsupported("Touch, pen and touchpad input"))
+                Event::Touch { .. } | Event::Pen { .. } => {
+                    self.keyboard_mouse
+                        .touch_pen(e, &self.policy, &self.warnings)
                 }
+                Event::Touchpad { .. } => Err(crate::unsupported("Touchpad input")),
                 Event::Haptics(enabled) => {
                     self.haptics = *enabled;
                     Ok(())

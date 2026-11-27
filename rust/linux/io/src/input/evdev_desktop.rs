@@ -35,23 +35,23 @@ const UI_SET_PROPBIT: libc::c_ulong = ioc(1, 110, 4);
 /// `UI_GET_SYSNAME`: the sysfs name of the new device, such as `input23`.
 const UI_GET_SYSNAME: libc::c_ulong = ioc(2, 44, 64);
 
-const EV_SYN: u16 = 0;
-const EV_KEY: u16 = 1;
+pub(super) const EV_SYN: u16 = 0;
+pub(super) const EV_KEY: u16 = 1;
 const EV_REL: u16 = 2;
-const EV_ABS: u16 = 3;
+pub(super) const EV_ABS: u16 = 3;
 const REL_X: u16 = 0;
 const REL_Y: u16 = 1;
 const REL_HWHEEL: u16 = 6;
 const REL_WHEEL: u16 = 8;
 const REL_WHEEL_HI_RES: u16 = 0x0b;
 const REL_HWHEEL_HI_RES: u16 = 0x0c;
-const ABS_X: u16 = 0;
-const ABS_Y: u16 = 1;
+pub(super) const ABS_X: u16 = 0;
+pub(super) const ABS_Y: u16 = 1;
 const BTN_LEFT: u16 = 0x110;
 const INPUT_PROP_POINTER: u32 = 0;
 const BUS_USB: u16 = 3;
 /// The absolute pointer's axes run `0..=ABS_MAX` across the whole desktop.
-const ABS_MAX: i32 = 65535;
+pub(super) const ABS_MAX: i32 = 65535;
 const MODIFIER_EXTENDED: u8 = 0x10;
 /// Shift, Ctrl and Alt as a key-down packet's modifier bits, the virtual keys that hold them
 /// and the evdev key pressed for the bit.
@@ -89,6 +89,15 @@ pub(crate) struct Device {
     queued: Vec<libc::input_event>,
 }
 
+/// An absolute axis: its code, range and resolution (units per millimetre, 0 when unknown).
+#[derive(Clone, Copy)]
+pub(super) struct Axis {
+    pub(super) code: u16,
+    pub(super) minimum: i32,
+    pub(super) maximum: i32,
+    pub(super) resolution: i32,
+}
+
 impl Device {
     fn create(
         name: &str,
@@ -96,6 +105,25 @@ impl Device {
         keys: impl Iterator<Item = u16>,
         rels: &[u16],
         abs: &[(u16, i32)],
+        props: &[u32],
+    ) -> Result<Self> {
+        let axes: Vec<Axis> = abs
+            .iter()
+            .map(|&(code, maximum)| Axis {
+                code,
+                minimum: 0,
+                maximum,
+                resolution: 0,
+            })
+            .collect();
+        Self::create_axes(name, events, keys, rels, &axes, props)
+    }
+    pub(super) fn create_axes(
+        name: &str,
+        events: &[u16],
+        keys: impl Iterator<Item = u16>,
+        rels: &[u16],
+        abs: &[Axis],
         props: &[u32],
     ) -> Result<Self> {
         let file = OpenOptions::new()
@@ -123,21 +151,21 @@ impl Device {
         for &rel in rels {
             set(UI_SET_RELBIT, u32::from(rel))?;
         }
-        for &(axis, _) in abs {
-            set(UI_SET_ABSBIT, u32::from(axis))?;
+        for axis in abs {
+            set(UI_SET_ABSBIT, u32::from(axis.code))?;
         }
         for &prop in props {
             set(UI_SET_PROPBIT, prop)?;
         }
-        for &(code, maximum) in abs {
+        for axis in abs {
             let setup = AbsSetup {
-                code,
+                code: axis.code,
                 value: 0,
-                minimum: 0,
-                maximum,
+                minimum: axis.minimum,
+                maximum: axis.maximum,
                 fuzz: 0,
                 flat: 0,
-                resolution: 0,
+                resolution: axis.resolution,
             };
             // SAFETY: the request reads one `AbsSetup`, which outlives the call.
             if unsafe { libc::ioctl(fd, UI_ABS_SETUP, &raw const setup) } < 0 {
@@ -176,23 +204,31 @@ impl Device {
             queued: Vec::new(),
         })
     }
-    fn queue(&mut self, kind: u16, code: u16, value: i32) {
+    pub(super) fn queue(&mut self, kind: u16, code: u16, value: i32) {
         // SAFETY: `input_event` is plain data; the kernel stamps the time itself.
         let mut event: libc::input_event = unsafe { std::mem::zeroed() };
         (event.type_, event.code, event.value) = (kind, code, value);
         self.queued.push(event);
     }
-    fn key(&mut self, code: u16, down: bool) {
+    /// The events staged since the last flush, as (type, code, value).
+    #[cfg(test)]
+    pub(super) fn staged(&self) -> Vec<(u16, u16, i32)> {
+        self.queued
+            .iter()
+            .map(|e| (e.type_, e.code, e.value))
+            .collect()
+    }
+    pub(super) fn key(&mut self, code: u16, down: bool) {
         self.queue(EV_KEY, code, i32::from(down));
     }
     /// Ends a report: what was queued becomes visible to the desktop together.
-    fn sync(&mut self) {
+    pub(super) fn sync(&mut self) {
         if !self.queued.is_empty() && self.queued.last().is_some_and(|e| e.type_ != EV_SYN) {
             self.queue(EV_SYN, 0, 0);
         }
     }
     /// Writes the queued events, closing the last report.
-    fn flush(&mut self) -> Result<()> {
+    pub(super) fn flush(&mut self) -> Result<()> {
         self.sync();
         if self.queued.is_empty() {
             return Ok(());

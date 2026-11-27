@@ -1,12 +1,15 @@
 //! Keyboard and mouse injection into the game's gamescope session, or, when the stream's target
 //! is the user's own desktop, into the desktop through `/dev/uinput`. The session's Xwayland
 //! may start after the stream does, so the connection is made when a session shows up and
-//! made again when another replaces it; input meanwhile is dropped with a debug log.
+//! made again when another replaces it; input meanwhile is dropped with a debug log. Native
+//! touch and pen go to the desktop's virtual touchscreen and pen ([`TouchPen`]), and drive the
+//! pointer where those cannot take them.
 
 use super::{
     Event,
     evdev_desktop::DesktopInput,
     keymap::{char_keysym, keysym, scale_absolute, scroll_notches, x_button},
+    touch_pen::{Emulated, TouchPen},
     xserver::XServer,
 };
 use anyhow::{Context, Result};
@@ -48,24 +51,46 @@ pub(super) struct KeyboardMouse {
     sources: BTreeMap<u16, u16>,
     buttons: BTreeSet<u8>,
     scroll: [i32; 2],
+    /// Whether native touch and pen are on (`native_pen_touch`): the desktop gets a virtual
+    /// touchscreen and pen.
+    native_touch: bool,
+    /// The desktop's touchscreen and pen, while the stream's target is the desktop.
+    touch: Option<TouchPen>,
+    /// Touch and pen as the pointer, where they cannot be injected.
+    emulated: Emulated,
 }
 
 impl KeyboardMouse {
     /// Input for a stream whose capture target is `output`: the desktop's devices for
     /// `desktop` and `desktop:<n>`, the gamescope session's X server otherwise.
-    pub(super) fn for_output(output: &str) -> Self {
-        let mut keyboard_mouse = Self::default();
+    pub(super) fn for_output(output: &str, native_touch: bool) -> Self {
+        let mut keyboard_mouse = Self {
+            native_touch,
+            ..Self::default()
+        };
         keyboard_mouse.set_output(output);
         keyboard_mouse
     }
     /// Follows a change of the stream's target.
     pub(super) fn set_output(&mut self, output: &str) {
         match (crate::portal::desktop_target(output), &mut self.desktop) {
-            (Some(monitor), None) => self.desktop = Some(DesktopInput::new(monitor)),
+            (Some(monitor), None) => {
+                // Made with the desktop's devices, not at the first touch: the desktop takes a
+                // moment to notice a new device, and input sent before that is lost.
+                if self.native_touch {
+                    self.touch = TouchPen::create(&monitor)
+                        .inspect_err(|error| {
+                            tracing::warn!(error = %format!("{error:#}"), "no native touch and pen on the desktop; they move the pointer instead");
+                        })
+                        .ok();
+                }
+                self.desktop = Some(DesktopInput::new(monitor));
+            }
             (Some(_), Some(_)) => {}
             (None, Some(desktop)) => {
                 let _ = desktop.release();
                 self.desktop = None;
+                self.touch = None;
             }
             (None, None) => {}
         }
@@ -127,6 +152,22 @@ impl KeyboardMouse {
             self.looked_up = None;
         }
         result
+    }
+    /// Inject one touch or pen event: on the desktop's touchscreen and pen, or as the pointer.
+    pub(super) fn touch_pen(
+        &mut self,
+        e: &Event,
+        policy: &Policy,
+        warnings: &Warnings,
+    ) -> Result<()> {
+        if let Some(touch) = &mut self.touch {
+            touch.apply(e);
+            return Ok(());
+        }
+        for pointer in self.emulated.events(e) {
+            self.apply(&pointer, policy, warnings)?;
+        }
+        Ok(())
     }
     fn stage(&mut self, e: &Event, policy: &Policy) -> Result<()> {
         if let Event::Keyboard {
@@ -271,6 +312,13 @@ impl KeyboardMouse {
     }
     /// Sends what the events of a pass queued.
     pub(super) fn finish(&mut self) -> Result<()> {
+        if let Some(touch) = &mut self.touch
+            && let Err(error) = touch.flush()
+        {
+            // The pointer stands in from now on.
+            self.touch = None;
+            return Err(error.context("native touch and pen"));
+        }
         if let Some(desktop) = &mut self.desktop {
             return desktop.finish();
         }
@@ -286,6 +334,11 @@ impl KeyboardMouse {
     }
     /// Lets go of every held key and button.
     pub(super) fn release(&mut self) -> Result<()> {
+        if let Some(touch) = &mut self.touch {
+            touch.release();
+            let _ = touch.flush();
+        }
+        self.emulated = Emulated::default();
         if let Some(desktop) = &mut self.desktop {
             return desktop.release();
         }
