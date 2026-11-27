@@ -26,8 +26,8 @@
 </div>
 
 <p align="center">
-  <a href="docs/media/readme/console-tour.mp4"><img src="docs/media/readme/console-tour.webp" width="880" alt="A tour of the Rubylight console: Home with the library, the Games page, one game's page with its graphics driver settings, Settings with its search, the Sessions history and a running stream with its details (demo library and sample data)."></a><br>
-  <sub><b>The console in half a minute:</b> the library, a game's own settings, search, stream history and live stage timings. <a href="docs/media/readme/console-tour.mp4">Watch it as a video</a></sub>
+  <a href="docs/media/readme/console-tour.mp4"><img src="docs/media/readme/console-tour.webp" width="880" alt="A tour of the Rubylight console: Home with the library, the Games page, one game's page with its graphics driver settings, Settings, the Ctrl+K search, the Sessions history, the Clips page and Home with a running stream on its live stage (demo library and sample data)."></a><br>
+  <sub><b>The console in half a minute:</b> the library, a game's own settings, search, stream history, clips and the live stage. <a href="docs/media/readme/console-tour.mp4">Watch it as a video</a></sub>
 </p>
 
 ## What you get
@@ -72,7 +72,7 @@ Rather than optimizing one benchmark number in isolation, Rubylight removes hidd
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/media/readme/console-stream-dark.webp">
-    <img src="docs/media/readme/console-stream-light.webp" width="820" alt="A connected stream on Home with Stream details and performance open: frame rate, encoding time, host processing, frame age and where pictures lost time (sample data).">
+    <img src="docs/media/readme/console-stream-light.webp" width="820" alt="Home while a device streams: the live stage with the stream's health, frame rate, bitrate and host frame time over the last two minutes, and where a new picture's time goes on the PC, from capture to sending (sample data).">
   </picture>
 </p>
 
@@ -130,6 +130,13 @@ Rubylight builds and ships its own **first-party UMDF2 VHF virtual gamepad drive
 
 **Instant replay** keeps the last 30 to 120 seconds of the stream in memory. Save them as a clip from Nightjar or the console's **Clips** page, or start and stop a recording, without encoding again: clips are MP4 files with the stream's own codec, colour and HDR. Both are off by default ([Quick Suspend](docs/configuration.md#quick-suspend), [Stream DVR and clips](docs/configuration.md#stream-dvr-and-clips)).
 
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/media/readme/console-clips-dark.webp">
+    <img src="docs/media/readme/console-clips-light.webp" width="820" alt="Clips: Instant Replay with 120 seconds ready to save, Save clip and Start recording, the space the clips use, and the saved clips with their length, picture and size, each with Preview, Download and Delete (sample data).">
+  </picture>
+</p>
+
 ### Play together
 
 A game that Nucleus Co-op supports gets a "(Co-op)" entry for up to four independent instances on one PC, each with its own picture, audio and virtual controller, keeping slots reserved across brief disconnects.
@@ -166,7 +173,7 @@ When the virtual display or gamepad driver goes missing, the service sets it up 
     <td width="50%" valign="top">
       <picture>
         <source media="(prefers-color-scheme: dark)" srcset="docs/media/readme/console-settings-dark.webp">
-        <img src="docs/media/readme/console-settings-light.webp" alt="Settings: Stream preset, virtual display, resolution and monitor restore behavior, audio and microphone explained plainly.">
+        <img src="docs/media/readme/console-settings-light.webp" alt="Settings: Stream preset, virtual display, stream resolution and what your monitors do while streaming, then stream audio and the device microphone, each explained plainly.">
       </picture><br><sub><b>Settings.</b> Clear everyday choices, backed by plain explanations.</sub>
     </td>
   </tr>
@@ -174,8 +181,8 @@ When the virtual display or gamepad driver goes missing, the service sets it up 
     <td width="50%" valign="top">
       <picture>
         <source media="(prefers-color-scheme: dark)" srcset="docs/media/readme/console-sessions-dark.webp">
-        <img src="docs/media/readme/console-sessions-light.webp" alt="Sessions: live stream details and history of earlier streams with picture, cadence, loss and how each ended (sample data).">
-      </picture><br><sub><b>Sessions.</b> Live telemetry and every ended stream's record.</sub>
+        <img src="docs/media/readme/console-sessions-light.webp" alt="Sessions: Live now, empty while nothing streams, and the history of earlier streams with picture, frame rate, bitrate, loss, duration and how each ended (sample data).">
+      </picture><br><sub><b>Sessions.</b> What streams now and every ended stream's record.</sub>
     </td>
     <td width="50%" valign="top">
       <picture>
@@ -193,15 +200,15 @@ The [feature reference](docs/features.md) lists everything else, from lock-scree
 ## Nightjar, the client built alongside it
 
 <p align="center">
-  <a href="client/docs/assets/readme/nightjar-tour.mp4"><img src="client/docs/assets/readme/nightjar-tour.webp" width="880" alt="Nightjar on a handheld: Home with a controller moving across the covers and the glass taking each cover's colours, a game's page, then a stream with the stream menu and the on-screen controls (offline demo)."></a><br>
-  <sub><b>Nightjar with a controller:</b> Home, a game's page, the stream menu and on-screen controls. <a href="client/docs/assets/readme/nightjar-tour.mp4">Watch it as a video</a></sub>
+  <a href="client/docs/assets/readme/nightjar-tour.mp4"><img src="client/docs/assets/readme/nightjar-tour.webp" width="880" alt="Nightjar on a handheld: Home with a controller moving across the covers and the glass taking each cover's colours, a game's page, then a stream with the Control Center and the on-screen controls (offline demo)."></a><br>
+  <sub><b>Nightjar with a controller:</b> Home, a game's page, the Control Center and the on-screen controls. <a href="client/docs/assets/readme/nightjar-tour.mp4">Watch it as a video</a></sub>
 </p>
 
 [Nightjar](https://github.com/RamazanKara/nightjar) shares one Rust streaming engine (`nightjar-core`) across Android phones, handhelds, Android TV, Fire TV, Windows, Linux (including Steam Deck Game Mode &amp; DRM/KMS) and macOS. It connects to any Moonlight host, and with Rubylight adds Frame Warp 2, Real VRR, QR pairing, the cover-art library, PyroWave (including Apple Silicon macOS via KosmicKrisp) and packed 4:4:4, Dolby Vision, HDR10+, GPU driver toggles during a stream, Quick Suspend, Instant replay, Stream Doctor, the launch curtain, Continue here, Dual screen, clipboard sync, file transfers, USB forwarding, guests and co-op, from its Control Center during a stream. Free and open source, with no accounts, ads or tracking.
 
 <table>
   <tr>
-    <td width="50%" valign="top"><img src="client/docs/assets/readme/handheld-home.webp" alt="Nightjar's Home on a handheld: Racing Game running, with Resume, Favourite and Quit game, a Continue playing list and the Recently played row (demo library)."><br><sub><b>Made for handhelds.</b> Home, the library and the stream menu follow the controller.</sub></td>
+    <td width="50%" valign="top"><img src="client/docs/assets/readme/handheld-home.webp" alt="Nightjar's Home on a handheld: Racing Game running, with Resume, Favourite and Quit game, the controller's buttons for Resume and Options in the top bar, a Continue playing list and the Recently played row (demo library)."><br><sub><b>Made for handhelds.</b> Home, the library and the Control Center follow the controller.</sub></td>
     <td width="50%" valign="top"><img src="client/docs/assets/readme/desktop-home.webp" alt="Nightjar on the desktop: Home with Racing Game in progress and a row of cover art per store (demo library)."><br><sub><b>On the desktop too.</b> Windows, Linux and macOS with Auto UI scaling and touch support.</sub></td>
   </tr>
 </table>

@@ -69,10 +69,57 @@ const power = {
   fix: { running: false, changes: [], skipped: [], error: null, fast_startup_off_offered: false, last: null },
 };
 
+// Stream DVR: the replay buffer of the running stream and the clips saved from earlier ones, newest first.
+const GB = 1024 ** 3;
+const clip = (ago, app_title, seconds, kind, extra = {}) => ({
+  id: `clip-${String(ago).padStart(8, '0')}`, app_title, created_unix_ms: (now - ago) * 1000, duration_ms: seconds * 1000,
+  width: 2560, height: 1440, fps: 120, codec: 'hevc', hdr: true, container: 'mp4', size_bytes: Math.round(seconds * 7_300_000),
+  kind, recovered: false, ...extra,
+});
+const clips = [
+  clip(420, 'Ashen Crown', 60, 'replay'),
+  clip(2_700, 'Ashen Crown', 30, 'replay'),
+  clip(23_400, 'Starfall Vanguard', 312, 'manual', { width: 3840, height: 2160, fps: 60, codec: 'av1', size_bytes: 1_610_000_000 }),
+  clip(97_000, 'Redline Avenue', 90, 'replay', { hdr: false, codec: 'h264' }),
+  clip(183_000, 'Pip & Bloom', 45, 'replay', { width: 1280, height: 800, fps: 90, hdr: false }),
+];
+const clipBytes = clips.reduce((sum, c) => sum + c.size_bytes, 0);
+const dvr = (streaming) => ({
+  enabled: true, state: streaming ? 'armed' : 'off', reason: streaming ? 'none' : 'not_streaming',
+  ring_buffered_secs: streaming ? 120 : 0, ring_capacity_secs: 120, recording: false, recording_elapsed_secs: 0,
+  quota_used_bytes: clipBytes, quota_limit_bytes: 20 * GB, clips_dir_available: true, container: 'mp4',
+  clips_dir: 'D:\\Clips',
+});
+
+// Displays as Windows arranges them: a monitor on the desk and the virtual display a stream uses.
+const displays = [
+  { device_id: 'desk', display_name: 'DISPLAY1', friendly_name: 'Desk monitor', hdr_supported: true, hdr_enabled: true, primary: true,
+    x: 0, y: 0, width: 2560, height: 1440, refresh: 165, scale: 100, virtual: false, notes: [] },
+  { device_id: 'side', display_name: 'DISPLAY2', friendly_name: 'Side monitor', hdr_supported: false, hdr_enabled: false, primary: false,
+    x: -1080, y: -240, width: 1080, height: 1920, refresh: 60, scale: 100, virtual: false, notes: [] },
+  { device_id: 'virtual', display_name: 'DISPLAY3', friendly_name: 'Rubylight virtual display', hdr_supported: true, hdr_enabled: true,
+    primary: false, x: 2560, y: 0, width: 1280, height: 800, refresh: 90, scale: 100, virtual: true, notes: [] },
+];
+
 /** `film.answer` plus the replies the README's pages read. `state` is read on every request, so a tour can change it. */
 function answer(state) {
   return (url) => {
     const scene = state.scene;
+    const streaming = !!(scene.streams && scene.streams.length);
+    if (url.pathname === '/api/dvr') return dvr(streaming);
+    if (url.pathname === '/api/dvr/clips') {
+      return { clips, next_cursor: null, quota_used_bytes: clipBytes, quota_limit_bytes: 20 * GB };
+    }
+    if (url.pathname === '/api/session/suspend') {
+      return streaming
+        ? { status: true, state: 'ready', reason: 'none', message: null, app_title: scene.app, suspended_count: 0 }
+        : { status: true, state: 'unavailable', reason: 'no_game', message: null, app_title: null, suspended_count: 0 };
+    }
+    // Away wake relay on, with one always-on computer that checked in a few minutes ago.
+    if (url.pathname === '/api/wake-relay') {
+      return { enabled: true, epoch: 1, relays: [{ id: 'a'.repeat(64), name: 'Mini PC', enrolled_unix: now - 9 * 86_400, last_seen_unix: now - 160 }] };
+    }
+    if (url.pathname === '/api/display-devices') return displays;
     if (url.pathname === '/api/sessions/history') return { status: true, limit: 200, days: 90, bytes: 262_144, sessions: sessionHistory };
     if (url.pathname === '/api/logs/analysis') {
       return { status: true, findings: [], since: new Date((now - 5_400) * 1000).toISOString(), until: new Date(now * 1000).toISOString(), read_bytes: 812_544 };
@@ -82,11 +129,14 @@ function answer(state) {
         release: null, mode: null, game: null, earlier_upscaling: null, job: null };
     }
     if (url.pathname === '/api/metadata') {
-      return { ...film.metadata, version: '6.0.0', pc_address: '', pc_addresses: [],
+      return { ...film.metadata, version: '7.0.0', pc_address: '', pc_addresses: [],
         audio_sinks: [{ id: 'speakers', name: 'Speakers', description: '', adapter: '', default: true, virtual_sink: false }] };
     }
     if (url.pathname === '/api/power') return power;
-    return film.answer(scene)(url);
+    const reply = film.answer(scene)(url);
+    // README_ROUTES=1 lists the routes no fixture answers, so a new console page shows what it still needs.
+    if (process.env.README_ROUTES && reply.available === false && Object.keys(reply).length === 3) console.log(`  fallback ${url.pathname}`);
+    return reply;
   };
 }
 
@@ -104,16 +154,14 @@ const openPanel = (title) => async (page) => {
 // Each still: the console page, the mocked state and what to open before the picture.
 const stills = {
   home: { path: '/', scene: idle },
-  stream: {
-    path: '/', scene: streaming, top: 'section.panel:has(:text-is("Connected streams"))',
-    act: async (page) => { await page.locator('summary:text-is("Stream details & performance")').click(); },
-  },
+  // Home while a device streams: the live stage.
+  stream: { path: '/', scene: streaming },
   games: { path: '/library', scene: idle },
   game: {
     path: '/library/ashen-crown', scene: idle,
     act: async (page) => {
       await openPanel('Graphics driver')(page);
-      await page.locator('details:has(> summary .title:text-is("Video and input"))').evaluate((panel) => {
+      await page.locator('details:has(> summary .title:text-is("Sound and couch menu"))').evaluate((panel) => {
         scrollTo(0, panel.getBoundingClientRect().top + scrollY - 96);
       });
     },
@@ -130,11 +178,15 @@ const stills = {
   settings: { path: '/settings', scene: idle, top: 'h2:text-is("Picture")' },
   sessions: { path: '/sessions', scene: idle },
   guests: { path: '/', scene: guests, top: 'section.panel:has(:text-is("Guests"))' },
-  coop: { path: '/', scene: { apps: [...library, coopEntry], streams: film.coopStreams, app: coopEntry.name, coop: film.coop } },
+  clips: { path: '/clips', scene: streaming },
+  displays: { path: '/troubleshoot', scene: idle },
+  coop: { path: '/', scene: { apps: [...library, coopEntry], streams: film.coopStreams, app: coopEntry.name, coop: film.coop },
+    top: 'section.panel:has(ul.seats)' },
 };
 
 async function open(browser, base, { width, height, scale, theme }, state) {
-  const context = await browser.newContext({ viewport: { width, height }, deviceScaleFactor: scale, colorScheme: theme });
+  // English dates and numbers, whatever the capturing PC's language.
+  const context = await browser.newContext({ viewport: { width, height }, deviceScaleFactor: scale, colorScheme: theme, locale: 'en-US' });
   await context.addInitScript((value) => {
     try { localStorage.setItem('butterpollo.theme', value); } catch { /* the console falls back to system */ }
   }, theme);
@@ -182,9 +234,9 @@ async function shootStills(browser, base) {
       await page.waitForLoadState('networkidle');
       await page.addStyleTag({ content: film.HIDE_VERSION });
       if (still.act) await still.act(page);
-      // `top` names what the picture starts at, a little below the window's edge.
+      // `top` names what the picture starts at, `margin` pixels below the window's edge (28 unless set).
       if (still.top) {
-        await page.locator(still.top).first().evaluate((node) => scrollTo(0, node.getBoundingClientRect().top + scrollY - 28));
+        await page.locator(still.top).first().evaluate((node, margin) => scrollTo(0, node.getBoundingClientRect().top + scrollY - margin), still.margin ?? 28);
       }
       // Park the pointer on the sidebar so no field shows a hover ring.
       await page.mouse.move(120, 700);
@@ -266,20 +318,26 @@ async function shootTour(browser, base) {
     await page.evaluate(([y]) => (document.scrollingElement || document.documentElement).scrollTo({ top: y, behavior: 'smooth' }), [top]);
     await pause(ms);
   };
+  // Scrolls until `selector` starts `margin` pixels below the window's top edge.
+  const scrollToNode = async (selector, margin, ms = 900) => {
+    const top = await page.locator(selector).first().evaluate((node, m) => node.getBoundingClientRect().top + scrollY - m, margin);
+    await scroll(Math.max(0, top), ms);
+  };
   const nav = (name) => page.locator('aside').getByRole('link', { name, exact: true });
+  const driver = 'details:has(> summary .title:text-is("Graphics driver"))';
 
-  // Home, the library, one game's driver settings, Settings, the quick switcher, the session history, then Home
-  // again with a stream running. Devices is left out: it opens on a pairing code.
+  // Home, the library, one game's driver settings, Settings, the command palette, the session history, then the
+  // clips and Home with a stream running and its live stage. Devices is left out: it opens on a pairing code.
   await pause(1600);
   await click(nav('Games'), 1900);
-  await click(page.getByRole('link', { name: /Ashen Crown/ }), 1500);
-  await scroll(420, 900);
-  await click(page.locator('details:has(> summary .title:text-is("Graphics driver")) > summary'), 500);
-  await scroll(760, 900);
+  await click(page.getByRole('link', { name: /Ashen Crown/ }), 1700);
+  await scrollToNode(driver, 260, 1000);
+  await click(page.locator(`${driver} > summary`), 500);
+  await scrollToNode(driver, 40, 900);
   await pause(1700);
   await click(nav('Settings'), 900);
-  await scroll(470, 900);
-  await pause(1500);
+  await scrollToNode('h2:text-is("Picture")', 28, 900);
+  await pause(1300);
   await page.keyboard.press('Control+k');
   await pause(700);
   await page.keyboard.type('hdr', { delay: 170 });
@@ -287,12 +345,10 @@ async function shootTour(browser, base) {
   await page.keyboard.press('Escape');
   await pause(500);
   await click(page.locator('aside').getByText('Advanced', { exact: true }), 700);
-  await click(nav('Sessions'), 2300);
+  await click(nav('Sessions'), 2100);
   state.scene = streaming;
-  await click(nav('Home'), 2400);
-  await click(page.locator('summary:text-is("Stream details & performance")'), 1200);
-  await scroll(330, 1100);
-  await pause(2400);
+  await click(nav('Clips'), 2300);
+  await click(nav('Home'), 3600);
 
   await cdp.send('Page.stopScreencast');
   await pause(200);

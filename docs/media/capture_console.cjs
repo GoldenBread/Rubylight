@@ -29,8 +29,11 @@ const now = Math.floor(Date.now() / 1000);
 // Deterministic jitter for the live graphs.
 let seed = 7;
 const jitter = () => ((seed = (seed * 16807) % 2147483647) / 2147483647 - 0.5);
-// Two minutes of host processing: steady, with small deterministic jitter.
+// Two minutes of frame rate, bitrate and host processing, one sample a second: steady, with small
+// deterministic jitter, as the live stage draws them.
 const history = Array.from({ length: 120 }, (_, i) => ({
+  fps: 119.9 - Math.abs(jitter()) * 0.6 - (i === 71 ? 2.4 : 0),
+  bitrate_mbps: 58 + Math.sin(i / 7) * 1.6 + jitter() * 1.2,
   host_processing_mean_ms: 2.75 + Math.sin(i / 9) * 0.12 + jitter() * 0.3 + (i === 71 ? 0.8 : 0),
 }));
 // Where a new picture's time goes on the host, in the last five seconds.
@@ -40,16 +43,17 @@ const stages = () => ({
   convert: timing(0.15), encode: timing(2.3), queue: timing(0.05), packetize: timing(0.1), send_queue: timing(0.05),
   send: timing(0.15), present_to_sent: timing(3.1), moonlight_host: timing(2.8),
 });
-const streamOf = (uuid, device_name, extra = {}) => ({
+// The measured frame rate follows the stream's own target (120 unless `extra.fps` says otherwise).
+const streamOf = (uuid, device_name, extra = {}, rate = (extra.fps ?? 120) / 120) => ({
   uuid, device_name, role: 'stream', state: 'RUNNING',
   width: 2560, height: 1440, fps: 120, video_format: 2, encoder: 'amf', hdr: true, vrr: false,
   encoder_bitrate_kbps: 60000, fec_percent: 20, pyrowave_minimum_kbps: null, pyrowave_recommended_kbps: null,
   audio_channels: 2, frames_sent: 1, bytes_sent: 1, idr_requests: 0, uptime_seconds: 2537, warnings: [],
   performance: {
-    fps: 119.9, bitrate_mbps: 58, encode_mean_ms: 2.6, encode_p95_ms: 3.4, encode_p99_ms: 3.9,
+    fps: +(119.9 * rate).toFixed(1), bitrate_mbps: 58, encode_mean_ms: 2.6, encode_p95_ms: 3.4, encode_p99_ms: 3.9,
     host_processing_mean_ms: 2.8, host_processing_p95_ms: 3.5, host_processing_p99_ms: 4.1, host_processing_max_ms: 5.2,
     frame_age_mean_ms: 4.6, frame_age_p95_ms: 5.8, present_to_send_mean_ms: 1, send_interval_p99_ms: 9,
-    sample_frames: 240, history, stages: stages(),
+    sample_frames: 240, history: history.map((sample) => ({ ...sample, fps: sample.fps * rate })), stages: stages(),
   },
   ...extra,
 });

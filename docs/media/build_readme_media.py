@@ -8,8 +8,10 @@
     console/stills/<page>-<dark|light>.png   node docs/media/capture_readme.cjs <captures>/console stills
     console/tour/frame-*.jpg, frames.txt     node docs/media/capture_readme.cjs <captures>/console tour
     android/raw/<state>.png, clips/*.mp4     client/scripts/demo/readme-capture.sh <captures>/android
-    phone/<name>.png                         the same offline demo on an upright phone (--es state home, detail)
-    desktop/<name>.png                       the desktop app's own page screenshots (its page_screenshots tests)
+                                             (stills and clips on a handheld, tv on an Android TV, phone on an
+                                             upright phone; emulators do)
+    desktop/<name>.png                       the desktop app's own screenshot tests: NIGHTJAR_SHOTS=<captures>/desktop
+                                             cargo test -p nightjar-desktop-ui --lib screenshots -- --ignored
 
 Everything shown is a demo: the console runs against made-up answers (no host, no token, no address), Nightjar
 plays its bundled sample scene with a made-up library. Nothing here is a measurement.
@@ -27,22 +29,23 @@ HOST_OUT = REPO / 'docs/media/readme'
 NIGHTJAR_OUT = REPO / 'client/docs/assets/readme'
 
 # Console pages the README shows, each in the dark and the light theme.
-CONSOLE_STILLS = ['home', 'games', 'game', 'add-games', 'settings', 'stream', 'sessions', 'coop']
+CONSOLE_STILLS = ['home', 'games', 'game', 'add-games', 'settings', 'stream', 'sessions', 'clips', 'coop']
 
-# Nightjar stills: output name -> (source, crop box or None, output width). The handheld layout keeps Android's
-# status bar (clock, battery), so those shots lose their top strip; streams and the TV layout are full screen.
-STATUS_BAR = 56
+# Nightjar stills: output name -> (source, crop box or None, output width). The capture empties Android's status
+# bar, so the handheld, TV and stream shots stay whole; a 1080x2400 phone loses the empty strip above the app and
+# the gesture bar below it.
+PHONE = (0, 96, 1080, 2340)
 NIGHTJAR_STILLS = {
     'tv-home': ('android/raw/tv-home.png', None, 1600),
     'tv-game': ('android/raw/tv-detail.png', None, 1600),
-    'handheld-home': ('android/raw/home.png', (0, STATUS_BAR, 1920, 1080), 1600),
-    'handheld-light': ('android/raw/home-day.png', (0, STATUS_BAR, 1920, 1080), 1600),
-    'stream-menu': ('android/raw/stream-menu.png', None, 1600),
+    'handheld-home': ('android/raw/home.png', None, 1600),
+    'handheld-light': ('android/raw/home-day.png', None, 1600),
+    'control-center': ('android/raw/control-center.png', None, 1600),
     'stream-controls': ('android/raw/stream-modern.png', None, 1600),
     'stream-keyboard': ('android/raw/stream-keyboard.png', None, 1600),
     'stream-stats': ('android/raw/stream-stats.png', None, 1600),
-    'phone-home': ('phone/android-phone-home-setup-card.png', (0, 84, 1080, 1920), 720),
-    'phone-game': ('phone/android-game-sheet.png', (0, 84, 1080, 1920), 720),
+    'phone-home': ('android/raw/phone-home.png', PHONE, 720),
+    'phone-game': ('android/raw/phone-game.png', PHONE, 720),
     'desktop-home': ('desktop/home-1280x800.png', None, 1600),
     'desktop-game': ('desktop/game-1280x800.png', None, 1600),
     'desktop-settings': ('desktop/settings-1280x800.png', None, 1600),
@@ -51,9 +54,9 @@ NIGHTJAR_STILLS = {
 
 # The Nightjar film: (clip, first second, last second or None for the end, seconds the last picture is held).
 NIGHTJAR_FILM = [
-    ('android/clips/tv-home.mp4', 0.6, None, 1.8),
-    ('android/clips/stream-menu.mp4', 2.6, 8.0, 0.0),
-    ('android/clips/controls.mp4', 1.0, 8.0, 0.6),
+    ('android/clips/tv-home.mp4', 0.6, None, 1.6),
+    ('android/clips/control-center.mp4', 3.8, 12.6, 0.0),
+    ('android/clips/controls.mp4', 2.2, 9.2, 0.4),
 ]
 CROSSFADE = 0.4
 
