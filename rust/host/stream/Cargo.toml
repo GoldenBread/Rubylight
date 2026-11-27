@@ -50,7 +50,7 @@ xmltree = "=0.10.3"
 xml-rs = "0.8"
 
 [features]
-test-support = ["butterpollo-win-io/test-folder", "butterpollo-win-io/test-route"]
+test-support = ["butterpollo-win-io/test-folder", "butterpollo-win-io/test-route", "butterpollo-win-graphics/test-ffmpeg"]
 
 [dev-dependencies]
 butterpollo-win-io = { path = "../../windows/io", features = ["test-folder", "test-route"] }

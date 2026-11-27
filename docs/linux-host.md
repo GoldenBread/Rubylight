@@ -14,7 +14,7 @@ Test PC: an RX 7800 XT on CachyOS, KDE Plasma 6.8 on Wayland, Mesa's VA-API, Pip
 | Input | Keyboard and mouse; Xbox 360 pads through `uinput`; DualSense, DualShock 4, Switch Pro, Steam Deck and Steam Controller through `uhid`, with rumble. |
 | Keyboard follows the focused text field | Through AT-SPI, the desktop's accessibility bus: the host turns accessibility on for the watch (and off after if it was off), hears the toolkits' focus events and gives the client the field's kind (text, password, number, email, URL, search, phone, multi-line) and, when asked, the text around the cursor, never a password's. Qt and GTK applications and browsers publish their fields; a game that draws its own text box does not. |
 | Native touch and pen | On the desktop, a virtual multitouch touchscreen (16 fingers) and a pen tablet with pressure, tilt, two barrel buttons and the eraser, both on `uinput` and tied to the streamed monitor through KWin (`outputName`). In a gamescope session, whose X server has no touch, the first finger and the pen move the pointer and hold its left button. Offered when `native_pen_touch` is on and the user can write `/dev/uinput`. |
-| Audio | Stereo from a PipeWire sink per stream (surround not yet streamed to a client); the client's microphone as a PipeWire source. |
+| Audio | Stereo from a PipeWire sink per stream (surround not yet streamed to a client); the client's microphone as a PipeWire source. AC3 and E-AC3 passthrough with FFmpeg 9 or 8, beside the host or the system's (`ffmpeg`). |
 | Around the stream | Clipboard, sleep inhibit and power actions (logind), Wake-on-LAN targets in `/serverinfo` and `/wake`, hardware metrics from `amdgpu`'s sysfs, the tray icon in Plasma's system tray with the Windows menu and notifications, the web console. |
 | Lifecycle | A systemd user unit, udev rules for input and the encoder clock, an Arch package. |
 
@@ -34,7 +34,6 @@ Each of these could come to Linux; the reason says what stands in the way.
 | USB forwarding | Not built; not offered to clients. |
 | Window capture | Not built (`rust/linux/graphics/src/capture.rs`). |
 | Per-application audio routing | Not built: no program's sound can be moved to another device (`rust/linux/io/src/audio_app_route.rs`). |
-| AC3 and E-AC3 passthrough | The encoders need FFmpeg 8 placed beside the host; a system FFmpeg of another version is refused, and the stream uses Opus. |
 | Switch 2 Pro Controller | The kernel has no driver for it; it becomes a Switch Pro Controller, with a warning. |
 | WebP covers | Not decoded; no cover in this PC's Steam cache is WebP. |
 | GNOME, wlroots and X11 desktops | Not built or not run. A gamescope session works without the desktop's help; the desktop, virtual display and KWin capture are KDE Plasma's. |
@@ -54,6 +53,7 @@ Out of the Linux host's scope, as they rest on Windows or a vendor's Windows dri
 
 - 10-bit HEVC and AV1 streamed to a client (encode and decode tests only).
 - Native touch and pen from a client (device tests and KWin's mapping only).
+- AC3 and E-AC3 streamed to a client (the system FFmpeg 9 encodes and decodes them in tests, and serverinfo offers them).
 - The keyboard following text fields on a client (a live test of a GTK entry only).
 - Lutris games (not installed on the test PC).
 - Waking the PC with Wake-on-LAN (the NIC's own wake setting is not read; it needs `CAP_NET_ADMIN`).

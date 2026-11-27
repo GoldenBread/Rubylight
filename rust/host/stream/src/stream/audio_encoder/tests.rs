@@ -78,16 +78,23 @@ fn opus_and_pcm_need_no_ffmpeg_and_dolby_without_it_is_refused_by_name() {
         check(nowhere, CODEC_OPUS, channels).unwrap();
         check(nowhere, CODEC_PCM, channels).unwrap();
     }
-    let error = format!("{:#}", check(nowhere, CODEC_AC3, 2).unwrap_err());
-    assert!(
-        error.starts_with("this host cannot encode Dolby Digital (AC3) for 2 audio channels")
-            && error.contains(if cfg!(windows) {
-                "avutil-60.dll"
-            } else {
-                "libavutil.so.60"
-            }),
-        "{error}"
-    );
+    // Linux falls back to the system's FFmpeg, which may be installed.
+    match check(nowhere, CODEC_AC3, 2) {
+        Ok(()) if cfg!(not(windows)) => {}
+        result => {
+            let error = format!("{:#}", result.unwrap_err());
+            assert!(
+                error.starts_with(
+                    "this host cannot encode Dolby Digital (AC3) for 2 audio channels"
+                ) && error.contains(if cfg!(windows) {
+                    "avutil-60.dll"
+                } else {
+                    "libavutil.so.61"
+                }),
+                "{error}"
+            );
+        }
+    }
     // More channels than the codec carries are refused before FFmpeg is looked for.
     let error = format!("{:#}", check(nowhere, CODEC_AC3, 8).unwrap_err());
     assert!(error.contains("cannot carry 8"), "{error}");

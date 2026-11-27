@@ -1,30 +1,67 @@
-//! FFmpeg's AC3 and E-AC3 encoders for audio passthrough on Linux, loaded at run time from
-//! `libavutil.so.60` and `libavcodec.so.62` in the folder the host names (its own). The
-//! system's FFmpeg is not used yet: without those two files there, opening a codec fails with
-//! the path that is missing.
+//! FFmpeg's AC3 and E-AC3 encoders for audio passthrough on Linux, loaded at run time: FFmpeg 9
+//! (`libavutil.so.61`, `libavcodec.so.63`) or 8 (`.60`, `.62`) from the folder the host names
+//! (its own) when its avutil is there, else the system's FFmpeg of either version by its soname.
+//! A build placed beside the host is never passed over for the system's: if it fails, the
+//! error names it.
 //!
 //! FFmpeg keeps its structs' layout within a major version, so both majors are checked before
 //! any field is touched. The codec context is set through its AVOptions where it has them; the
-//! rest of it, frames and packets use FFmpeg 8's field offsets on a 64-bit target.
+//! rest of it, frames and packets use field offsets on a 64-bit target that FFmpeg 8 and 9
+//! share (checked against both versions' headers).
 use anyhow::{Context, Result, bail};
 use std::{
     ffi::{CStr, c_char, c_int, c_void},
     path::{Path, PathBuf},
 };
 
-/// avcodec needs avutil, so avutil loads first and the dynamic linker reuses it for avcodec.
-const AVUTIL: &str = "libavutil.so.60";
-const AVCODEC: &str = "libavcodec.so.62";
-const AVUTIL_MAJOR: u32 = 60;
-const AVCODEC_MAJOR: u32 = 62;
+/// The FFmpeg versions this module knows, newest first, as their (avutil, avcodec) majors:
+/// FFmpeg 9 and 8. avcodec needs avutil, so avutil loads first and the dynamic linker reuses it
+/// for avcodec.
+const MAJORS: [(u32, u32); 2] = [(61, 63), (60, 62)];
+
+/// The file names of one version's libraries.
+fn names((avutil, avcodec): (u32, u32)) -> (String, String) {
+    (
+        format!("libavutil.so.{avutil}"),
+        format!("libavcodec.so.{avcodec}"),
+    )
+}
+
+/// The libraries to try, in order, as (majors, avutil, avcodec): the versions whose avutil is
+/// in `directory`, by absolute path; with none there, the system's by soname (not with the
+/// `test-ffmpeg` feature).
+/// One version's libraries to load: its majors, then avutil's and avcodec's path or soname.
+type Candidate = ((u32, u32), PathBuf, PathBuf);
+
+fn candidates(directory: &Path) -> Result<Vec<Candidate>> {
+    let mut beside_host = Vec::new();
+    for majors in MAJORS {
+        let (avutil, avcodec) = names(majors);
+        let path = beside(directory, &avutil)?;
+        if path.exists() {
+            beside_host.push((majors, path, beside(directory, &avcodec)?));
+        }
+    }
+    // The host's tests see the same host whatever FFmpeg the PC has.
+    if !beside_host.is_empty() || cfg!(feature = "test-ffmpeg") {
+        return Ok(beside_host);
+    }
+    Ok(MAJORS
+        .into_iter()
+        .map(|majors| {
+            let (avutil, avcodec) = names(majors);
+            (majors, PathBuf::from(avutil), PathBuf::from(avcodec))
+        })
+        .collect())
+}
 /// `AV_SAMPLE_FMT_FLTP`: what the AC3 and E-AC3 encoders take and their decoders give.
 const SAMPLE_FMT_FLTP: c_int = 8;
 /// `AVERROR(EAGAIN)`: the codec wants more input before it has output.
 const AGAIN: c_int = -11;
 /// Samples per AC3 and E-AC3 frame.
 pub const FRAME_SAMPLES: usize = 1536;
-/// Field offsets in FFmpeg 8's `AVCodecContext`, `AVFrame` and `AVPacket` (avutil 60,
-/// avcodec 62).
+/// Field offsets in FFmpeg 8's and 9's `AVCodecContext`, `AVFrame` and `AVPacket` (avutil 60
+/// and 61, avcodec 62 and 63: the same in both).
 const CONTEXT_SAMPLE_FMT: usize = 348;
 const CONTEXT_FRAME_SIZE: usize = 376;
 const FRAME_DATA: usize = 0;
@@ -62,12 +99,12 @@ fn beside(directory: &Path, name: &str) -> Result<PathBuf> {
         .with_context(|| format!("locating {name} in {}", directory.display()))
 }
 
-/// Loads the library at the absolute `path`.
+/// Loads the library at the absolute `path`, or the system's by its soname.
 ///
 /// # Safety
 /// Loading runs the library's initialisers.
-unsafe fn load_beside(path: &Path) -> Result<libloading::Library> {
-    // SAFETY: the caller accepts the library's initialisers; `path` is absolute.
+unsafe fn load_library(path: &Path) -> Result<libloading::Library> {
+    // SAFETY: the caller accepts the library's initialisers.
     Ok(unsafe { libloading::Library::new(path)? })
 }
 
@@ -118,19 +155,57 @@ struct Library {
 }
 
 impl Library {
+    /// FFmpeg beside the host in `directory`, else the system's ([`candidates`]).
     fn load(directory: &Path) -> Result<Self> {
-        // SAFETY: the symbol types match FFmpeg 8's declarations, the majors are checked before
-        // anything else is called, and both libraries are kept in `Self` with their pointers.
+        let mut failures = Vec::new();
+        for (majors, avutil, avcodec) in candidates(directory)? {
+            match Self::load_pair(majors, &avutil, &avcodec) {
+                Ok(library) => return Ok(library),
+                Err(error) => failures.push(format!("{error:#}")),
+            }
+        }
+        if failures.is_empty() {
+            bail!(
+                "no FFmpeg 8 or 9 beside the host: {} is missing",
+                beside(directory, &names(MAJORS[0]).0)?.display()
+            );
+        }
+        bail!(
+            "no FFmpeg 8 or 9 beside the host ({}) or on the system: {}",
+            directory.display(),
+            failures.join("; ")
+        )
+    }
+
+    fn load_pair(
+        (avutil_major, avcodec_major): (u32, u32),
+        avutil: &Path,
+        avcodec: &Path,
+    ) -> Result<Self> {
+        // SAFETY: the symbol types match FFmpeg 8's and 9's declarations, the majors are checked
+        // before anything else is called, and both libraries are kept in `Self` with their
+        // pointers.
         unsafe {
-            let open = |name: &str| {
-                let path = beside(directory, name)?;
-                load_beside(&path).with_context(|| format!("loading {}", path.display()))
+            let open = |path: &Path| {
+                load_library(path).with_context(|| format!("loading {}", path.display()))
             };
-            let avutil = open(AVUTIL)?;
-            let avcodec = open(AVCODEC)?;
+            let avutil_name = avutil.display().to_string();
+            let avcodec_name = avcodec.display().to_string();
+            let avutil = open(avutil)?;
+            let avcodec = open(avcodec)?;
             for (library, symbol, name, major) in [
-                (&avutil, &b"avutil_version\0"[..], AVUTIL, AVUTIL_MAJOR),
-                (&avcodec, &b"avcodec_version\0"[..], AVCODEC, AVCODEC_MAJOR),
+                (
+                    &avutil,
+                    &b"avutil_version\0"[..],
+                    &avutil_name,
+                    avutil_major,
+                ),
+                (
+                    &avcodec,
+                    &b"avcodec_version\0"[..],
+                    &avcodec_name,
+                    avcodec_major,
+                ),
             ] {
                 let version = (*library.get::<Version>(symbol)?)();
                 if version >> 16 != major {
@@ -240,7 +315,7 @@ impl Codec {
     fn drain(&mut self, take: &mut dyn FnMut(&[u8])) -> Result<()> {
         loop {
             // SAFETY: the context and packet are live; the packet's data and size are read at
-            // FFmpeg 8's offsets and released by av_packet_unref before the next receive.
+            // the shared offsets and released by av_packet_unref before the next receive.
             unsafe {
                 let code = (self.ff.receive_packet)(self.context, self.packet);
                 if code == AGAIN {
@@ -291,7 +366,7 @@ impl Ac3Encoder {
         codec.option_int(c"b", i64::from(bitrate))?;
         codec.option_int(c"ar", 48_000)?;
         // SAFETY: the context is live and not open yet, `layout` is a native layout without
-        // allocations, and the frame is a fresh AVFrame written at FFmpeg 8's offsets before
+        // allocations, and the frame is a fresh AVFrame written at the shared offsets before
         // av_frame_get_buffer allocates its planes.
         unsafe {
             let ff = &codec.ff;
@@ -413,7 +488,7 @@ impl Ac3Decoder {
         let mut samples = Vec::new();
         let mut channels = 0;
         // SAFETY: av_new_packet makes `frame.len()` writable bytes at the packet's data; the
-        // decoded frame's fields are read at FFmpeg 8's offsets, `channels` planes of
+        // decoded frame's fields are read at the shared offsets, `channels` planes of
         // `count` floats each.
         unsafe {
             let code = (codec.ff.new_packet)(codec.packet, frame.len() as c_int);
@@ -471,12 +546,77 @@ mod tests {
     }
 
     #[test]
-    fn a_missing_ffmpeg_is_refused_by_its_absolute_path() {
-        let path = beside(Path::new("no-ffmpeg-here"), AVUTIL).unwrap();
-        assert!(path.is_absolute(), "{}", path.display());
-        assert!(path.ends_with(Path::new("no-ffmpeg-here").join(AVUTIL)));
-        let error = format!("{:#}", probe(Path::new("no-ffmpeg-here")).unwrap_err());
-        assert!(error.contains(&path.display().to_string()), "{error}");
-        assert!(Ac3Decoder::new(Path::new("no-ffmpeg-here"), false).is_err());
+    fn ffmpeg_beside_the_host_comes_first_and_is_never_passed_over() {
+        let folder = std::env::temp_dir().join(format!("rubylight-ffmpeg-{}", std::process::id()));
+        std::fs::create_dir_all(&folder).unwrap();
+        // Nothing there: the system's FFmpeg 9, then 8, by soname.
+        let system = candidates(&folder).unwrap();
+        assert_eq!(
+            system
+                .iter()
+                .map(|(majors, avutil, avcodec)| (*majors, avutil.clone(), avcodec.clone()))
+                .collect::<Vec<_>>(),
+            vec![
+                (
+                    (61, 63),
+                    "libavutil.so.61".into(),
+                    "libavcodec.so.63".into()
+                ),
+                (
+                    (60, 62),
+                    "libavutil.so.60".into(),
+                    "libavcodec.so.62".into()
+                ),
+            ]
+        );
+        // An FFmpeg 8 beside the host is the only one tried, by its absolute path, and its
+        // failure is the error: a broken copy there does not fall back to the system's.
+        let broken = folder.join("libavutil.so.60");
+        std::fs::write(&broken, b"not a library").unwrap();
+        let beside_host = candidates(&folder).unwrap();
+        assert_eq!(beside_host.len(), 1);
+        assert_eq!(beside_host[0].0, (60, 62));
+        assert!(beside_host[0].1.is_absolute());
+        let error = format!("{:#}", probe(&folder).unwrap_err());
+        assert!(
+            error.contains(&beside_host[0].1.display().to_string()),
+            "{error}"
+        );
+        assert!(Ac3Decoder::new(&folder, false).is_err());
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    /// The system's FFmpeg 8 or 9, where installed: AC3 and E-AC3 encode and decode back to the
+    /// channels they were given. Skipped without one (CI).
+    #[test]
+    fn the_systems_ffmpeg_encodes_and_decodes() {
+        let folder = std::env::temp_dir().join("rubylight-no-ffmpeg-here");
+        if let Err(error) = Library::load(&folder) {
+            eprintln!("skipped: {error:#}");
+            return;
+        }
+        probe(&folder).unwrap();
+        for (eac3, channels, bitrate) in [
+            (false, 2u8, 192_000),
+            (false, 6, 640_000),
+            (true, 6, 768_000),
+        ] {
+            let mut encoder = Ac3Encoder::new(&folder, eac3, channels, bitrate).unwrap();
+            let mut decoder = Ac3Decoder::new(&folder, eac3).unwrap();
+            let count = usize::from(channels);
+            let samples: Vec<f32> = (0..FRAME_SAMPLES * count)
+                .map(|i| ((i / count) as f32 * 0.05).sin() * 0.5)
+                .collect();
+            let mut decoded = Vec::new();
+            for _ in 0..3 {
+                let frame = encoder.encode(&samples).unwrap();
+                assert!(!frame.is_empty());
+                let (got, mut out) = decoder.decode(&frame).unwrap();
+                assert_eq!(got, count);
+                decoded.append(&mut out);
+            }
+            assert_eq!(decoded.len(), 3 * FRAME_SAMPLES * count);
+            assert!(decoded.iter().any(|s| s.abs() > 0.1), "silence came back");
+        }
     }
 }

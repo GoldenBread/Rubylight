@@ -73,5 +73,9 @@ windows = { version = "0.62.2", features = ["Win32_System_RemoteDesktop"] }
 [target.'cfg(target_os = "linux")'.dependencies]
 butterpollo-linux-graphics = { path = "../../linux/graphics" }
 
+[features]
+# FFmpeg only from beside the host, never the system's, for the host's tests only.
+test-ffmpeg = ["butterpollo-linux-graphics/test-ffmpeg"]
+
 [lints]
 workspace = true

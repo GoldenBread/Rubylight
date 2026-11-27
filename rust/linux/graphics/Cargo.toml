@@ -25,6 +25,11 @@ pipewire = "0.10"
 wayland-client = "0.31"
 wayland-protocols-plasma = { version = "0.3", features = ["client"] }
 
+[features]
+# FFmpeg only from beside the host, never the system's: the host's tests see the same host
+# whatever FFmpeg the PC has.
+test-ffmpeg = []
+
 [build-dependencies]
 bindgen = "0.72"
 pkg-config = "0.3"

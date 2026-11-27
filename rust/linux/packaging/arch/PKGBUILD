@@ -57,6 +57,8 @@ optdepends=(
   'xdg-desktop-portal: streaming the desktop itself (screen capture portal)'
   'xdg-utils: opening a launcher (Steam, Heroic, Lutris) URLs for library games'
   'pipewire-pulse: audio capture and per-app routing through PipeWire'
+  'ffmpeg: AC3 and E-AC3 audio passthrough (FFmpeg 8 or 9)'
+  'at-spi2-core: the device keyboard following text fields (accessibility bus)'
   'npm: build the web console when building the package'
 )
 # The PyroWave codec library (client/scripts/build-pyrowave-sdk.sh) is not packaged: the host
