@@ -1,14 +1,26 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="280" height="56" viewBox="0 0 280 56" role="img" aria-label="Download Rubylight for Windows">
+<svg xmlns="http://www.w3.org/2000/svg" width="280" height="56" viewBox="0 0 280 56" role="img" aria-label="Download for Windows — 64-bit installer · Windows 10 &amp; 11">
   <defs>
-    <linearGradient id="fill" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#e0245e"/>
-      <stop offset="1" stop-color="#a80f3c"/>
+    <linearGradient id="rubyBtn" x1="0" y1="0" x2="0" y2="56" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#DA2452"/>
+      <stop offset="0.48" stop-color="#CE1E49"/>
+      <stop offset="1" stop-color="#A61439"/>
     </linearGradient>
+    <radialGradient id="topSheen" cx="80" cy="0" r="190" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.18"/>
+      <stop offset="0.6" stop-color="#FFFFFF" stop-opacity="0.04"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+    </radialGradient>
   </defs>
-  <rect width="280" height="56" rx="10" fill="url(#fill)"/>
-  <g fill="none" stroke="#ffffff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M29 16v17m-6.5-6.5 6.5 6.5 6.5-6.5M20 35v5h18v-5"/>
+  <rect x="0.5" y="0.5" width="279" height="55" rx="12" fill="url(#rubyBtn)" stroke="#8A0E2E"/>
+  <rect x="1" y="1" width="278" height="54" rx="11.5" fill="url(#topSheen)"/>
+  <path d="M13 1.5H267" stroke="#FFFFFF" stroke-opacity="0.32" stroke-width="1" stroke-linecap="round"/>
+
+  <!-- Recessed Obsidian Studio Icon Well -->
+  <rect x="10" y="10" width="36" height="36" rx="9" fill="#090A0D" fill-opacity="0.3" stroke="#FFFFFF" stroke-opacity="0.18"/>
+  <g fill="none" stroke="#FFFFFF" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M28 17.5v13m-5.2-5 5.2 5.2 5.2-5.2M20.5 34.5h15"/>
   </g>
-  <text x="54" y="26" fill="#ffffff" font-family="Segoe UI,Arial,sans-serif" font-size="18" font-weight="700">Download Rubylight</text>
-  <text x="54" y="43" fill="#ffe3ea" font-family="Segoe UI,Arial,sans-serif" font-size="12" letter-spacing="0.6">WINDOWS · RADEON · NVIDIA</text>
+
+  <text x="56" y="25.5" fill="#FFFFFF" font-family="Segoe UI Variable Text, Figtree, Segoe UI, system-ui, sans-serif" font-size="16.5" font-weight="700" letter-spacing="-0.2">Download for Windows</text>
+  <text x="56" y="42" fill="#FFE6EE" font-family="Segoe UI Variable Text, Figtree, Segoe UI, system-ui, sans-serif" font-size="11.5" font-weight="500" letter-spacing="0.1">64-bit installer · Windows 10 &amp; 11</text>
 </svg>

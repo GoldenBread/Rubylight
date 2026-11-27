@@ -1,30 +1,214 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1280" height="360" viewBox="0 0 1280 360" role="img" aria-labelledby="title desc">
-  <title id="title">Rubylight</title>
-  <desc id="desc">Written in Rust. Built for Radeon and NVIDIA. Made for Moonlight. A free Windows game-streaming host.</desc>
+  <title id="title">Rubylight — Low-latency Windows game-streaming host for Radeon &amp; NVIDIA</title>
+  <desc id="desc">Obsidian Studio 7.0 hero banner for Rubylight: a Rust-built Windows game-streaming host for AMD Radeon and NVIDIA GPUs, streaming to TV, handheld, desktop and phone clients.</desc>
   <defs>
-    <linearGradient id="background" x1="0" y1="0" x2="1" y2="1">
-      <stop stop-color="#111116"/>
-      <stop offset="1" stop-color="#210e18"/>
+    <linearGradient id="canvas" x1="0" y1="0" x2="1280" y2="360" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#090A0D"/>
+      <stop offset="0.58" stop-color="#0D1017"/>
+      <stop offset="1" stop-color="#13111A"/>
     </linearGradient>
-    <radialGradient id="glow">
-      <stop stop-color="#c41242" stop-opacity=".3"/>
-      <stop offset="1" stop-color="#c41242" stop-opacity="0"/>
+    <radialGradient id="rubyKey" cx="995" cy="164" r="420" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#CE1E49" stop-opacity="0.34"/>
+      <stop offset="0.52" stop-color="#CE1E49" stop-opacity="0.11"/>
+      <stop offset="1" stop-color="#090A0D" stop-opacity="0"/>
     </radialGradient>
+    <radialGradient id="amberRim" cx="1110" cy="240" r="280" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#F5B041" stop-opacity="0.22"/>
+      <stop offset="1" stop-color="#090A0D" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="cyanRim" cx="830" cy="92" r="250" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#59B0FF" stop-opacity="0.16"/>
+      <stop offset="1" stop-color="#090A0D" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="markGrad" x1="60" y1="48" x2="108" y2="96" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#DC2352"/>
+      <stop offset="1" stop-color="#A81239"/>
+    </linearGradient>
+    <linearGradient id="stageArt" x1="764" y1="48" x2="1194" y2="148" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#131826"/>
+      <stop offset="0.52" stop-color="#331528"/>
+      <stop offset="0.84" stop-color="#8F1838"/>
+      <stop offset="1" stop-color="#E07A38"/>
+    </linearGradient>
+    <linearGradient id="handheldArt" x1="756" y1="214" x2="906" y2="306" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#151332"/>
+      <stop offset="0.55" stop-color="#8C1D4B"/>
+      <stop offset="1" stop-color="#F5B041"/>
+    </linearGradient>
+    <linearGradient id="waveArea" x1="0" y1="196" x2="0" y2="252" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#59B0FF" stop-opacity="0.28"/>
+      <stop offset="1" stop-color="#59B0FF" stop-opacity="0"/>
+    </linearGradient>
+    <clipPath id="bannerClip">
+      <rect width="1280" height="360" rx="22"/>
+    </clipPath>
+    <clipPath id="tvClip">
+      <rect x="764" y="48" width="430" height="214" rx="11"/>
+    </clipPath>
+    <clipPath id="hhClip">
+      <rect x="756" y="214" width="150" height="92" rx="8"/>
+    </clipPath>
   </defs>
-  <rect width="1280" height="360" rx="20" fill="url(#background)"/>
-  <ellipse cx="1090" cy="160" rx="370" ry="300" fill="url(#glow)"/>
-  <g font-family="Segoe UI, Helvetica, Arial, sans-serif">
-    <rect x="64" y="54" width="42" height="42" rx="10" fill="#c41242"/>
-    <text x="85" y="85" text-anchor="middle" font-size="30" font-weight="800" fill="#fff">R</text>
-    <text x="122" y="82" font-size="17" font-weight="600" letter-spacing="2" fill="#c4bcc2">YOUR PC. EVERY SCREEN.</text>
-    <text x="60" y="200" font-size="92" font-weight="750" letter-spacing="-3" fill="#fff">Rubylight</text>
-    <text x="65" y="252" font-size="27" fill="#ece8ec">Written in Rust. <tspan fill="#ff477b" font-weight="700">Built for Radeon and NVIDIA.</tspan> Made for Moonlight.</text>
-    <text x="65" y="309" font-size="16" letter-spacing="1.5" fill="#b5a8b0">WINDOWS HOST · FREE &amp; OPEN SOURCE</text>
+
+  <g clip-path="url(#bannerClip)">
+    <!-- Obsidian Studio Canvas & Ambient Key Lights -->
+    <rect width="1280" height="360" fill="url(#canvas)"/>
+    <rect width="1280" height="360" fill="url(#rubyKey)"/>
+    <rect width="1280" height="360" fill="url(#amberRim)"/>
+    <rect width="1280" height="360" fill="url(#cyanRim)"/>
+
+    <!-- Subtle Architectural Grid Planes on Right Stage -->
+    <g stroke="#FFFFFF" stroke-opacity="0.035" stroke-width="1">
+      <line x1="704" y1="0" x2="704" y2="360"/>
+      <line x1="848" y1="0" x2="848" y2="360"/>
+      <line x1="992" y1="0" x2="992" y2="360"/>
+      <line x1="1136" y1="0" x2="1136" y2="360"/>
+      <line x1="680" y1="90" x2="1280" y2="90"/>
+      <line x1="680" y1="180" x2="1280" y2="180"/>
+      <line x1="680" y1="270" x2="1280" y2="270"/>
+    </g>
+
+    <!-- ==================== LEFT: 7.0 STUDIO IDENTITY ==================== -->
+    <!-- Geometric Rubylight Squircle Mark -->
+    <rect x="60" y="48" width="46" height="46" rx="12" fill="url(#markGrad)"/>
+    <rect x="60.5" y="48.5" width="45" height="45" rx="11.5" fill="none" stroke="#FFFFFF" stroke-opacity="0.24"/>
+    <path d="M74.5 60.5H85.2C90.2 60.5 93.5 63.3 93.5 67.6C93.5 70.9 91.5 73.3 88.2 74.2L94.2 83.5H88.4L83.1 74.8H79.6V83.5H74.5V60.5ZM79.6 64.8V70.7H84.8C87.2 70.7 88.5 69.5 88.5 67.7C88.5 65.9 87.2 64.8 84.8 64.8H79.6Z" fill="#FFFFFF"/>
+
+    <!-- Studio Status Eyebrow Pill -->
+    <rect x="120" y="56" width="268" height="30" rx="15" fill="#141821" stroke="#2B3140"/>
+    <circle cx="138" cy="71" r="4.5" fill="#45E0A0"/>
+    <circle cx="138" cy="71" r="8" fill="#45E0A0" opacity="0.2"/>
+    <text x="152" y="75.5" fill="#C8CEDB" font-family="Segoe UI Variable Text, Figtree, Segoe UI, system-ui, sans-serif" font-size="12" font-weight="600" letter-spacing="1.4">WINDOWS HOST · OPEN SOURCE</text>
+
+    <!-- Display Wordmark -->
+    <text x="58" y="182" fill="#F5F7FA" font-family="Segoe UI Variable Display, Figtree, Segoe UI, system-ui, sans-serif" font-size="86" font-weight="750" letter-spacing="-2.6">Rubylight</text>
+
+    <!-- Crisp Tagline with Generous Gap to Right Hardware Stage -->
+    <text x="61" y="228" fill="#C8CEDB" font-family="Segoe UI Variable Text, Figtree, Segoe UI, system-ui, sans-serif" font-size="18.8" font-weight="450">Low-latency Windows game-streaming host for <tspan fill="#F5F7FA" font-weight="650">Radeon &amp; NVIDIA</tspan></text>
+
+    <!-- Architectural Capability Strip -->
+    <g font-family="Segoe UI Variable Text, Figtree, Segoe UI, system-ui, sans-serif" font-size="12.5" font-weight="600" fill="#E4E8F0">
+      <rect x="60" y="268" width="166" height="36" rx="10" fill="#141821" stroke="#2B3140"/>
+      <line x1="70" y1="269" x2="216" y2="269" stroke="#FFFFFF" stroke-opacity="0.08"/>
+      <circle cx="77" cy="286" r="4" fill="#CE1E49"/>
+      <text x="89" y="290.5">Rust · AMF &amp; NVENC</text>
+
+      <rect x="236" y="268" width="192" height="36" rx="10" fill="#141821" stroke="#2B3140"/>
+      <line x1="246" y1="269" x2="418" y2="269" stroke="#FFFFFF" stroke-opacity="0.08"/>
+      <circle cx="253" cy="286" r="4" fill="#59B0FF"/>
+      <text x="265" y="290.5">Real VRR &amp; Frame Warp 2</text>
+
+      <rect x="438" y="268" width="182" height="36" rx="10" fill="#141821" stroke="#2B3140"/>
+      <line x1="448" y1="269" x2="610" y2="269" stroke="#FFFFFF" stroke-opacity="0.08"/>
+      <circle cx="455" cy="286" r="4" fill="#F5B041"/>
+      <text x="467" y="290.5">Moonlight &amp; Nightjar</text>
+    </g>
+
+    <!-- ==================== RIGHT: MULTI-SCREEN HARDWARE STAGE ==================== -->
+    <!-- 1. Studio 4K Display / TV Command Stage (metrics sit cleanly above overlapping devices) -->
+    <ellipse cx="979" cy="288" rx="180" ry="12" fill="#000000" opacity="0.55"/>
+    <path d="M952 272H1006L1016 288H942Z" fill="#1C212C" stroke="#2B3140"/>
+    <rect x="920" y="287" width="118" height="4" rx="2" fill="#363E52"/>
+
+    <rect x="754" y="38" width="450" height="234" rx="16" fill="#111319" stroke="#363E52" stroke-width="1.5"/>
+    <line x1="772" y1="39.2" x2="1186" y2="39.2" stroke="#FFFFFF" stroke-opacity="0.14"/>
+
+    <g clip-path="url(#tvClip)">
+      <rect x="764" y="48" width="430" height="214" fill="#0B0D12"/>
+      <!-- Cover-lit hero header inside TV stage -->
+      <rect x="764" y="48" width="430" height="82" fill="url(#stageArt)"/>
+      <path d="M764 130L852 98L926 114L1030 78L1118 106L1194 86V130Z" fill="#0B0D12" opacity="0.72"/>
+      <rect x="764" y="48" width="276" height="82" fill="#0B0D12" opacity="0.45"/>
+
+      <!-- Live pill & active game header -->
+      <rect x="778" y="59" width="128" height="21" rx="10.5" fill="#0B0D12" fill-opacity="0.8" stroke="#45E0A0" stroke-opacity="0.45"/>
+      <circle cx="791" cy="69.5" r="3.5" fill="#45E0A0"/>
+      <text x="801" y="73.5" fill="#F5F7FA" font-family="Segoe UI, system-ui, sans-serif" font-size="9.8" font-weight="700" letter-spacing="0.5">4K 120 · HDR LIVE</text>
+      <text x="778" y="102" fill="#F5F7FA" font-family="Segoe UI, system-ui, sans-serif" font-size="17" font-weight="700">Ashen Crown</text>
+      <text x="778" y="119" fill="#CBD2DE" font-family="Segoe UI, system-ui, sans-serif" font-size="10.2">Virtual Display · DualSense VHF · HEVC 10-bit</text>
+
+      <!-- 4 Pipeline Stage Metric Cards (y: 138..180 — 100% unobstructed!) -->
+      <g font-family="Cascadia Mono, Consolas, monospace">
+        <rect x="778" y="138" width="96" height="42" rx="8" fill="#141821" stroke="#2B3140"/>
+        <text x="788" y="153" fill="#9BA4B5" font-family="Segoe UI, sans-serif" font-size="9" font-weight="600">CAPTURE</text>
+        <text x="788" y="171" fill="#59B0FF" font-size="12.5" font-weight="700">0.4 ms</text>
+
+        <rect x="881" y="138" width="96" height="42" rx="8" fill="#141821" stroke="#2B3140"/>
+        <text x="891" y="153" fill="#9BA4B5" font-family="Segoe UI, sans-serif" font-size="9" font-weight="600">ENCODE</text>
+        <text x="891" y="171" fill="#B79BFF" font-size="12.5" font-weight="700">1.8 ms</text>
+
+        <rect x="984" y="138" width="96" height="42" rx="8" fill="#141821" stroke="#2B3140"/>
+        <text x="994" y="153" fill="#9BA4B5" font-family="Segoe UI, sans-serif" font-size="9" font-weight="600">PACING</text>
+        <text x="994" y="171" fill="#45E0A0" font-size="12.5" font-weight="700">99.8%</text>
+
+        <rect x="1087" y="138" width="93" height="42" rx="8" fill="#141821" stroke="#2B3140"/>
+        <text x="1097" y="153" fill="#9BA4B5" font-family="Segoe UI, sans-serif" font-size="9" font-weight="600">WARP 2</text>
+        <text x="1097" y="171" fill="#F5B041" font-size="12.5" font-weight="700">ON · VRR</text>
+      </g>
+
+      <!-- Telemetry Frame-Pacing Sparkline Strip -->
+      <rect x="778" y="188" width="402" height="62" rx="8" fill="#11141C" stroke="#232836"/>
+      <path d="M788 222C820 218 846 210 878 214C910 218 936 206 968 209C1000 212 1026 204 1058 208C1090 212 1126 203 1170 206V244H788Z" fill="url(#waveArea)"/>
+      <path d="M788 222C820 218 846 210 878 214C910 218 936 206 968 209C1000 212 1026 204 1058 208C1090 212 1126 203 1170 206" fill="none" stroke="#59B0FF" stroke-width="2" stroke-linecap="round"/>
+      <path d="M788 232C830 231 872 229 914 230C956 231 998 228 1040 229C1082 230 1126 228 1170 228" fill="none" stroke="#45E0A0" stroke-width="1.6" stroke-dasharray="4 4"/>
+    </g>
+
+    <!-- 2. Front-Left Overlap: Handheld Console (y: 198..318, cleanly below TV metric cards) -->
+    <rect x="714" y="204" width="238" height="118" rx="28" fill="#000000" opacity="0.54"/>
+    <rect x="712" y="200" width="238" height="118" rx="28" fill="#181B24" stroke="#363E52" stroke-width="1.5"/>
+    <line x1="740" y1="201.2" x2="922" y2="201.2" stroke="#FFFFFF" stroke-opacity="0.14"/>
+    <!-- Left & Right Handheld Controls -->
+    <circle cx="734" cy="240" r="10" fill="#0E1015" stroke="#2E3446" stroke-width="1.5"/>
+    <circle cx="734" cy="240" r="4.5" fill="#232836"/>
+    <path d="M731 270h6v6h6v6h-6v6h-6v-6h-6v-6h6z" fill="#2B3140"/>
+    <circle cx="928" cy="278" r="10" fill="#0E1015" stroke="#2E3446" stroke-width="1.5"/>
+    <circle cx="928" cy="278" r="4.5" fill="#232836"/>
+    <circle cx="928" cy="232" r="3" fill="#F5B041"/>
+    <circle cx="935" cy="239" r="3" fill="#CE1E49"/>
+    <circle cx="921" cy="239" r="3" fill="#59B0FF"/>
+    <circle cx="928" cy="246" r="3" fill="#45E0A0"/>
+
+    <!-- Handheld OLED Screen -->
+    <g clip-path="url(#hhClip)">
+      <rect x="756" y="214" width="150" height="92" fill="url(#handheldArt)"/>
+      <circle cx="864" cy="248" r="18" fill="#FFF2C6" opacity="0.88"/>
+      <path d="M756 276L798 258L838 268L878 252L906 264V306H756Z" fill="#120B1D"/>
+      <path d="M824 272L842 272L890 306H776Z" fill="#26142C"/>
+      <line x1="827" y1="274" x2="790" y2="306" stroke="#FF4778" stroke-width="2"/>
+      <line x1="839" y1="274" x2="876" y2="306" stroke="#FFC866" stroke-width="2"/>
+      <rect x="764" y="221" width="52" height="15" rx="7.5" fill="#090A0D" fill-opacity="0.78"/>
+      <text x="790" y="231.5" text-anchor="middle" fill="#F5B041" font-family="Segoe UI, sans-serif" font-size="8.8" font-weight="700">120 FPS</text>
+      <rect x="764" y="282" width="64" height="17" rx="8.5" fill="#F5B041"/>
+      <text x="796" y="293.5" text-anchor="middle" fill="#1A1000" font-family="Segoe UI, sans-serif" font-size="9" font-weight="700">Resume</text>
+    </g>
+    <rect x="756" y="214" width="150" height="92" rx="8" fill="none" stroke="#F5B041" stroke-opacity="0.55" stroke-width="1.2"/>
+
+    <!-- 3. Front-Right Overlap: Compact Library & Mobile Client Card (y: 192..320, cleanly below WARP 2) -->
+    <rect x="1074" y="196" width="158" height="126" rx="16" fill="#000000" opacity="0.52"/>
+    <rect x="1072" y="192" width="158" height="126" rx="16" fill="#151923" stroke="#363E52" stroke-width="1.5"/>
+    <line x1="1088" y1="193.2" x2="1214" y2="193.2" stroke="#FFFFFF" stroke-opacity="0.14"/>
+
+    <!-- Miniature 2:3 Poster Shelf inside Mobile Card -->
+    <rect x="1085" y="206" width="38" height="56" rx="6" fill="#8F1838"/>
+    <circle cx="1104" cy="228" r="9" fill="#FFC866" opacity="0.85"/>
+    <path d="M1085 245L1104 232L1123 247V262H1085Z" fill="#180A14"/>
+    <rect x="1085" y="206" width="38" height="56" rx="6" fill="none" stroke="#F5B041" stroke-width="1.5"/>
+
+    <rect x="1132" y="206" width="38" height="56" rx="6" fill="#124E68"/>
+    <circle cx="1151" cy="227" r="8.5" fill="#9AF6E6" opacity="0.8"/>
+    <path d="M1132 247L1149 235L1170 249V262H1132Z" fill="#071C28"/>
+
+    <rect x="1179" y="206" width="38" height="56" rx="6" fill="#2A1D54"/>
+    <circle cx="1198" cy="229" r="9.5" fill="#B79BFF" opacity="0.75"/>
+    <path d="M1179 249L1198 234L1217 250V262H1179Z" fill="#0D0920"/>
+
+    <rect x="1085" y="271" width="132" height="35" rx="8.5" fill="#0E1118" stroke="#232836"/>
+    <circle cx="1099" cy="288.5" r="4" fill="#45E0A0"/>
+    <text x="1110" y="285.5" fill="#F5F7FA" font-family="Segoe UI, sans-serif" font-size="9.8" font-weight="700">Nightjar Ready</text>
+    <text x="1110" y="298" fill="#9BA4B5" font-family="Segoe UI, sans-serif" font-size="8.6">TV · Handheld · Desktop</text>
   </g>
-  <g fill="none" stroke="#ee3569" stroke-width="2">
-    <rect x="991" y="73" width="208" height="142" rx="14" opacity=".65"/>
-    <path d="M1095 215v29m-42 0h84" opacity=".65"/>
-    <rect x="1086" y="158" width="92" height="142" rx="14" fill="#210e18"/>
-    <path d="M1120 174h24m-20 110h16"/>
-  </g>
+
+  <!-- Outer Obsidian Studio Frame & Top-Lit Specular Hairline -->
+  <rect x="0.75" y="0.75" width="1278.5" height="358.5" rx="21.25" fill="none" stroke="#2B3140" stroke-width="1.5"/>
+  <path d="M24 1.5H1256" stroke="#FFFFFF" stroke-opacity="0.12" stroke-width="1"/>
 </svg>
