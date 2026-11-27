@@ -25,13 +25,14 @@
   import DeviceOverrides from './DeviceOverrides.svelte';
   import PlayTogether from './PlayTogether.svelte';
   import NeuralRendering from './NeuralRendering.svelte';
+  import DisclosureMeta from '../settings/DisclosureMeta.svelte';
   import { api, type App, type SessionStatus } from '../../lib/api';
   import { confirm, failed, notify } from '../../lib/feedback.svelte';
   import { session } from '../../lib/session.svelte';
-  import { guardNavigation, link, navigate } from '../../lib/router.svelte';
+  import { guardNavigation, link } from '../../lib/router.svelte';
   import { commandFor, coverKey } from '../../lib/paths';
   import { closeApp, confirmClose, coverPath, isRunningApp, launchApp, runningName } from './app';
-  import { AppDraft, type FlagKey } from './draft.svelte';
+  import { AppDraft, CONFIG_KEY, FLAGS, type FlagKey } from './draft.svelte';
   import { LAUNCHER_NAMES, deleteMessage, launcherOf } from './selection.svelte';
 
   let {
@@ -82,6 +83,56 @@
     if (sync === 'playnite') return 'Playnite';
     if (sync === 'launcher') return launcher === 'local' ? 'game folder' : launcherName || 'launcher';
     return '';
+  });
+
+  const customized = $derived.by(() => {
+    const configOverrides = draft.app[CONFIG_KEY];
+    const extraOverrides = configOverrides && typeof configOverrides === 'object' && !Array.isArray(configOverrides)
+      ? Object.keys(configOverrides).length
+      : 0;
+    const radeonProfile = draft.text('radeon-profile').trim();
+    return {
+      prep: draft.prep.filter((row) => row.do.trim() || row.undo.trim()).length + (draft.flag('exclude-global-prep-cmd') ? 1 : 0),
+      menu: draft.menu.filter((row) => row.name.trim() || row.cmd.trim() || row.undo.trim()).length + (draft.flag('exclude-global-menu-cmd') ? 1 : 0),
+      behavior:
+        (['elevated', 'auto-detach', 'wait-all', 'allow-client-commands', 'exclude-global-state-cmd', 'background-stream'] as FlagKey[])
+          .filter((key) => draft.flag(key) !== FLAGS[key]).length +
+        (draft.tristate('terminate-on-pause') !== '' ? 1 : 0) +
+        (draft.number('exit-timeout') !== undefined ? 1 : 0),
+      display:
+        (['virtual-display-primary', 'use-app-identity', 'per-client-app-identity'] as FlagKey[])
+          .filter((key) => draft.flag(key) !== FLAGS[key]).length +
+        (draft.virtualDisplay() !== '' ? 1 : 0) +
+        (['virtual-display-layout', 'display-output', 'dd-configuration-option', 'capture-window', 'capture-window-exe', 'capture-window-title', 'capture-window-closed', 'capture-window-frame'] as const)
+          .filter((key) => draft.text(key).trim() !== '').length +
+        (draft.number('scale-factor') !== undefined ? 1 : 0),
+      video:
+        (['prefer-10bit-sdr', 'native-pen-touch'] as const).filter((key) => draft.tristate(key) !== '').length +
+        (['frame-generation-mode', 'gamepad'] as const).filter((key) => draft.text(key).trim() !== '').length +
+        (draft.number('absolute-left-release-delay') !== undefined ? 1 : 0) +
+        (draft.flag('gen1-framegen-fix') ? 1 : 0) +
+        extraOverrides,
+      couch:
+        (['audio-night-mode', 'audio-headphone-surround', 'couch-menu'] as const).filter((key) => draft.tristate(key) !== '').length +
+        (['couch-menu-open-with', 'couch-menu-controller-chord', 'couch-menu-keyboard-chord'] as const)
+          .filter((key) => draft.text(key).trim() !== '').length +
+        (['couch-menu-hold-ms', 'couch-menu-corner-hold-ms'] as const).filter((key) => draft.number(key) !== undefined).length,
+      radeon: radeonProfile ? (radeonProfile.toLowerCase() === 'custom' ? Math.max(1, draft.radeon.filter((row) => row.id.trim() !== '').length) : 1) : 0,
+      files: draft.files.filter((row) => row.path.trim() !== '').length,
+      settingsFiles: draft.settingsFiles.filter((row) => row.value.trim() !== '').length,
+      devices: draft.devices().length,
+      lossless:
+        (draft.flag('lossless-scaling-enabled') ? 1 : 0) +
+        (draft.text('lossless-scaling-profile').trim() !== '' ? 1 : 0) +
+        (draft.tristate('lossless-scaling-legacy-auto-detect') !== '' ? 1 : 0) +
+        (['lossless-scaling-target-fps', 'lossless-scaling-rtss-limit', 'lossless-scaling-launch-delay'] as const)
+          .filter((key) => draft.number(key) !== undefined).length,
+      rtx:
+        (draft.flag('rtx-hdr') ? 1 : 0) +
+        (draft.tristate('rtx-video') !== '' ? 1 : 0) +
+        (['rtx-hdr-sdr-brightness', 'rtx-hdr-contrast', 'rtx-hdr-saturation', 'rtx-hdr-middle-gray', 'rtx-video-intensity'] as const)
+          .filter((key) => draft.number(key) !== undefined).length,
+    };
   });
 
   // Follow a reload of the library while this form has no edits of its own.
@@ -208,6 +259,10 @@
   <Toggle {label} {hint} bind:checked={() => draft.flag(key), (value) => draft.setFlag(key, value)} />
 {/snippet}
 
+{#snippet foldMeta(count: number)}
+  {#if count > 0}<DisclosureMeta customized={count} />{/if}
+{/snippet}
+
 <div class="editor">
   <a class="back" href="/library" use:link>
     <span class="back-icon"><Icon name="chevron" size={16} /></span>
@@ -226,13 +281,17 @@
       facts={studioFacts(draft.saved)}
     >
       {#snippet actions()}
-        {#if !isRunning}
+        {#if isRunning}
+          <Button variant="danger" icon="power" busy={busy === 'close'} disabled={busy !== '' && busy !== 'close'} onclick={close}>
+            Quit game
+          </Button>
+        {:else}
           <Button
             variant="primary"
             icon="play"
             busy={busy === 'launch'}
             disabled={running !== '' || busy !== ''}
-            title={running ? `Close ${running} first` : draft.changed ? 'Starts it on this PC with the saved settings' : 'Starts it on this PC'}
+            title={running ? `Quit ${running} first` : draft.changed ? 'Starts it on this PC with the saved settings' : 'Starts it on this PC'}
             onclick={launch}
           >
             Launch
@@ -319,6 +378,7 @@
 
     <div class="more">
     <Panel collapsible title="Preparation commands" description="Run before the app starts. Cleanup commands run after it closes.">
+      {#snippet facts()}{@render foldMeta(customized.prep)}{/snippet}
       <div class="prep">
         <PrepCommands id="{uid}-prep" bind:rows={draft.prep} />
         <p class="note">
@@ -340,6 +400,7 @@
       title="Stream menu commands"
       description="Commands devices can run on this PC from their stream menu and the host menu while this app runs. Each undo runs when the app closes, if its command ran."
     >
+      {#snippet facts()}{@render foldMeta(customized.menu)}{/snippet}
       <div class="prep">
         <MenuCommands id="{uid}-menu" bind:rows={draft.menu} error={draft.menuError} />
         <p class="note">
@@ -356,6 +417,7 @@
     </Panel>
 
     <Panel collapsible title="Behavior" description="What the PC does while the app runs.">
+      {#snippet facts()}{@render foldMeta(customized.behavior)}{/snippet}
       <div class="toggles">
         {@render flag('elevated', 'Run as administrator', 'Leave it off unless the program needs administrator rights. Detached commands run as administrator too.')}
         {@render flag(
@@ -385,7 +447,7 @@
         )}
       </div>
       <div class="form-grid behaviour-numbers">
-        <Field label="Close the app when the last device disconnects" id="{uid}-terminate">
+        <Field label="Quit the game when the last device disconnects" id="{uid}-terminate">
           <select
             id="{uid}-terminate"
             class="select"
@@ -397,7 +459,7 @@
             <option value="off">Off</option>
           </select>
           <p class="hint" id="{uid}-terminate-hint">
-            On closes this app once no device streams it, which may lose unsaved progress. Off keeps it running so
+            On quits this game once no device streams it, which may lose unsaved progress. Off keeps it running so
             a device can reconnect. Global default:
             <a href={APP_BEHAVIOR} use:link>All settings › Games</a>.
           </p>
@@ -414,39 +476,48 @@
     </Panel>
 
     <Panel collapsible title="Display">
+      {#snippet facts()}{@render foldMeta(customized.display)}{/snippet}
       <DisplaySettings {draft} />
     </Panel>
 
     <Panel collapsible title="Video and input">
+      {#snippet facts()}{@render foldMeta(customized.video)}{/snippet}
       <VideoSettings {draft} />
     </Panel>
 
     <Panel collapsible title="Sound and couch menu" description="Night mode, headphone surround and the couch menu for this app, in place of the host's.">
+      {#snippet facts()}{@render foldMeta(customized.couch)}{/snippet}
       <CouchSettings {draft} />
     </Panel>
 
     <Panel collapsible title="Graphics driver" description="Driver settings for this game, applied when it starts and put back when the session ends.">
+      {#snippet facts()}{@render foldMeta(customized.radeon)}{/snippet}
       <RadeonSettings {draft} />
     </Panel>
 
     <Panel collapsible title="Managed game files" description="Keys in the game’s own settings files, set for a stream and put back when the session ends.">
+      {#snippet facts()}{@render foldMeta(customized.files)}{/snippet}
       <GameFiles id="{uid}-files" bind:rows={draft.files} />
     </Panel>
 
     <Panel collapsible title="Game settings per device" description="The game’s own settings files, kept for each device: a TV and a handheld each keep their resolution and quality.">
+      {#snippet facts()}{@render foldMeta(customized.settingsFiles)}{/snippet}
       <GameSettingsFiles {draft} id="{uid}-settings-files" />
     </Panel>
 
     <Panel collapsible title="Per device" description="This game’s settings on one device: stream preset, frame limit, what to stream, driver preset and game files.">
+      {#snippet facts()}{@render foldMeta(customized.devices)}{/snippet}
       <DeviceOverrides {draft} />
     </Panel>
 
     <Panel collapsible title="Lossless Scaling" description="Upscaling and frame generation by Lossless Scaling while the app runs.">
+      {#snippet facts()}{@render foldMeta(customized.lossless)}{/snippet}
       <LosslessSettings {draft} />
     </Panel>
 
     {#if session.metadata?.nvidia_enhancements?.component.nvidia_gpu || session.metadata?.nvidia_enhancements?.component.installed}
       <Panel collapsible title="NVIDIA image enhancement" description="RTX HDR and RTX Video enhancement for this app’s streams.">
+        {#snippet facts()}{@render foldMeta(customized.rtx)}{/snippet}
         <RtxSettings {draft} offered={session.metadata.nvidia_enhancements} />
       </Panel>
     {/if}
@@ -460,14 +531,14 @@
       <!-- What happens to the game itself sits in the page; the bar below is only for unsaved changes. -->
       <div class="game-actions">
         {#if isRunning}
-          <Button icon="stop" busy={busy === 'close'} onclick={close}>Close app</Button>
+          <Button variant="danger" icon="power" busy={busy === 'close'} onclick={close}>Quit game</Button>
         {:else}
           <Button
             icon="play"
             busy={busy === 'launch'}
             disabled={running !== '' || busy !== ''}
             title={running
-              ? `Close ${running} first`
+              ? `Quit ${running} first`
               : draft.changed
                 ? 'Starts it with the saved settings'
                 : undefined}
@@ -503,6 +574,7 @@
   }
   .back {
     justify-self: start;
+    min-height: var(--control-height);
     display: inline-flex;
     align-items: center;
     gap: var(--space-1);
@@ -521,7 +593,7 @@
   .position {
     color: var(--muted);
     font-size: var(--text-xs);
-    margin-right: 2px;
+    margin-inline-end: 2px;
   }
   .sections {
     display: grid;
@@ -600,7 +672,7 @@
   }
   .status {
     font-size: var(--text-xs);
-    margin-left: var(--space-1);
+    margin-inline-start: var(--space-1);
   }
   @media (max-width: 900px) {
     .top {

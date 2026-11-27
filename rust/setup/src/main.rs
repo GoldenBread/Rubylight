@@ -177,6 +177,7 @@ Exit codes: 0 done, 3010 done but Windows must restart, 1223 cancelled, 1 failed
 fn main() {
     // Before any window, so every dialog renders sharp on every monitor.
     ui_theme::per_monitor_dpi();
+    ui_theme::allow_dark_mode();
     let args = match arguments() {
         Ok(args) => args,
         Err(error) => {

@@ -316,7 +316,7 @@ pub(super) async fn maintenance(
             "crash-dismiss",
             csrf,
             "/maintenance",
-            &(fields + "<button type=\"submit\">Dismiss this report</button>"),
+            &(fields + "<button type=\"submit\" class=\"secondary\">Dismiss this report</button>"),
         );
     }
     content += &card("Crash reports", &crash_content);
@@ -325,4 +325,162 @@ pub(super) async fn maintenance(
             "Support",
             "<p>The support bundle includes host logs and diagnostics for troubleshooting, with addresses, user and device names and game titles replaced by marks.</p><a class=\"button secondary\" href=\"/api/logs/export_crash\">Download support bundle</a><p>A crash memory dump can hold anything Rubylight had in memory, such as names, addresses and passwords. Include it only when asked, and share it privately.</p><a class=\"button secondary\" href=\"/api/logs/export_crash?include_dump=1\">Download with the crash memory dump</a>",
         ))
+}
+
+pub(super) async fn sessions(
+    h: &Shared,
+    connection: &Connection,
+    headers: &HeaderMap,
+    csrf: &str,
+) -> Result<String, String> {
+    let rtsp = get(h, connection, headers, "/api/rtsp/sessions").await?;
+    let status = get(h, connection, headers, "/api/session/status").await?;
+    let history = get(h, connection, headers, "/api/sessions/history").await?;
+    let active = rows(&rtsp, "sessions");
+    let mut content =
+        "<p class=\"intro\">Inspect active streams, running games, and recent session history.</p>"
+            .to_owned();
+    content += &crate::console::theme::telemetry_strip(active);
+    if status["appRunning"] == true {
+        let app_name = text(&status, "appName");
+        let label = if app_name.is_empty() {
+            "A game is running on this host.".to_owned()
+        } else {
+            format!("Running now: <strong>{}</strong>", i18n::data(app_name))
+        };
+        content += &card(
+            "Running game",
+            &format!(
+                "<p>{label}</p><div class=\"actions\">{}</div>",
+                button("app-close", csrf, "/sessions", "", "", "Quit game")
+            ),
+        );
+    }
+    if active.is_empty() {
+        content += &card(
+            "Active streams",
+            "<p>No devices are streaming right now. Connect from Nightjar or Moonlight to start.</p>",
+        );
+    } else {
+        let mut table = "<div class=\"table-scroll\"><table><thead><tr><th>Device</th><th>Stream</th><th>Bitrate</th><th></th></tr></thead><tbody>".to_owned();
+        for session in active {
+            let disconnect = button(
+                "disconnect",
+                csrf,
+                "/sessions",
+                "uuid",
+                text(session, "uuid"),
+                "Disconnect",
+            );
+            table += &format!(
+                "<tr><td>{}</td><td>{}×{} · {} fps</td><td>{:.1} Mbps</td><td>{disconnect}</td></tr>",
+                i18n::data(text(session, "device_name")),
+                session["width"],
+                session["height"],
+                session["fps"],
+                session["performance"]["bitrate_mbps"]
+                    .as_f64()
+                    .unwrap_or(0.),
+            );
+        }
+        content += &card("Active streams", &(table + "</tbody></table></div>"));
+    }
+    let past = rows(&history, "sessions");
+    if past.is_empty() {
+        content += &card(
+            "Recent sessions",
+            "<p>No completed sessions recorded yet.</p>",
+        );
+    } else {
+        let mut table = "<div class=\"table-scroll\"><table><thead><tr><th>Device</th><th>Game</th><th>Duration</th></tr></thead><tbody>".to_owned();
+        for entry in past.iter().take(20) {
+            let secs = entry["duration_secs"]
+                .as_u64()
+                .or_else(|| entry["duration_ms"].as_u64().map(|ms| ms / 1000))
+                .unwrap_or(0);
+            table += &format!(
+                "<tr><td>{}</td><td>{}</td><td>{}s</td></tr>",
+                i18n::data(text(entry, "device_name")),
+                i18n::data(if text(entry, "app_name").is_empty() {
+                    "Desktop"
+                } else {
+                    text(entry, "app_name")
+                }),
+                secs
+            );
+        }
+        content += &card("Recent sessions", &(table + "</tbody></table></div>"));
+    }
+    Ok(content)
+}
+
+pub(super) async fn clips(
+    h: &Shared,
+    connection: &Connection,
+    headers: &HeaderMap,
+) -> Result<String, String> {
+    let status = get(h, connection, headers, "/api/dvr/status").await?;
+    let list = get(h, connection, headers, "/api/dvr/clips").await?;
+    let enabled = status["enabled"] == true;
+    let mut content =
+        "<p class=\"intro\">Instant replay clips and recordings saved on this host.</p>".to_owned();
+    content += &card(
+        "Replay buffer",
+        &format!(
+            "<dl><div><dt>Status</dt><dd>{}</dd></div><div><dt>Folder</dt><dd><code>{}</code></dd></div></dl>",
+            if enabled {
+                "Enabled"
+            } else {
+                "Off in Settings"
+            },
+            i18n::data(text(&status, "clips_dir")),
+        ),
+    );
+    let items = rows(&list, "clips");
+    if items.is_empty() {
+        content += &card(
+            "Saved clips",
+            "<p>No clips saved yet. Enable replay in Settings to capture highlights during a stream.</p>",
+        );
+    } else {
+        let mut table = "<div class=\"table-scroll\"><table><thead><tr><th>Clip</th><th>Game</th><th>Download</th></tr></thead><tbody>".to_owned();
+        for clip in items {
+            let id = text(clip, "id");
+            table += &format!(
+                "<tr><td><code>{}</code></td><td>{}</td><td><a class=\"button secondary\" href=\"/api/dvr/clips/{}/download\">Download</a></td></tr>",
+                i18n::data(id),
+                i18n::data(if text(clip, "app_name").is_empty() {
+                    "Desktop"
+                } else {
+                    text(clip, "app_name")
+                }),
+                crate::console::encoded(id),
+            );
+        }
+        content += &card("Saved clips", &(table + "</tbody></table></div>"));
+    }
+    Ok(content)
+}
+
+pub(super) async fn help(
+    h: &Shared,
+    connection: &Connection,
+    headers: &HeaderMap,
+) -> Result<String, String> {
+    let meta = get(h, connection, headers, "/api/metadata").await?;
+    let mut content =
+        "<p class=\"intro\">Connection steps, firewall checks, and support tools for this host.</p>"
+            .to_owned();
+    content += &card(
+        "Connect a device",
+        &format!(
+            "<ol class=\"setup-steps\"><li>Install Nightjar or Moonlight on your device and join the same network as this PC.</li><li>Select this host or add <code>{}</code> manually.</li><li>Approve the pairing PIN on <a href=\"/devices\">Devices</a>.</li></ol><p class=\"muted\">If your device cannot reach this PC, allow Rubylight through Windows Firewall for your private network.</p>",
+            i18n::data(text(&meta, "pc_address")),
+        ),
+    );
+    content += &card(
+        "Diagnostics and recovery",
+        "<div class=\"quick-links\"><a href=\"/logs\"><strong>Host log</strong><span>Inspect recent encoder, capture, and connection events</span></a><a href=\"/maintenance\"><strong>Maintenance</strong><span>Restore display layouts, check updates, and export support bundles</span></a><a href=\"/sessions\"><strong>Sessions</strong><span>Check active streams or quit a running game</span></a></div>",
+    );
+    Ok(content)
 }

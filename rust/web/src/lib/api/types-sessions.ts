@@ -8,6 +8,8 @@ export interface PerfSample {
   host_processing_mean_ms: number;
   host_processing_max_ms: number;
   frame_age_mean_ms: number;
+  rtt_ms?: number | null;
+  jitter_ms?: number | null;
 }
 /** Milliseconds a stage took, over the new pictures in the stage window. */
 export interface StageTiming {
@@ -48,6 +50,8 @@ export interface Performance {
   frame_age_p95_ms: number;
   present_to_send_mean_ms: number;
   send_interval_p99_ms: number;
+  rtt_ms?: number | null;
+  jitter_ms?: number | null;
   stages?: StageTimings;
   sample_frames: number;
   history: PerfSample[];
@@ -82,6 +86,11 @@ export interface StreamSession {
   /** The guest id when this stream joined another device's game as a guest (`/api/session-guests`). */
   guest?: number | null;
   encoder: string;
+  /** Capture backend identifier when reported by the host (`idd-push`, `wgc`, `dxgi`, ...). */
+  capture_backend?: string | null;
+  capture?: string | null;
+  rtt_ms?: number | null;
+  jitter_ms?: number | null;
   warnings: { code: string; message: string }[];
   uuid: string;
   device_name: string;

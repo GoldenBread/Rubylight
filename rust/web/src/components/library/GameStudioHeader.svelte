@@ -76,6 +76,9 @@
     --warn: var(--media-warn);
     --warn-soft: color-mix(in srgb, var(--media-warn) 14%, var(--media-panel));
     --warn-line: color-mix(in srgb, var(--media-warn) 36%, var(--media-panel));
+    --danger: var(--media-danger);
+    --danger-soft: color-mix(in srgb, var(--media-danger) 14%, var(--media-panel));
+    --danger-line: color-mix(in srgb, var(--media-danger) 40%, var(--media-panel));
     --accent-text: var(--media-accent-text);
     --accent-soft: color-mix(in srgb, var(--media-accent-text) 16%, var(--media-panel));
     --accent-line: color-mix(in srgb, var(--media-accent-text) 40%, var(--media-panel));

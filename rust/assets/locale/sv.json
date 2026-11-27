@@ -1417,6 +1417,32 @@
       "advanced": "Avancerat"
     }
   },
+  "couch_menu": {
+    "title": "Värdmeny",
+    "back_to_game": "Tillbaka till spelet",
+    "radeon": "Radeon-inställningar",
+    "restore_radeon": "Återställ Radeon",
+    "back": "Tillbaka",
+    "profile": "Profil: ",
+    "disconnect": "Koppla från (spelet körs)",
+    "end_session": "Avsluta session",
+    "close_game": "Avsluta spel",
+    "run": "Kör",
+    "next_stream": "Gäller från nästa ström",
+    "confirm": "Tryck igen inom 5 s",
+    "working": "Arbetar...",
+    "failed": "Fel: ",
+    "needs_host_control": "Kräver värdstyrning",
+    "on": "På",
+    "off": "Av",
+    "hint": "Enter/A: välj  Esc/B: tillbaka",
+    "items": {
+      "audio_night_mode": "Nattläge",
+      "audio_headphone_surround": "Surround i hörlurar",
+      "encoder_focus": "Kodarfokus",
+      "sleep_after_idle_minutes": "Vila vid inaktivitet"
+    }
+  },
   "support": {
     "bundle_desc": "Supportpaketet innehåller värdens loggar och diagnostik för felsökning, med adresser, användar- och enhetsnamn och speltitlar ersatta av markörer.",
     "bundle_download": "Ladda ned supportpaket",

@@ -3,13 +3,29 @@
 import { CODEC_NAMES, type StageTimings, type StreamSession } from '../../lib/api';
 
 const ENCODERS: Record<string, string> = { amf: 'AMD AMF', nvenc: 'NVIDIA NVENC', pyrowave: 'PyroWave' };
+const CAPTURES: Record<string, string> = {
+  'idd-push': 'Direct driver push',
+  idd_push: 'Direct driver push',
+  wgc: 'Windows Graphics Capture',
+  wgcc: 'WGC constant rate',
+  dxgi: 'Desktop Duplication',
+  ddx: 'Desktop Duplication',
+  d3d11: 'Direct3D 11',
+  amd: 'AMD Direct Capture',
+};
+
+/** Plain-English capture backend when the host names one it knows. */
+export function captureName(stream: StreamSession): string | null {
+  const raw = (stream.capture_backend ?? stream.capture ?? '').trim().toLowerCase();
+  return raw ? (CAPTURES[raw] ?? null) : null;
+}
 
 /** A stream's codec in plain words. */
 export function codecName(stream: StreamSession): string {
   return (CODEC_NAMES as readonly string[])[stream.video_format] ?? 'Unknown video format';
 }
 
-/** The short facts under the stage's title: picture, rate, range, codec, encoder. */
+/** The short facts under the stage's title: picture, rate, range, codec, encoder, capture. */
 export function specPills(stream: StreamSession): string[] {
   const pills = [`${stream.width}×${stream.height}`, `${stream.fps} fps`];
   if (stream.hdr) pills.push('HDR');
@@ -17,6 +33,8 @@ export function specPills(stream: StreamSession): string[] {
   pills.push(codecName(stream));
   const encoder = ENCODERS[stream.encoder];
   if (encoder) pills.push(encoder);
+  const capture = captureName(stream);
+  if (capture) pills.push(capture);
   return pills;
 }
 
@@ -63,7 +81,7 @@ export function shortMs(value: number): string {
 }
 
 export interface Trace {
-  id: 'fps' | 'bitrate' | 'host';
+  id: 'network' | 'fps' | 'bitrate' | 'host';
   label: string;
   unit: string;
   /** The figure now, or a dash before a frame was measured. */
@@ -74,19 +92,54 @@ export interface Trace {
   values: number[];
 }
 
-/** The stage's three traces: frame rate, bitrate and the host's time per frame. */
+function finite(value: number | null | undefined): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0;
+}
+
+/** The stage's three traces: network RTT/jitter (or frame rate when unreported), bitrate and host time per frame. */
 export function traces(stream: StreamSession): Trace[] {
   const perf = stream.performance;
   const measured = perf.sample_frames > 0;
   const history = perf.history ?? [];
   const mbps = perf.bitrate_mbps;
+  const rttSamples = history.map((sample) => sample.rtt_ms).filter(finite);
+  const jitterSamples = history.map((sample) => sample.jitter_ms).filter(finite);
+  const rttNow = finite(stream.rtt_ms) ? stream.rtt_ms : finite(perf.rtt_ms) ? perf.rtt_ms : rttSamples.at(-1);
+  const jitterNow = finite(stream.jitter_ms) ? stream.jitter_ms : finite(perf.jitter_ms) ? perf.jitter_ms : jitterSamples.at(-1);
+
+  const leadTrace: Trace =
+    rttNow !== undefined
+      ? {
+          id: 'network',
+          label: 'Network RTT',
+          unit: 'ms',
+          now: measured ? shortMs(rttNow) : '–',
+          sub:
+            jitterNow !== undefined
+              ? `Jitter ${shortMs(jitterNow)} ms · ${measured ? `${Math.round(perf.fps)}/${stream.fps} fps` : `Target ${stream.fps} fps`}`
+              : `Target ${stream.fps} fps${measured ? `, ${Math.round(perf.fps)} now` : ''}`,
+          values: rttSamples.length > 0 ? rttSamples : jitterSamples,
+        }
+      : jitterNow !== undefined
+        ? {
+            id: 'network',
+            label: 'Network jitter',
+            unit: 'ms',
+            now: measured ? shortMs(jitterNow) : '–',
+            sub: `Target ${stream.fps} fps${measured ? `, ${Math.round(perf.fps)} now` : ''}`,
+            values: jitterSamples,
+          }
+        : {
+            id: 'fps',
+            label: 'Frame rate',
+            unit: 'fps',
+            now: measured ? String(Math.round(perf.fps)) : '–',
+            sub: `Target ${stream.fps}`,
+            values: history.map((sample) => sample.fps),
+          };
+
   return [
-    {
-      id: 'fps', label: 'Frame rate', unit: 'fps',
-      now: measured ? String(Math.round(perf.fps)) : '–',
-      sub: `Target ${stream.fps}`,
-      values: history.map((sample) => sample.fps),
-    },
+    leadTrace,
     {
       id: 'bitrate', label: 'Bitrate', unit: 'Mbps',
       now: measured ? mbps.toFixed(mbps < 100 ? 1 : 0) : '–',
@@ -194,6 +247,9 @@ export function diagnosticsText(stream: StreamSession, game: string | null): str
   }
   const phases = pipelinePhases(perf.stages, measured);
   if (phases.length) lines.push(`Pipeline: ${phases.map((phase) => `${phase.label} ${shortMs(phase.ms)} ms`).join(', ')}`);
+  const rtt = finite(stream.rtt_ms) ? stream.rtt_ms : finite(perf.rtt_ms) ? perf.rtt_ms : undefined;
+  const jitter = finite(stream.jitter_ms) ? stream.jitter_ms : finite(perf.jitter_ms) ? perf.jitter_ms : undefined;
+  if (rtt !== undefined) lines.push(`Network: ${shortMs(rtt)} ms RTT${jitter !== undefined ? `, ${shortMs(jitter)} ms jitter` : ''}`);
   const link = stream.link_rate;
   if (link && link.state !== 'off') lines.push(`Network bitrate control: ${link.state}, ceiling ${(link.ceiling_kbps / 1000).toFixed(1)} Mbps`);
   for (const warning of stream.warnings ?? []) lines.push(`Warning: ${warning.message}`);

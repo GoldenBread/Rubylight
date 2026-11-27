@@ -1,7 +1,8 @@
 // The Rubylight 7.0 command palette (Ctrl+K, QuickSwitcher.svelte): quick-switch.ts's search,
-// grouped as Pages, Host actions, Diagnostics, Games, Devices and Settings. Host actions know the
-// host's state: a theme the console doesn't use yet, and Disconnect every stream only while a
-// device streams. Pure, so QuickSwitch70.test.mjs checks it without a browser.
+// grouped as Recent, Games, Devices, Pages, Host actions, Diagnostics and Settings. Host actions
+// know the host's state: a theme the console doesn't use yet, Disconnect every stream while a
+// device streams, and Quit game while a game runs. Pure, so QuickSwitch70.test.mjs checks it
+// without a browser.
 import { searchSettings, searchWords } from '../components/settings/search';
 import type { App, Client } from './api';
 import { advanced, primary } from './navigation';
@@ -12,11 +13,18 @@ import {
 import { categoriesOf, schema } from './settings-schema';
 import type { Theme } from './theme';
 
+export const RECENT_KEY = 'rubylight.palette.recent';
+export const EMPTY_LIMITS = { recent: 4, games: 4, devices: 3 } as const;
+
 /** What the palette knows about the console and the host when it opens. */
 export interface PaletteContext {
   theme: Theme;
   /** Streams to devices right now. */
   streams: number;
+  /** The running game's name when an app runs on this PC. */
+  runningApp?: string | null;
+  /** Recently chosen entry ids, most recent first. */
+  recentIds?: readonly string[];
 }
 
 /** Pages that find and explain a problem: they have their own group. */
@@ -34,18 +42,46 @@ const THEMES: Record<Theme, Entry> = {
 };
 
 const STOP: Entry = { id: 'action:stop', label: 'Disconnect every stream', icon: 'stop', action: 'stop', keywords: 'stop streams end kick all devices' };
+const QUIT: Entry = { id: 'action:quit', label: 'Quit game', icon: 'power', action: 'quit', keywords: 'quit close stop exit end running game app' };
 const DISPLAYS: Entry = {
   id: 'action:displays', label: 'Restore displays', detail: 'Troubleshoot', icon: 'monitor', href: '/troubleshoot#displays',
   keywords: 'monitor layout virtual display screen black fix saved',
 };
 const BUNDLE = ACTIONS.find((entry) => entry.action === 'bundle')!;
 
+/** Reads saved MRU entry ids from site storage. */
+export function readRecent(storage: Pick<Storage, 'getItem'> | null = typeof localStorage === 'undefined' ? null : localStorage): string[] {
+  if (!storage) return [];
+  try {
+    const parsed = JSON.parse(storage.getItem(RECENT_KEY) ?? '[]');
+    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === 'string').slice(0, 6) : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Prepends `id` to MRU storage and returns the updated list. */
+export function recordRecent(
+  id: string,
+  storage: Pick<Storage, 'getItem' | 'setItem'> | null = typeof localStorage === 'undefined' ? null : localStorage,
+): string[] {
+  const next = [id, ...readRecent(storage).filter((existing) => existing !== id)].slice(0, 6);
+  try {
+    storage?.setItem(RECENT_KEY, JSON.stringify(next));
+  } catch {
+    // Ignore blocked storage.
+  }
+  return next;
+}
+
 /** The host actions for this moment: what can't be done now is not offered. */
 export function hostActions(context: PaletteContext): Entry[] {
   const themes = (['light', 'dark', 'system'] as Theme[]).filter((theme) => theme !== context.theme).map((theme) => THEMES[theme]);
+  const running = context.runningApp?.trim();
   return [
     ...ACTIONS.filter((entry) => entry !== BUNDLE && entry.action !== 'restart'),
     ...(context.streams > 0 ? [{ ...STOP, detail: context.streams === 1 ? '1 stream' : `${context.streams} streams` }] : []),
+    ...(running ? [{ ...QUIT, detail: running }] : []),
     DISPLAYS,
     ...themes,
     ...ACTIONS.filter((entry) => entry.action === 'restart'),
@@ -62,27 +98,42 @@ export function diagnostics(): Entry[] {
 }
 
 /** How many host actions a query lists; with nothing typed, all of them show. */
-export const PALETTE_LIMITS = { ...LIMITS, actions: 5 } as const;
+export const PALETTE_LIMITS = { ...LIMITS, actions: 6, recent: EMPTY_LIMITS.recent } as const;
 
 /**
- * The palette for a query. With nothing typed: the everyday pages, the host actions and
- * diagnostics. With a query: the group with the closest match first (on a tie pages, host actions,
- * diagnostics, games, then devices) and settings last, so Enter takes the closest match.
+ * The palette for a query. With nothing typed: MRU recent entries, top games and devices,
+ * everyday pages, host actions (including Quit game while one runs) and diagnostics. With a query:
+ * the group with the closest match first (on a tie pages, host actions, diagnostics, games, then
+ * devices) and settings last, so Enter takes the closest match.
  */
 export function palette(query: string, found: { apps: App[] | null; clients: Client[] | null }, context: PaletteContext): Group[] {
   const words = searchWords(query);
   const actions = hostActions(context);
   const checks = diagnostics();
+  const games = (found.apps ?? []).filter((app): app is App & { uuid: string } => !!app.uuid).map(gameEntry);
+  const devices = (found.clients ?? []).map(deviceEntry);
+
   if (!words.length) {
-    return [
+    const catalog = new Map<string, Entry>(
+      [...PAGES, ...actions, ...checks, ...games, ...devices, ...schema.settings.map(settingEntry)].map((entry) => [entry.id, entry]),
+    );
+    const recent = (context.recentIds ?? [])
+      .map((id) => catalog.get(id))
+      .filter((entry): entry is Entry => Boolean(entry))
+      .slice(0, EMPTY_LIMITS.recent);
+    const emptyGroups: Group[] = [];
+    if (recent.length) emptyGroups.push({ id: 'recent', title: 'Recent', entries: recent });
+    if (games.length) emptyGroups.push({ id: 'games', title: 'Games', entries: games.slice(0, EMPTY_LIMITS.games) });
+    if (devices.length) emptyGroups.push({ id: 'devices', title: 'Devices', entries: devices.slice(0, EMPTY_LIMITS.devices) });
+    emptyGroups.push(
       { id: 'pages', title: 'Pages', entries: PAGES.filter((entry) => primary.some((item) => entry.id === `page:${item.path}`)) },
       { id: 'actions', title: 'Host actions', entries: actions },
       { id: 'diagnostics', title: 'Diagnostics', entries: checks },
-    ];
+    );
+    return emptyGroups;
   }
+
   const pages = PAGES.filter((entry) => !DIAGNOSTIC_PATHS.some((path) => entry.id === `page:${path}`));
-  const games = (found.apps ?? []).filter((app): app is App & { uuid: string } => !!app.uuid).map(gameEntry);
-  const devices = (found.clients ?? []).map(deviceEntry);
   const groups: Group[] = [
     { id: 'pages', title: 'Pages', entries: ranked(pages, words).slice(0, PALETTE_LIMITS.pages) },
     { id: 'actions', title: 'Host actions', entries: ranked(actions, words).slice(0, PALETTE_LIMITS.actions) },

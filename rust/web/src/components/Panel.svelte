@@ -5,6 +5,8 @@
   let {
     title,
     description,
+    meta,
+    facts,
     actions,
     flush = false,
     collapsible = false,
@@ -15,6 +17,10 @@
   }: {
     title?: string;
     description?: string;
+    /** Quiet text after a collapsible panel's title. */
+    meta?: string;
+    /** Pills after a collapsible panel's title, in place of `meta`. */
+    facts?: Snippet;
     actions?: Snippet;
     /** Content reaches the panel's edges (tables, lists). */
     flush?: boolean;
@@ -30,7 +36,7 @@
 </script>
 
 {#if collapsible}
-  <Disclosure title={title ?? ''} {description} {open} {level} {flush} {id}>{@render children()}</Disclosure>
+  <Disclosure title={title ?? ''} {description} {meta} {facts} {open} {level} {flush} {id}>{@render children()}</Disclosure>
 {:else}
   <section class="panel" {id}>
     {#if title || actions}

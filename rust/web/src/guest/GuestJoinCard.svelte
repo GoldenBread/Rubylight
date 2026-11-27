@@ -55,7 +55,14 @@
 </script>
 
 <section class="card" aria-labelledby="guest-title">
-  <p class="brand"><BrandMark size={28} /><span>Rubylight</span></p>
+  <div class="brand">
+    <span class="brand-name"><BrandMark size={28} /><span>Rubylight</span></span>
+    {#if phase !== 'incomplete'}
+      <Badge tone={permission && permission !== 'view' ? 'accent' : 'neutral'}>
+        {permission ? (PERMISSION_TEXT[permission] ?? permission) : 'Live guest stream'}
+      </Badge>
+    {/if}
+  </div>
   {#if phase === 'incomplete'}
     <h1 id="guest-title">This invite link is incomplete</h1>
     <p class="muted">The part after <code>#</code> is missing or cut short. Ask the host to send the link again.</p>
@@ -78,7 +85,6 @@
       <span class="rings" aria-hidden="true"></span>
       <h1 id="guest-title">Waiting for the host</h1>
       <p class="muted" role="status">{waiting || 'The host is not streaming right now. This page joins when the stream starts.'}</p>
-      {#if permission}<Badge tone="neutral">{PERMISSION_TEXT[permission] ?? permission}</Badge>{/if}
       <Button variant="secondary" onclick={onleave}>Leave</Button>
     </div>
   {:else if ended}
@@ -109,11 +115,18 @@
   }
   .brand {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
+    justify-content: space-between;
     gap: var(--space-2);
     margin: 0 0 var(--space-2);
     color: var(--media-ink-2);
     font-weight: var(--weight-semibold);
+  }
+  .brand-name {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
   }
   form,
   .wait {

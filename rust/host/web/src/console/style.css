@@ -47,6 +47,7 @@
   --panel: #ffffff;
   --panel-raised: #ffffff;
   --sunken: #e8ebf0;
+  --field: #ffffff;
   --ink: #111318;
   --ink-2: #383e4a;
   --muted: #596170;
@@ -89,6 +90,7 @@
   --panel: #111319;
   --panel-raised: #181b24;
   --sunken: #0e1015;
+  --field: #0b0c10;
   --ink: #f5f7fa;
   --ink-2: #c8cedb;
   --muted: #9aa3b5;
@@ -125,6 +127,7 @@
     --panel: #111319;
     --panel-raised: #181b24;
     --sunken: #0e1015;
+    --field: #0b0c10;
     --ink: #f5f7fa;
     --ink-2: #c8cedb;
     --muted: #9aa3b5;
@@ -202,7 +205,7 @@ h1 {
 }
 h2 {
   margin: 0 0 var(--space-4);
-  font-size: var(--text-md);
+  font-size: var(--text-lg);
   letter-spacing: var(--tracking-tight);
 }
 p {
@@ -574,7 +577,7 @@ textarea {
   padding: var(--space-2) var(--space-3);
   border: 1px solid var(--muted);
   border-radius: var(--radius);
-  background: var(--panel);
+  background: var(--field);
   color: var(--ink);
   font: inherit;
   font-size: var(--text);

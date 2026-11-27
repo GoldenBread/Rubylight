@@ -76,6 +76,7 @@
     margin-top: var(--space-2);
     --line: var(--media-line);
   }
+  .network .spark,
   .fps .spark {
     --ink-2: var(--media-viz-4);
   }

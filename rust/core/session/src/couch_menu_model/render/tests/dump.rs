@@ -113,7 +113,22 @@ fn composite(frame: &Frame) -> Vec<u8> {
                 let px = (x - frame.origin[0]) / frame.scale;
                 let py = (y - frame.origin[1]) / frame.scale;
                 let at = ((py * panel_width + px) * 4) as usize;
-                rgb.extend_from_slice(&frame.rgba[at..at + 3]);
+                let a = u32::from(frame.rgba[at + 3]);
+                if a == 255 {
+                    rgb.extend_from_slice(&frame.rgba[at..at + 3]);
+                    continue;
+                }
+                let (fx, fy) = (x as f32 / width as f32, y as f32 / height as f32);
+                let band = ((fx * 9. + fy * 5.).sin() * 10.) as i32;
+                let sky = [92., 118., 140.].map(|c: f32| c - 30. * fy);
+                let ground = [128., 108., 78.].map(|c: f32| c + 20. * fx);
+                let mix = ((fy - 0.55) * 6.).clamp(0., 1.);
+                for c in 0..3 {
+                    let v = sky[c] + (ground[c] - sky[c]) * mix;
+                    let bg = (v as i32 + band).clamp(0, 255) as u32;
+                    let over = u32::from(frame.rgba[at + c]);
+                    rgb.push((over + (bg * (255 - a) + 127) / 255).min(255) as u8);
+                }
             } else {
                 // A dusky landscape: sky to ground, soft bands.
                 let (fx, fy) = (x as f32 / width as f32, y as f32 / height as f32);

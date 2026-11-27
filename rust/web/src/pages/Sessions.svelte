@@ -4,13 +4,16 @@
   import EmptyState from '../components/EmptyState.svelte';
   import Icon from '../components/Icon.svelte';
   import LiveCommandStage from '../components/overview/LiveCommandStage.svelte';
+  import { heroGame } from '../components/overview/now-playing';
+  import SuspendedGameBanner from '../components/session/SuspendedGameBanner.svelte';
   import LoadState from '../components/LoadState.svelte';
   import PageHeader from '../components/PageHeader.svelte';
   import Panel from '../components/Panel.svelte';
   import Table from '../components/Table.svelte';
-  import { api, CODEC_NAMES, type SessionHistoryEntry, type StreamSession } from '../lib/api';
+  import { api, CODEC_NAMES, type App, type QuickSuspendStatus, type SessionHistoryEntry, type SessionStatus, type StreamSession } from '../lib/api';
   import { confirm, failed, notify } from '../lib/feedback.svelte';
   import { ago, duration, marked, poll, when } from '../lib/format';
+  import { isSuspended } from '../lib/quick-suspend';
   import {
     aStreamEnded,
     bitrateText,
@@ -27,6 +30,9 @@
 
   let streams = $state<StreamSession[] | null>(null);
   let streamsError = $state('');
+  let status = $state<SessionStatus | null>(null);
+  let quick = $state<QuickSuspendStatus | null>(null);
+  let apps = $state<App[] | null>(null);
   let history = $state<SessionHistoryEntry[] | null>(null);
   let historyError = $state('');
   // The host's caps, so the page names them rather than repeating them.
@@ -37,6 +43,10 @@
   /** The streams to devices: they get the live command stage, as on Home. */
   const staged = $derived((streams ?? []).filter((stream) => stream.role === 'stream'));
   const others = $derived((streams ?? []).filter((stream) => stream.role !== 'stream'));
+  const game = $derived.by(() => {
+    const current = heroGame(apps, status);
+    return current?.state === 'last' ? null : current;
+  });
   /** uuid of the device being disconnected. */
   let disconnecting = $state<string | null>(null);
 
@@ -75,27 +85,41 @@
     }
   }
 
+  async function loadGames() {
+    try {
+      apps = (await api.apps.list()).apps;
+    } catch {
+      apps = null;
+    }
+  }
+
   // Only the newest poll may land, as Home's stream poll does.
   let latest = 0;
   async function refreshStreams() {
     const id = ++latest;
-    try {
-      const reply = await api.sessions.streams();
-      if (id !== latest) return;
-      const next = reply.sessions ?? [];
+    const [reply, current, paused] = await Promise.allSettled([
+      api.sessions.streams(),
+      api.sessions.status(),
+      api.sessions.suspendStatus(),
+    ]);
+    if (id !== latest) return;
+    if (current.status === 'fulfilled') status = current.value;
+    quick = paused.status === 'fulfilled' ? paused.value : null;
+    if (reply.status === 'fulfilled') {
+      const next = reply.value.sessions ?? [];
       const ended = aStreamEnded(streams, next);
       streams = next;
       streamsError = '';
       // A stream that just left is in the history by now; the slower history
       // poll covers a write that lands after this one.
       if (ended) void marked(loadHistory);
-    } catch (failure) {
-      if (id !== latest) return;
-      streamsError = reason(failure);
+    } else {
+      streamsError = reason(reply.reason);
     }
   }
 
   onMount(() => {
+    void loadGames();
     // The first history load is the poll's own; a stream that ends is reloaded
     // at once above, and this slower tick catches anything else.
     const stopHistory = poll(loadHistory, 15_000);
@@ -116,8 +140,18 @@
   />
 
   {#if staged.length}
-    <LiveCommandStage label="Live now" streams={staged} stale={Boolean(streamsError)} {disconnecting} ondisconnect={disconnect} />
+    <LiveCommandStage label="Live now"
+      streams={staged}
+      {game}
+      {status}
+      {quick}
+      stale={Boolean(streamsError)}
+      {disconnecting}
+      ondisconnect={disconnect}
+      onchange={refreshStreams}
+    />
   {/if}
+  {#if quick && isSuspended(quick)}<SuspendedGameBanner {quick} onchange={refreshStreams} />{/if}
   {#if !staged.length || others.length}
   <Panel title={staged.length ? 'Other connections' : 'Live now'} description={!staged.length && streams?.length ? `${streams.length} streaming` : undefined} flush>
     {#if streams === null}
@@ -354,7 +388,7 @@
   }
   .category {
     display: inline-block;
-    margin-left: var(--space-2);
+    margin-inline-start: var(--space-2);
     font-size: var(--text-xs);
     color: var(--muted);
   }
@@ -382,8 +416,7 @@
     .pad,
     .toolbar,
     .footnote {
-      padding-left: var(--space-4);
-      padding-right: var(--space-4);
+      padding-inline: var(--space-4);
     }
   }
 </style>

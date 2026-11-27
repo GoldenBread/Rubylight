@@ -1417,6 +1417,32 @@
       "advanced": "Avançado"
     }
   },
+  "couch_menu": {
+    "title": "Menu do host",
+    "back_to_game": "Voltar ao jogo",
+    "radeon": "Ajustes Radeon",
+    "restore_radeon": "Restaurar ajustes Radeon",
+    "back": "Voltar",
+    "profile": "Perfil: ",
+    "disconnect": "Desconectar (jogo continua)",
+    "end_session": "Encerrar sessão",
+    "close_game": "Sair do jogo",
+    "run": "Executar",
+    "next_stream": "Vale na próxima transmissão",
+    "confirm": "Aperte de novo em 5 s",
+    "working": "Aplicando...",
+    "failed": "Falha: ",
+    "needs_host_control": "Requer controle do host",
+    "on": "Ativo",
+    "off": "Inativo",
+    "hint": "Enter/A: escolher  Esc/B: voltar",
+    "items": {
+      "audio_night_mode": "Modo noturno",
+      "audio_headphone_surround": "Som surround nos fones",
+      "encoder_focus": "Foco do codificador",
+      "sleep_after_idle_minutes": "Suspender quando ocioso"
+    }
+  },
   "support": {
     "bundle_desc": "O pacote de suporte inclui os logs e diagnósticos do host para solução de problemas, com endereços, nomes de usuários e dispositivos e títulos de jogos substituídos por marcas.",
     "bundle_download": "Baixar pacote de suporte",

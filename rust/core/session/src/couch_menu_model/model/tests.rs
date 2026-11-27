@@ -25,7 +25,7 @@ pub(crate) const CATALOGUE: &[(&str, &str, &str)] = &[
         "Trennen (Spiel läuft weiter)",
     ),
     ("end_session", "End session", "Sitzung beenden"),
-    ("close_game", "Close game", "Spiel schließen"),
+    ("close_game", "Quit game", "Spiel beenden"),
     ("run", "Run", "Ausführen"),
     (
         "next_stream",
@@ -274,6 +274,42 @@ fn couch_menu_font_covers_every_catalogue_string() {
 }
 
 #[test]
+fn couch_menu_all_latin1_locale_catalogues_are_valid() {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/locale");
+    for locale in [
+        "en", "en_GB", "en_US", "de", "es", "fr", "it", "pt", "pt_BR", "sv",
+    ] {
+        let content = std::fs::read_to_string(dir.join(format!("{locale}.json"))).unwrap();
+        let json: serde_json::Value = serde_json::from_str(&content).unwrap();
+        let lookup = |path: &str| {
+            path.split('/')
+                .try_fold(&json, |node, part| node.get(part))?
+                .as_str()
+                .map(str::to_owned)
+        };
+        let loaded = Strings::from_lookup(lookup).unwrap_or_else(|e| panic!("{locale}: {e}"));
+        assert!(!loaded.close_game.is_empty(), "{locale}");
+        for key in Strings::KEYS {
+            let text = lookup(&format!("couch_menu/{key}")).unwrap();
+            assert!(
+                text.chars().count() <= COLUMNS as usize,
+                "{locale} couch_menu/{key}: {text:?} exceeds {COLUMNS} chars"
+            );
+            assert!(!text.contains('…'), "{locale} couch_menu/{key} uses …");
+        }
+        for key in items::ALL {
+            let path = items::label_path(key);
+            let label = lookup(&path).unwrap_or_else(|| panic!("{locale} missing {path}"));
+            assert_eq!(font::uncovered(&label), None, "{locale} {path}: {label}");
+            assert!(
+                label.chars().count() <= COLUMNS as usize,
+                "{locale} {path}: {label:?} exceeds {COLUMNS} chars"
+            );
+        }
+    }
+}
+
+#[test]
 fn couch_menu_model_main_page_rows_in_order() {
     let run = Run::new(snapshot());
     assert_eq!(
@@ -288,7 +324,7 @@ fn couch_menu_model_main_page_rows_in_order() {
             "Night mode                     Off",
             "Disconnect (game keeps running)",
             "End session",
-            "Close game",
+            "Quit game",
             "",
             "Enter/A: select  Esc/B: back",
         ]
@@ -307,7 +343,7 @@ fn couch_menu_model_main_page_rows_in_order() {
             "Back to game",
             "Disconnect (game keeps running)",
             "End session",
-            "Close game",
+            "Quit game",
         ],
         "a long line is cut to 34 columns"
     );
@@ -350,7 +386,7 @@ fn couch_menu_model_locked_rows_keep_their_reason() {
     );
     assert!(run.nav(Nav::Accept).is_some());
     run.menu.finish(Ok(()));
-    run.focus("Close game");
+    run.focus("Quit game");
     assert_eq!(run.message(), "Needs host control");
     assert_eq!(run.nav(Nav::Accept), None);
     assert_eq!(run.nav(Nav::Accept), None);
@@ -374,7 +410,7 @@ fn couch_menu_model_confirm_window_is_5_s() {
     run.menu.finish(Ok(()));
 
     // At 5 s the window has shut: the press arms it again.
-    run.focus("Close game");
+    run.focus("Quit game");
     assert_eq!(run.nav(Nav::Accept), None);
     run.after(CONFIRM);
     assert!(run.menu.tick(run.now), "the expiry redraws");
@@ -392,7 +428,7 @@ fn couch_menu_model_confirm_window_is_5_s() {
     assert_eq!(
         run.nav(Nav::Accept),
         None,
-        "Close game needs its own two presses"
+        "Quit game needs its own two presses"
     );
     run.nav(Nav::Up);
     assert_eq!(run.nav(Nav::Accept), None, "End session starts over");

@@ -135,11 +135,14 @@ pub fn composite(pixels: &mut [u8], width: usize, height: usize, status: Status)
 pub fn header(status: Status, app: Option<&str>) -> String {
     match (status, app) {
         (Status::Streaming, Some(app)) => format!("Streaming {app}"),
+        (Status::Streaming, None) => "Streaming Desktop".to_owned(),
         (Status::Attention, Some(app)) => format!("Needs attention: {app} is paused"),
+        (Status::Attention, None) => "Needs attention: stream is paused".to_owned(),
         (Status::Error, Some(app)) => {
             format!("Needs attention: {app} closed right after it started")
         }
-        _ => "Ready".to_owned(),
+        (Status::Error, None) => "Needs attention: launch failed".to_owned(),
+        (Status::Idle, _) => "Ready".to_owned(),
     }
 }
 

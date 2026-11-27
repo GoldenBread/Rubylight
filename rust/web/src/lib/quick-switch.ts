@@ -9,7 +9,7 @@ import { categoriesOf, placeOf, placeText, schema, settingGroups } from './setti
 import type { Setting } from './settings-types';
 
 /** What an action does when chosen; QuickSwitcher.svelte runs it. */
-export type ActionId = 'sync' | 'restart' | 'bundle' | 'stop' | 'theme-light' | 'theme-dark' | 'theme-system';
+export type ActionId = 'sync' | 'restart' | 'bundle' | 'stop' | 'quit' | 'theme-light' | 'theme-dark' | 'theme-system';
 
 export interface Entry {
   /** Unique among all results. */
@@ -32,7 +32,7 @@ export interface Entry {
 }
 
 export interface Group {
-  id: 'pages' | 'actions' | 'diagnostics' | 'games' | 'devices' | 'settings';
+  id: 'recent' | 'pages' | 'actions' | 'diagnostics' | 'games' | 'devices' | 'settings';
   title: string;
   entries: Entry[];
 }

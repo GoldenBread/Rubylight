@@ -91,7 +91,7 @@ pub(super) async fn apps(
         },
         &form("app-save", csrf, "/library", &editor),
     );
-    Ok(content + &button("app-close", csrf, "/library", "", "", "Close running app"))
+    Ok(content + &button("app-close", csrf, "/library", "", "", "Quit game"))
 }
 
 pub(super) async fn devices(

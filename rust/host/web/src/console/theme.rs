@@ -233,7 +233,7 @@ mod tests {
         let [light, dark, _] = blocks(&style);
         let mut dark_theme = light.clone();
         dark_theme.extend(dark);
-        let surfaces = ["--bg", "--panel", "--sunken"];
+        let surfaces = ["--bg", "--panel", "--sunken", "--field"];
         let mut text: Vec<(&str, &str)> = ["--ink", "--ink-2", "--muted"]
             .iter()
             .flat_map(|fg| surfaces.iter().map(move |bg| (*fg, *bg)))
@@ -391,15 +391,19 @@ mod tests {
             !before.is_some_and(char::is_alphanumeric) && !after.is_some_and(char::is_alphanumeric)
         })
     }
-    const PAGES: [&str; 8] = [
+    const PAGES: [&str; 12] = [
         "/",
+        "/sessions",
         "/library",
         "/devices",
+        "/clips",
         "/settings",
         "/logs",
         "/integrations",
         "/api-tokens",
         "/maintenance",
+        "/troubleshoot",
+        "/help",
     ];
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

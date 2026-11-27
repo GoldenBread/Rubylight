@@ -89,7 +89,7 @@ strings! {
     disconnect,
     /// "End session"
     end_session,
-    /// "Close game"
+    /// "Quit game"
     close_game,
     /// "Run", the value column of a PC command row.
     run,

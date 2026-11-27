@@ -235,6 +235,9 @@ pub(super) async fn render(
         "/devices" => management::devices(h, connection, headers, csrf).await,
         "/settings" => management::settings(h, connection, headers, csrf).await,
         "/logs" => system::logs(h, connection, headers).await,
+        "/sessions" => system::sessions(h, connection, headers, csrf).await,
+        "/clips" => system::clips(h, connection, headers).await,
+        "/help" => system::help(h, connection, headers).await,
         "/integrations" => system::integrations(h, connection, headers).await,
         "/api-tokens" => system::api_tokens(h, connection, headers, csrf).await,
         "/maintenance" => system::maintenance(h, connection, headers, csrf).await,
@@ -356,7 +359,7 @@ async fn overview(
                     .join(", ")
             );
         }
-        content += "<p class=\"muted\">If Moonlight cannot connect, allow Butterpollo.exe through Windows Firewall for your private network, then check for a pairing request in Devices.</p>";
+        content += "<p class=\"muted\">If Moonlight cannot connect, allow Rubylight through Windows Firewall for your private network, then check for a pairing request in Devices.</p>";
     }
     content += &card(
         "Get started",

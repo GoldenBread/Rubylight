@@ -65,5 +65,5 @@ test('the save bar shows only while a change waits; launching and deleting sit i
   // Only the bar with a change floats.
   assert.match(source, /\.bar\.dirty \{\s*position: sticky;/);
   assert.doesNotMatch(source.match(/\n  \.bar \{[^}]*\}/)[0], /sticky/);
-  assert.doesNotMatch(source.match(/<footer class="bar"[\s\S]*?<\/footer>/)[0], /Launch on PC|Delete|Close app/);
+  assert.doesNotMatch(source.match(/<footer class="bar"[\s\S]*?<\/footer>/)[0], /Launch on PC|Delete|Quit game|Close app/);
 });

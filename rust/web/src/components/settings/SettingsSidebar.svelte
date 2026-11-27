@@ -75,6 +75,8 @@
 
 <style>
   .side {
+    position: sticky;
+    top: calc(var(--sticky-top, 0px) + var(--space-3));
     display: grid;
     gap: var(--space-3);
     min-width: 0;
@@ -87,13 +89,13 @@
   }
   .search :global(svg) {
     position: absolute;
-    left: 10px;
+    inset-inline-start: calc(var(--space-2) + 2px);
     top: 50%;
     transform: translateY(-50%);
     pointer-events: none;
   }
   .search .input {
-    padding-left: var(--space-6);
+    padding-inline-start: var(--space-6);
   }
   .picker {
     display: none;
@@ -102,17 +104,16 @@
     font-weight: var(--weight-medium);
   }
   .tabs ul {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--space-1);
+    display: grid;
+    gap: 2px;
     margin: 0;
     padding: 0;
     list-style: none;
   }
   .tabs a {
-    display: grid;
-    gap: 1px;
-    padding: var(--space-3) calc(var(--space-4) - 2px);
+    display: flex;
+    align-items: center;
+    padding: var(--space-2) var(--space-3);
     min-height: var(--control-height);
     border-radius: var(--radius);
     color: var(--ink-2);
@@ -141,7 +142,7 @@
     border-radius: 50%;
     background: var(--accent);
   }
-  @container (max-width: 720px) {
+  @container (max-width: 820px) {
     .side {
       position: static;
       grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);

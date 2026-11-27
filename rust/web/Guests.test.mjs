@@ -330,8 +330,9 @@ test('the stream’s bar hides itself, leaves a mouse-and-keyboard guest’s poi
   assert.match(page, /barTimer = setTimeout\(\(\) => \(barShown = barHeld\), BAR_MS\);/);
   assert.match(page, /onfocusin=\{\(\) => hold\(true\)\}/);
   assert.match(page, /onpointerenter=\{\(\) => hold\(true\)\}/);
-  // A guest whose mouse plays the game wakes the bar only at the top edge; a finger always does.
-  assert.match(page, /if \(!typing \|\| event\.pointerType !== 'mouse' \|\| event\.clientY - \(player\?\.getBoundingClientRect\(\)\.top \?\? 0\) < BAR_ZONE\) wake\(\);/);
+  // A guest whose pointer plays or types wakes the bar only from the top wake band; view-only wakes anywhere.
+  assert.match(page, /const WAKE_BAND_PX = 96;/);
+  assert.match(page, /if \(event\.pointerType === 'mouse' \? inWakeBand\(event\) : touchStartedInWakeBand && inWakeBand\(event\)\) wake\(\);/);
   // Leaving the page tells the host and lets go of the tracks.
   assert.match(page, /onpagehide=\{\(\) => \{\s+stream\?\.leave\(\);\s+stopped\(\);\s+\}\}/);
   // The bar's motion stops with reduced motion.

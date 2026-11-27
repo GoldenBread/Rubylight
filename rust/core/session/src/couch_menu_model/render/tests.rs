@@ -95,8 +95,14 @@ fn couch_menu_render_golden_hash_per_page() {
     // Changing a page's look changes these: check the dump by eye, then
     // update them.
     let golden = [
-        ([1280, 720], [0xe966_9736_4a17_d115, 0x54b5_790e_09e0_54a6]),
-        ([3840, 2160], [0x80bb_68d4_ebbc_1a18, 0xda93_83af_c15a_e507]),
+        (
+            [1280, 720],
+            [16_611_423_062_435_694_303, 4_764_675_009_040_935_426],
+        ),
+        (
+            [3840, 2160],
+            [11_330_281_601_596_965_250, 12_983_685_394_941_064_539],
+        ),
     ];
     let mut got = Vec::new();
     for (target, _) in golden {
@@ -121,21 +127,16 @@ fn couch_menu_render_is_opaque_hairlined_and_sized_for_the_layout() {
             let [fw, fh] = frame.size.map(|v| v / frame.scale);
             assert_eq!(frame.size, [fw, fh].map(|v| v * layout.scale));
             assert_eq!(frame.rgba.len(), (fw * fh * 4) as usize);
-            assert!(
-                frame.rgba.as_chunks::<4>().0.iter().all(|p| p[3] == 0xff),
-                "alpha 255"
-            );
             assert!(frame.origin.iter().chain(&frame.size).all(|v| v % 16 == 0));
-            for (x, y) in [
-                (0, 0),
-                (fw - 1, fh - 1),
-                (fw - 1, 7),
-                (5, fh - 1),
-                (0, fh / 2),
-            ] {
+            // Outside the rounded corner is premultiplied transparent; interior is opaque.
+            assert_eq!(&frame.rgba[..4], &[0, 0, 0, 0], "rounded corner outside");
+            let mid_at = ((fh / 2 * fw + fw / 2) * 4) as usize;
+            assert_eq!(frame.rgba[mid_at + 3], 0xff, "interior opaque");
+            assert_eq!(colour(&frame, fw / 2, 0), EDGE_TOP, "specular top rim");
+            for (x, y) in [(0, fh / 2), (fw - 1, fh / 2), (fw / 2, fh - 1)] {
                 assert_eq!(colour(&frame, x, y), HAIRLINE, "border at {x},{y}");
             }
-            for (x, y) in [(1, 1), (fw - 2, fh - 2), (2, fh / 2)] {
+            for (x, y) in [(fw / 2, 1), (2, fh / 2), (fw - 2, fh / 2)] {
                 assert_eq!(colour(&frame, x, y), STAGE, "stage at {x},{y}");
             }
         }

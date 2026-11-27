@@ -3,11 +3,11 @@
    * The facts on a folded group of settings, as pills after its title: how many settings it
    * holds, how many differ from the default, how many wait to be saved.
    */
-  let { count, customized = 0, unsaved = 0 }: { count: number; customized?: number; unsaved?: number } = $props();
+  let { count, customized = 0, unsaved = 0 }: { count?: number; customized?: number; unsaved?: number } = $props();
 </script>
 
 <span class="pills">
-  <span class="pill">{count} {count === 1 ? 'setting' : 'settings'}</span>
+  {#if count !== undefined}<span class="pill">{count} {count === 1 ? 'setting' : 'settings'}</span>{/if}
   {#if customized}<span class="pill customized">{customized} customized</span>{/if}
   {#if unsaved}<span class="pill unsaved">{unsaved} unsaved</span>{/if}
 </span>

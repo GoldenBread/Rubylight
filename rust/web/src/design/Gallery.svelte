@@ -68,7 +68,7 @@
   <Panel title="Media: over game art and video, dark in both themes">
     <div class="stage">
       <p class="eyebrow">Now streaming</p>
-      <p class="stage-title">Portal 2 on Pixel 9</p>
+      <p class="stage-title">Skybound on Handheld</p>
       <div class="swatches">
         {#each media as swatch (swatch)}
           <div class="swatch"><span style:background="var(--{swatch})"></span><code>--{swatch}</code></div>

@@ -20,14 +20,14 @@
 function install({ state, pad }) {
   const later = (run, ms = 0) => setTimeout(run, ms);
   const GAMES = [
-    { id: 'portal', title: 'Portal 2', artworkAvailable: true, running: true },
-    { id: 'hades', title: 'Hades II', artworkAvailable: true, running: false },
-    { id: 'forza', title: 'Forza Horizon 5', artworkAvailable: false, running: false },
-    { id: 'witcher', title: 'The Witcher 3: Wild Hunt', artworkAvailable: true, running: false },
-    { id: 'celeste', title: 'Celeste', artworkAvailable: false, running: false },
-    { id: 'desktop', title: 'Desktop', artworkAvailable: false, running: false },
-    { id: 'steam', title: 'Steam Big Picture', artworkAvailable: true, running: false },
-    { id: 'elden', title: 'Elden Ring', artworkAvailable: true, running: false },
+    { id: 'skybound', title: 'Skybound', artworkAvailable: true, running: true },
+    { id: 'ashen', title: 'Ashen Crown', artworkAvailable: true, running: false },
+    { id: 'frostline', title: 'Frostline', artworkAvailable: false, running: false },
+    { id: 'tidebreaker', title: 'Tidebreaker', artworkAvailable: true, running: false },
+    { id: 'hollow', title: 'Hollow Peak', artworkAvailable: false, running: false },
+    { id: 'starfall', title: 'Starfall Vanguard', artworkAvailable: true, running: false },
+    { id: 'courier', title: 'Night Courier', artworkAvailable: false, running: false },
+    { id: 'jade', title: 'Jade Circuit', artworkAvailable: true, running: false },
   ];
   const CAPABILITIES = {
     videoModes: [{ width: 1920, height: 1080, frameRates: [60], codecs: ['h264', 'hevc', 'av1'], defaultBitrateKbps: 20000 }],
@@ -90,10 +90,11 @@ function install({ state, pad }) {
           return this.say({ type: 'apps', apps: GAMES });
         case 'get-app-artwork': {
           const game = GAMES.find((g) => g.id === message.appId);
-          const data = paint(300, 400, hueOf(game.title), '').toDataURL('image/png').split(',')[1];
+          const data = paint(300, 450, hueOf(game.title), '').toDataURL('image/png').split(',')[1];
           return this.say({ type: 'app-artwork', appId: message.appId, available: true, mimeType: 'image/png', data });
         }
         case 'start-session':
+          if (state === 'starting') return;
           return this.say({ type: 'offer', sessionId: 'shot', sdp: 'v=0\r\n' });
         case 'join':
           if (state === 'waiting') {
@@ -128,7 +129,7 @@ function install({ state, pad }) {
     }
     async setRemoteDescription() {
       // The "game": a painted frame as a real video track, so the page plays a picture.
-      const canvas = paint(1920, 1080, 205, 'Portal 2');
+      const canvas = paint(1920, 1080, 205, 'Skybound');
       const track = canvas.captureStream(1).getVideoTracks()[0];
       later(() => this.ontrack?.({ track, receiver: {} }));
     }

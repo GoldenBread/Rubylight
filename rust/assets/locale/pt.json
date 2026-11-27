@@ -1417,6 +1417,32 @@
       "advanced": "Avançadas"
     }
   },
+  "couch_menu": {
+    "title": "Menu do anfitrião",
+    "back_to_game": "Voltar ao jogo",
+    "radeon": "Definições Radeon",
+    "restore_radeon": "Repor definições Radeon",
+    "back": "Voltar",
+    "profile": "Perfil: ",
+    "disconnect": "Desligar (jogo continua)",
+    "end_session": "Terminar sessão",
+    "close_game": "Sair do jogo",
+    "run": "Executar",
+    "next_stream": "Aplica-se na próxima sessão",
+    "confirm": "Prima de novo em 5 s",
+    "working": "A aplicar...",
+    "failed": "Falhou: ",
+    "needs_host_control": "Requer controlo do anfitrião",
+    "on": "Ativo",
+    "off": "Inativo",
+    "hint": "Enter/A: escolher  Esc/B: voltar",
+    "items": {
+      "audio_night_mode": "Modo noturno",
+      "audio_headphone_surround": "Som surround auscultadores",
+      "encoder_focus": "Foco do codificador",
+      "sleep_after_idle_minutes": "Suspender quando inativo"
+    }
+  },
   "support": {
     "bundle_desc": "O pacote de suporte inclui os registos e diagnósticos do anfitrião para resolução de problemas, com endereços, nomes de utilizadores e dispositivos e títulos de jogos substituídos por marcas.",
     "bundle_download": "Transferir pacote de suporte",

@@ -429,7 +429,7 @@
   }
   .indent {
     /* Under the switch's label, past its track. */
-    padding-left: calc(40px + var(--space-3));
+    padding-inline-start: calc(40px + var(--space-3));
     flex-wrap: wrap;
   }
   .line .select {

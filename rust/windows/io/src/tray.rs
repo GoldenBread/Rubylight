@@ -11,10 +11,15 @@ use std::{
 use windows::{
     Win32::{
         Foundation::*,
-        System::{LibraryLoader::GetModuleHandleW, Threading::GetCurrentThreadId},
+        System::{
+            LibraryLoader::{
+                GetModuleHandleW, GetProcAddress, LOAD_LIBRARY_SEARCH_SYSTEM32, LoadLibraryExW,
+            },
+            Threading::GetCurrentThreadId,
+        },
         UI::{Shell::*, WindowsAndMessaging::*},
     },
-    core::{PCWSTR, w},
+    core::{PCSTR, PCWSTR, w},
 };
 
 mod icon;
@@ -61,10 +66,52 @@ struct State {
     icons: Icons,
     /// The icon file used when the executable carries no icon.
     icon_file: PathBuf,
-    port: u16,
     taskbar: u32,
     hide_controls: bool,
     added: AddLog,
+}
+
+/// Best-effort Win32 dark popup menu opt-in on Windows 10 1809+ (`uxtheme.dll`
+/// ordinals 135 `SetPreferredAppMode(AllowDark)` and 136 `FlushMenuThemes`).
+fn enable_dark_menus(flush: bool) {
+    let Some(build) = crate::os_helpers::windows_build() else {
+        return;
+    };
+    if build < 17763 {
+        return;
+    }
+    type PreferredAppMode = unsafe extern "system" fn(i32) -> i32;
+    type FlushThemes = unsafe extern "system" fn();
+    // SAFETY: `uxtheme.dll` is loaded from System32 and stays loaded for the process;
+    // ordinal 135 on build >= 17763 accepts `1` (AllowDark / TRUE) and ordinal 136 on
+    // build >= 18362 takes no arguments and flushes cached menu visuals.
+    unsafe {
+        let Ok(uxtheme) = GetModuleHandleW(w!("uxtheme.dll"))
+            .or_else(|_| LoadLibraryExW(w!("uxtheme.dll"), None, LOAD_LIBRARY_SEARCH_SYSTEM32))
+        else {
+            return;
+        };
+        if let Some(proc) = GetProcAddress(uxtheme, PCSTR(std::ptr::without_provenance(135))) {
+            let set_mode =
+                std::mem::transmute::<unsafe extern "system" fn() -> isize, PreferredAppMode>(proc);
+            let _ = set_mode(1);
+        }
+        if flush
+            && build >= 18362
+            && let Some(proc) = GetProcAddress(uxtheme, PCSTR(std::ptr::without_provenance(136)))
+        {
+            let flush_fn =
+                std::mem::transmute::<unsafe extern "system" fn() -> isize, FlushThemes>(proc);
+            flush_fn();
+        }
+    }
+}
+
+fn tooltip_text(summary: Option<&str>, status: Status, app: Option<&str>) -> String {
+    match summary {
+        Some(summary) => format!("Rubylight — {summary}"),
+        None => format!("Rubylight — {}", status::header(status, app)),
+    }
 }
 /// How long the taskbar may refuse the icon before the log says so again.
 const ADD_REFUSED_LONG: Duration = Duration::from_secs(60);
@@ -206,11 +253,9 @@ impl State {
     /// Show the running app's state in the icon and its tooltip.
     fn show(&mut self) {
         let app = APP.lock().unwrap();
-        self.icon.hIcon = self.icons.get(app.status());
-        let tip = match &app.summary {
-            Some(summary) => format!("Rubylight — {summary}"),
-            None => format!("Rubylight — web port {}", self.port),
-        };
+        let status = app.status();
+        self.icon.hIcon = self.icons.get(status);
+        let tip = tooltip_text(app.summary.as_deref(), status, app.app.as_deref());
         let tip: Vec<u16> = tip.encode_utf16().take(127).collect();
         self.icon.szTip = [0; 128];
         self.icon.szTip[..tip.len()].copy_from_slice(&tip);
@@ -355,6 +400,7 @@ unsafe extern "system" fn window(
                         let _ = (*state).sender.send(Action::Open);
                     }
                     WM_RBUTTONUP | WM_CONTEXTMENU => {
+                        enable_dark_menus(true);
                         let hide_controls = (*state).hide_controls;
                         if let Ok(menu) = CreatePopupMenu() {
                             let items = {
@@ -436,13 +482,14 @@ impl Tray {
     }
     pub fn new_options(
         icon: PathBuf,
-        port: u16,
+        _port: u16,
         hide_controls: bool,
     ) -> Result<(Self, mpsc::Receiver<Action>)> {
         let (sender, receiver) = mpsc::channel();
         let (ready, started) = mpsc::sync_channel(1);
         let worker = thread::Builder::new().name("tray".into()).spawn(move || {
             let result = (|| -> Result<()> {
+                enable_dark_menus(true);
                 // SAFETY: This thread creates, dispatches and destroys the window;
                 // sized structures and terminated strings remain live through calls.
                 // The boxed State outlives GWLP_USERDATA, owned icons are destroyed
@@ -471,7 +518,6 @@ impl Tray {
                         },
                         icons,
                         icon_file: icon,
-                        port,
                         taskbar: RegisterWindowMessageW(w!("TaskbarCreated")),
                         hide_controls,
                         added: AddLog::default(),

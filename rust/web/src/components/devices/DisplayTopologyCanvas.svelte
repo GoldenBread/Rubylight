@@ -75,11 +75,15 @@
     </div>
     <ul class="list" aria-label="Displays">
       {#each map.tiles as tile (tile.id)}
+        <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
         <li
+          tabindex="0"
           class:lit={lit === tile.id}
           class:target={tile.target}
           onpointerenter={() => (lit = tile.id)}
           onpointerleave={() => (lit = '')}
+          onfocus={() => (lit = tile.id)}
+          onblur={() => { if (lit === tile.id) lit = ''; }}
         >
           <span class="number" aria-hidden="true">{tile.index}</span>
           <span class="who">
@@ -200,8 +204,13 @@
   li + li {
     border-top: 1px solid var(--line);
   }
-  li.lit {
+  li.lit,
+  li:focus-visible {
     background: var(--field);
+  }
+  li:focus-visible {
+    outline: var(--focus-width) solid var(--focus);
+    outline-offset: calc(-1 * var(--focus-width));
   }
   li .number {
     display: grid;

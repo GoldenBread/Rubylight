@@ -88,8 +88,8 @@ test('pairing leads an unpaired Home, the access choice waits for a second devic
   const overview = source('pages/Overview.svelte');
   assert.match(overview, /firstRun = \$derived\(Boolean\(metadata\) && !unavailable && !live && !top\?\.blocking && \(!paired \|\| welcomed !== null\)\)/);
   assert.match(overview, /<PairPanel bare onpaired=\{\(client\) => \(welcomed = client\)\} \/>/);
-  // Launchers sync by themselves: Home has no Add games.
-  assert.match(overview, /<PageHeader title="Home" \/>/);
+  // Launchers sync by themselves: Home has no Add games, and leads immediately with the hero stage.
+  assert.match(overview, /<h1 class="visually-hidden">Home<\/h1>/);
   assert.doesNotMatch(overview, /Add games|Choose a game in your streaming app/);
 });
 

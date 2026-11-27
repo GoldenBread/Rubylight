@@ -59,9 +59,9 @@ test('a refusal is a toast with the host’s reason, a pause or resume names the
   assert.equal(view.outcome(quick({ state: 'unavailable', message: null }), 'suspend').ok, false);
 });
 
-test('the running-app card says Suspended and offers Suspend game beside Close app', () => {
+test('the running-app card says Suspended and offers Suspend game beside Quit game', () => {
   const ready = render(RunningApp, { props: { status: running, quick: quick(), error: null, onchange() {} } }).body;
-  assert.match(ready, />Suspend game<[\s\S]*>Close app</);
+  assert.match(ready, />Suspend game<[\s\S]*>Quit game</);
   assert.match(ready, />Paused</);
   const paused = render(RunningApp, { props: { status: running, quick: suspended, error: null, onchange() {} } }).body;
   assert.match(paused, />Suspended</);

@@ -39,12 +39,12 @@ const stream = (changes = {}) => ({
   ...changes,
 });
 
-test('the pills name the picture, the range, the codec and the encoder the host reports', () => {
+test('the pills name the picture, the range, the codec, the encoder and the capture backend the host reports', () => {
   assert.deepEqual(telemetry.specPills(stream()), ['2400×1080', '120 fps', 'HDR', 'HEVC', 'AMD AMF']);
-  assert.deepEqual(telemetry.specPills(stream({ hdr: false, vrr: true, video_format: 2, encoder: 'nvenc' })),
-    ['2400×1080', '120 fps', 'VRR', 'AV1', 'NVIDIA NVENC']);
-  // An encoder the console does not know is left out, never guessed.
-  assert.deepEqual(telemetry.specPills(stream({ hdr: false, encoder: 'future' })), ['2400×1080', '120 fps', 'HEVC']);
+  assert.deepEqual(telemetry.specPills(stream({ hdr: false, vrr: true, video_format: 2, encoder: 'nvenc', capture_backend: 'idd-push' })),
+    ['2400×1080', '120 fps', 'VRR', 'AV1', 'NVIDIA NVENC', 'Direct driver push']);
+  // An encoder or capture backend the console does not know is left out, never guessed.
+  assert.deepEqual(telemetry.specPills(stream({ hdr: false, encoder: 'future', capture_backend: 'future' })), ['2400×1080', '120 fps', 'HEVC']);
 });
 
 test('the pipeline groups the host’s stages into four phases, proportional, and never invents one', () => {
@@ -75,8 +75,18 @@ test('the traces are frame rate, bitrate and host frame time, a dash before a fr
   const still = telemetry.traces(stream({ performance: { ...stream().performance, sample_frames: 0 } }));
   assert.deepEqual(still.map(trace => trace.now), ['–', '–', '–']);
   assert.equal(still[2].sub, 'No new pictures to time');
-  // The host reports no round trip or jitter for a stream, so the stage shows none.
+  // The host reports no round trip or jitter for this stream, so the stage falls back to Frame rate; when reported, Network RTT leads.
   assert.equal(telemetry.traces(stream()).some(trace => /jitter|rtt|round trip/i.test(trace.label)), false);
+  const withRtt = telemetry.traces(stream({
+    rtt_ms: 3.8,
+    jitter_ms: 0.6,
+    performance: {
+      ...stream().performance,
+      history: [{ fps: 118, bitrate_mbps: 40, host_processing_mean_ms: 3.1, rtt_ms: 3.5 }, { fps: 120, bitrate_mbps: 48, host_processing_mean_ms: 3.4, rtt_ms: 3.8 }],
+    },
+  }))[0];
+  assert.deepEqual([withRtt.id, withRtt.label, withRtt.now, withRtt.unit, withRtt.values], ['network', 'Network RTT', '3.8', 'ms', [3.5, 3.8]]);
+  assert.match(withRtt.sub, /Jitter 0\.60 ms/);
   const drawn = render(Sparklines, { props: { traces: telemetry.traces(stream()) } }).body;
   assert.equal((drawn.match(/<svg/g) ?? []).length, 3);
   assert.match(drawn, /aria-label="Bitrate over the last/);
@@ -144,6 +154,18 @@ test('the stage draws the health banner, the title, the deck and a row per strea
   assert.doesNotMatch(quiet, />Quit game</);
   assert.match(quiet, /aria-label="Live now"/);
   assert.match(quiet, /these figures are a few seconds old/);
+  // Single stream: Disconnect lives in the deck, no duplicate StreamCard is rendered, and warning health links Troubleshoot.
+  const solo = render(Stage, {
+    props: {
+      streams: [stream({ warnings: [{ code: 'mode', message: 'The display changed its mode.' }] })],
+      game: { name: 'Skybound', app: null },
+      status: { activeSessions: 1, appRunning: true, appName: 'Skybound', paused: false, running: true },
+      ondisconnect() {},
+    },
+  }).body;
+  assert.equal((solo.match(/<article class="stream/g) ?? []).length, 0);
+  assert.match(solo, /Disconnect[\s\S]*Pixel 9/);
+  assert.match(solo, /href="\/troubleshoot"[^>]*>Troubleshoot<\/a>/);
 });
 
 test('the stage is a media plane: its own palette in both themes, and nothing new asked of the host', () => {

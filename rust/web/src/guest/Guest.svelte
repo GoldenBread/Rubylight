@@ -19,7 +19,7 @@
   /** How long the stream's bar stays without the pointer or the focus on it. */
   const BAR_MS = 4000;
   /** The strip at the top of the picture where the pointer brings the bar back. */
-  const BAR_ZONE = 96;
+  const WAKE_BAND_PX = 96;
 
   const token = inviteToken(location.hash);
   let phase = $state<Phase>('name');
@@ -39,6 +39,7 @@
   let barShown = $state(true);
   /** The pointer or the focus is on the bar: it stays. */
   let barHeld = false;
+  let touchStartedInWakeBand = false;
   let barTimer: ReturnType<typeof setTimeout> | undefined;
   let stream: GuestStream | null = null;
   let retry: ReturnType<typeof setTimeout> | undefined;
@@ -49,6 +50,7 @@
   let wheelInput = new Wheel();
 
   const typing = $derived(joined !== null && keyboardMouse(joined.permission));
+  const playing = $derived(joined !== null && joined.permission !== 'view');
 
   // A browser that blocks site data throws on localStorage: the name then lasts for this visit.
   function savedName(): string {
@@ -162,10 +164,22 @@
     wake();
   }
 
-  // A guest who only watches gets the bar on any move, like a video player. One whose pointer is
-  // the game's gets it at the top edge, so it stays out of the game.
-  function moved(event: PointerEvent) {
-    if (!typing || event.pointerType !== 'mouse' || event.clientY - (player?.getBoundingClientRect().top ?? 0) < BAR_ZONE) wake();
+  const inWakeBand = (event: PointerEvent) =>
+    event.clientY - (player?.getBoundingClientRect().top ?? 0) <= WAKE_BAND_PX;
+
+  // A view-only guest gets the bar on any move, like a video player. While playing or typing,
+  // mouse and touch only wake `.bar` when starting or hovering inside the top wake band.
+  function stagePointerDown(event: PointerEvent) {
+    touchStartedInWakeBand = inWakeBand(event);
+    if (!playing || touchStartedInWakeBand) wake();
+  }
+
+  function stagePointerMove(event: PointerEvent) {
+    if (!playing) {
+      wake();
+      return;
+    }
+    if (event.pointerType === 'mouse' ? inWakeBand(event) : touchStartedInWakeBand && inWakeBand(event)) wake();
   }
 
   // Keys and the mouse go to the host only with that permission, and while the picture has the focus.
@@ -239,7 +253,14 @@
   {/if}
 
   {#if token}
-    <section class="player" bind:this={player} hidden={phase !== 'streaming'} aria-label="The host's stream" onpointermove={moved} onpointerdown={moved}>
+    <section
+      class="player"
+      bind:this={player}
+      hidden={phase !== 'streaming'}
+      aria-label="The host's stream"
+      onpointermove={stagePointerMove}
+      onpointerdown={stagePointerDown}
+    >
       <!-- The picture takes every key and pointer event while it has the focus, when the invite allows them. -->
       <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
       <div
@@ -345,8 +366,7 @@
   .bar {
     position: absolute;
     top: max(var(--space-3), env(safe-area-inset-top));
-    right: max(var(--space-3), env(safe-area-inset-right));
-    left: max(var(--space-3), env(safe-area-inset-left));
+    inset-inline: max(var(--space-3), env(safe-area-inset-left)) max(var(--space-3), env(safe-area-inset-right));
     z-index: var(--z-raised);
     display: flex;
     flex-wrap: wrap;
@@ -354,7 +374,8 @@
     gap: var(--space-2) var(--space-3);
     max-width: 60rem;
     margin: 0 auto;
-    padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4);
+    padding-block: var(--space-2);
+    padding-inline: var(--space-4) var(--space-2);
     border: 1px solid var(--media-line);
     border-radius: var(--radius-lg);
     background: var(--media-panel);

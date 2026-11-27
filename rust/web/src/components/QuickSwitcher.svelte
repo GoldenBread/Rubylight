@@ -7,11 +7,12 @@
   import Dialog from './Dialog.svelte';
   import Icon from './Icon.svelte';
   import AppCover from './library/AppCover.svelte';
+  import { closeApp, confirmClose } from './library/app';
   import { backAfterRestart, confirmRestart } from './maintenance/host';
   import { api, type App, type Client } from '../lib/api';
   import { confirm, failed, notify } from '../lib/feedback.svelte';
   import type { ActionId, Entry } from '../lib/quick-switch';
-  import { enterVerb, palette } from '../lib/quick-switch-70';
+  import { enterVerb, palette, readRecent, recordRecent } from '../lib/quick-switch-70';
   import { navigate, route } from '../lib/router.svelte';
   import { refreshLive, session } from '../lib/session.svelte';
   import type { Theme } from '../lib/theme';
@@ -34,11 +35,18 @@
   let query = $state('');
   let apps = $state<App[] | null>(null);
   let clients = $state<Client[] | null>(null);
+  let recentIds = $state<string[]>(readRecent());
   let active = $state(0);
   let input = $state<HTMLInputElement>();
   let list = $state<HTMLElement>();
 
-  const groups = $derived(palette(query, { apps, clients }, { theme, streams: session.live?.streams ?? 0 }));
+  const groups = $derived(
+    palette(
+      query,
+      { apps, clients },
+      { theme, streams: session.live?.streams ?? 0, runningApp: session.live?.app || null, recentIds },
+    ),
+  );
   const entries = $derived(groups.flatMap((group) => group.entries));
   const optionId = (at: number) => `${id}-option-${at}`;
 
@@ -48,6 +56,7 @@
     untrack(() => {
       query = '';
       active = 0;
+      recentIds = readRecent();
       void load();
       void tick().then(() => input?.focus());
     });
@@ -96,6 +105,7 @@
 
   async function choose(entry: Entry) {
     open = false;
+    if (entry.href) recentIds = recordRecent(entry.id);
     // The dialog closes and hands focus back before the page changes.
     await tick();
     if (entry.href) {
@@ -127,6 +137,11 @@
       await sync();
     } else if (action === 'stop') {
       await stopStreams();
+    } else if (action === 'quit') {
+      const appName = session.live?.app || 'the game';
+      if (!(await confirmClose(appName))) return;
+      await closeApp(appName);
+      await refreshLive();
     } else if (action === 'theme-light' || action === 'theme-dark' || action === 'theme-system') {
       ontheme?.(action === 'theme-light' ? 'light' : action === 'theme-dark' ? 'dark' : 'system');
     }
@@ -294,14 +309,14 @@
   }
   .search-icon {
     position: absolute;
-    left: var(--space-3);
+    inset-inline-start: var(--space-3);
     top: 50%;
     transform: translateY(-50%);
     color: var(--muted);
     pointer-events: none;
   }
   .field .input {
-    padding-left: calc(var(--space-6) + var(--space-2));
+    padding-inline-start: calc(var(--space-6) + var(--space-2));
   }
   /* A steady height: the dialog doesn't jump as the results change. */
   .results {
@@ -424,7 +439,7 @@
     color: var(--muted);
   }
   .keys kbd + kbd {
-    margin-left: 2px;
+    margin-inline-start: 2px;
   }
   /* A touch screen has no arrows to press. */
   @media (hover: none) {

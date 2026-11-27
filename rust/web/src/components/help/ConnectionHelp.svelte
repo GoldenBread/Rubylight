@@ -43,12 +43,11 @@
   strong {
     font-weight: var(--weight-semibold);
   }
-  /* The copy button keeps its 44 px target but overlaps the rows around it. */
+  /* The copy button keeps its 44 px target without overlapping neighbouring rows. */
   .address {
     display: flex;
     align-items: center;
     gap: 2px;
-    margin-block: calc(-1 * (var(--space-3) - 2px));
   }
   .loading {
     font-size: var(--text-sm);

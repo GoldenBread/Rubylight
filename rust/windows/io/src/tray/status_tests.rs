@@ -141,13 +141,23 @@ fn the_status_follows_the_running_app() {
 #[test]
 fn the_header_says_what_is_happening() {
     assert_eq!(header(Status::Idle, None), "Ready");
+    assert_eq!(header(Status::Idle, Some("Skybound")), "Ready");
+    assert_eq!(header(Status::Streaming, None), "Streaming Desktop");
     assert_eq!(
         header(Status::Streaming, Some("Portal 2")),
         "Streaming Portal 2"
     );
     assert_eq!(
+        header(Status::Attention, None),
+        "Needs attention: stream is paused"
+    );
+    assert_eq!(
         header(Status::Attention, Some("Portal 2")),
         "Needs attention: Portal 2 is paused"
+    );
+    assert_eq!(
+        header(Status::Error, None),
+        "Needs attention: launch failed"
     );
     assert_eq!(
         header(Status::Error, Some("Portal 2")),

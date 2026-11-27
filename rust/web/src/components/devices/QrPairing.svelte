@@ -133,7 +133,7 @@
     {/if}
     {#if codes.length > 1 && !lock}
       <label for="{uid}-address">Address your device reaches</label>
-      <select id="{uid}-address" class="input" bind:value={chosen}>
+      <select id="{uid}-address" class="select" bind:value={chosen}>
         {#each codes as option (option.address)}<option value={option.address}>{option.address}</option>{/each}
       </select>
     {/if}

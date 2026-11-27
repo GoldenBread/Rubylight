@@ -14,8 +14,12 @@ const { render } = await server.ssrLoadModule('svelte/server');
 const source = await server.ssrLoadModule('/src/play/play-input-source.ts');
 const statsLib = await server.ssrLoadModule('/src/lib/webrtc/stats.ts');
 const part = async (name) => (await server.ssrLoadModule(`/src/play/${name}.svelte`)).default;
-const [Dock, GlyphBar, Library, PairCard, StatsCapsule] = await Promise.all(['PlayDock', 'PlayGlyphBar', 'PlayLibrary', 'PlayPairCard', 'PlayStatsCapsule'].map(part));
-const PLAY_FILES = ['Play', 'PlayDock', 'PlayErrorCard', 'PlayGlyphBar', 'PlayLibrary', 'PlayPairCard', 'PlayStatsCapsule'].map((name) => `./src/play/${name}.svelte`).concat('./src/play/play-input-source.ts');
+const [Dock, GlyphBar, LaunchCurtain, Library, PairCard, StatsCapsule] = await Promise.all(
+  ['PlayDock', 'PlayGlyphBar', 'PlayLaunchCurtain', 'PlayLibrary', 'PlayPairCard', 'PlayStatsCapsule'].map(part),
+);
+const PLAY_FILES = ['Play', 'PlayDock', 'PlayErrorCard', 'PlayGlyphBar', 'PlayLaunchCurtain', 'PlayLibrary', 'PlayPairCard', 'PlayStatsCapsule']
+  .map((name) => `./src/play/${name}.svelte`)
+  .concat('./src/play/play-input-source.ts');
 
 const SECRET = Array.from({ length: 32 }, (_, i) => i.toString(16).padStart(2, '0')).join('');
 const NONCE = Array.from({ length: 32 }, (_, i) => (0xa0 + i).toString(16)).join('');
@@ -298,8 +302,17 @@ test('the dock holds every stream control, each one reachable by remote, and one
   // An iPhone has no full screen to offer.
   body = render(Dock, { props: { ...props, canFullscreen: false } }).body;
   assert.doesNotMatch(body, /Full screen/i);
-  // Every control is at least 44 px tall.
+  // Every control is at least 44 px tall, and multiple codecs offer a live codec selector.
   assert.match(readFileSync(new URL('./src/play/PlayDock.svelte', import.meta.url), 'utf8'), /min-height: max\(44px, [\d.]+em\)/);
+  assert.match(readFileSync(new URL('./src/play/PlayDock.svelte', import.meta.url), 'utf8'), /Confirm quit\?/);
+  const multiCodec = render(Dock, {
+    props: { ...props, codecs: [{ id: 'hevc', name: 'HEVC' }, { id: 'av1', name: 'AV1' }], codec: 'hevc', oncodec() {} },
+  }).body;
+  assert.match(multiCodec, /aria-label="Video codec"/);
+  assert.match(multiCodec, />AV1</);
+  const curtain = render(LaunchCurtain, { props: { title: 'Skybound', host: 'Gaming PC', picture: 'HEVC · 1080p60', status: 'Starting…', curtain: true } }).body;
+  assert.match(curtain, /Skybound/);
+  assert.match(curtain, /Starting…/);
 });
 
 test('nothing blurs over the picture, and the capsule is this browser’s choice', () => {

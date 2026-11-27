@@ -39,8 +39,8 @@
 <style>
   .capsule {
     position: absolute;
-    top: max(3vh, env(safe-area-inset-top));
-    right: max(3vw, env(safe-area-inset-right));
+    top: max(var(--space-3), env(safe-area-inset-top));
+    inset-inline-start: var(--space-3);
     z-index: var(--z-raised);
     display: flex;
     align-items: stretch;
@@ -63,7 +63,7 @@
     padding: 0.45em 0.8em;
   }
   .capsule > div + div {
-    border-left: 1px solid var(--media-line);
+    border-inline-start: 1px solid var(--media-line);
   }
   dt {
     color: var(--media-idle);
@@ -78,7 +78,7 @@
     white-space: nowrap;
   }
   .unit {
-    margin-left: 0.2em;
+    margin-inline-start: 0.2em;
     color: var(--media-idle);
     font-weight: var(--weight-medium);
   }

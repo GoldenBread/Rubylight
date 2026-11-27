@@ -64,9 +64,9 @@ export async function launchApp(app: App): Promise<boolean> {
 
 export function confirmClose(name: string): Promise<boolean> {
   return confirm({
-    title: `Close ${name}?`,
-    message: 'The app quits on this PC and every stream ends. Unsaved progress in the app may be lost.',
-    confirm: 'Close app',
+    title: `Quit ${name}?`,
+    message: 'The game quits on this PC and every stream ends. Unsaved progress may be lost.',
+    confirm: 'Quit game',
     danger: true,
   });
 }
@@ -75,10 +75,10 @@ export function confirmClose(name: string): Promise<boolean> {
 export async function closeApp(name: string): Promise<boolean> {
   try {
     await api.apps.close();
-    notify(`Closed ${name}.`, 'ok');
+    notify(`Quit ${name}.`, 'ok');
     return true;
   } catch (error) {
-    failed('Closing the app failed', error);
+    failed('Quitting the game failed', error);
     return false;
   }
 }

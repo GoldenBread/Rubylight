@@ -122,3 +122,25 @@ fn a_failed_launch_shows_while_its_app_still_runs() {
     assert_eq!(shown(None, Some("Game")).status(), Status::Idle);
     assert_eq!(shown(Some("Game"), None).status(), Status::Streaming);
 }
+
+#[test]
+fn idle_tooltip_says_ready_and_custom_summaries_win() {
+    assert_eq!(tooltip_text(None, Status::Idle, None), "Rubylight — Ready");
+    assert_eq!(
+        tooltip_text(None, Status::Streaming, None),
+        "Rubylight — Streaming Desktop"
+    );
+    assert_eq!(
+        tooltip_text(None, Status::Streaming, Some("Skybound")),
+        "Rubylight — Streaming Skybound"
+    );
+    assert_eq!(
+        tooltip_text(
+            Some("Skybound on Handheld"),
+            Status::Streaming,
+            Some("Skybound")
+        ),
+        "Rubylight — Skybound on Handheld"
+    );
+    enable_dark_menus(false);
+}

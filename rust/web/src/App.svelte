@@ -510,13 +510,13 @@
     flex: none;
     color: var(--muted);
   }
-  /* The copy button keeps its 44 px target but overlaps the lines around it. */
+  /* The copy button keeps its 44 px target without colliding with the lines around it. */
   .address {
     display: flex;
     align-items: center;
+    justify-content: space-between;
     gap: 2px;
     min-width: 0;
-    margin-block: calc(-1 * var(--space-2));
     font-size: var(--text-xs);
     color: var(--ink-2);
   }
@@ -566,6 +566,7 @@
     min-width: 0;
     width: 100%;
     max-width: 1500px;
+    margin-inline: auto;
     padding-inline: var(--space-6);
   }
   .bar {

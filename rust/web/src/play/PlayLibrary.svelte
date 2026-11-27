@@ -87,8 +87,8 @@
   .light {
     position: absolute;
     top: -8em;
-    right: -5vw;
-    left: 15%;
+    inset-inline-end: -5vw;
+    inset-inline-start: 15%;
     z-index: var(--z-below);
     width: calc(85% + 5vw);
     height: 28em;
@@ -167,7 +167,7 @@
     position: relative;
     display: grid;
     place-items: center;
-    aspect-ratio: 3 / 4;
+    aspect-ratio: 2 / 3;
     overflow: hidden;
     border-radius: var(--radius);
     background-color: var(--media-panel);
@@ -194,7 +194,7 @@
   .badge {
     position: absolute;
     top: 0.5em;
-    left: 0.5em;
+    inset-inline-start: 0.5em;
     display: flex;
     align-items: center;
     gap: 0.4em;

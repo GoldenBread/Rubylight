@@ -1,13 +1,13 @@
 //! Drawing primitives over the menu's 1x canvas: anti-aliased rounded
 //! rectangles, capsules and polygons, and the widgets built from them (pill
-//! switch, inline slider, chevrons, header badge). Every edge is blended by
-//! its coverage against the opaque colour already underneath, so the panel
-//! stays opaque (alpha 255) for the compositor, which reads only RGB.
+//! switch, inline slider, chevrons, keycaps, header badge, and the rounded
+//! studio shell with premultiplied corner alpha).
 use super::theme_70::{
-    BRAND, FOCUS, FOCUS_INK, FOCUS_STRONG, INK, INK_2, MUTED, OK, Rgb, STAGE, TRACK,
+    BRAND, CARD, EDGE_TOP, FOCUS, FOCUS_INK, FOCUS_STRONG, HAIRLINE, INK, INK_2, MUTED, OK, Rgb,
+    STAGE, TRACK,
 };
 
-/// An opaque RGBA8 image, drawn back to front.
+/// An RGBA8 image, drawn back to front.
 pub(super) struct Canvas {
     pub width: u32,
     pub height: u32,
@@ -44,20 +44,39 @@ impl Canvas {
             }
         }
     }
-    /// A 1-pixel frame around the whole canvas.
-    pub fn border(&mut self, colour: Rgb) {
-        let [w, h] = [self.width, self.height];
-        for rect in [
-            [0, 0, w, 1],
-            [0, h - 1, w, 1],
-            [0, 0, 1, h],
-            [w - 1, 0, 1, h],
-        ] {
-            self.fill(rect, colour);
+    /// Draws the rounded obsidian studio shell (`STAGE` interior, `HAIRLINE`
+    /// 1-px frame with an `EDGE_TOP` specular top rim, and premultiplied smooth
+    /// corner alpha outside `radius`).
+    pub fn panel_shell(&mut self, radius: f32) {
+        let [w, h] = [self.width as f32, self.height as f32];
+        let r = radius.min(w / 2.).min(h / 2.);
+        let (cx, cy) = (w / 2., h / 2.);
+        let (hx, hy) = (w / 2. - r, h / 2. - r);
+        let top_fade = r.max(2.);
+        for y in 0..self.height {
+            let py = y as f32 + 0.5;
+            let qy = (py - cy).abs() - hy;
+            let top_t = ((top_fade - (py - 0.5)) / top_fade).clamp(0., 1.);
+            let rim = [0, 1, 2].map(|c| {
+                f32::from(HAIRLINE[c]) + (f32::from(EDGE_TOP[c]) - f32::from(HAIRLINE[c])) * top_t
+            });
+            for x in 0..self.width {
+                let px = x as f32 + 0.5;
+                let qx = (px - cx).abs() - hx;
+                let d_outer = qx.max(0.).hypot(qy.max(0.)) + qx.max(qy).min(0.) - r;
+                let cov_outer = (0.5 - d_outer).clamp(0., 1.);
+                let cov_inner = (0.5 - (d_outer + 1.)).clamp(0., 1.);
+                let at = ((y * self.width + x) * 4) as usize;
+                for c in 0..3 {
+                    let surface = rim[c] + (f32::from(STAGE[c]) - rim[c]) * cov_inner;
+                    self.rgba[at + c] = (surface * cov_outer).round() as u8;
+                }
+                self.rgba[at + 3] = (255. * cov_outer).round() as u8;
+            }
         }
     }
     /// Mixes `colour` over pixel (`x`, `y`) by `coverage` (0 to 1).
-    fn blend(&mut self, x: i64, y: i64, colour: Rgb, coverage: f32) {
+    pub fn blend(&mut self, x: i64, y: i64, colour: Rgb, coverage: f32) {
         if coverage <= 0. || x < 0 || y < 0 || x >= self.width as i64 || y >= self.height as i64 {
             return;
         }
@@ -210,11 +229,53 @@ pub(super) fn chevron(canvas: &mut Canvas, [cx, cy]: [f32; 2], u: f32, right: bo
 }
 
 /// The Rubylight badge: a ruby rounded square of `size` at (`x`, `y`) with
-/// a white play mark.
+/// a crisp geometric white `"R"` mark.
 pub(super) fn badge(canvas: &mut Canvas, [x, y]: [f32; 2], size: f32) {
-    canvas.rounded([x, y, size, size], size / 4., BRAND);
+    canvas.rounded([x, y, size, size], size * 0.25, BRAND);
     let at = |fx: f32, fy: f32| [x + fx * size, y + fy * size];
-    canvas.polygon(&[at(0.36, 0.26), at(0.78, 0.5), at(0.36, 0.74)], FOCUS_INK);
+    // Upper bowl and left vertical stem of the geometric "R".
+    canvas.rounded(
+        [x + 0.27 * size, y + 0.21 * size, 0.47 * size, 0.37 * size],
+        0.185 * size,
+        FOCUS_INK,
+    );
+    canvas.rounded(
+        [x + 0.27 * size, y + 0.21 * size, 0.15 * size, 0.58 * size],
+        0.02 * size,
+        FOCUS_INK,
+    );
+    // Open counter inside the bowl.
+    canvas.rounded(
+        [x + 0.42 * size, y + 0.33 * size, 0.18 * size, 0.13 * size],
+        0.065 * size,
+        BRAND,
+    );
+    canvas.rounded(
+        [x + 0.42 * size, y + 0.33 * size, 0.10 * size, 0.13 * size],
+        0.01 * size,
+        BRAND,
+    );
+    // Diagonal right leg sitting flush on the baseline.
+    canvas.polygon(
+        &[
+            at(0.46, 0.52),
+            at(0.61, 0.52),
+            at(0.76, 0.79),
+            at(0.60, 0.79),
+        ],
+        FOCUS_INK,
+    );
+}
+
+/// A rounded footer keycap pill (`EDGE_TOP` 1-px border around `CARD`).
+pub(super) fn keycap(canvas: &mut Canvas, [x, y, w, h]: [f32; 4], u: f32) {
+    let radius = (6. * u).max(3.);
+    canvas.rounded([x, y, w, h], radius, EDGE_TOP);
+    canvas.rounded(
+        [x + 1., y + 1., (w - 2.).max(1.), (h - 2.).max(1.)],
+        (radius - 1.).max(2.),
+        CARD,
+    );
 }
 
 /// The colour of a label and of a value on a row of `tone`.

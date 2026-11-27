@@ -52,6 +52,16 @@
   background-size: 5px 5px;
   background-repeat: no-repeat;
 }
+.select:dir(rtl),
+[dir='rtl'] .select {
+  background-position:
+    12px 52%,
+    17px 52%;
+}
+/* Standalone menus and short numeric fields inside wide single-column panels never stretch edge to edge. */
+:where(.panel, .disclosure) :where(.select, input.input[type='number']):not(.form-grid *, .path-picker *) {
+  max-width: 30rem;
+}
 
 /* Two columns of fields that collapse on narrow screens. */
 .form-grid {

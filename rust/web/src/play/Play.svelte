@@ -10,6 +10,7 @@
   import PlayDock from './PlayDock.svelte';
   import PlayErrorCard from './PlayErrorCard.svelte';
   import PlayGlyphBar from './PlayGlyphBar.svelte';
+  import PlayLaunchCurtain from './PlayLaunchCurtain.svelte';
   import PlayLibrary from './PlayLibrary.svelte';
   import PlayPairCard from './PlayPairCard.svelte';
   import PlayStatsCapsule from './PlayStatsCapsule.svelte';
@@ -42,8 +43,9 @@
   let menu = $state(false);
   let muted = $state(false);
   let host = $state('');
-  /** The game that plays, for the dock. */
+  /** The game that plays, for the dock and live codec switch. */
   let playing = $state('');
+  let playingApp = $state.raw<AppEntry | null>(null);
   let fullscreen = $state(false);
   let canFullscreen = $state(false);
   let statsOn = $state(savedStats());
@@ -226,16 +228,26 @@
     }
   }
 
+  function setCodec(codec: Choice['codec']) {
+    if (!choice) return;
+    const wanted = { ...choice, codec };
+    choice = optionFor(options, wanted) ? wanted : defaultChoice(options, [codec]);
+    try { localStorage.setItem(CHOICE_KEY, JSON.stringify(choice)); } catch { /* not remembered */ }
+  }
+
   function nextPicture() {
     if (!choice || codecs.length < 2) return;
     const index = codecs.findIndex((c) => c.id === choice!.codec);
-    const codec = codecs[(index + 1) % codecs.length]!.id;
-    const wanted = { ...choice, codec };
-    choice = optionFor(options, wanted) ? wanted : defaultChoice(options, [codec]);
-    try {
-      localStorage.setItem(CHOICE_KEY, JSON.stringify(choice));
-    } catch {
-      // Not remembered; the default comes back next time.
+    setCodec(codecs[(index + 1) % codecs.length]!.id);
+  }
+
+  async function switchCodec(codecId: string) {
+    const found = codecs.find((c) => c.id === codecId);
+    if (!found || !choice || found.id === choice.codec) return;
+    setCodec(found.id);
+    if (stream && playingApp) {
+      stream.disconnect();
+      await start(playingApp);
     }
   }
 
@@ -246,6 +258,7 @@
     status = 'Starting…';
     menu = false;
     playing = app.title;
+    playingApp = app;
     stats = null;
     phase = 'starting';
     // Sound needs a key press or click on the page first; a pad press is none.
@@ -560,7 +573,9 @@
     >
       <video id="play-video" bind:this={video} autoplay playsinline></video>
     </div>
-    {#if status}<p class="status" role="status"><span class="pulse" aria-hidden="true"></span>{status}</p>{/if}
+    {#if phase === 'starting' || status}
+      <PlayLaunchCurtain title={playing} {host} {picture} {status} curtain={phase === 'starting'} />
+    {/if}
     {#if phase === 'stream' && !menu}
       <!-- Nothing but the game shows once the first seconds have passed. -->
       {#if muted}<p class="sound" role="status">Sound is off. Press a key or click to hear it.</p>{/if}
@@ -572,22 +587,9 @@
       </button>
     {/if}
     {#if menu}
-      <PlayDock
-        bind:box={menuBox}
-        title={playing}
-        {picture}
-        {muted}
-        stats={statsOn}
-        {fullscreen}
-        {canFullscreen}
-        {source}
-        onresume={closeMenu}
-        onfullscreen={toggleFullscreen}
-        onmute={toggleMute}
-        onstats={toggleStats}
-        ondisconnect={disconnect}
-        onquit={quit}
-      />
+      <PlayDock bind:box={menuBox} title={playing} {picture} {codecs} codec={choice?.codec ?? ''} {muted} stats={statsOn}
+        {fullscreen} {canFullscreen} {source} onresume={closeMenu} oncodec={switchCodec} onfullscreen={toggleFullscreen}
+        onmute={toggleMute} onstats={toggleStats} ondisconnect={disconnect} onquit={quit} />
     {/if}
   </section>
 </main>
@@ -677,15 +679,12 @@
     color: var(--media-ink);
     font-size: 0.85em;
   }
-  .connecting,
-  .status {
+  .connecting {
     display: flex;
     align-items: center;
+    justify-self: center;
     gap: 0.7em;
     color: var(--media-ink-2);
-  }
-  .connecting {
-    justify-self: center;
   }
   .pulse {
     flex: none;
@@ -695,43 +694,23 @@
     background: var(--media-accent-text);
     animation: breathe var(--pulse-duration) var(--ease-standard) infinite alternate;
   }
-  @keyframes breathe {
-    to {
-      opacity: 0.3;
-    }
-  }
+  @keyframes breathe { to { opacity: 0.3; } }
   footer {
     position: fixed;
-    right: 0;
+    inset-inline: 0;
     bottom: 0;
-    left: 0;
     z-index: var(--z-bar);
     padding: 1.2em 5vw max(3vh, env(safe-area-inset-bottom));
     border-top: 1px solid var(--media-line);
     background: var(--media-bg);
   }
-  .player {
-    position: fixed;
-    inset: 0;
-    background: var(--media-black);
-  }
-  .surface {
-    position: absolute;
-    inset: 0;
-    overflow: hidden;
-    outline: none;
-    touch-action: none;
-  }
-  video {
-    width: 100%;
-    height: 100%;
-    object-fit: contain;
-    pointer-events: none;
-  }
+  .player { position: fixed; inset: 0; background: var(--media-black); }
+  .surface { position: absolute; inset: 0; overflow: hidden; outline: none; touch-action: none; }
+  video { width: 100%; height: 100%; object-fit: contain; pointer-events: none; }
   /* Over the picture: solid decks, never a blur. */
-  .status,
   .sound {
     position: absolute;
+    top: max(3vh, env(safe-area-inset-top));
     left: 50%;
     z-index: var(--z-raised);
     transform: translateX(-50%);
@@ -745,12 +724,6 @@
     color: var(--media-ink);
     font-size: 0.85em;
     text-align: center;
-  }
-  .status {
-    top: 45%;
-  }
-  .sound {
-    top: max(3vh, env(safe-area-inset-top));
     pointer-events: none;
   }
   /* The handle: a strip at the top edge that shows a grip under the pointer. */

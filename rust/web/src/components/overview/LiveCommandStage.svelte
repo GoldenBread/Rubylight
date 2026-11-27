@@ -15,8 +15,9 @@
   import SuspendButton from '../session/SuspendButton.svelte';
   import TelemetrySparklines from './TelemetrySparklines.svelte';
   import { diagnosticsText, leadStream, pipelinePhases, specPills, stageTitle, traces, worstHealth } from './studio-telemetry';
-  import { api, type App, type QuickSuspendStatus, type SessionStatus, type StreamSession } from '../../lib/api';
+  import { api, type App, type QuickSuspendStatus, type SessionStatus, type StreamSession, type StutterStageId } from '../../lib/api';
   import { confirm, failed, notify } from '../../lib/feedback.svelte';
+  import { duration, ms } from '../../lib/format';
   import { link } from '../../lib/router.svelte';
 
   interface Props {
@@ -55,12 +56,31 @@
     return { image: uuid && path ? api.apps.coverUrl(uuid, coverVersion(path)) : '', hue: placeholder(game.name).hue, path, uuid };
   });
   const appName = $derived(status?.app?.name || status?.appName || game?.name || 'the game');
+  const single = $derived(streams.length === 1 ? lead : null);
+  const presentToSent = $derived(measured && lead.performance.stages && lead.performance.stages.frames > 0 ? lead.performance.stages.present_to_sent : null);
+  const stutter = $derived(lead.stutter_recent ?? lead.stutter ?? null);
+  const lostStage = $derived(stutter?.stages.find((stage) => stage.id === stutter?.dominant) ?? null);
+  const pipeline = $derived(lead.pipeline_rates ?? null);
+  const timing = (value: number) => (measured ? ms(value) : '–');
+  const hz = (mhz: number | null) => (mhz == null ? '–' : (mhz / 1000).toFixed(mhz < 100_000 ? 1 : 0));
+  const stageWords: Record<StutterStageId, string> = {
+    capture: 'capture',
+    convert: 'conversion',
+    encode: 'encoding',
+    packetize: 'packetizing',
+    send: 'sending',
+  };
 
   let rows = $state<HTMLElement>();
+  let detailsOpen = $state(false);
   let quitting = $state(false);
 
-  /** Opens the first stream's figures and brings them into view. */
+  /** Toggles the inline breakdown for a single stream, or opens the first device row's figures. */
   function showDetails() {
+    if (single) {
+      detailsOpen = !detailsOpen;
+      return;
+    }
     const details = rows?.querySelector('details');
     if (!details) return;
     details.open = true;
@@ -90,7 +110,7 @@
     quitting = true;
     try {
       await api.apps.close();
-      notify(`Closed ${app}.`, 'ok');
+      notify(`Quit ${app}.`, 'ok');
       onchange?.();
     } catch (failure) {
       failed('Quitting the game failed', failure);
@@ -110,12 +130,13 @@
           <span class="dot" aria-hidden="true"></span>
           <strong>{health.label}</strong>
           <span class="cause">{health.cause}</span>
+          {#if health.level !== 'healthy'}<a class="troubleshoot" href="/troubleshoot" use:link>Troubleshoot</a>{/if}
         </p>
       {/if}
       {#if stale}<p class="old" role="status"><Icon name="alert" size={16} />Waiting for this PC: these figures are a few seconds old.</p>{/if}
     </div>
     <div class="what">
-      <p class="eyebrow">Live now</p>
+      <p class="eyebrow">Live now{#if single?.uptime_seconds}{' · '}<span class="num">{duration(single.uptime_seconds)}</span>{/if}</p>
       <h2>{title}</h2>
       <ul class="pills" aria-label="Stream format">
         {#each pills as pill (pill)}<li class="num">{pill}</li>{/each}
@@ -136,16 +157,85 @@
   <div class="deck">
     <Button icon="info" onclick={showDetails}>Stream details</Button>
     <Button icon="copy" onclick={copyDiagnostics}>Copy diagnostics</Button>
-    {#if status?.appRunning}
-      <span class="end"><SuspendButton {quick} {onchange} /><Button variant="danger" icon="power" busy={quitting} onclick={quit}>Quit game</Button></span>
+    {#if single || status?.appRunning}
+      <span class="end">
+        {#if single}
+          <Button busy={disconnecting === single.uuid} disabled={single.state === 'STOPPING'} onclick={() => ondisconnect(single)}>
+            Disconnect<span class="visually-hidden"> {single.device_name}</span>
+          </Button>
+        {/if}
+        {#if status?.appRunning}
+          <SuspendButton {quick} {onchange} /><Button variant="danger" icon="power" busy={quitting} onclick={quit}>Quit game</Button>
+        {/if}
+      </span>
     {/if}
   </div>
 
-  <div class="rows" bind:this={rows}>
-    {#each streams as stream (stream.uuid)}
-      <StreamCard {stream} busy={disconnecting === stream.uuid} {ondisconnect} />
-    {/each}
-  </div>
+  {#if single && detailsOpen}
+    <div class="drawer" role="region" aria-label="Stream details">
+      <dl class="metrics">
+        <div>
+          <dt>Frame rate</dt>
+          <dd class="value num">{measured ? `${Math.round(single.performance.fps)} fps` : '–'}</dd>
+          <dd class="sub">
+            Target <span class="num">{single.fps}</span>
+            {#if single.requested_fps && single.requested_fps !== single.fps}
+              (asked for <span class="num">{single.requested_fps}</span>)
+            {/if}
+          </dd>
+        </div>
+        <div>
+          <dt>Encoding (p95)</dt>
+          <dd class="value num">{timing(single.performance.encode_p95_ms)}</dd>
+          <dd class="sub">Average <span class="num">{timing(single.performance.encode_mean_ms)}</span></dd>
+        </div>
+        <div>
+          <dt>Host processing</dt>
+          <dd class="value num">{timing(single.performance.host_processing_mean_ms)}</dd>
+          <dd class="sub">99% below <span class="num">{timing(single.performance.host_processing_p99_ms)}</span></dd>
+        </div>
+        <div>
+          <dt>Present to sent</dt>
+          <dd class="value num">{presentToSent ? ms(presentToSent.mean_ms) : timing(single.performance.frame_age_mean_ms)}</dd>
+          <dd class="sub">
+            {#if presentToSent}
+              99% below <span class="num">{ms(presentToSent.p99_ms)}</span>
+            {:else}
+              Average frame age
+            {/if}
+          </dd>
+        </div>
+        {#if stutter && stutter.pictures > 0}
+          <div class="whole">
+            <dt>Where pictures lost time</dt>
+            <dd class="value">{lostStage ? `${lostStage.percent}% in ${stageWords[lostStage.id]}` : 'No dominant stage'}</dd>
+            <dd class="sub">
+              {#if stutter.late_pictures > 0}
+                <span class="num">{stutter.late_pictures}</span> of <span class="num">{stutter.pictures}</span> new pictures lost <span class="num">{ms(stutter.lost_ms)}</span>{#if lostStage}, {lostStage.percent}% in {stageWords[lostStage.id]}{/if}.
+              {:else}
+                No new picture took longer than this stream’s usual path on this PC.
+              {/if}
+            </dd>
+          </div>
+        {/if}
+        {#if pipeline}
+          <div class="whole">
+            <dt>Pipeline frame rates</dt>
+            <dd class="value num">{hz(pipeline.source_mhz)} → {hz(pipeline.capture_mhz)} → {hz(pipeline.submit_mhz)} → {hz(pipeline.output_mhz)} fps</dd>
+            <dd class="sub">Display → capture → encode → send over <span class="num">{(pipeline.window_ms / 1000).toFixed(1)}</span> s (<span class="num">{hz(pipeline.repeat_mhz)}</span> fps repeats).</dd>
+          </div>
+        {/if}
+      </dl>
+    </div>
+  {/if}
+
+  {#if streams.length > 1}
+    <div class="rows" bind:this={rows}>
+      {#each streams as stream (stream.uuid)}
+        <StreamCard {stream} busy={disconnecting === stream.uuid} {ondisconnect} />
+      {/each}
+    </div>
+  {/if}
   {@render children?.()}
 </section>
 
@@ -249,6 +339,16 @@
   }
   .health .cause {
     color: var(--media-ink-2);
+  }
+  .health .troubleshoot {
+    margin-inline-start: var(--space-1);
+    color: var(--media-ink);
+    font-weight: var(--weight-semibold);
+    text-decoration: underline;
+    text-underline-offset: 3px;
+  }
+  .health .troubleshoot:hover {
+    color: var(--tone);
   }
   .healthy {
     --tone: var(--media-ok);
@@ -358,6 +458,48 @@
   .rows > :global(* + *) {
     border-top: 1px solid var(--media-line);
   }
+  .drawer {
+    padding: var(--space-4) var(--space-6);
+    border-top: 1px solid var(--media-line);
+    background: var(--media-panel);
+    container-type: inline-size;
+  }
+  .metrics {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    margin: 0;
+    border: 1px solid var(--media-line);
+    border-radius: var(--radius);
+    overflow: hidden;
+    background: var(--media-panel-raised);
+  }
+  .metrics .whole {
+    grid-column: 1 / -1;
+  }
+  .metrics div {
+    padding: var(--space-2) var(--space-3);
+    box-shadow: var(--rule-grid);
+  }
+  .metrics dt {
+    font-size: var(--text-xs);
+    color: var(--media-idle);
+  }
+  .metrics dd {
+    margin: 0;
+  }
+  .metrics .value {
+    font-size: var(--text-lg);
+    line-height: var(--leading-snug);
+  }
+  .metrics .sub {
+    font-size: var(--text-xs);
+    color: var(--media-ink-2);
+  }
+  @container (max-width: 520px) {
+    .metrics {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
   @keyframes beat {
     50% {
       opacity: 0.45;
@@ -366,7 +508,8 @@
   @media (max-width: 700px) {
     .main,
     .figures,
-    .deck {
+    .deck,
+    .drawer {
       padding-inline: var(--space-4);
     }
     .health {

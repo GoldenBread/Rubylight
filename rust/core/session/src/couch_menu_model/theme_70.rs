@@ -15,6 +15,8 @@ pub const STAGE: Rgb = hex(0x0d0f14);
 pub const CARD: Rgb = hex(0x161922);
 /// The container border and the rule under the header (`--media-line`).
 pub const HAIRLINE: Rgb = hex(0x2b3140);
+/// Specular top rim along the outer studio shell (`--line-strong`).
+pub const EDGE_TOP: Rgb = hex(0x363e52);
 /// A slider's rail and an off switch's track.
 pub const TRACK: Rgb = hex(0x2b3140);
 /// Labels, the title and messages (`--ink`).
@@ -85,6 +87,7 @@ mod tests {
             ("warn", WARN),
             ("danger", ERROR),
             ("brand", BRAND),
+            ("line-strong", EDGE_TOP),
         ] {
             assert_eq!(token(dark, name), colour, "--{name}");
         }

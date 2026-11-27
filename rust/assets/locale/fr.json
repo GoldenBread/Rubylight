@@ -1417,6 +1417,32 @@
       "advanced": "Avancé"
     }
   },
+  "couch_menu": {
+    "title": "Menu de l'hôte",
+    "back_to_game": "Retour au jeu",
+    "radeon": "Paramètres Radeon",
+    "restore_radeon": "Réinitialiser Radeon",
+    "back": "Retour",
+    "profile": "Profil : ",
+    "disconnect": "Déconnecter (jeu actif)",
+    "end_session": "Terminer la session",
+    "close_game": "Quitter le jeu",
+    "run": "Lancer",
+    "next_stream": "Actif au prochain stream",
+    "confirm": "Rappuyer sous 5 s",
+    "working": "En cours...",
+    "failed": "Échec : ",
+    "needs_host_control": "Contrôle hôte requis",
+    "on": "Oui",
+    "off": "Non",
+    "hint": "Enter/A: choisir  Esc/B: retour",
+    "items": {
+      "audio_night_mode": "Mode nuit",
+      "audio_headphone_surround": "Son surround casque",
+      "encoder_focus": "Priorité d'encodage",
+      "sleep_after_idle_minutes": "Veille si inactif"
+    }
+  },
   "support": {
     "bundle_desc": "Le paquet d’assistance contient les journaux et diagnostics de l’hôte pour le dépannage ; les adresses, les noms d’utilisateurs et d’appareils et les titres de jeux y sont remplacés par des marqueurs.",
     "bundle_download": "Télécharger le paquet d’assistance",

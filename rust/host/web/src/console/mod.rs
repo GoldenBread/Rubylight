@@ -42,15 +42,18 @@ fn verified_notice<'a>(path: &str, token: &'a str) -> Option<&'a str> {
             == 0)
         .then_some(message)
 }
-const NAV: [(&str, &str); 8] = [
+const NAV: [(&str, &str); 11] = [
     ("/", "Overview"),
+    ("/sessions", "Sessions"),
     ("/library", "Library"),
     ("/devices", "Devices"),
+    ("/clips", "Clips"),
     ("/logs", "Logs"),
     ("/settings", "Settings"),
     ("/integrations", "Integrations"),
     ("/api-tokens", "API tokens"),
     ("/maintenance", "Maintenance"),
+    ("/help", "Help"),
 ];
 pub(crate) const PERMISSIONS: [(u32, &str); 13] = [
     (0x01000000, "List apps"),
@@ -184,6 +187,10 @@ fn page_path(path: &str) -> Option<&str> {
         "/apps" => "/library",
         "/clients" | "/pin" => "/devices",
         "/config" => "/settings",
+        "/tokens" => "/api-tokens",
+        "/troubleshoot" => "/maintenance",
+        p if p.starts_with("/settings/") => "/settings",
+        p if p.starts_with("/library/") => "/library",
         p if NAV.iter().any(|n| n.0 == p) || matches!(p, "/login" | "/setup") => p,
         _ => return None,
     })

@@ -329,6 +329,10 @@ pub fn progress<T: Send + 'static>(
             dwFlags: TDF_SHOW_MARQUEE_PROGRESS_BAR | TDF_CALLBACK_TIMER,
             dwCommonButtons: TDCBF_CANCEL_BUTTON,
             pszWindowTitle: PCWSTR(title.as_ptr()),
+            hInstance: brand_instance(),
+            Anonymous1: TASKDIALOGCONFIG_0 {
+                pszMainIcon: brand_icon(),
+            },
             pszMainInstruction: PCWSTR(heading.as_ptr()),
             pszContent: PCWSTR(initial.as_ptr()),
             pfCallback: Some(progress_callback),

@@ -128,7 +128,7 @@
   {/if}
 </Panel>
 <div class="import-bar" class:has-selection={selected.length > 0}><p>{selected.length ? selected.length + ' selected' : 'Choose the games you want to add.'}<span class="muted">You can change names and covers later.</span></p><Button variant="primary" disabled={scanning || !selected.length || !catalog} busy={importing} onclick={importGames}>{importing ? 'Adding games…' : 'Add selected games'}</Button></div>
-<p class="muted source-help">Launchers add every installed game by themselves: <a href="/library" use:link>Where your games come from</a>. Game folders and each launcher's options: <a href="/settings/games#game-folders" use:link>All settings › Games</a>.</p>
+<p class="muted source-help" class:has-selection={selected.length > 0}>Launchers add every installed game by themselves: <a href="/library" use:link>Where your games come from</a>. Game folders and each launcher's options: <a href="/settings/games#game-folders" use:link>All settings › Games</a>.</p>
 
 <style>
   .back { justify-self: start; width: fit-content; min-height: var(--control-height); display: inline-flex; align-items: center; gap: var(--space-1); font-size: var(--text-sm); color: var(--ink-2); text-decoration: none; }
@@ -138,14 +138,14 @@
   .filters label { display: grid; gap: var(--space-1-5); align-content: start; }
   .label { font-size: var(--text-sm); font-weight: var(--weight-medium); }
   .search { position: relative; }
-  .search-icon { position: absolute; left: var(--space-3); top: 50%; transform: translateY(-50%); color: var(--muted); pointer-events: none; }
-  .search .input { padding-left: calc(var(--space-7) - 10px); }
+  .search-icon { position: absolute; inset-inline-start: var(--space-3); top: 50%; transform: translateY(-50%); color: var(--muted); pointer-events: none; }
+  .search .input { padding-inline-start: calc(var(--space-7) - 10px); }
   .scanning { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-5) 0; font-size: var(--text-sm); }
   .spinner { width: 18px; height: 18px; border: 2px solid var(--line-strong); border-top-color: var(--accent); border-radius: var(--radius-pill); animation: spin var(--spin-duration) linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
   @media (prefers-reduced-motion: reduce) { .spinner { animation: none; } }
-  .games { list-style: none; margin: 0; padding: 0; }
-  .games li { border-top: 1px solid var(--line); }
+  .games { list-style: none; margin: 0; padding: 0 0 var(--space-2); }
+  .games li { border-top: 1px solid var(--line); scroll-margin-bottom: calc(var(--control-height) + var(--space-8)); }
   .game { display: flex; gap: var(--space-4); align-items: center; min-height: 72px; padding: var(--space-3) var(--space-2); margin: 0 calc(-1 * var(--space-2)); border-radius: var(--radius); cursor: pointer; transition: background-color var(--duration-fast) var(--ease-standard); }
   .game:hover { background: var(--sunken); }
   .added .game { cursor: default; }
@@ -159,7 +159,7 @@
   .game-name .error { color: var(--danger); font-size: var(--text-sm); }
   .game-state { color: var(--muted); white-space: nowrap; }
   .select-all { display: flex; align-items: center; gap: var(--space-4); min-height: var(--control-height); font-size: var(--text-sm); font-weight: var(--weight-medium); cursor: pointer; }
-  .select-all span { margin-left: auto; font-weight: var(--weight-regular); }
+  .select-all span { margin-inline-start: auto; font-weight: var(--weight-regular); }
   .empty { display: grid; justify-items: start; gap: var(--space-3); padding: var(--space-6) 0; }
   .empty h3 { font-size: var(--text-md); }
   .sources { margin-top: var(--space-5); padding-top: var(--space-4); border-top: 1px solid var(--line); color: var(--muted); font-size: var(--text-sm); }
@@ -167,10 +167,11 @@
   .source { display: flex; justify-content: space-between; gap: var(--space-4); padding: var(--space-2) 0; border-bottom: 1px solid var(--line); }
   .source strong { color: var(--ink-2); font-weight: var(--weight-medium); }
   .sources .error { color: var(--danger); overflow-wrap: anywhere; }
-  .import-bar.has-selection { position: sticky; bottom: var(--space-4); z-index: var(--z-sticky); box-shadow: var(--shadow-pop); border-color: var(--line-strong); }
+  .import-bar.has-selection { position: sticky; bottom: var(--space-4); z-index: var(--z-sticky); margin-top: var(--space-2); background: var(--panel-raised); box-shadow: var(--shadow-pop); border-color: var(--line-strong); }
   .import-bar { display: flex; justify-content: space-between; align-items: center; gap: var(--space-5); padding: var(--space-4) var(--space-5); border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--panel); box-shadow: var(--shadow); }
   .import-bar p { display: grid; gap: 2px; font-weight: var(--weight-medium); }
   .import-bar .muted, .source-help { font-size: var(--text-sm); font-weight: var(--weight-regular); }
+  .source-help.has-selection { padding-bottom: var(--space-6); }
   .result { display: grid; gap: var(--space-2); justify-items: start; margin: var(--space-2) 0 var(--space-4); padding: var(--space-3) var(--space-4); border: 1px solid var(--line); border-radius: var(--radius); background: var(--sunken); color: var(--ink); }
   .result .error { color: var(--danger); }
   @media (max-width: 600px) {
@@ -178,7 +179,7 @@
     .game { display: grid; grid-template-columns: 20px 40px minmax(0, 1fr); gap: var(--space-1) var(--space-3); }
     .game > input, .game > .cover { grid-row: span 2; }
     .game-state { grid-column: 3; }
-    .import-bar { padding: var(--space-3) var(--space-3) var(--space-3) var(--space-4); gap: var(--space-3); }
+    .import-bar { padding-block: var(--space-3); padding-inline: var(--space-4) var(--space-3); gap: var(--space-3); }
     .import-bar.has-selection { bottom: var(--space-2); }
     .import-bar .muted { display: none; }
   }

@@ -20,19 +20,19 @@
   async function close() {
     const app = name;
     const ok = await confirm({
-      title: `Close ${app}?`,
-      message: 'The app quits on this PC and every stream ends. Unsaved progress in the app may be lost.',
-      confirm: 'Close app',
+      title: `Quit ${app}?`,
+      message: 'The game quits on this PC and every stream ends. Unsaved progress may be lost.',
+      confirm: 'Quit game',
       danger: true,
     });
     if (!ok) return;
     closing = true;
     try {
       await api.apps.close();
-      notify(`Closed ${app}.`, 'ok');
+      notify(`Quit ${app}.`, 'ok');
       onchange();
     } catch (failure) {
-      failed('Closing the app failed', failure);
+      failed('Quitting the game failed', failure);
     } finally {
       closing = false;
     }
@@ -57,13 +57,13 @@
         </div>
         <p class="muted">
           {status.paused
-            ? 'No device is connected. It keeps running until a device resumes it or you close it.'
-            : 'Closing it ends every stream.'}
+            ? 'No device is connected. It keeps running until a device resumes it or you quit it.'
+            : 'Quitting it ends every stream.'}
         </p>
       </div>
       <div class="actions">
         <SuspendButton {quick} size="sm" {onchange} />
-        <Button variant="danger" size="sm" icon="stop" busy={closing} onclick={close}>Close app</Button>
+        <Button variant="danger" size="sm" icon="power" busy={closing} onclick={close}>Quit game</Button>
       </div>
     </div>
   {:else}

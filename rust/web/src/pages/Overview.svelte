@@ -10,7 +10,6 @@
   import { homeLead, problems } from '../lib/host-readiness';
   import { applyFix, dismissWarning, fixes } from '../lib/host-fixes.svelte';
   import CopyButton from '../components/CopyButton.svelte';
-  import PageHeader from '../components/PageHeader.svelte';
   import Panel from '../components/Panel.svelte';
   import ConnectHelp from '../components/overview/ConnectHelp.svelte';
   import PairPanel from '../components/devices/PairPanel.svelte';
@@ -271,7 +270,7 @@
   });
 </script>
 
-<PageHeader title="Home" />
+<h1 class="visually-hidden">Home</h1>
 
 {#snippet helpToggle()}
   <button class="text-action" onclick={() => (helpOpen = !helpOpen)} aria-expanded={helpOpen}>Connection help</button>
@@ -443,9 +442,37 @@
   .details-link :global(svg) { transition: transform var(--duration-fast) var(--ease-standard); }
   .details-link.open :global(svg) { transform: rotate(90deg); }
 
-  /* First run: a short band of art over the two ways to pair. */
+  /* First run: a short band of art over the two ways to pair, kept on the media plane in both themes. */
   .first .hero-main { min-height: 0; grid-template-columns: minmax(0, 1fr); }
-  .pair { padding: var(--space-5) var(--space-6) var(--space-6); background: var(--panel); color: var(--ink); border-top: 1px solid var(--media-line); }
+  .pair {
+    --panel: var(--media-panel-raised);
+    --panel-raised: var(--media-panel-raised);
+    --sunken: var(--media-panel);
+    --field: var(--media-panel);
+    --ink: var(--media-ink);
+    --ink-2: var(--media-ink-2);
+    --muted: var(--media-idle);
+    --line: var(--media-line);
+    --line-strong: var(--media-line-strong);
+    --focus: var(--media-focus);
+    --edge: var(--media-edge);
+    --ok: var(--media-ok);
+    --ok-soft: color-mix(in srgb, var(--media-ok) 14%, var(--media-panel));
+    --ok-line: color-mix(in srgb, var(--media-ok) 36%, var(--media-panel));
+    --warn: var(--media-warn);
+    --warn-soft: color-mix(in srgb, var(--media-warn) 14%, var(--media-panel));
+    --warn-line: color-mix(in srgb, var(--media-warn) 36%, var(--media-panel));
+    --danger: var(--media-danger);
+    --danger-soft: color-mix(in srgb, var(--media-danger) 14%, var(--media-panel));
+    --danger-line: color-mix(in srgb, var(--media-danger) 40%, var(--media-panel));
+    --accent-text: var(--media-accent-text);
+    --accent-soft: color-mix(in srgb, var(--media-accent-text) 16%, var(--media-panel));
+    --accent-line: color-mix(in srgb, var(--media-accent-text) 40%, var(--media-panel));
+    padding: var(--space-5) var(--space-6) var(--space-6);
+    background: color-mix(in srgb, var(--media-panel) 94%, var(--media-bg));
+    color: var(--media-ink);
+    border-top: 1px solid var(--media-line);
+  }
 
   .games-error { align-items: center; justify-content: space-between; flex-wrap: wrap; }
   .games { display: grid; gap: var(--space-4); }

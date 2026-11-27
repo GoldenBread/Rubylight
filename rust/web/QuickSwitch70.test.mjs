@@ -29,13 +29,19 @@ const found = { apps, clients };
 const idle = { theme: 'system', streams: 0 };
 const labels = (groups, id) => groups.find(group => group.id === id)?.entries.map(entry => entry.label) ?? [];
 
-test('with nothing typed: the everyday pages, the host actions and diagnostics', () => {
+test('with nothing typed: recent entries, top games and devices, everyday pages, host actions and diagnostics', () => {
   const groups = lib.palette('', found, idle);
-  assert.deepEqual(groups.map(group => group.title), ['Pages', 'Host actions', 'Diagnostics']);
+  assert.deepEqual(groups.map(group => group.title), ['Games', 'Devices', 'Pages', 'Host actions', 'Diagnostics']);
+  assert.deepEqual(labels(groups, 'games'), ['Portal 2', 'The Witcher 3']);
+  assert.deepEqual(labels(groups, 'devices'), ['Pixel 9', 'Living room TV', 'Old tablet']);
   assert.deepEqual(labels(groups, 'pages'), ['Home', 'Games', 'Devices', 'Settings', 'Help']);
   assert.deepEqual(labels(groups, 'actions'),
     ['Pair a device', 'Sync games now', 'Restore displays', 'Use the light theme', 'Use the dark theme', 'Restart Rubylight']);
   assert.deepEqual(labels(groups, 'diagnostics'), ['Troubleshoot', 'Sessions', 'Logs', 'Download support bundle']);
+  const withRecentAndRunning = lib.palette('', found, { ...idle, runningApp: 'Portal 2', recentIds: ['game:steam-620', 'page:/logs'] });
+  assert.equal(withRecentAndRunning[0].title, 'Recent');
+  assert.deepEqual(labels(withRecentAndRunning, 'recent'), ['Portal 2', 'Logs']);
+  assert.ok(labels(withRecentAndRunning, 'actions').includes('Quit game'));
 });
 
 test('host actions follow the host: only other themes, and Disconnect every stream only while a device streams', () => {

@@ -15,6 +15,8 @@
   let {
     title,
     picture,
+    codecs = [],
+    codec = '',
     muted,
     stats,
     fullscreen,
@@ -22,6 +24,7 @@
     source,
     box = $bindable(),
     onresume,
+    oncodec,
     onfullscreen,
     onmute,
     onstats,
@@ -32,6 +35,10 @@
     title: string;
     /** The picture in words: "HEVC · 1080p60". */
     picture: string;
+    /** Receivable video codecs when more than one is offered. */
+    codecs?: readonly { id: string; name: string }[];
+    /** Active codec id. */
+    codec?: string;
     muted: boolean;
     /** Whether the stats capsule shows. */
     stats: boolean;
@@ -43,12 +50,24 @@
     /** The dock's element, for the page's focus moves. */
     box?: HTMLElement;
     onresume: () => void;
+    oncodec?: (id: string) => void;
     onfullscreen: () => void;
     onmute: () => void;
     onstats: () => void;
     ondisconnect: () => void;
     onquit: () => void;
   } = $props();
+
+  let confirmQuit = $state(false);
+
+  function pressQuit() {
+    if (!confirmQuit) {
+      confirmQuit = true;
+      return;
+    }
+    confirmQuit = false;
+    onquit();
+  }
 </script>
 
 {#snippet control(icon: IconName, label: string, detail: string, action: () => void, pressed: boolean | undefined = undefined)}
@@ -70,8 +89,26 @@
       </div>
       {#if picture}<p class="picture">{picture}</p>{/if}
     </header>
+    {#if codecs.length > 1 && oncodec}
+      <div class="codecs" role="group" aria-label="Video codec">
+        <span class="codecs-label">Codec</span>
+        <div class="codec-pills">
+          {#each codecs as item (item.id)}
+            <button
+              class="codec-pill"
+              class:active={item.id === codec}
+              data-nav
+              aria-pressed={item.id === codec}
+              onclick={() => item.id !== codec && oncodec(item.id)}
+            >
+              {item.name}
+            </button>
+          {/each}
+        </div>
+      </div>
+    {/if}
     <div class="controls">
-      <button class="control primary" data-nav onclick={onresume}>
+      <button class="control primary" data-nav onclick={() => { confirmQuit = false; onresume(); }}>
         <Icon name="play" />
         <span class="label">Back to game</span>
       </button>
@@ -82,15 +119,15 @@
       {@render control('stats', 'Stats', stats ? 'On' : 'Off', onstats, stats)}
     </div>
     <div class="controls leave">
-      <button class="control" data-nav onclick={ondisconnect}>
+      <button class="control" data-nav onclick={() => { confirmQuit = false; ondisconnect(); }}>
         <Icon name="signout" />
         <span class="label">Disconnect</span>
         <span class="detail">The game keeps running</span>
       </button>
-      <button class="control danger" data-nav onclick={onquit}>
+      <button class="control danger" class:confirming={confirmQuit} data-nav onclick={pressQuit} onblur={() => (confirmQuit = false)}>
         <Icon name="power" />
-        <span class="label">Quit game</span>
-        <span class="detail">Closes it on the PC</span>
+        <span class="label">{confirmQuit ? 'Confirm quit?' : 'Quit game'}</span>
+        <span class="detail">{confirmQuit ? 'Press again to close on PC' : 'Closes it on the PC'}</span>
       </button>
     </div>
     <PlayGlyphBar {source} context="dock" />
@@ -184,6 +221,51 @@
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
   }
+  .codecs {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5em 0.8em;
+    padding: 0.45em 0.75em;
+    border: 1px solid var(--media-line);
+    border-radius: var(--radius-lg);
+    background: var(--media-bg);
+  }
+  .codecs-label {
+    color: var(--media-idle);
+    font-size: 0.7em;
+    font-weight: var(--weight-semibold);
+    letter-spacing: var(--tracking-label);
+    text-transform: uppercase;
+  }
+  .codec-pills {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4em;
+  }
+  .codec-pill {
+    min-height: max(44px, 2.4em);
+    padding: 0.3em 0.85em;
+    border: 1px solid var(--media-line);
+    border-radius: var(--radius-pill);
+    background: var(--media-panel);
+    color: var(--media-ink-2);
+    font: inherit;
+    font-size: 0.75em;
+    font-weight: var(--weight-semibold);
+    cursor: pointer;
+  }
+  .codec-pill.active {
+    border-color: var(--media-accent);
+    background: var(--media-accent);
+    color: var(--media-accent-ink);
+  }
+  .codec-pill:focus-visible,
+  .codec-pill:focus {
+    outline: 4px solid var(--media-focus);
+    outline-offset: 2px;
+  }
   /* One row of equal controls; two to a row on a tablet, one on a phone, and never one left over. */
   .controls {
     display: grid;
@@ -275,6 +357,11 @@
     border-color: color-mix(in srgb, var(--media-danger) 40%, var(--media-panel));
     background: color-mix(in srgb, var(--media-danger) 14%, var(--media-panel));
     color: var(--media-danger);
+  }
+  .danger.confirming {
+    border-color: var(--media-danger);
+    background: color-mix(in srgb, var(--media-danger) 28%, var(--media-panel));
+    color: var(--media-ink);
   }
   .danger .detail {
     color: var(--media-ink-2);

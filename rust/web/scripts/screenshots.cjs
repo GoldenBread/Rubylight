@@ -70,14 +70,15 @@ const replies = {
   ],
   '/api/apps': { apps: [
     { uuid: 'desktop', name: 'Desktop' }, { uuid: 'steam', name: 'Steam Big Picture', cmd: 'steam://open/bigpicture' },
-    { uuid: 'steam-620', name: 'Portal 2', 'steam-id': '620', 'synced-by': 'steam', 'config-overrides': { fec_percentage: 10 },
+    { uuid: 'steam-620', name: 'Skybound', 'steam-id': '620', 'synced-by': 'steam', 'config-overrides': { fec_percentage: 10 },
       'device-overrides': { tv: { 'config-overrides': { max_bitrate: 80000, hevc_mode: '2', frame_limiter_fps_limit: 60 } } } },
-    { uuid: 'mirage', name: 'Assassin’s Creed Mirage', 'launcher-source': 'ubisoft', 'launcher-id': '13504', 'synced-by': 'launcher' },
-    { uuid: 'fortnite', name: 'Fortnite', 'launcher-source': 'epic', 'launcher-id': 'Fortnite', 'synced-by': 'launcher' },
-    { uuid: 'forza', name: 'Forza Horizon 5', 'launcher-source': 'microsoft', 'launcher-id': 'Microsoft.SunriseBaseGame', 'synced-by': 'launcher' },
-    { uuid: 'diablo', name: 'Diablo IV', 'launcher-source': 'battlenet', 'launcher-id': 'Fen', 'synced-by': 'launcher' },
-    { uuid: 'hades', name: 'Hades II', 'playnite-id': 'b7c1', 'synced-by': 'playnite' },
-    { uuid: 'witcher', name: 'The Witcher 3: Wild Hunt', 'launcher-source': 'gog', 'launcher-id': '1207664663', 'synced-by': 'launcher', 'not-installed': true },
+    { uuid: 'ashen', name: 'Ashen Crown', 'launcher-source': 'ubisoft', 'launcher-id': '13504', 'synced-by': 'launcher' },
+    { uuid: 'frostline', name: 'Frostline', 'launcher-source': 'epic', 'launcher-id': 'Frostline', 'synced-by': 'launcher' },
+    { uuid: 'tidebreaker', name: 'Tidebreaker', 'launcher-source': 'microsoft', 'launcher-id': 'Studio.Tidebreaker', 'synced-by': 'launcher' },
+    { uuid: 'hollow', name: 'Hollow Peak', 'launcher-source': 'battlenet', 'launcher-id': 'Peak', 'synced-by': 'launcher' },
+    { uuid: 'starfall', name: 'Starfall Vanguard', 'playnite-id': 'b7c1', 'synced-by': 'playnite' },
+    { uuid: 'courier', name: 'Night Courier', 'launcher-source': 'gog', 'launcher-id': '1207664663', 'synced-by': 'launcher' },
+    { uuid: 'jade', name: 'Jade Circuit', 'launcher-source': 'gog', 'launcher-id': '1207664664', 'synced-by': 'launcher', 'not-installed': true },
   ], 'launcher-dismissed': ['steam:546560', 'steam:617830'] },
   '/api/library/discovery': { status: true,
     sources: [['steam', 'Steam', 'available'], ['epic', 'Epic Games', 'available'], ['battlenet', 'Battle.net', 'available'],
@@ -85,10 +86,9 @@ const replies = {
       ['gog', 'GOG', 'error'], ['local', 'Game folders', 'disabled']]
       .map(([source, name, state]) => ({ source, name, state, errors: state === 'error' ? ['GOG Galaxy’s game list could not be read.'] : [] })),
     games: [
-      ['steam', '620', 'Portal 2', true], ['steam', '546560', 'Half-Life: Alyx', false], ['steam', '617830', 'SUPERHOT VR', false],
-      ['steam', '1145360', 'Hades', false], ['ubisoft', '13504', 'Assassin’s Creed Mirage', true], ['epic', 'Fortnite', 'Fortnite', true],
-      ['epic', 'Kinglet', 'Alan Wake 2', false], ['microsoft', 'Microsoft.SunriseBaseGame', 'Forza Horizon 5', true],
-      ['battlenet', 'Fen', 'Diablo IV', true], ['battlenet', 'Pro', 'Overwatch 2', false],
+      ['steam', '620', 'Skybound', true], ['steam', '546560', 'Starfall Vanguard', false], ['steam', '617830', 'Night Courier', false],
+      ['steam', '1145360', 'Jade Circuit', false], ['ubisoft', '13504', 'Ashen Crown', true], ['epic', 'Frostline', 'Frostline', true],
+      ['epic', 'Hollow', 'Hollow Peak', false], ['microsoft', 'Studio.Tidebreaker', 'Tidebreaker', true],
     ].map(([source, id, name, already_added]) => ({ source, id, uuid: `${source}-${id}`, name, install_dir: '', already_added,
       unavailable_reason: null, has_cover: false })) },
   '/api/playnite/status': { status: true, enabled: true, active: true, available: true, installed: true, installed_version: '1.4.0',
@@ -126,7 +126,7 @@ const replies = {
         notice: 'The NucleusCoop.exe in C:\\Program Files\\Nucleus Co-op isn\'t Nucleus Co-op 2.4.2\'s: download 2.4.2 from its release page and choose its folder. Until then Rubylight runs the Nucleus Co-op 2.4.2 an earlier Rubylight installed, in C:\\ProgramData\\Butterpollo\\nucleus\\2.4.2' },
     }[process.env.SHOT_COOP || 'configured'] },
     available: true, reason: null, elevates: true, admin_protection: false, open_refusal: null, opened: false,
-    games: [{ app: 'steam-620', name: 'Portal 2', status: 'unknown', reason: null, handler: null, players: null, entry: 'Portal 2 (Co-op)' }],
+    games: [{ app: 'steam-620', name: 'Skybound', status: 'unknown', reason: null, handler: null, players: null, entry: 'Skybound (Co-op)' }],
     catalog_error: null, sessions: [] },
   '/api/logs/analysis': { status: true, findings: [], since: '2026-10-31T08:02:11Z', until: '2026-10-31T09:41:57Z', read_bytes: 812_544 },
   '/api/session/console': { status: true, recovery: { session_id: 1, console_session_id: 1, can_reattach: false,
@@ -148,14 +148,16 @@ if (!['full', 'live', 'empty'].includes(sessionsState)) throw new Error(`SHOT_SE
 function liveStream() {
   const history = Array.from({ length: 90 }, (_, second) => ({ fps: 119 + (second % 3 === 0 ? 1 : 0) - (second % 29 === 0 ? 3 : 0),
     bitrate_mbps: 44 + 6 * Math.sin(second / 7) + (second % 11 === 0 ? 5 : 0), encode_mean_ms: 2.9, encode_max_ms: 4.1,
-    host_processing_mean_ms: 3.2 + 0.3 * Math.sin(second / 4) + (second % 17 === 0 ? 0.6 : 0), host_processing_max_ms: 4.4, frame_age_mean_ms: 0.8 }));
+    host_processing_mean_ms: 3.2 + 0.3 * Math.sin(second / 4) + (second % 17 === 0 ? 0.6 : 0), host_processing_max_ms: 4.4, frame_age_mean_ms: 0.8,
+    rtt_ms: 3.4 + 0.45 * Math.sin(second / 5) + (second % 19 === 0 ? 0.9 : 0), jitter_ms: 0.55 + 0.15 * Math.cos(second / 6) }));
   const timed = (mean_ms) => ({ mean_ms, p95_ms: mean_ms * 1.3, p99_ms: mean_ms * 1.6 });
   const stages = { frames: 1190, window_seconds: 10, capture: timed(0.42), hold: timed(0.08), claim: timed(0.05), convert: timed(0.31),
     encode: timed(1.84), queue: timed(0.06), packetize: timed(0.12), send_queue: timed(0.09), send: timed(0.23),
     present_to_sent: timed(3.2), moonlight_host: timed(2.9) };
   return {
     uuid: 'phone', device_name: 'Pixel 9', role: 'stream', state: 'RUNNING', width: 2400, height: 1080, fps: 120,
-    video_format: 1, hdr: false, vrr: false, encoder: 'amf', encoder_bitrate_kbps: 50_000, pyrowave_minimum_kbps: null,
+    video_format: 1, hdr: false, vrr: false, encoder: 'amf', capture_backend: 'idd-push', rtt_ms: 3.8, jitter_ms: 0.6,
+    encoder_bitrate_kbps: 50_000, pyrowave_minimum_kbps: null,
     pyrowave_recommended_kbps: null, audio_channels: 2, frames_sent: 10_800, bytes_sent: 0, idr_requests: 1,
     uptime_seconds: 754, warnings: [],
     performance: { fps: 120, bitrate_mbps: 47.6, encode_mean_ms: 2.9, encode_p95_ms: 3.4, encode_p99_ms: 3.8,
@@ -166,28 +168,32 @@ function liveStream() {
 /** The ended sessions `/api/sessions/history` lists, newest first. */
 const ended = (seconds) => Math.floor(Date.now() / 1000) - seconds;
 const sessionHistory = [
-  { id: 'stream-1', device: 'phone', device_name: 'Pixel 9', app_id: 3, app: 'Portal 2', role: 'stream', transport: 'moonlight',
+  { id: 'stream-1', device: 'phone', device_name: 'Pixel 9', app_id: 3, app: 'Skybound', role: 'stream', transport: 'moonlight',
     codec: 'hevc', width: 2400, height: 1080, fps: 120, hdr: false, bitrate_kbps: 50_000, requested_bitrate_kbps: 50_000, mean_bitrate_kbps: 47_600,
     mean_fps: 119.4, p95_fps: 117.8, loss_percent: 0.04, end_reason: 'ended', end_detail: '', end_category: null,
     started_unix_ms: (ended(120) - 3_720) * 1000, ended_unix_ms: ended(120) * 1000, duration_ms: 3_720_000 },
-  { id: 'stream-2', device: 'tv', device_name: 'Living room TV', app_id: 7, app: 'Forza Horizon 5', role: 'stream', transport: 'moonlight',
+  { id: 'stream-2', device: 'tv', device_name: 'Living room TV', app_id: 7, app: 'Jade Circuit', role: 'stream', transport: 'moonlight',
     codec: 'av1', width: 3840, height: 2160, fps: 60, hdr: true, bitrate_kbps: 80_000, requested_bitrate_kbps: 120_000, mean_bitrate_kbps: 76_900,
     mean_fps: 59.8, p95_fps: 58.1, loss_percent: 1.84, end_reason: 'failed', end_category: 'encoder',
     end_detail: 'Stream ended: AMF error AMF_ENCODER_NOT_PRESENT (24)', started_unix_ms: (ended(14_400) - 2_640) * 1000,
     ended_unix_ms: ended(14_400) * 1000, duration_ms: 2_640_000 },
-  { id: 'stream-3', device: 'deck', device_name: 'Steam Deck', app_id: 12, app: 'Hades II', role: 'stream', transport: 'moonlight',
+  { id: 'stream-3', device: 'deck', device_name: 'Handheld', app_id: 12, app: 'Starfall Vanguard', role: 'stream', transport: 'moonlight',
     codec: 'h264', width: 0, height: 0, fps: 0, hdr: false, bitrate_kbps: 0, requested_bitrate_kbps: 0, mean_bitrate_kbps: 0,
     mean_fps: 0, p95_fps: 0, loss_percent: null, end_reason: 'start_failed', end_category: null,
     end_detail: 'the stream could not start: the app exited before its first frame', started_unix_ms: ended(90_000) * 1000,
     ended_unix_ms: ended(90_000) * 1000, duration_ms: 0 },
-  { id: 'stream-4', device: 'phone', device_name: 'Pixel 9', app_id: 3, app: 'Portal 2', role: 'stream', transport: 'webrtc',
+  { id: 'stream-4', device: 'phone', device_name: 'Pixel 9', app_id: 3, app: 'Skybound', role: 'stream', transport: 'webrtc',
     codec: 'pyrowave', width: 2560, height: 1440, fps: 90, hdr: false, bitrate_kbps: 60_000, requested_bitrate_kbps: 60_000, mean_bitrate_kbps: 58_200,
     mean_fps: 89.1, p95_fps: 86.4, loss_percent: null, end_reason: 'interrupted', end_category: null,
     end_detail: 'The host stopped during the session; its duration ends at the host\'s last minute, so the last part is not counted.',
     started_unix_ms: (ended(259_200) - 1_500) * 1000, ended_unix_ms: ended(259_200) * 1000, duration_ms: 1_500_000 },
 ];
 replies['/api/sessions/history'] = { status: true, limit: 200, days: 90, bytes: 262_144, sessions: sessionsState === 'empty' ? [] : sessionHistory };
-if (sessionsState === 'live') replies['/api/rtsp/sessions'] = { status: true, sessions: [liveStream()] };
+if (sessionsState === 'live') {
+  replies['/api/rtsp/sessions'] = { status: true, sessions: [liveStream()] };
+  replies['/api/session/status'] = { activeSessions: 1, appRunning: true, appName: 'Skybound', paused: false, running: true,
+    app: { name: 'Skybound', id: 3, uuid: 'steam-620' } };
+}
 // SHOT_CLIPS: Stream DVR on the Clips page (/api/dvr and /api/dvr/clips).
 const clipsState = process.env.SHOT_CLIPS || 'full';
 const CLIPS = ['full', 'empty', 'near-full', 'recording', 'off', 'pyrowave'];
@@ -196,10 +202,10 @@ const GiB = 1024 ** 3;
 const clipUsed = { 'near-full': 19.2 * GiB, empty: 0 }[clipsState] ?? 4.2 * GiB;
 const savedAgo = (minutes) => Date.now() - minutes * 60_000;
 const clipFixture = [
-  ['clip_portal2_01', 'Portal 2', 4, 60_000, 2400, 1080, 120, 'hevc', false, 92 * 1024 ** 2, 'replay', false],
-  ['clip_forza5_rec', 'Forza Horizon 5', 95, 754_000, 3840, 2160, 60, 'av1', true, 2.4 * GiB, 'manual', false],
-  ['clip_hades2_002', 'Hades II', 1_500, 30_000, 1920, 1080, 60, 'h264', false, 41 * 1024 ** 2, 'replay', false],
-  ['clip_mirage_rec', 'Assassin’s Creed Mirage', 4_400, 1_312_000, 2560, 1440, 60, 'hevc', true, 1.7 * GiB, 'manual', true],
+  ['clip_skybound_01', 'Skybound', 4, 60_000, 2400, 1080, 120, 'hevc', false, 92 * 1024 ** 2, 'replay', false],
+  ['clip_jade_rec', 'Jade Circuit', 95, 754_000, 3840, 2160, 60, 'av1', true, 2.4 * GiB, 'manual', false],
+  ['clip_starfall_002', 'Starfall Vanguard', 1_500, 30_000, 1920, 1080, 60, 'h264', false, 41 * 1024 ** 2, 'replay', false],
+  ['clip_ashen_rec', 'Ashen Crown', 4_400, 1_312_000, 2560, 1440, 60, 'hevc', true, 1.7 * GiB, 'manual', true],
 ].map(([id, app_title, minutes, duration_ms, width, height, fps, codec, hdr, size_bytes, kind, recovered]) => ({
   id, app_title, created_unix_ms: savedAgo(minutes), duration_ms, width, height, fps, codec, hdr, container: 'mp4', size_bytes, kind, recovered }));
 replies['/api/dvr'] = {
@@ -214,9 +220,9 @@ replies['/api/dvr/clips'] = { clips: clipsState === 'empty' ? [] : clipFixture, 
 /** Requests for the device list so far: paired-now pairs Pixel 9 after the first. */
 let clientLists = 0;
 const pixel = { uuid: 'phone', name: 'Pixel 9', enabled: true, connected: false, perm: 0x071f1f00 };
-if (home) {
-  const portal = replies['/api/apps'].apps.find(app => app.uuid === 'steam-620');
-  Object.assign(portal, { 'image-path': 'covers/portal-2.png', 'last-played': Math.floor(Date.now() / 1000) - 2 * 86400 });
+if (home || sessionsState === 'live') {
+  const skybound = replies['/api/apps'].apps.find(app => app.uuid === 'steam-620');
+  Object.assign(skybound, { 'image-path': 'covers/skybound.png', 'last-played': Math.floor(Date.now() / 1000) - 2 * 86400 });
 }
 if (home.startsWith('fresh') || home === 'paired-now') {
   Object.assign(metadata, { paired_devices: 0, enable_pairing: home !== 'fresh-off' });
@@ -227,8 +233,8 @@ if (['ready', 'streaming', 'paired-now'].includes(home)) {
   replies['/api/power'] = power(true);
 }
 if (home === 'streaming') {
-  replies['/api/session/status'] = { activeSessions: 1, appRunning: true, appName: 'Portal 2', paused: false, running: true,
-    app: { name: 'Portal 2', id: 3, uuid: 'steam-620' } };
+  replies['/api/session/status'] = { activeSessions: 1, appRunning: true, appName: 'Skybound', paused: false, running: true,
+    app: { name: 'Skybound', id: 3, uuid: 'steam-620' } };
   replies['/api/rtsp/sessions'] = { status: true, sessions: [liveStream()] };
 }
 // SHOT_DOCTOR=late (with SHOT_HOME=streaming): the last 30 seconds had late pictures, as Stream Doctor reports them.
@@ -335,7 +341,7 @@ function power(ready = false) {
               name: metadata.host_name, expires_in_seconds: 180 } });
           }
           if (route.request().method() !== 'GET') return route.fulfill({ json: { status: true } });
-          if (home && url.pathname === '/api/apps/steam-620/cover') {
+          if ((home || sessionsState === 'live') && url.pathname === '/api/apps/steam-620/cover') {
             return route.fulfill({ path: path.join(__dirname, '..', 'src', 'assets', 'home-landscape.webp'), contentType: 'image/webp' });
           }
           return route.fulfill({ json: dynamic(url.pathname) ?? replies[url.pathname] ?? { status: true, available: false, enabled: false } });

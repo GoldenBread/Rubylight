@@ -1,5 +1,5 @@
-//! Setup's 7.0 look: whether Windows is in dark app mode, a best-effort dark
-//! title bar, Per-Monitor-V2 DPI awareness and the brand
+//! Setup's 7.0 look: whether Windows is in dark app mode, best-effort dark
+//! mode opt-in and title bar, Per-Monitor-V2 DPI awareness and the brand
 //! icon task dialogs show. Everything here is best effort: a failure leaves
 //! Windows' default look and never stops setup.
 use windows::{
@@ -7,12 +7,73 @@ use windows::{
         Foundation::{HMODULE, HWND},
         Graphics::Dwm::{DWMWINDOWATTRIBUTE, DwmSetWindowAttribute},
         System::{
-            LibraryLoader::{GetModuleHandleW, GetProcAddress},
-            Registry::{HKEY_CURRENT_USER, RRF_RT_REG_DWORD, RegGetValueW},
+            LibraryLoader::{
+                GetModuleHandleW, GetProcAddress, LOAD_LIBRARY_SEARCH_SYSTEM32, LoadLibraryExW,
+            },
+            Registry::{
+                HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, RRF_RT_REG_DWORD, RRF_RT_REG_SZ,
+                RegGetValueW,
+            },
         },
     },
-    core::{BOOL, PCWSTR, s, w},
+    core::{BOOL, PCSTR, PCWSTR, s, w},
 };
+
+fn windows_build() -> Option<u32> {
+    let mut text = [0u16; 32];
+    let mut size = (text.len() * 2) as u32;
+    // SAFETY: the registry key and value names are static NUL-terminated strings, and
+    // `text` and `size` match the writable UTF-16 buffer.
+    let read = unsafe {
+        RegGetValueW(
+            HKEY_LOCAL_MACHINE,
+            w!(r"SOFTWARE\Microsoft\Windows NT\CurrentVersion"),
+            w!("CurrentBuildNumber"),
+            RRF_RT_REG_SZ,
+            None,
+            Some(text.as_mut_ptr().cast()),
+            Some(&mut size),
+        )
+    };
+    read.ok().ok()?;
+    let end = text.iter().position(|&c| c == 0).unwrap_or(text.len());
+    String::from_utf16_lossy(&text[..end]).trim().parse().ok()
+}
+
+/// Opts setup's common controls and menus into dark mode when Windows apps use
+/// dark mode (Windows 10 1809+, `uxtheme.dll` ordinals 135 & 136).
+pub fn allow_dark_mode() {
+    let Some(build) = windows_build() else {
+        return;
+    };
+    if build < 17763 {
+        return;
+    }
+    type PreferredAppMode = unsafe extern "system" fn(i32) -> i32;
+    type FlushThemes = unsafe extern "system" fn();
+    // SAFETY: `uxtheme.dll` is loaded from System32 for the lifetime of setup; ordinal 135
+    // on build >= 17763 accepts `1` (AllowDark / TRUE) and ordinal 136 on build >= 18362
+    // takes no arguments and refreshes cached theme state.
+    unsafe {
+        let Ok(uxtheme) = GetModuleHandleW(w!("uxtheme.dll"))
+            .or_else(|_| LoadLibraryExW(w!("uxtheme.dll"), None, LOAD_LIBRARY_SEARCH_SYSTEM32))
+        else {
+            return;
+        };
+        if let Some(proc) = GetProcAddress(uxtheme, PCSTR(std::ptr::without_provenance(135))) {
+            let set_mode =
+                std::mem::transmute::<unsafe extern "system" fn() -> isize, PreferredAppMode>(proc);
+            let _ = set_mode(1);
+        }
+        if build >= 18362
+            && let Some(proc) = GetProcAddress(uxtheme, PCSTR(std::ptr::without_provenance(136)))
+        {
+            let flush =
+                std::mem::transmute::<unsafe extern "system" fn() -> isize, FlushThemes>(proc);
+            flush();
+        }
+    }
+}
 
 /// Whether apps are dark: `AppsUseLightTheme` is 0. Light when the value is
 /// missing, as on Windows 10 before 1809.
@@ -99,6 +160,7 @@ mod tests {
     fn theme_queries_never_fail_setup() {
         // Whatever this PC says, reading it neither panics nor blocks.
         let _ = dark_mode();
+        allow_dark_mode();
         title_bar(HWND::default(), true);
         title_bar(HWND::default(), false);
         assert!(module().is_some());
