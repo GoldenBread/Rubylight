@@ -2,15 +2,16 @@
 # controllers with: /dev/uinput (the Xbox 360 pad, rust/linux/io/src/input/) and /dev/uhid (the
 # DualSense, DualShock 4, Switch Pro, Steam Deck and Steam Controller pads, hid_pad.rs and
 # uhid_pad.rs). `uaccess` makes logind add an ACL for the seat's active user (and remove it when
-# the seat changes hands); the node's owner and group stay root's, so no one is added to a
-# group and a user not at the seat gets nothing.
+# the seat changes hands); the node's owner and group stay root's, and a user not at the seat
+# gets nothing, unless they are in the rubylight group (the last rule).
 #
 # Security: a program that can open /dev/uinput can type and click into every window of the
 # seat, and one that can open /dev/uhid can present itself as any HID device (a keyboard too).
 # On a Wayland desktop that is more than the user's programs otherwise have: the compositor
 # keeps them from injecting input into one another, and this rule lets every program the seat
 # user runs, games included, go around it. On X11 any program of theirs could already do so
-# (XTEST). It does not reach remote logins, services or other seats. On a PC where that is too
+# (XTEST). It does not reach remote logins, services or other seats, except through the
+# rubylight group: its members' programs reach the seat from anywhere. On a PC where that is too
 # much, drop this rule and use a group instead: GROUP="rubylight-input", MODE="0660" (and add
 # the one user to it). That is no narrower for the user's own programs, which all share the
 # group, but it ends the access for anyone else at the seat and needs a new login after
@@ -22,3 +23,12 @@
 # `uaccess` stays beside it.
 KERNEL=="uinput", SUBSYSTEM=="misc", OPTIONS+="static_node=uinput", TAG+="uaccess"
 KERNEL=="uhid", SUBSYSTEM=="misc", OPTIONS+="static_node=uhid", TAG+="uaccess"
+#
+# The login screen: before anyone signs in, the seat's user is the login manager's, so the
+# host streaming that screen (rubylight-kms.socket) gets neither node from `uaccess`. Members
+# of the rubylight group, the same who may capture the screen, get both as an ACL entry of
+# their own: whatever the seat, which is the access the group already means (whoever may see
+# the login screen may type into it). Another rule's
+# group stays as it is, and logind leaves group entries alone. Without the group (the
+# package's sysusers.d makes it), setfacl fails and nothing changes.
+KERNEL=="uinput|uhid", SUBSYSTEM=="misc", ACTION!="remove", RUN+="/usr/bin/setfacl -m g:rubylight:rw $devnode"

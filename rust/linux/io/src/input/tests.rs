@@ -337,3 +337,42 @@ fn uinput_pad_reports_input() {
     });
     assert_eq!(pads.plugged_pads(), 0);
 }
+
+/// Types `RUBYLIGHT_LIVE_TYPE` (letters, digits and spaces; default `rubylight`), then Enter
+/// when `RUBYLIGHT_LIVE_ENTER` is set, into whatever the seat shows, through the desktop
+/// devices a stream to `RUBYLIGHT_LIVE_TARGET` (default `kms`) makes: the login screen's
+/// password field, for one. Needs write access to `/dev/uinput`.
+#[test]
+#[ignore = "types into the seat's screen; needs write access to /dev/uinput"]
+fn live_typing_reaches_the_seat() {
+    let target = std::env::var("RUBYLIGHT_LIVE_TARGET").unwrap_or("kms".into());
+    let text = std::env::var("RUBYLIGHT_LIVE_TYPE").unwrap_or("rubylight".into());
+    let mut injector = Injector::new(&target, "").unwrap();
+    // The compositor takes a moment to notice new devices.
+    std::thread::sleep(Duration::from_millis(1500));
+    let mut press = |key: u16, modifiers: u8| {
+        for down in [true, false] {
+            injector
+                .apply(&Event::Keyboard {
+                    key,
+                    modifiers,
+                    flags: 0,
+                    down,
+                })
+                .unwrap();
+            std::thread::sleep(Duration::from_millis(30));
+        }
+    };
+    for c in text.chars() {
+        match c {
+            'a'..='z' => press(c.to_ascii_uppercase() as u16, 0),
+            'A'..='Z' => press(c as u16, 0x01),
+            '0'..='9' | ' ' => press(c as u16, 0),
+            other => panic!("{other:?} is not typed by this test"),
+        }
+    }
+    if std::env::var_os("RUBYLIGHT_LIVE_ENTER").is_some() {
+        press(0x0d, 0);
+    }
+    std::thread::sleep(Duration::from_millis(300));
+}

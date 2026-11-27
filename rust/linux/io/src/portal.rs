@@ -79,12 +79,17 @@ pub enum DesktopMonitor {
 }
 
 /// The monitor a desktop capture target names; `None` for any other target (a gamescope
-/// session's).
+/// session's). A KMS capture (`kms`, `kms:<output>`, the login screen's too) shows the desktop
+/// of whichever compositor owns the screen.
 pub fn desktop_target(target: &str) -> Option<DesktopMonitor> {
-    if target == "desktop" {
+    if target == "desktop" || target == "kms" {
         return Some(DesktopMonitor::Primary);
     }
-    if let Some(name) = target.strip_prefix("kwin-output:") {
+    if let Some(name) = target
+        .strip_prefix("kwin-output:")
+        .or_else(|| target.strip_prefix("kms:"))
+        .filter(|name| !name.is_empty())
+    {
         return Some(DesktopMonitor::Named(name.to_owned()));
     }
     target
@@ -345,5 +350,27 @@ impl Drop for ScreenCast {
         {
             let _ = session.call_method("Close", &());
         }
+    }
+}
+
+#[cfg(test)]
+mod target_tests {
+    use super::{DesktopMonitor, desktop_target};
+
+    #[test]
+    fn desktop_targets_name_their_monitor() {
+        assert_eq!(desktop_target("desktop"), Some(DesktopMonitor::Primary));
+        assert_eq!(desktop_target("desktop:1"), Some(DesktopMonitor::Index(1)));
+        assert_eq!(
+            desktop_target("kwin-output:Virtual-1"),
+            Some(DesktopMonitor::Named("Virtual-1".into()))
+        );
+        assert_eq!(desktop_target("kms"), Some(DesktopMonitor::Primary));
+        assert_eq!(
+            desktop_target("kms:DP-1"),
+            Some(DesktopMonitor::Named("DP-1".into()))
+        );
+        assert_eq!(desktop_target("kms:"), None);
+        assert_eq!(desktop_target("gamescope"), None);
     }
 }

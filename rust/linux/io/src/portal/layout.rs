@@ -69,6 +69,11 @@ pub fn monitors() -> Vec<(String, Rect)> {
 
 /// KDE's own list of outputs: `priority` 1 is the primary.
 fn from_kscreen() -> Option<Vec<(String, Rect)>> {
+    // With no display to ask (the login screen, before anyone signs in), kscreen-doctor aborts
+    // and leaves a core dump each time.
+    if std::env::var_os("WAYLAND_DISPLAY").is_none() && std::env::var_os("DISPLAY").is_none() {
+        return None;
+    }
     let output = Command::new("kscreen-doctor").arg("-j").output().ok()?;
     if !output.status.success() {
         return None;
