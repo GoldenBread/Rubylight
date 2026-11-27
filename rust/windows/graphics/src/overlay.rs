@@ -271,19 +271,35 @@ pub(crate) mod reference {
         Pyro { yuv444: bool },
     }
 
-    /// The panel's colour at a target pixel, clamped into the panel as
-    /// `menu_rgb` does.
-    struct Panel<'a> {
+    /// Expected value of a stored output sample after the menu pass.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub(crate) enum Sample {
+        /// Outside the panel or `alpha == 0`: must match the closed capture bit-for-bit.
+        Capture,
+        /// Inside the panel with all contributing taps at `alpha == 255`: must match `code ± 1`.
+        Panel(u16),
+        /// Single-tap pixel at `0 < alpha < 255`: must lie between capture and `code` (`±2`).
+        BlendedSingle(u16),
+        /// Multi-tap chroma/detail block straddling a partial-alpha corner boundary.
+        MixedBlock,
+    }
+
+    /// The panel's premultiplied colour and alpha at a target pixel, clamped
+    /// into the panel as `menu_texel` / `menu_rgb` do.
+    pub(crate) struct Panel<'a> {
         overlay: &'a Overlay,
         colour: Colour,
     }
-    impl Panel<'_> {
+    impl<'a> Panel<'a> {
+        pub(crate) fn new(overlay: &'a Overlay, colour: Colour) -> Self {
+            Self { overlay, colour }
+        }
         fn inside(&self, [x, y]: [u32; 2]) -> bool {
             let o = self.overlay;
             (o.origin[0]..o.origin[0] + o.size[0]).contains(&x)
                 && (o.origin[1]..o.origin[1] + o.size[1]).contains(&y)
         }
-        fn at(&self, [x, y]: [u32; 2]) -> [f64; 3] {
+        fn texel(&self, [x, y]: [u32; 2]) -> [u8; 4] {
             let o = self.overlay;
             let [width, height] = o.image_size();
             let local = |v: u32, origin: u32, limit: u32| {
@@ -291,21 +307,65 @@ pub(crate) mod reference {
             };
             let index =
                 (local(y, o.origin[1], height) * width as usize + local(x, o.origin[0], width)) * 4;
-            let rgb = [0, 1, 2].map(|c| f64::from(o.rgba[index + c]) / 255.);
+            [
+                o.rgba[index],
+                o.rgba[index + 1],
+                o.rgba[index + 2],
+                o.rgba[index + 3],
+            ]
+        }
+        fn classify(
+            &self,
+            inside_panel: bool,
+            taps: &[[u32; 2]],
+            straight_code: impl FnOnce() -> u16,
+        ) -> Sample {
+            if !inside_panel || taps.iter().all(|&p| self.texel(p)[3] == 0) {
+                Sample::Capture
+            } else if taps.iter().all(|&p| self.texel(p)[3] == 255) {
+                Sample::Panel(straight_code())
+            } else if taps.len() == 1 {
+                Sample::BlendedSingle(straight_code())
+            } else {
+                Sample::MixedBlock
+            }
+        }
+        fn at(&self, p: [u32; 2]) -> [f64; 3] {
+            let [r, g, b, a] = self.texel(p);
+            let denom = f64::from(a.max(1));
+            let rgb = [r, g, b].map(|c| (f64::from(c) / denom).clamp(0., 1.));
             self.colour.transform(rgb)
+        }
+        /// Blends a premultiplied panel texel over a nonlinear capture signal,
+        /// matching `menu_rgb` in `color.hlsl`.
+        pub(crate) fn blend(&self, p: [u32; 2], capture: [f64; 3]) -> [f64; 3] {
+            if !self.inside(p) {
+                return capture;
+            }
+            let a = self.texel(p)[3];
+            if a == 0 {
+                return capture;
+            }
+            let panel = self.at(p);
+            if a == 255 {
+                return panel;
+            }
+            let t = f64::from(a) / 255.;
+            [0, 1, 2].map(|c| capture[c] + (panel[c] - capture[c]) * t)
         }
     }
 
-    /// For each plane, every stored sample in order: the code the panel gives
-    /// it, or `None` where the picture decides it.
+    /// For each plane, every stored sample in order: [`Sample::Panel`] where all
+    /// taps are opaque, [`Sample::Capture`] outside or where all taps have
+    /// `alpha == 0`, and [`Sample::Blended`] along premultiplied rounded-corner arcs.
     pub(crate) fn expected(
         overlay: &Overlay,
         colour: Colour,
         layout: Layout,
         [width, height]: [u32; 2],
-    ) -> Vec<Vec<Option<u16>>> {
-        let panel = Panel { overlay, colour };
-        let luma = |p: [u32; 2]| panel.inside(p).then(|| colour.luma(panel.at(p)));
+    ) -> Vec<Vec<Sample>> {
+        let panel = Panel::new(overlay, colour);
+        let luma = |p: [u32; 2]| panel.classify(panel.inside(p), &[p], || colour.luma(panel.at(p)));
         match layout {
             Layout::Yuv420 => {
                 let mut plane: Vec<_> = (0..height)
@@ -315,21 +375,29 @@ pub(crate) mod reference {
                 for y in 0..height / 2 {
                     for x in 0..width / 2 {
                         let at = [x * 2, y * 2];
-                        let uv = panel.inside(at).then(|| {
-                            let left = at[0].saturating_sub(1);
-                            let samples = [
-                                [left, at[1]],
-                                [left, at[1] + 1],
-                                at,
-                                [at[0], at[1] + 1],
-                                [at[0] + 1, at[1]],
-                                [at[0] + 1, at[1] + 1],
-                            ]
-                            .map(|p| panel.at(p));
+                        let left = at[0].saturating_sub(1);
+                        let taps = [
+                            [left, at[1]],
+                            [left, at[1] + 1],
+                            at,
+                            [at[0], at[1] + 1],
+                            [at[0] + 1, at[1]],
+                            [at[0] + 1, at[1] + 1],
+                        ];
+                        let uv_pair = || {
+                            let samples = taps.map(|p| panel.at(p));
                             colour.chroma(colour.filtered(&samples, &[1., 1., 2., 2., 1., 1.]))
-                        });
-                        plane.push(uv.map(|uv| uv[0]));
-                        plane.push(uv.map(|uv| uv[1]));
+                        };
+                        let pair =
+                            if !panel.inside(at) || taps.iter().all(|&p| panel.texel(p)[3] == 0) {
+                                [Sample::Capture, Sample::Capture]
+                            } else if taps.iter().all(|&p| panel.texel(p)[3] == 255) {
+                                let uv = uv_pair();
+                                [Sample::Panel(uv[0]), Sample::Panel(uv[1])]
+                            } else {
+                                [Sample::MixedBlock, Sample::MixedBlock]
+                            };
+                        plane.extend(pair);
                     }
                 }
                 vec![plane]
@@ -337,43 +405,60 @@ pub(crate) mod reference {
             Layout::Pack(version) => {
                 let size = [(width + 63) & !63, (height + 7) & !7];
                 let half = size[0] / 2;
-                let inside = |p: [u32; 2]| p[0] < width && p[1] < height && panel.inside(p);
+                let in_panel = |p: [u32; 2]| p[0] < width && p[1] < height && panel.inside(p);
                 let chroma = |p: [u32; 2]| colour.chroma(panel.at(p));
                 let mut plane = Vec::new();
                 for y in 0..size[1] * 2 {
                     for x in 0..size[0] {
                         plane.push(if y < size[1] {
-                            inside([x, y]).then(|| colour.luma(panel.at([x, y])))
+                            panel.classify(in_panel([x, y]), &[[x, y]], || {
+                                colour.luma(panel.at([x, y]))
+                            })
                         } else {
                             let pixel = [(x % half) * 2 + 1, y - size[1]];
-                            inside(pixel).then(|| {
+                            let anchor = [pixel[0] & !1, pixel[1] & !1];
+                            let code = || {
                                 let mut uv = chroma(pixel);
                                 if version == 2 {
-                                    uv = colour.detail(uv, chroma([pixel[0] & !1, pixel[1] & !1]));
+                                    uv = colour.detail(uv, chroma(anchor));
                                 }
                                 uv[usize::from(x >= half)]
-                            })
+                            };
+                            if version == 2 {
+                                panel.classify(in_panel(pixel), &[pixel, anchor], code)
+                            } else {
+                                panel.classify(in_panel(pixel), &[pixel], code)
+                            }
                         });
                     }
                 }
                 for y in 0..size[1] {
                     for x in 0..half {
-                        let uv = if version == 2 {
+                        let pair = if version == 2 {
                             let at = [x * 2, (y % (size[1] / 2)) * 2];
-                            inside(at).then(|| {
-                                let base = chroma(at);
-                                if y < size[1] / 2 {
-                                    base
-                                } else {
-                                    colour.detail(chroma([at[0], at[1] + 1]), base)
-                                }
-                            })
+                            let below = [at[0], at[1] + 1];
+                            if y < size[1] / 2 {
+                                let [u, v] = chroma(at);
+                                [
+                                    panel.classify(in_panel(at), &[at], || u),
+                                    panel.classify(in_panel(at), &[at], || v),
+                                ]
+                            } else {
+                                let [u, v] = colour.detail(chroma(below), chroma(at));
+                                [
+                                    panel.classify(in_panel(at), &[at, below], || u),
+                                    panel.classify(in_panel(at), &[at, below], || v),
+                                ]
+                            }
                         } else {
                             let at = [x * 2, y];
-                            inside(at).then(|| chroma(at))
+                            let [u, v] = chroma(at);
+                            [
+                                panel.classify(in_panel(at), &[at], || u),
+                                panel.classify(in_panel(at), &[at], || v),
+                            ]
                         };
-                        plane.push(uv.map(|uv| uv[0]));
-                        plane.push(uv.map(|uv| uv[1]));
+                        plane.extend(pair);
                     }
                 }
                 vec![plane]
@@ -383,32 +468,40 @@ pub(crate) mod reference {
                     .flat_map(|y| (0..width).map(move |x| [x, y]))
                     .collect();
                 let y = pixels.iter().map(|&p| luma(p)).collect();
-                let chroma: Vec<Option<[u16; 2]>> = if yuv444 {
+                let chroma: Vec<[Sample; 2]> = if yuv444 {
                     pixels
                         .iter()
-                        .map(|&p| panel.inside(p).then(|| colour.chroma(panel.at(p))))
+                        .map(|&p| {
+                            let [u, v] = colour.chroma(panel.at(p));
+                            [
+                                panel.classify(panel.inside(p), &[p], || u),
+                                panel.classify(panel.inside(p), &[p], || v),
+                            ]
+                        })
                         .collect()
                 } else {
                     (0..height / 2)
                         .flat_map(|y| (0..width / 2).map(move |x| [x * 2, y * 2]))
                         .map(|at| {
-                            panel.inside(at).then(|| {
-                                let samples = [
-                                    at,
-                                    [at[0] + 1, at[1]],
-                                    [at[0], at[1] + 1],
-                                    [at[0] + 1, at[1] + 1],
-                                ]
-                                .map(|p| panel.at(p));
-                                colour.chroma(colour.filtered(&samples, &[1.; 4]))
-                            })
+                            let taps = [
+                                at,
+                                [at[0] + 1, at[1]],
+                                [at[0], at[1] + 1],
+                                [at[0] + 1, at[1] + 1],
+                            ];
+                            let [u, v] = colour
+                                .chroma(colour.filtered(&taps.map(|p| panel.at(p)), &[1.; 4]));
+                            [
+                                panel.classify(panel.inside(at), &taps, || u),
+                                panel.classify(panel.inside(at), &taps, || v),
+                            ]
                         })
                         .collect()
                 };
                 vec![
                     y,
-                    chroma.iter().map(|uv| uv.map(|uv| uv[0])).collect(),
-                    chroma.iter().map(|uv| uv.map(|uv| uv[1])).collect(),
+                    chroma.iter().map(|uv| uv[0]).collect(),
+                    chroma.iter().map(|uv| uv[1]).collect(),
                 ]
             }
         }
@@ -473,5 +566,71 @@ mod tests {
             panel.constants([2, 1]),
             [32, 48, 576, 272, 16, 48, 288, 272, 2, 0, 0, 0]
         );
+    }
+
+    #[test]
+    fn rounded_corner_alpha_preserves_capture_outside_and_blends_fringe() {
+        let mut rgba = vec![255u8; 16 * 16 * 4];
+        // Transparent top-left corner `[0, 0]` (`alpha == 0`) and half-coverage `[1, 0]`
+        // (`premultiplied rgb = [100, 50, 25], alpha = 128`).
+        rgba[..4].copy_from_slice(&[0, 0, 0, 0]);
+        rgba[4..8].copy_from_slice(&[100, 50, 25, 128]);
+        let ov = Overlay {
+            revision: 1,
+            origin: [16, 16],
+            size: [32, 32],
+            scale: 2,
+            rgba: rgba.into(),
+        };
+        let mut values = [0u32; 20];
+        values[6] = 1; // BT.709
+        values[7] = 1; // full range
+        let colour = reference::Colour::from_values(&values);
+        let exp = reference::expected(&ov, colour, reference::Layout::Yuv420, [64, 64]);
+        // Top-left 2x2 target pixels `(16, 16)` have `alpha == 0`, `[1, 0]` at `(18, 16)` is blended,
+        // and `(24, 24)` is opaque interior.
+        assert_eq!(
+            exp[0][16 * 64 + 16],
+            reference::Sample::Capture,
+            "transparent corner preserves capture luma"
+        );
+        assert!(
+            matches!(exp[0][16 * 64 + 18], reference::Sample::BlendedSingle(_)),
+            "anti-aliased fringe is classified as blended"
+        );
+        assert!(
+            matches!(exp[0][24 * 64 + 24], reference::Sample::Panel(_)),
+            "opaque interior writes panel luma"
+        );
+        let pyro = reference::expected(
+            &ov,
+            colour,
+            reference::Layout::Pyro { yuv444: false },
+            [64, 64],
+        );
+        assert_eq!(
+            pyro[1][(16 / 2) * (64 / 2) + (16 / 2)],
+            reference::Sample::Capture,
+            "Pyro420 transparent corner preserves capture chroma"
+        );
+
+        let panel = reference::Panel::new(&ov, colour);
+        let cap = [0.2, 0.4, 0.8];
+        assert_eq!(
+            panel.blend([16, 16], cap),
+            cap,
+            "alpha 0 keeps capture untouched"
+        );
+        let blended = panel.blend([18, 16], cap);
+        let t = 128.0 / 255.0;
+        let straight = [100.0 / 128.0, 50.0 / 128.0, 25.0 / 128.0];
+        for c in 0..3 {
+            let want = cap[c] + (straight[c] - cap[c]) * t;
+            assert!(
+                (blended[c] - want).abs() < 1e-6,
+                "channel {c}: got {}, want {want}",
+                blended[c]
+            );
+        }
     }
 }

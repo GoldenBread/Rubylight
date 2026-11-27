@@ -423,6 +423,10 @@ mod tests {
         }
         for (path, html) in &pages {
             assert!(
+                !html.contains("class=\"notice error\""),
+                "{path} rendered an error banner: {html}"
+            );
+            assert!(
                 !html.to_lowercase().contains("experimental"),
                 "{path} says experimental"
             );

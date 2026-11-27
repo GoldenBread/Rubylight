@@ -372,6 +372,13 @@ pub(super) async fn sessions(
                 text(session, "uuid"),
                 "Disconnect",
             );
+            if session["role"] == "input_only" {
+                table += &format!(
+                    "<tr><td>{}</td><td>Remote input</td><td>—</td><td>{disconnect}</td></tr>",
+                    i18n::data(text(session, "device_name")),
+                );
+                continue;
+            }
             table += &format!(
                 "<tr><td>{}</td><td>{}×{} · {} fps</td><td>{:.1} Mbps</td><td>{disconnect}</td></tr>",
                 i18n::data(text(session, "device_name")),
@@ -398,14 +405,17 @@ pub(super) async fn sessions(
                 .as_u64()
                 .or_else(|| entry["duration_ms"].as_u64().map(|ms| ms / 1000))
                 .unwrap_or(0);
+            let app_title = if !text(entry, "app").is_empty() {
+                text(entry, "app")
+            } else if !text(entry, "app_name").is_empty() {
+                text(entry, "app_name")
+            } else {
+                "Desktop"
+            };
             table += &format!(
                 "<tr><td>{}</td><td>{}</td><td>{}s</td></tr>",
                 i18n::data(text(entry, "device_name")),
-                i18n::data(if text(entry, "app_name").is_empty() {
-                    "Desktop"
-                } else {
-                    text(entry, "app_name")
-                }),
+                i18n::data(app_title),
                 secs
             );
         }
@@ -419,7 +429,7 @@ pub(super) async fn clips(
     connection: &Connection,
     headers: &HeaderMap,
 ) -> Result<String, String> {
-    let status = get(h, connection, headers, "/api/dvr/status").await?;
+    let status = get(h, connection, headers, "/api/dvr").await?;
     let list = get(h, connection, headers, "/api/dvr/clips").await?;
     let enabled = status["enabled"] == true;
     let mut content =
@@ -446,14 +456,17 @@ pub(super) async fn clips(
         let mut table = "<div class=\"table-scroll\"><table><thead><tr><th>Clip</th><th>Game</th><th>Download</th></tr></thead><tbody>".to_owned();
         for clip in items {
             let id = text(clip, "id");
+            let app_title = if !text(clip, "app_title").is_empty() {
+                text(clip, "app_title")
+            } else if !text(clip, "app_name").is_empty() {
+                text(clip, "app_name")
+            } else {
+                "Desktop"
+            };
             table += &format!(
                 "<tr><td><code>{}</code></td><td>{}</td><td><a class=\"button secondary\" href=\"/api/dvr/clips/{}/download\">Download</a></td></tr>",
                 i18n::data(id),
-                i18n::data(if text(clip, "app_name").is_empty() {
-                    "Desktop"
-                } else {
-                    text(clip, "app_name")
-                }),
+                i18n::data(app_title),
                 crate::console::encoded(id),
             );
         }

@@ -306,15 +306,25 @@ cbuffer Menu : register(b2) {
     uint menuScale; uint3 menuPadding;
 };
 Texture2D<float4> menuImage : register(t2);
-// A panel pixel in the space `nonlinear` returns; HDR puts panel white at the
-// SDR white level, as the cursor does. Clamping into the panel keeps the
-// chroma filter's left neighbour on its border.
-float3 menu_rgb(float2 target) {
+// Premultiplied RGBA8 sRGB texel of the panel at `target`, clamped into the
+// panel so the chroma filter's left neighbour stays on its border. Opaque
+// interior texels (`a == 1`) skip sampling the underlying picture; transparent
+// rounded-corner texels (`a == 0`) preserve the capture untouched, and the
+// 1-px anti-aliased corner arc blends against the capture.
+float4 menu_texel(float2 target) {
     int2 at = clamp((int2(target) - int2(menuOrigin)) / int(menuScale), 0, int2(menuSize / menuScale) - 1);
-    float3 c = menuImage.Load(int3(at, 0)).rgb;
+    return menuImage.Load(int3(at, 0));
+}
+float3 menu_panel_code(float3 c) {
     if (hdr == 2) return hlg(gamut2020(srgb_linear(c)) * sdrWhiteScale);
     if (hdr != 0) return pq(gamut2020(srgb_linear(c)) * sdrWhiteScale / 125.0);
     return colorMatrix == 2 ? bt2020_sdr(gamut2020(srgb_linear(c))) : c;
+}
+float3 menu_rgb(float2 target) {
+    float4 m = menu_texel(target);
+    [branch] if (m.a >= 1.0) return menu_panel_code(m.rgb);
+    [branch] if (m.a <= 0.0) return nonlinear(target);
+    return lerp(nonlinear(target), menu_panel_code(saturate(m.rgb / m.a)), m.a);
 }
 // A pixel's colour: the capture's, or the panel's in a menu pass. Every body
 // passes a literal `menu`, which fxc folds, so the closed entries keep their
@@ -354,14 +364,25 @@ float2 chromaCode(float3 rgb) {
 // (`chromaCodes`), avoiding a transfer-and-inverse round-trip on every tap;
 // SDR keeps filtering its codes.
 // Branches, not `?:`, which would evaluate every curve for every stream.
+float3 menu_panel_chroma(float3 c) {
+    [branch] if (hdr == 0) return colorMatrix == 2 ? bt2020_sdr(gamut2020(srgb_linear(c))) : c;
+    float3 light = gamut2020(srgb_linear(c)) * sdrWhiteScale;
+    [branch] if (hdr == 2) return max(light, 0);
+    return saturate(light / 125.0);
+}
+float3 menu_capture_chroma(float2 target) {
+    float3 rgb = sample_source(target);
+    [branch] if (hdr == 0) return sdr_signal(rgb);
+    [branch] if (hdr == 2) return pixel == 2 ? depq(rgb) * 125.0 : max(gamut2020(rgb), 0);
+    [branch] if (pixel == 2) return depq(rgb);
+    return saturate(gamut2020(rgb) / 125.0);
+}
 float3 chroma_sample_at(float2 target, bool menu) {
     if (menu) {
-        int2 at = clamp((int2(target) - int2(menuOrigin)) / int(menuScale), 0, int2(menuSize / menuScale) - 1);
-        float3 c = menuImage.Load(int3(at, 0)).rgb;
-        [branch] if (hdr == 0) return colorMatrix == 2 ? bt2020_sdr(gamut2020(srgb_linear(c))) : c;
-        float3 light = gamut2020(srgb_linear(c)) * sdrWhiteScale;
-        [branch] if (hdr == 2) return max(light, 0);
-        return saturate(light / 125.0);
+        float4 m = menu_texel(target);
+        [branch] if (m.a >= 1.0) return menu_panel_chroma(m.rgb);
+        [branch] if (m.a <= 0.0) return menu_capture_chroma(target);
+        return lerp(menu_capture_chroma(target), menu_panel_chroma(saturate(m.rgb / m.a)), m.a);
     }
     float3 rgb = sample_source(target);
     [branch] if (hdr == 0) {
@@ -374,21 +395,50 @@ float3 chroma_sample_at(float2 target, bool menu) {
 // Compute both the nonlinear code (returned) and the chroma filter's
 // working-space value (`light`), evaluating `sample_source` once per pixel
 // without a `pq -> depq` or `hlg -> hlgLight` round-trip.
+float3 menu_panel_pixel_and_light(float3 c, out float3 light) {
+    [branch] if (hdr == 0) {
+        light = colorMatrix == 2 ? bt2020_sdr(gamut2020(srgb_linear(c))) : c;
+        return light;
+    }
+    float3 lin = gamut2020(srgb_linear(c)) * sdrWhiteScale;
+    [branch] if (hdr == 2) {
+        light = max(lin, 0);
+        return hlg(light);
+    }
+    light = saturate(lin / 125.0);
+    return pq(light);
+}
+float3 menu_capture_pixel_and_light(float2 target, out float3 light) {
+    float3 rgb = sample_source(target);
+    [branch] if (hdr == 0) {
+        light = sdr_signal(rgb);
+        return light;
+    }
+    [branch] if (hdr == 2) {
+        light = pixel == 2 ? depq(rgb) * 125.0 : max(gamut2020(rgb), 0);
+        return hlg(light);
+    }
+    [branch] if (pixel == 2) {
+        light = depq(rgb);
+        return rgb;
+    }
+    light = saturate(gamut2020(rgb) / 125.0);
+    return pq(light);
+}
 float3 pixel_and_light(float2 target, bool menu, out float3 light) {
     if (menu) {
-        int2 at = clamp((int2(target) - int2(menuOrigin)) / int(menuScale), 0, int2(menuSize / menuScale) - 1);
-        float3 c = menuImage.Load(int3(at, 0)).rgb;
-        [branch] if (hdr == 0) {
-            light = colorMatrix == 2 ? bt2020_sdr(gamut2020(srgb_linear(c))) : c;
-            return light;
+        float4 m = menu_texel(target);
+        [branch] if (m.a >= 1.0) return menu_panel_pixel_and_light(m.rgb, light);
+        float3 cap_light;
+        float3 cap_code = menu_capture_pixel_and_light(target, cap_light);
+        [branch] if (m.a <= 0.0) {
+            light = cap_light;
+            return cap_code;
         }
-        float3 lin = gamut2020(srgb_linear(c)) * sdrWhiteScale;
-        [branch] if (hdr == 2) {
-            light = max(lin, 0);
-            return hlg(light);
-        }
-        light = saturate(lin / 125.0);
-        return pq(light);
+        float3 pan_light;
+        float3 pan_code = menu_panel_pixel_and_light(saturate(m.rgb / m.a), pan_light);
+        light = lerp(cap_light, pan_light, m.a);
+        return lerp(cap_code, pan_code, m.a);
     }
     float3 rgb = sample_source(target);
     [branch] if (hdr == 0) {

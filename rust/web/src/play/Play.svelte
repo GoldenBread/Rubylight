@@ -15,7 +15,7 @@
   import PlayPairCard from './PlayPairCard.svelte';
   import PlayStatsCapsule from './PlayStatsCapsule.svelte';
   import { activePad, firstSource, hints, keySource, pointerSource, type HintContext, type InputSource } from './play-input-source';
-  import { CODECS, codecName, defaultChoice, hardwareCodecs, optionFor, receivableCodecs, streamOptions, type AppEntry, type Choice, type StreamOption } from '../lib/webrtc/client';
+  import { CODECS, codecName, defaultChoice, fitChoice, hardwareCodecs, optionFor, receivableCodecs, streamOptions, type AppEntry, type Choice, type StreamOption } from '../lib/webrtc/client';
   import { buttonChanges, cropPadding, keyMessage, positionMessage, shownSize, Wheel } from '../lib/webrtc/input';
   import { deviceName, forgetCredentials, Hold, keyAction, loadCredentials, nearest, newPin, PadNavigator, PlayStream, saveCredentials, type Action, type Move } from '../lib/webrtc/play';
   import { RefusedError, SignallingError } from '../lib/webrtc/signalling';
@@ -231,7 +231,7 @@
   function setCodec(codec: Choice['codec']) {
     if (!choice) return;
     const wanted = { ...choice, codec };
-    choice = optionFor(options, wanted) ? wanted : defaultChoice(options, [codec]);
+    choice = optionFor(options, wanted) ? wanted : (fitChoice(options, wanted) ?? defaultChoice(options, [codec]));
     try { localStorage.setItem(CHOICE_KEY, JSON.stringify(choice)); } catch { /* not remembered */ }
   }
 
@@ -246,12 +246,13 @@
     if (!found || !choice || found.id === choice.codec) return;
     setCodec(found.id);
     if (stream && playingApp) {
+      const keepFullscreen = Boolean(document.fullscreenElement);
       stream.disconnect();
-      await start(playingApp);
+      await start(playingApp, keepFullscreen);
     }
   }
 
-  async function start(app: AppEntry) {
+  async function start(app: AppEntry, fullscreen = true) {
     if (!stream || !choice || !video) return;
     const current = (attempt = {});
     notice = '';
@@ -266,7 +267,7 @@
     muted = activation ? !activation.hasBeenActive : false;
     video.muted = muted;
     // Full screen needs that too; without it the picture still fills the page.
-    enterFullscreen();
+    if (fullscreen) enterFullscreen();
     try {
       await stream.start(app.id, choice, video, (text) => (status = text || 'Starting…'));
     } catch (error) {
@@ -339,6 +340,7 @@
   function ended(from: PlayStream, reason: string, closed: boolean) {
     if (stream !== from || gone) return;
     attempt = null;
+    playingApp = null;
     menu = false;
     leaveFullscreen();
     if (closed && /another tab/i.test(from.closeReason)) return failed(new Error(reason));
@@ -365,6 +367,7 @@
 
   function disconnect() {
     attempt = null;
+    playingApp = null;
     menu = false;
     stream?.disconnect();
     leaveFullscreen();
@@ -373,6 +376,7 @@
 
   async function quit() {
     attempt = null;
+    playingApp = null;
     menu = false;
     status = 'Quitting…';
     leaveFullscreen();

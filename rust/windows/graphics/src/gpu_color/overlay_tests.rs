@@ -376,7 +376,9 @@ fn overlay_closed_outputs_match_their_fixture_hashes() -> Result<()> {
     Ok(())
 }
 
-/// A 64x32 panel at (32, 16), magnified twice, every 2x2 block its own colour.
+/// A 64x32 panel at (32, 16), magnified twice, every 2x2 block its own colour,
+/// with a transparent rounded-corner pixel (`alpha == 0`) at `[0, 0]` and a
+/// premultiplied corner-arc pixel (`0 < alpha < 255`) at `[1, 0]`.
 fn panel(revision: u64) -> Overlay {
     let (width, height) = (32, 16);
     let mut rgba = vec![255; width * height * 4];
@@ -384,6 +386,8 @@ fn panel(revision: u64) -> Overlay {
         let v = (index as u32 ^ revision as u32).wrapping_mul(2_246_822_519) >> 7;
         pixel[..3].copy_from_slice(&[v as u8, (v >> 8) as u8, (v >> 16) as u8]);
     }
+    rgba[..4].copy_from_slice(&[0, 0, 0, 0]);
+    rgba[4..8].copy_from_slice(&[96, 48, 24, 128]);
     Overlay {
         revision,
         origin: [32, 16],
@@ -427,6 +431,8 @@ fn overlay_matches_the_reference_inside_and_closed_outside() -> Result<()> {
         let open = rig.convert(kind, colour, route, Some(&overlay))?;
         assert_eq!(expected.len(), open.len(), "{label}");
         let mut inside = 0;
+        let mut blended = 0;
+        let mut transparent_inside = 0;
         for (plane, ((expected, open), closed)) in
             expected.iter().zip(&open).zip(&closed).enumerate()
         {
@@ -435,10 +441,11 @@ fn overlay_matches_the_reference_inside_and_closed_outside() -> Result<()> {
                 expected.iter().zip(open.iter().zip(closed)).enumerate()
             {
                 match expected {
-                    None => {
-                        assert_eq!(open, closed, "{label} plane {plane} sample {index} outside")
+                    reference::Sample::Capture => {
+                        assert_eq!(open, closed, "{label} plane {plane} sample {index} outside");
+                        transparent_inside += 1;
                     }
-                    Some(expected) => {
+                    reference::Sample::Panel(expected) => {
                         let actual = code(open, kind, config.ten_bit());
                         assert!(
                             actual.abs_diff(*expected) <= 1,
@@ -446,10 +453,27 @@ fn overlay_matches_the_reference_inside_and_closed_outside() -> Result<()> {
                         );
                         inside += 1;
                     }
+                    reference::Sample::BlendedSingle(panel_code) => {
+                        let actual = code(open, kind, config.ten_bit());
+                        let cap_code = code(closed, kind, config.ten_bit());
+                        let lo = cap_code.min(*panel_code).saturating_sub(2);
+                        let hi = cap_code.max(*panel_code).saturating_add(2);
+                        assert!(
+                            (lo..=hi).contains(&actual),
+                            "{label} plane {plane} sample {index}: blended {actual} outside {lo}..={hi} (capture={cap_code}, panel={panel_code})"
+                        );
+                        blended += 1;
+                    }
+                    reference::Sample::MixedBlock => {
+                        blended += 1;
+                    }
                 }
             }
         }
-        assert!(inside > 0, "{label} has no panel samples");
+        assert!(
+            inside > 0 && blended > 0 && transparent_inside > 0,
+            "{label} missing samples"
+        );
     }
     Ok(())
 }
