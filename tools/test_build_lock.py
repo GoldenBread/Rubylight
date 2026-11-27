@@ -259,12 +259,16 @@ class Lanes(unittest.TestCase):
 
     def test_cargo_jobs_scales_with_active_lanes_and_honors_override(self):
         os.environ.pop(build_lock.CARGO_JOBS_ENV, None)
+        # 16T reserves 1 physical core (2 threads -> 14 usable): 12 / 7 / 4 / 3 so total <= 14.
         self.assertEqual(build_lock.cargo_jobs(self.root, cpus=16, active=1), 12)
         # Missing lanes/ subdirectory (WinError 3 ERROR_PATH_NOT_FOUND) must treat all lanes as free.
         self.assertEqual(build_lock.busy_cargo_lanes(self.root / 'nonexistent-lock-dir'), 0)
-        self.assertEqual(build_lock.cargo_jobs(self.root, cpus=16, active=2), 8)
-        self.assertEqual(build_lock.cargo_jobs(self.root, cpus=16, active=4), 4)
+        self.assertEqual(build_lock.cargo_jobs(self.root, cpus=16, active=2), 7)
+        self.assertEqual(build_lock.cargo_jobs(self.root, cpus=16, active=3), 4)
+        self.assertEqual(build_lock.cargo_jobs(self.root, cpus=16, active=4), 3)
         self.assertEqual(build_lock.cargo_jobs(self.root, cpus=4, active=1), 4)
+        self.assertEqual(build_lock.nextest_threads(16), 14)
+        self.assertEqual(build_lock.nextest_threads(4), 4)
         os.environ[build_lock.CARGO_JOBS_ENV] = '6'
         try:
             self.assertEqual(build_lock.cargo_jobs(self.root, cpus=16, active=1), 6)

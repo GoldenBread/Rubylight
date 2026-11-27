@@ -27,7 +27,7 @@ param(
     # Build (the release build and -Package). All runs them in order.
     [ValidateSet('All', 'Test', 'Lint', 'Build')]
     [string]$Stage = 'All',
-    [ValidateRange(1, 256)][int]$Jobs = ([Math]::Max(4, [Math]::Min(12, [Environment]::ProcessorCount)))
+    [ValidateRange(1, 256)][int]$Jobs = ([Math]::Max(4, [Math]::Min(12, $(if ([Environment]::ProcessorCount -ge 8) { [Environment]::ProcessorCount - 2 } else { [Environment]::ProcessorCount }))))
 )
 $ErrorActionPreference = 'Stop'
 if ($Package -and $env:RLVD_IDDCX_LIB) {

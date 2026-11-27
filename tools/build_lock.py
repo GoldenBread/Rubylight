@@ -145,16 +145,31 @@ def busy_cargo_lanes(directory=None):
     return count
 
 
+def usable_build_threads(cpus=None):
+    """Leave 1 physical core (2 logical threads) free on 8+ thread workstations so agents
+    and the desktop stay responsive; smaller/CI runners keep all threads."""
+    cpus = cpus or os.cpu_count() or 1
+    return (cpus - 2) if cpus >= 8 else cpus
+
+
+def nextest_threads(cpus=None):
+    """Default test thread cap: leave 1 physical core free on 8+ thread machines."""
+    return max(1, usable_build_threads(cpus))
+
+
 def cargo_jobs(directory=None, cpus=None, active=None):
-    """Dynamic Cargo -j count: scale up to CARGO_MAX_JOBS when few Cargo stages are busy,
-    staying at CARGO_STAGE_THREADS when all slots are saturated. RUBYLIGHT_CARGO_JOBS overrides."""
+    """Dynamic Cargo -j count: scale up to CARGO_MAX_JOBS while reserving 1 physical core
+    on 8+ thread machines so concurrent builds never starve agents or the desktop.
+    RUBYLIGHT_CARGO_JOBS overrides."""
     override = os.environ.get(CARGO_JOBS_ENV, '').strip()
     if override.isdigit() and int(override) > 0:
         return int(override)
-    cpus = cpus or os.cpu_count() or CARGO_STAGE_THREADS
+    usable = usable_build_threads(cpus)
     busy = max(1, busy_cargo_lanes(directory) if active is None else int(active))
-    cap = min(CARGO_MAX_JOBS, cpus)
-    return max(CARGO_STAGE_THREADS, min(cap, cpus // busy))
+    cap = min(CARGO_MAX_JOBS, usable)
+    per_stage = usable // busy
+    floor = 3 if (busy >= 4 and usable >= 8) else min(CARGO_STAGE_THREADS, cap)
+    return max(floor, min(cap, per_stage))
 
 
 def priority_alive(text, written=None):

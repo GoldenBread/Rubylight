@@ -676,6 +676,9 @@ def host_env(target, lock_directory=None, fast=False):
     env['BUTTERPOLLO_PYROWAVE_ROOT'] = str(pyrowave)
     env['CARGO_TARGET_DIR'] = str(target)
     env['CARGO_BUILD_JOBS'] = str(build_lock.cargo_jobs(lock_directory))
+    threads = str(build_lock.nextest_threads())
+    env.setdefault('NEXTEST_TEST_THREADS', threads)
+    env.setdefault('RUST_TEST_THREADS', threads)
     env.setdefault('CARGO_PROFILE_DEV_DEBUG', '0')
     if lock_directory is not None or not env.get('RUBYLIGHT_LOCK_DIRECTORY'):
         env['RUBYLIGHT_LOCK_DIRECTORY'] = str(build_lock.lock_directory(lock_directory))
@@ -691,6 +694,9 @@ def client_env(target, fast=False, lock_directory=None):
     env['LIBCLANG_PATH'] = str(msys_bin)
     env['CARGO_TARGET_DIR'] = str(target)
     env['CARGO_BUILD_JOBS'] = str(build_lock.cargo_jobs(lock_directory))
+    threads = str(build_lock.nextest_threads())
+    env.setdefault('NEXTEST_TEST_THREADS', threads)
+    env.setdefault('RUST_TEST_THREADS', threads)
     env.setdefault('CARGO_PROFILE_DEV_DEBUG', '0')
     return apply_sccache(apply_gnu_lld(env), start_server=True)
 
