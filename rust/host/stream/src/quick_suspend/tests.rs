@@ -154,9 +154,15 @@ fn a_process_that_stays_suspended_stays_in_the_journal_and_blocks_a_new_suspend(
         (State::Refused, Reason::IoOrOsError)
     );
     assert!(failed.message.unwrap().contains("arena.exe"));
-    assert!(!f.host.quick_suspend.suspended());
     let left = journal::load(&f.host.directory).unwrap().unwrap();
     assert_eq!(left.processes, paused.processes);
+    // It still shows as suspended, so Resume tries again; once that works it is gone.
+    assert_eq!(status(&f.host).state, State::Suspended);
+    assert_eq!(status(&f.host).suspended_count, 1);
+    resume_with(&f.host, Who::Console, &mut Fake { fails: false });
+    assert!(!f.host.quick_suspend.suspended());
+    assert!(!journal::path(&f.host.directory).exists());
+    journal::save(&f.host.directory, &left).unwrap();
     // A new suspend tries it again first, and pauses nothing while it fails.
     let refused = leftovers(&f.host, &mut Fake { fails: true }).unwrap_err();
     assert_eq!(refused.reason, Reason::IoOrOsError);

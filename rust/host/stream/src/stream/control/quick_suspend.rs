@@ -67,12 +67,15 @@ pub(super) fn request(
         tracing::debug!(len = payload.len(), "invalid Quick Suspend request");
         return;
     };
-    // Turned off while a game is paused, the host still answers and resumes it.
+    // Turned off while a game is paused, the host still answers and resumes it;
+    // otherwise a request only learns the state (Unavailable, turned off), so the
+    // device stops offering it instead of waiting for an answer.
+    let mut op = request.op;
     if !crate::extensions::quick_suspend(&config)
-        && (request.op == Op::Suspend || !h.quick_suspend.suspended())
+        && (op == Op::Suspend || !h.quick_suspend.suspended())
     {
-        tracing::debug!("unoffered Quick Suspend request");
-        return;
+        tracing::debug!("Quick Suspend request while it is off");
+        op = Op::QueryState;
     }
     if !p.quick_suspend.active {
         p.quick_suspend.active = true;
@@ -86,7 +89,7 @@ pub(super) fn request(
         request.request_id,
         move |h| {
             use crate::quick_suspend::{Who, resume, status, suspend};
-            match request.op {
+            match op {
                 Op::QueryState => status(h),
                 Op::Suspend => suspend(h, Who::Device(&client)),
                 Op::Resume => resume(h, Who::Device(&client)),

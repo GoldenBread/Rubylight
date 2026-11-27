@@ -463,10 +463,11 @@ fn thaw(h: &Host, why: &str) {
 }
 
 /// Resume the suspended game, if any. Err names a process that stays
-/// suspended, kept in the journal for the watchdog and the next start.
+/// suspended, kept in the journal for the watchdog and the next start, and
+/// still shown as suspended so a resume or the end of the session tries again.
 fn thaw_with(h: &Host, why: &str, thaw: &mut impl Thaw) -> Result<(), String> {
     let mut slot = h.quick_suspend.lock();
-    let Some(suspended) = slot.take() else {
+    let Some(mut suspended) = slot.take() else {
         return Ok(());
     };
     let recovery = recover(&suspended.journal, thaw);
@@ -479,11 +480,19 @@ fn thaw_with(h: &Host, why: &str, thaw: &mut impl Thaw) -> Result<(), String> {
         );
         Ok(())
     } else {
-        Err(recovery
+        let failed = recovery
             .failed
             .first()
             .map(|(record, _)| record.name.clone())
-            .unwrap_or_default())
+            .unwrap_or_default();
+        suspended.journal.processes = recovery
+            .failed
+            .iter()
+            .map(|(record, _)| record.clone())
+            .collect();
+        suspended.count = suspended.journal.processes.len();
+        *slot = Some(suspended);
+        Err(failed)
     };
     drop(slot);
     h.quick_suspend.changed();
