@@ -10,7 +10,7 @@ python rust/release/bump.py <version>   # versions, download links, a "## New in
 git push origin <commit>:refs/tags/v<version>   # the commit whose main run is green
 ```
 
-Before the tag, review the whole release: the range from the previous release tag to the commit to be tagged, with its `## New in <version>` notes (Nightjar's too, when its release goes with it). Fix any findings first.
+Before the tag, review the whole release: the range from the previous release tag to the commit to be tagged, with its `## New in <version>` notes (Nightjar's too, when its release goes with it), and validate the green `main` release candidate on real hardware (`pwsh rust/release/check.ps1 <rc-tag> -NoInstall -NoUpload` plus laptop/device checks). Fix any findings first so a public tag is never burned on an unvalidated build. After the signed `v<version>` release publishes, run `check.ps1 v<version>` and `smoke.ps1 -Version v<version>` to verify the signed upgrade and upload `VALIDATION.json` and `REAL-CLIENT.json`.
 
 The workflow runs for tags `v2.*` to `v9.*` (`v[2-9].*`). Push the tag by commit: a clone that pulled Nightjar's subtree holds Nightjar's own `v4.x` tags, so a local `git tag v4.0.1` can collide with one of them.
 
@@ -48,11 +48,11 @@ The binaries signing request signs the service under its own version (`service_v
 
 ## Host check
 
-The only part GitHub's runners cannot do needs the Radeon release workstation, with the installed host idle:
+The only part GitHub's runners cannot do needs the Radeon release workstation, with the installed host idle. Run it **pre-release** against the green `main` RC before pushing `v<version>`, then run the full upload/install pass on the published signed `v<version>` release to verify the signed upgrade and attach `VALIDATION.json`:
 
 ```powershell
-pwsh rust/release/check.ps1                # the newest release
-pwsh rust/release/check.ps1 v<version> -NoInstall -NoUpload
+pwsh rust/release/check.ps1 v<version>-rc.<N> -NoInstall -NoUpload   # pre-release RC hardware validation (before tagging)
+pwsh rust/release/check.ps1 v<version>                                # post-publish signed upgrade + VALIDATION.json upload
 ```
 
 `-SkipStreams` leaves named stream cases out (recorded in `VALIDATION.json`), `-RealClient` adds a `smoke.ps1` result, `-Work` and `-Settings` move the work folder and machine settings, and `-LockDirectory` and `-GpuLockHeld` are described under the locks below.
