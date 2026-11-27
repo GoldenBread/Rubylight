@@ -18,8 +18,10 @@ struct Fake {
     gone: RefCell<Option<String>>,
     /// Windows answers S_OK and keeps nothing.
     ignores: std::cell::Cell<bool>,
-    /// For each process listing, whether [`LISTED`] was free.
+    /// For each process listing, whether [`LISTED`] was free (checked only when
+    /// `watch_listed` is set, so other tests running in parallel never touch the lock).
     listed: RefCell<Vec<bool>>,
+    watch_listed: std::cell::Cell<bool>,
     /// Processes that haven't opened their sound: Windows refuses both calls.
     silent: RefCell<std::collections::BTreeSet<u32>>,
 }
@@ -72,7 +74,9 @@ impl Apps for Fake {
         Ok(())
     }
     fn running(&self, exes: &[&str]) -> Result<Vec<(u32, String)>> {
-        self.listed.borrow_mut().push(LISTED.try_lock().is_ok());
+        // Only the test that watches the lock takes it: other tests run in parallel.
+        let free = !self.watch_listed.get() || LISTED.try_lock().is_ok();
+        self.listed.borrow_mut().push(free);
         Ok(self
             .running
             .borrow()
@@ -190,6 +194,7 @@ fn an_unreadable_record_is_moved_aside() -> Result<()> {
 fn a_restore_lists_the_processes_without_the_lock() -> Result<()> {
     let directory = tempfile::tempdir()?;
     let fake = Fake::default();
+    fake.watch_listed.set(true);
     started(&fake, 7);
     let Routed::Sink(id) = route_with(
         &fake,
