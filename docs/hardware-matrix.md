@@ -305,7 +305,7 @@ The installed host runs as SYSTEM in the console session; a development host run
 
 ## 6. Linux host (preview)
 
-A Linux host is being ported on a fork ([plan and measurements](linux-host-spike.md)); it is not a release. The labels mean what they mean above, with a Linux PC in place of the Windows build.
+A Linux host is being ported on a fork ([plan and measurements](linux-host-spike.md)); it is not a release. [What differs from Windows](linux-host.md) lists every gap in one place. The labels mean what they mean above, with a Linux PC in place of the Windows build.
 
 Test PC: an RX 7800 XT (Navi 32, RDNA 3, VCN 4) with a Ryzen 7 5700X3D, CachyOS with kernel 7.3.5, Mesa 26.3.1 (radeonsi, VA-API through libva 2.24.1), KDE Plasma 6.8.3 on Wayland (KWin 6.8.3, xdg-desktop-portal-kde 6.8.3), PipeWire 1.6.11 and gamescope 3.17.0. Clients: Nightjar's headless client (`nightjar-cli`) and moonlight-qt 6.2.0 on the same PC, over loopback, and Nightjar for Android 6.4.4 (a debug build from source) on an AYN Odin 3 (Android 15, Qualcomm decoders) over Wi-Fi on the same LAN, 2026-11-26. No other GPU, distribution or desktop has run.
 

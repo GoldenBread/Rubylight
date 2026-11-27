@@ -2,7 +2,7 @@
 
 [Rubylight docs](README.md) › [For developers](README.md#for-developers) · [Architecture](architecture.md) · [Code map](code-map.md) · [Rubylight 3.0 plan](rubylight-3.0-plan.md)
 
-Rubylight hosts on Windows only. The [3.0 plan](rubylight-3.0-plan.md) leaves a Linux host to a later track that starts with a spike: capture and hardware encoding on Mesa, measured before any host code depends on them. This page is that spike's record, and the plan it supports. It is work on a fork (GoldenBread/Rubylight, branch `linux/spike`, started 2026-11-24); nothing here is in a Rubylight release.
+Rubylight hosts on Windows only. The [3.0 plan](rubylight-3.0-plan.md) leaves a Linux host to a later track that starts with a spike: capture and hardware encoding on Mesa, measured before any host code depends on them. This page is that spike's record, and the plan it supports. It is work on a fork (GoldenBread/Rubylight, branch `linux/spike`, started 2026-11-24); nothing here is in a Rubylight release. What a Linux host offers today, next to Windows, is summed up in [Linux host: what differs from Windows](linux-host.md).
 
 ## What the spike answers
 
