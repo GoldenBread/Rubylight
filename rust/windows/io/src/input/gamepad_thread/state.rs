@@ -100,6 +100,7 @@ impl AudioQueue {
 #[derive(Default)]
 pub(super) struct Queue {
     pub(super) events: VecDeque<Event>,
+    pub(super) policy: Option<butterpollo_input_policy::input_policy::Policy>,
     pub(super) release: bool,
     /// Whether events were dropped since the thread last took the queue.
     pub(super) full: bool,
@@ -109,11 +110,14 @@ pub(super) struct Queue {
 impl Queue {
     /// Hand the worker one batch and give producers its empty spare buffer.
     /// Both allocations survive draining, without holding this lock in a driver call.
-    pub(super) fn take_into(&mut self, batch: &mut VecDeque<Event>) -> bool {
+    pub(super) fn take_into(
+        &mut self,
+        batch: &mut VecDeque<Event>,
+    ) -> (bool, Option<butterpollo_input_policy::input_policy::Policy>) {
         debug_assert!(batch.is_empty());
         std::mem::swap(&mut self.events, batch);
         self.full = false;
-        std::mem::take(&mut self.release)
+        (std::mem::take(&mut self.release), self.policy.take())
     }
 }
 

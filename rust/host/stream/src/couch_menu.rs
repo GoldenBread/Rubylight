@@ -172,9 +172,11 @@ pub(crate) struct Batch {
 }
 
 /// Runs one batch through the peer's filter, then gives the game what it
-/// kept. When the menu opens, everything the game holds is released before
-/// the kept events (the ones before the chord) are applied. The injector is
-/// always called, even with no events, because it flushes there.
+/// kept. Kept events (the ones before an opening chord) are applied before
+/// releasing everything the game holds, so keys pressed earlier in the same
+/// batch as the chord are released too instead of staying stuck while the
+/// menu is open. The injector is always called, even with no events, because
+/// it flushes there.
 pub(crate) fn apply_batch(
     menu: &mut PeerMenu,
     mut game: Option<&mut impl Game>,
@@ -182,18 +184,18 @@ pub(crate) fn apply_batch(
     now: Instant,
 ) -> Batch {
     let mut batch = Batch::default();
+    let mut release_game = false;
     if let Some(filter) = &mut menu.filter {
         let out = filter.apply(now, events, || game.as_deref_mut()?.pointer());
-        if out.release_game
-            && let Some(game) = game.as_deref_mut()
-        {
-            game.release_all();
-        }
+        release_game = out.release_game;
         batch.nav = out.nav;
         batch.refused = out.refused;
     }
     if let Some(game) = game {
         batch.errors = game.apply_all(events);
+        if release_game {
+            game.release_all();
+        }
     }
     batch
 }

@@ -12,7 +12,7 @@ use std::{
     os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle},
     sync::{
         Arc, Condvar, Mutex, MutexGuard,
-        atomic::{AtomicBool, AtomicU16, Ordering},
+        atomic::{AtomicBool, AtomicU16, AtomicU32, Ordering},
         mpsc,
     },
     thread::JoinHandle,
@@ -92,6 +92,12 @@ pub enum PadReport {
 /// The pads the thread drives: VHF, or a stand-in in tests.
 pub(super) trait Pads {
     fn warnings(&mut self, _warnings: Arc<butterpollo_session::session::Warnings>) {}
+    fn set_policy(
+        &mut self,
+        _policy: butterpollo_input_policy::input_policy::Policy,
+    ) -> Result<()> {
+        Ok(())
+    }
     fn apply(&mut self, event: &Event) -> Result<()>;
     fn refresh(&mut self) -> Result<()>;
     /// Controllers whose client should be asked for motion again, with their
@@ -172,6 +178,9 @@ pub(super) trait Pads {
 impl Pads for Gamepads {
     fn warnings(&mut self, warnings: Arc<butterpollo_session::session::Warnings>) {
         self.set_warnings(warnings);
+    }
+    fn set_policy(&mut self, policy: butterpollo_input_policy::input_policy::Policy) -> Result<()> {
+        Gamepads::set_policy(self, policy)
     }
     fn apply(&mut self, event: &Event) -> Result<()> {
         let applied = Gamepads::apply(self, event);
@@ -303,7 +312,9 @@ pub struct GamepadThread {
     /// driver and nothing waits for it again.
     abandoned: AtomicBool,
     /// The back grips no setting maps; pressing one the controller's pad lacks shows a hint.
-    unmapped_grips: u32,
+    unmapped_grips: AtomicU32,
+    /// Latest policy for opening or reopening the driver when no pads are open yet.
+    open_policy: Option<Arc<Mutex<butterpollo_input_policy::input_policy::Policy>>>,
     /// The `gamepad` profile and the controllers' identities, for the grips each pad has
     /// ([`butterpollo_input_policy::input_policy::pad_back_grips`]).
     profile: u16,
@@ -324,12 +335,23 @@ impl GamepadThread {
             backoff: BACKOFF,
             reopen: REOPEN,
         };
+        let open_policy = Arc::new(Mutex::new(policy));
+        let worker_policy = Arc::clone(&open_policy);
         let mut thread = Self::spawn_polled(
-            move || Gamepads::open_options(profile, policy.clone(), pad_warnings.clone()),
+            move || {
+                Gamepads::open_options(
+                    profile,
+                    worker_policy.lock().unwrap().clone(),
+                    pad_warnings.clone(),
+                )
+            },
             warnings,
             polling,
         )?;
-        thread.unmapped_grips = unmapped_grips;
+        thread
+            .unmapped_grips
+            .store(unmapped_grips, Ordering::Release);
+        thread.open_policy = Some(open_policy);
         thread.profile = profile;
         Ok(thread)
     }
@@ -392,7 +414,8 @@ impl GamepadThread {
             reports: Mutex::new(reports),
             thread: Mutex::new(Some(thread)),
             abandoned: AtomicBool::new(false),
-            unmapped_grips: 0,
+            unmapped_grips: AtomicU32::new(0),
+            open_policy: None,
             profile: 0,
             identities: Mutex::default(),
         })
@@ -415,6 +438,24 @@ impl GamepadThread {
     pub fn set_warnings(&self, warnings: Arc<butterpollo_session::session::Warnings>) {
         *self.shared.warnings.lock().unwrap() = warnings;
     }
+    /// Updates a retained thread's policy without tearing down its virtual pads.
+    pub fn set_policy(&self, policy: butterpollo_input_policy::input_policy::Policy) {
+        self.unmapped_grips
+            .store(policy.unmapped_back_grips(), Ordering::Release);
+        if let Some(open_policy) = &self.open_policy {
+            *open_policy.lock().unwrap() = policy.clone();
+        }
+        self.shared.queue.lock().unwrap().policy = Some(policy);
+        self.shared.wake();
+    }
+    /// Whether the worker thread has already exited.
+    pub fn is_stopped(&self) -> bool {
+        self.thread
+            .lock()
+            .unwrap()
+            .as_ref()
+            .is_none_or(JoinHandle::is_finished)
+    }
     pub fn send(&self, event: Event) {
         if let Event::Arrival { id, .. } = &event
             && *id < 16
@@ -427,9 +468,10 @@ impl GamepadThread {
                 (identity.vendor, identity.product),
             );
         }
+        let unmapped_grips = self.unmapped_grips.load(Ordering::Acquire);
         if let Event::Controller { id, buttons, .. } = &event
-            && buttons & self.unmapped_grips != 0
-            && buttons & self.unmapped_grips & !self.pad_back_grips(*id) != 0
+            && buttons & unmapped_grips != 0
+            && buttons & unmapped_grips & !self.pad_back_grips(*id) != 0
         {
             self.shared.warnings.lock().unwrap().event(
                 "input_back_grips",

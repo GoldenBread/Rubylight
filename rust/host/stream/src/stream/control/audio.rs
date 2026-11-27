@@ -14,7 +14,7 @@ pub(super) fn handle_controller_audio(
     kind: u16,
     payload: &[u8],
 ) {
-    if !s.launch.client.allows(1 << 8) {
+    if !s.launch.client.allows(1 << 8) || !h.device_guests.admits(s, 1 << 8) {
         return;
     }
     if kind == controller_audio::CONTROL {

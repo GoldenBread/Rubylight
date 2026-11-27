@@ -5,7 +5,7 @@ use super::super::*;
 use super::audio::handle_controller_audio;
 use super::clipboard::{handle_clipboard_and_focus_packet, send_clipboard_and_focus_updates};
 use super::extensions::{handle_extension_packet, send_extension_updates};
-use super::haptics::{haptics_negotiated, send_audio_haptics, send_pad_feedback};
+use super::haptics::{game_suspended, haptics_negotiated, send_audio_haptics, send_pad_feedback};
 use super::input::{
     apply_input, ensure_input_ready, follow_session, handle_input_packet, inject_pending_inputs,
 };
@@ -211,7 +211,7 @@ impl Media {
             // Haptics from game audio, for the waveform controllers the game
             // leaves without haptics or rumble: after the input was applied
             // and the acks went out, so the analysis delays neither.
-            send_audio_haptics(&mut host, &mut peers);
+            send_audio_haptics(&h, &mut host, &mut peers);
             expire_controllers(&h, &mut controller_cleanup);
             if loop_config.refresh_housekeeping(&h) {
                 host.socket_mut()
@@ -661,19 +661,34 @@ fn poll_peer(
         // co-op player was made just now, and the couch menu's timers.
         apply_input(h, p, &s, menus, received);
     }
+    let suspended = game_suspended(h, &s);
+    if suspended
+        && !p.was_suspended
+        && let Some(i) = &mut p.injector
+    {
+        i.release_all();
+    }
     if !poll_feedback
         && let Some(i) = &mut p.injector
-        && let Err(e) = i.flush_virtual_left_release().and_then(|()| i.due())
+        && let Err(e) = if suspended {
+            i.flush_suspended()
+        } else {
+            i.flush_virtual_left_release().and_then(|()| i.due())
+        }
     {
         s.launch.warnings.event("input_repeat", format!("Input release or repeat failed ({e:#}); held controls may not update. Unlock the desktop or reconnect."), butterpollo_session::session::EVENT_PERIOD);
     }
     if poll_feedback
         && let Some(i) = &mut p.injector
-        && let Err(e) = i.refresh()
+        && let Err(e) = if suspended {
+            i.flush_suspended()
+        } else {
+            i.refresh()
+        }
     {
         s.launch.warnings.event("input_pointer", format!("Touch/pen pointer refresh failed ({e:#}); pointer updates may be missing. Unlock the desktop or disable native touch/pen if Windows does not support it."), butterpollo_session::session::EVENT_PERIOD);
     }
-    send_pad_feedback(h, host, peer_id, p, &s, poll_feedback);
+    send_pad_feedback(h, host, peer_id, p, &s, poll_feedback, suspended);
     true
 }
 

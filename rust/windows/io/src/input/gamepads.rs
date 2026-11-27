@@ -106,6 +106,8 @@ pub struct Gamepads {
         std::sync::Arc<std::sync::Mutex<std::collections::VecDeque<attach::CompletedAttach>>>,
     /// In-flight USB/IP pad attaches keyed by kind and controller ID -> generation.
     pub(super) attaching: BTreeMap<(attach::AttachKind, u16), u64>,
+    /// Background USB/IP pad detaches still holding a [`Slot`], joined before reusing `id` or teardown.
+    pub(super) detaching: Vec<(u16, std::thread::JoinHandle<()>)>,
     next_attach_gen: u64,
     /// Wakes the owning gamepad thread when a background attach finishes.
     wake: Option<std::sync::Arc<dyn Fn() + Send + Sync>>,
@@ -133,12 +135,100 @@ pub(super) struct PadMemory {
 /// at every controller state or 8 ms feedback poll.
 const RECREATE_RETRY: Duration = Duration::from_secs(1);
 
+fn retain_usb_pads<T: Send + 'static>(
+    pads: &mut BTreeMap<u16, T>,
+    active: u16,
+    detaching: &mut Vec<(u16, std::thread::JoinHandle<()>)>,
+) {
+    let gone: Vec<u16> = pads
+        .keys()
+        .copied()
+        .filter(|i| active & (1 << *i) == 0)
+        .collect();
+    for id in gone {
+        if let Some(pad) = pads.remove(&id) {
+            spawn_usb_detach(detaching, id, pad);
+        }
+    }
+}
+
+fn spawn_usb_detach<T: Send + 'static>(
+    detaching: &mut Vec<(u16, std::thread::JoinHandle<()>)>,
+    id: u16,
+    pad: T,
+) {
+    detaching.retain(|(_, h)| !h.is_finished());
+    // If thread creation fails, dropping `Err` drops the closure and `pad` inline.
+    if let Ok(handle) = std::thread::Builder::new()
+        .name("usbip-detach".into())
+        .spawn(move || drop(pad))
+    {
+        detaching.push((id, handle));
+    }
+}
+
 impl Gamepads {
+    pub(super) fn detach_usb_pad<T: Send + 'static>(&mut self, id: u16, pad: T) {
+        spawn_usb_detach(&mut self.detaching, id, pad);
+    }
+    pub(super) fn wait_detach(&mut self, target: Option<u16>) {
+        let mut keep = Vec::new();
+        for (id, handle) in self.detaching.drain(..) {
+            if target.is_none_or(|wanted| wanted == id) {
+                let _ = handle.join();
+            } else if !handle.is_finished() {
+                keep.push((id, handle));
+            } else {
+                let _ = handle.join();
+            }
+        }
+        self.detaching = keep;
+    }
+    pub(super) fn wait_detach_before_plug(&mut self, id: u16) {
+        self.wait_detach(Some(id));
+        if !self.detaching.is_empty() && SLOTS.lock().unwrap().iter().all(|&used| used) {
+            self.wait_detach(None);
+        }
+    }
     pub(super) fn set_warnings(
         &mut self,
         warnings: std::sync::Arc<butterpollo_session::session::Warnings>,
     ) {
         self.warnings = warnings;
+    }
+    pub(super) fn set_policy(
+        &mut self,
+        policy: butterpollo_input_policy::input_policy::Policy,
+    ) -> Result<()> {
+        let was_steam = self.policy.steam_app;
+        self.policy = policy;
+        if !was_steam && self.policy.steam_app {
+            self.steam_at_arrival.clear();
+        }
+        self.follow_driver_host();
+        let ids: Vec<u16> = self.active.keys().copied().collect();
+        let mut failure = None;
+        for id in ids {
+            if self.dropped.contains(&id) {
+                continue;
+            }
+            if let Err(error) = self.ensure(id) {
+                failure.get_or_insert(error);
+                continue;
+            }
+            if let Some(&(kind, capabilities)) = self.arrivals.get(&id) {
+                let pad = if self.dualsenses.contains_key(&id) {
+                    Some(butterpollo_input_policy::input_policy::VHF_DUALSENSE)
+                } else {
+                    self.profiles.get(&id).copied()
+                };
+                match pad {
+                    Some(profile) => self.note_steam_controls(id, kind, capabilities, profile),
+                    None => self.forget_steam_fallback(id),
+                }
+            }
+        }
+        self.note(failure.map_or(Ok(()), Err))
     }
     pub fn open(profile: u16) -> Result<Self> {
         Self::open_options(
@@ -190,6 +280,7 @@ impl Gamepads {
             lost: false,
             attaches: Default::default(),
             attaching: BTreeMap::new(),
+            detaching: Vec::new(),
             next_attach_gen: 0,
             wake: None,
             #[cfg(test)]
@@ -210,9 +301,9 @@ impl Gamepads {
                 if *id >= 16 {
                     bail!("controller ID out of range");
                 }
-                self.decks.retain(|i, _| active & (1 << *i) != 0);
-                self.dualsenses.retain(|i, _| active & (1 << *i) != 0);
-                self.switch2s.retain(|i, _| active & (1 << *i) != 0);
+                retain_usb_pads(&mut self.decks, *active, &mut self.detaching);
+                retain_usb_pads(&mut self.dualsenses, *active, &mut self.detaching);
+                retain_usb_pads(&mut self.switch2s, *active, &mut self.detaching);
                 self.switch2_failed.retain(|i| active & (1 << *i) != 0);
                 self.attaching.retain(|(_, i), _| active & (1 << *i) != 0);
                 self.arrivals.retain(|i, _| active & (1 << *i) != 0);
@@ -307,8 +398,12 @@ impl Gamepads {
                     .get(&id)
                     .is_some_and(|old| *old != (*kind, *capabilities))
                 {
-                    self.decks.remove(&id);
-                    self.dualsenses.remove(&id);
+                    if let Some(pad) = self.decks.remove(&id) {
+                        self.detach_usb_pad(id, pad);
+                    }
+                    if let Some(pad) = self.dualsenses.remove(&id) {
+                        self.detach_usb_pad(id, pad);
+                    }
                     self.attaching.retain(|(k, i), _| {
                         *i != id
                             || !matches!(
@@ -325,7 +420,9 @@ impl Gamepads {
                         self.identities.get(&id).copied(),
                     )
                 {
-                    self.switch2s.remove(&id);
+                    if let Some(pad) = self.switch2s.remove(&id) {
+                        self.detach_usb_pad(id, pad);
+                    }
                     self.attaching.remove(&(attach::AttachKind::Switch2, id));
                 }
                 self.arrivals.insert(id, (*kind, *capabilities));
@@ -466,7 +563,9 @@ impl Gamepads {
                     .insert(id, new)
                     .is_some_and(|old| old != new)
                 {
-                    self.switch2s.remove(&id);
+                    if let Some(pad) = self.switch2s.remove(&id) {
+                        self.detach_usb_pad(id, pad);
+                    }
                     self.attaching.remove(&(attach::AttachKind::Switch2, id));
                 }
             }

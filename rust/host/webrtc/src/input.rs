@@ -99,6 +99,7 @@ struct Core {
     /// When the frame being handled reached the transport, for the delay it waited in the queue.
     received: Option<Instant>,
     warned_invalid: bool,
+    was_suspended: bool,
     /// The stream's guests by id, whose pads share `pads`.
     guests: BTreeMap<u64, Guest>,
 }
@@ -126,6 +127,7 @@ impl Core {
             slow_logged: 0,
             received: None,
             warned_invalid: false,
+            was_suspended: false,
             guests: BTreeMap::new(),
         };
         // Made before input comes, as the GameStream control loop does: making it with the
@@ -359,15 +361,51 @@ impl Core {
                 self.session.launch.warnings.event("input_injection", format!("Input injection failed ({error:#}); keyboard, mouse or controller actions may be missing. Unlock the desktop and check Windows input permissions."), EVENT_PERIOD);
             }
         }
-        if let Some(sink) = &mut self.sink
-            && sink.next_due().is_some_and(|due| now >= due)
-            && let Err(error) = sink.due()
-        {
-            self.session.launch.warnings.event("input_repeat", format!("Input release or repeat failed ({error:#}); held controls may not update. Unlock the desktop or reconnect."), EVENT_PERIOD);
+        let suspended = self.sink.as_ref().is_some_and(|sink| sink.game_suspended());
+        if suspended && !self.was_suspended {
+            let pad_actions = self.pads.release_all();
+            self.actions(pad_actions, now);
+            self.release_held(now);
+            let guests: Vec<u64> = self.guests.keys().copied().collect();
+            for id in guests {
+                self.guest_release(id, now);
+            }
+            if let Some(sink) = &mut self.sink {
+                sink.release_all();
+            }
+            let active = self.pads.active_mask();
+            let mut stops = Vec::new();
+            for slot in 0..16u16 {
+                if active & (1 << slot) != 0 {
+                    stops.extend(self.pads.rumble(slot, 0, 0));
+                    stops.extend(self.pads.trigger_rumble(slot, 0, 0));
+                }
+            }
+            for stop in stops {
+                self.send(&stop);
+            }
+        }
+        self.was_suspended = suspended;
+        if let Some(sink) = &mut self.sink {
+            if suspended {
+                if let Err(error) = sink.flush_suspended() {
+                    self.session.launch.warnings.event("input_repeat", format!("Input release failed ({error:#}); held controls may not update. Unlock the desktop or reconnect."), EVENT_PERIOD);
+                }
+            } else if sink.next_due().is_some_and(|due| now >= due)
+                && let Err(error) = sink.due()
+            {
+                self.session.launch.warnings.event("input_repeat", format!("Input release or repeat failed ({error:#}); held controls may not update. Unlock the desktop or reconnect."), EVENT_PERIOD);
+            }
         }
         if self.pads.active_mask() != 0 && now >= self.feedback_at {
             self.feedback_at = now + FEEDBACK_POLL;
-            self.feedback();
+            if suspended {
+                if let Some(sink) = &mut self.sink {
+                    let _ = sink.feedback();
+                }
+            } else {
+                self.feedback();
+            }
         }
         true
     }

@@ -15,6 +15,7 @@ use std::{
 };
 
 const GRACE: Duration = Duration::from_secs(120);
+const UNPLUG_WAIT: Duration = Duration::from_secs(2);
 struct Entry {
     pads: Arc<GamepadThread>,
     profile: u16,
@@ -38,7 +39,7 @@ pub fn key(launch: &Launch) -> String {
 /// launch or a stream its controllers takes them here, so none leaves the answer out.
 pub fn acquire_for(h: &Shared, launch: &Launch, config: &Config) -> Result<Arc<GamepadThread>> {
     let steam_app = crate::stream::launched_through_steam(h, launch);
-    let kept: BTreeSet<String> = {
+    let mut kept: BTreeSet<String> = {
         let sessions = h.sessions.lock().unwrap();
         let running = sessions.active.values().filter(|s| !s.stopping());
         sessions
@@ -48,13 +49,54 @@ pub fn acquire_for(h: &Shared, launch: &Launch, config: &Config) -> Result<Arc<G
             .map(key)
             .collect()
     };
+    // Spare the running game owner's parked stream pad while the owner reconnects, so a guest
+    // connecting meanwhile never evicts player 1 (#164 / H3).
+    if let Some(app) = h.current_app.lock().unwrap().as_ref()
+        && !app.owner.is_empty()
+    {
+        kept.insert(format!(
+            "{}:{:?}",
+            app.owner,
+            butterpollo_session::session::Role::Stream
+        ));
+    }
     h.controller_sessions
         .acquire_keeping(launch, config, steam_app, &kept)
 }
 impl Pool {
+    fn reap_stopped(&self) {
+        self.1.lock().unwrap().retain(|pads| {
+            if pads.is_stopped() {
+                let _ = pads.stop_within(Duration::ZERO);
+                false
+            } else {
+                true
+            }
+        });
+    }
+    fn stop_removed(&self, removed: Vec<Arc<GamepadThread>>) {
+        self.reap_stopped();
+        if removed.is_empty() {
+            return;
+        }
+        for pads in &removed {
+            pads.request_stop();
+        }
+        let deadline = Instant::now() + UNPLUG_WAIT;
+        let mut still = Vec::new();
+        for pads in removed {
+            let left = deadline.saturating_duration_since(Instant::now());
+            if pads.stop_within(left).is_err() {
+                still.push(pads);
+            }
+        }
+        if !still.is_empty() {
+            self.1.lock().unwrap().extend(still);
+        }
+    }
     /// `launch`'s controllers with its settings `config`; `steam_app`: whether its app starts
     /// through Steam ([`crate::stream::launched_through_steam`]). Parked ones are handed back
-    /// while both, and so the policy, are unchanged.
+    /// while their hardware backend and profile stay compatible.
     pub fn acquire(
         &self,
         launch: &Launch,
@@ -64,7 +106,7 @@ impl Pool {
         self.acquire_keeping(launch, config, steam_app, &BTreeSet::new())
     }
     /// [`Self::acquire`], sparing parked controllers whose keys are in `kept`
-    /// (such as another device's pending launch).
+    /// (such as another device's pending launch or the running game's owner).
     pub fn acquire_keeping(
         &self,
         launch: &Launch,
@@ -76,39 +118,79 @@ impl Pool {
         let profile = gamepad_profile(config.get("gamepad", "auto"));
         let mut policy = Policy::resolve(config)?;
         policy.steam_app = steam_app;
-        let mut entries = self.0.lock().unwrap();
-        // Parked controllers wait for their own client's reconnect. Another
-        // client's stay plugged beside this client's while a game runs, and
-        // can hold the game's first player slot. Pending launches also keep theirs.
-        entries.retain(|other, entry| {
-            if *other == key || Arc::strong_count(&entry.pads) > 1 || kept.contains(other) {
-                return true;
+        let mut removed = Vec::new();
+        let reused = {
+            let mut entries = self.0.lock().unwrap();
+            // Parked controllers wait for their own client's reconnect. Another
+            // client's stay plugged beside this client's while a game runs, and
+            // can hold the game's first player slot. Pending launches also keep theirs.
+            entries.retain(|other, entry| {
+                if *other == key || Arc::strong_count(&entry.pads) > 1 || kept.contains(other) {
+                    return true;
+                }
+                entry.pads.request_stop();
+                removed.push(entry.pads.clone());
+                false
+            });
+            if let Some(entry) = entries.get_mut(&key) {
+                if Arc::strong_count(&entry.pads) > 1 {
+                    drop(entries);
+                    self.stop_removed(removed);
+                    bail!("previous controller transport is closing");
+                }
+                if entry.profile == profile && entry.policy.same_pad_hardware(&policy) {
+                    entry.policy = policy.clone();
+                    entry.idle = Instant::now();
+                    entry.pads.set_warnings(launch.warnings.clone());
+                    entry.pads.set_policy(policy.clone());
+                    Some(entry.pads.clone())
+                } else {
+                    None
+                }
+            } else {
+                None
             }
-            drop(entry.pads.stop());
-            false
-        });
-        if let Some(entry) = entries.get_mut(&key) {
-            if Arc::strong_count(&entry.pads) > 1 {
-                bail!("previous controller transport is closing");
+        };
+        if let Some(pads) = reused {
+            self.stop_removed(removed);
+            return Ok(pads);
+        }
+        {
+            let mut entries = self.0.lock().unwrap();
+            if let Some(old) = entries.remove(&key) {
+                if Arc::strong_count(&old.pads) > 1 {
+                    entries.insert(key, old);
+                    drop(entries);
+                    self.stop_removed(removed);
+                    bail!("previous controller transport is closing");
+                }
+                old.pads.request_stop();
+                removed.push(old.pads);
             }
-            if entry.profile == profile && entry.policy == policy {
-                entry.idle = Instant::now();
-                entry.pads.set_warnings(launch.warnings.clone());
-                return Ok(entry.pads.clone());
+            if entries.len() >= 16 {
+                drop(entries);
+                self.stop_removed(removed);
+                bail!("all controller sessions are in use");
             }
         }
-        if let Some(old) = entries.remove(&key) {
-            drop(old.pads.stop());
-        }
-        // There are only sixteen host controller slots; cap abandoned preparations as well.
-        if entries.len() >= 16 {
-            bail!("all controller sessions are in use");
-        }
+        // Finish unplugging replaced or evicted pads before opening new virtual slots (#164).
+        self.stop_removed(removed);
         let pads = Arc::new(GamepadThread::new(
             profile,
             policy.clone(),
             launch.warnings.clone(),
         )?);
+        let mut entries = self.0.lock().unwrap();
+        if entries.contains_key(&key) {
+            drop(entries);
+            self.stop_removed(vec![pads]);
+            bail!("previous controller transport is closing");
+        }
+        if entries.len() >= 16 {
+            drop(entries);
+            self.stop_removed(vec![pads]);
+            bail!("all controller sessions are in use");
+        }
         entries.insert(
             key,
             Entry {
@@ -125,21 +207,27 @@ impl Pool {
     /// pad it has (a guest made view-only mid-stream), and plugs them in again with its next
     /// controller input. False when there is no such session.
     pub fn unplug(&self, key: &str) -> bool {
-        let mut entries = self.0.lock().unwrap();
-        let Some(entry) = entries.get(key) else {
-            return false;
+        let removed = {
+            let mut entries = self.0.lock().unwrap();
+            let Some(entry) = entries.get(key) else {
+                return false;
+            };
+            if Arc::strong_count(&entry.pads) > 1 {
+                entry.pads.send(Input::Controller {
+                    id: 0,
+                    active: 0,
+                    buttons: 0,
+                    left_trigger: 0,
+                    right_trigger: 0,
+                    sticks: [0; 4],
+                });
+                None
+            } else {
+                entries.remove(key).map(|entry| entry.pads)
+            }
         };
-        if Arc::strong_count(&entry.pads) > 1 {
-            entry.pads.send(Input::Controller {
-                id: 0,
-                active: 0,
-                buttons: 0,
-                left_trigger: 0,
-                right_trigger: 0,
-                sticks: [0; 4],
-            });
-        } else if let Some(entry) = entries.remove(key) {
-            drop(entry.pads.stop());
+        if let Some(pads) = removed {
+            self.stop_removed(vec![pads]);
         }
         true
     }
@@ -165,6 +253,7 @@ impl Pool {
     /// controller session no stream holds and no key in `kept`, or one whose
     /// release got stuck.
     pub fn parked(&self, kept: &BTreeSet<String>) -> bool {
+        self.reap_stopped();
         !self.1.lock().unwrap().is_empty()
             || self
                 .0
@@ -230,15 +319,21 @@ impl Pool {
         Ok(plugged)
     }
     pub fn expire(&self, app_running: bool) {
+        self.reap_stopped();
+        let mut expired = Vec::new();
         self.0.lock().unwrap().retain(|_, entry| {
             if Arc::strong_count(&entry.pads) > 1 {
                 entry.idle = Instant::now();
             } else if !app_running && entry.idle.elapsed() >= GRACE {
-                drop(entry.pads.stop());
+                entry.pads.request_stop();
+                expired.push(entry.pads.clone());
                 return false;
             }
             true
         });
+        if !expired.is_empty() {
+            self.1.lock().unwrap().extend(expired);
+        }
     }
 }
 impl Drop for Pool {
@@ -443,10 +538,67 @@ mod tests {
             let policy = f.host.controller_sessions.policy(&key(launch));
             policy.expect("the launch has controllers").steam_app
         };
-        drop(acquire_for(&f.host, &big_picture, &config).unwrap());
+        let first = acquire_for(&f.host, &big_picture, &config).unwrap();
+        let first_ptr = Arc::as_ptr(&first);
+        drop(first);
         assert!(steam_app(&big_picture));
-        drop(acquire_for(&f.host, &desktop, &config).unwrap());
-        assert!(!steam_app(&desktop), "new controllers, without it");
+        let second = acquire_for(&f.host, &desktop, &config).unwrap();
+        assert_eq!(
+            Arc::as_ptr(&second),
+            first_ptr,
+            "retained controllers update steam_app in place without tearing down the pad thread"
+        );
+        drop(second);
+        assert!(!steam_app(&desktop), "policy updated in place");
+    }
+
+    /// #164 / H3: a running game's owner keeps its parked player-1 pad while reconnecting even
+    /// if a guest device connects meanwhile, whereas a profile change unplugs the old pad before
+    /// opening the replacement.
+    #[test]
+    fn running_app_owner_keeps_parked_controllers_when_guest_connects() {
+        let f = crate::state::test_support::Fixture::new();
+        let paired = f.client(0);
+        let launch = |uuid: &str| {
+            let mut client = paired.clone();
+            client.uuid = uuid.into();
+            f.launch(client, Role::Stream)
+        };
+        let owner = launch("owner");
+        let guest = launch("guest");
+        let mut config = Config::default();
+        let owner_pads = acquire_for(&f.host, &owner, &config).unwrap();
+        let owner_ptr = Arc::as_ptr(&owner_pads);
+        drop(owner_pads);
+
+        // Simulate a running game owned by "owner".
+        let app: butterpollo_session::state::App =
+            serde_json::from_value(serde_json::json!({"name": "Test"})).unwrap();
+        *f.host.current_app.lock().unwrap() = Some(
+            crate::process::RunningApp::with_environment(
+                &app,
+                BTreeMap::from([("SUNSHINE_CLIENT_UUID".into(), "owner".into())]),
+            )
+            .unwrap(),
+        );
+        let guest_pads = acquire_for(&f.host, &guest, &config).unwrap();
+        let owner_reconnected = acquire_for(&f.host, &owner, &config).unwrap();
+        assert_eq!(Arc::as_ptr(&owner_reconnected), owner_ptr);
+        drop((guest_pads, owner_reconnected));
+
+        // Changing a non-hardware policy setting (e.g. rumble forwarding) reuses the pad thread,
+        // while changing `gamepad` profile stops the old thread before opening the new one.
+        config
+            .values
+            .insert("forward_rumble".into(), "false".into());
+        let same_thread = acquire_for(&f.host, &owner, &config).unwrap();
+        assert_eq!(Arc::as_ptr(&same_thread), owner_ptr);
+        drop(same_thread);
+
+        config.values.insert("gamepad".into(), "vhf_xbox".into());
+        let new_thread = acquire_for(&f.host, &owner, &config).unwrap();
+        assert_ne!(Arc::as_ptr(&new_thread), owner_ptr);
+        drop(new_thread);
     }
 
     /// #56: a desktop stream's parked controller held XInput slot 0, and the

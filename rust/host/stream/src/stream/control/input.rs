@@ -20,7 +20,12 @@ pub(super) fn handle_input_packet(
     let speaker = super::ps_speaker::negotiated(s, peer.channel_count());
     // A 20-byte speaker binding shares the touchpad packet's magic; its length alone routes it.
     if encrypted
-        && super::ps_speaker::take_binding(p, s, payload, speaker && s.launch.client.allows(1 << 8))
+        && super::ps_speaker::take_binding(
+            p,
+            s,
+            payload,
+            speaker && s.launch.client.allows(1 << 8) && h.device_guests.admits(s, 1 << 8),
+        )
     {
         return;
     }

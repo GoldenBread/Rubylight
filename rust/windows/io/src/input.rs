@@ -338,6 +338,19 @@ impl Injector {
         }
         Ok(())
     }
+    /// While Quick Suspend freezes the game, clears pending key repeats so `next_due()` never
+    /// spins on past-due repeats, and releases any due deferred left-button click across both
+    /// virtual and `SendInput` routes.
+    pub fn flush_suspended(&mut self) -> Result<()> {
+        self.repeat = None;
+        if self
+            .left_release
+            .is_some_and(|due| std::time::Instant::now() >= due)
+        {
+            return self.release_deferred_left(false);
+        }
+        Ok(())
+    }
     pub fn refresh(&mut self) -> Result<()> {
         // Every step runs even when an earlier one fails; the first error is
         // reported. A failed step is not retried before its next due time.

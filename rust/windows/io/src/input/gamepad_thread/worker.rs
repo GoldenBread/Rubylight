@@ -117,21 +117,21 @@ pub(super) fn run<P: Pads>(
     let mut losses = Losses::default();
     let stopping = || shared.stop.load(Ordering::Acquire);
     loop {
-        let release = {
+        let (release, pending_policy) = {
             let mut queue = shared.queue.lock().unwrap();
             loop {
                 if stopping() {
                     // Dropping the pads unplugs them.
                     return;
                 }
-                if queue.release || !queue.events.is_empty() {
+                if queue.release || queue.policy.is_some() || !queue.events.is_empty() {
                     queued = queue.oldest.take();
                     break queue.take_into(&mut events);
                 }
                 if pads.as_ref().is_some_and(|pads| {
                     pads.attach_ready() || ((polling || pads.plugged()) && pads.feedback_ready())
                 }) {
-                    break false;
+                    break (false, None);
                 }
                 handles.clear();
                 handles.push(HANDLE(shared.wake_event.as_raw_handle()));
@@ -143,7 +143,7 @@ pub(super) fn run<P: Pads>(
                         Some(at) => {
                             let now = Instant::now();
                             if now >= at {
-                                break false;
+                                break (false, None);
                             }
                             queue = wait(shared, queue, &handles, Some(at - now));
                         }
@@ -153,11 +153,24 @@ pub(super) fn run<P: Pads>(
                 }
                 let now = Instant::now();
                 if now >= poll_at {
-                    break false;
+                    break (false, None);
                 }
                 queue = wait(shared, queue, &handles, Some(poll_at - now));
             }
         };
+        if let Some(policy) = pending_policy
+            && let Some(pads_now) = &mut pads
+        {
+            pads_now.warnings(shared.warnings.lock().unwrap().clone());
+            if let Err(error) = pads_now.set_policy(policy)
+                && !pads_now.lost()
+            {
+                shared.warnings.lock().unwrap().event("input_gamepad_injection", format!("Controller policy update failed ({error:#}); some controls may not work. Check the selected gamepad profile and virtual driver."), butterpollo_session::session::EVENT_PERIOD);
+            }
+            shared
+                .steam_pads
+                .store(pads_now.steam_pads(), Ordering::Release);
+        }
         let fresh_arrival = events
             .iter()
             .any(|event| matches!(event, Event::Arrival { .. }));

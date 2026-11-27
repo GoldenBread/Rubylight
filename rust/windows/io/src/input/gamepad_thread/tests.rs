@@ -17,8 +17,9 @@ fn drained_batches_reuse_both_buffers_and_discard_interrupted_input() {
         queue.events.extend(expected.clone());
         queue.release = round == 3;
         queue.full = true;
-        let release = queue.take_into(&mut batch);
+        let (release, policy) = queue.take_into(&mut batch);
         assert_eq!(release, round == 3);
+        assert!(policy.is_none());
         assert!(!queue.full);
         assert!(!queue.release);
         assert_eq!(batch.iter().cloned().collect::<Vec<_>>(), expected);

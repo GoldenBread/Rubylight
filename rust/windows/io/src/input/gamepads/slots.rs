@@ -194,6 +194,7 @@ pub(super) fn device_removed(error: &anyhow::Error) -> bool {
 
 impl Drop for Gamepads {
     fn drop(&mut self) {
+        self.wait_detach(None);
         if self.lost {
             // Closing the refused handle releases its pads without stranding slots.
             let mut slots = SLOTS.lock().unwrap();

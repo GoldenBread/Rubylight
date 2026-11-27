@@ -24,7 +24,8 @@ pub(super) fn handle_clipboard_and_focus_packet(
                 return true;
             };
             let offered = crate::extensions::offered(h, &config).text_input
-                && s.launch.client.allows(input::KEYBOARD_PERMISSION);
+                && s.launch.client.allows(input::KEYBOARD_PERMISSION)
+                && h.device_guests.full_access(s);
             let surrounding = encrypted && config.text_input_surrounding_text();
             let watch = s.text_input.on_request(payload, offered, surrounding);
             match watch {
@@ -73,7 +74,9 @@ pub(super) fn handle_clipboard_and_focus_packet(
                 return true;
             }
             // Only a device that may type picks the layout keys go with.
-            if !s.launch.client.allows(input::KEYBOARD_PERMISSION) {
+            if !s.launch.client.allows(input::KEYBOARD_PERMISSION)
+                || !h.device_guests.full_access(s)
+            {
                 tracing::debug!("keyboard layout report without the keyboard permission");
                 return true;
             }
@@ -139,7 +142,9 @@ pub(super) fn send_clipboard_and_focus_updates(
 ) {
     // The text field notice for a client that asked (0x553B): reliable,
     // the newest focus at most every 50 ms.
-    if s.text_input.queued() {
+    if !h.device_guests.full_access(s) {
+        p.focus_watch = None;
+    } else if s.text_input.queued() {
         let notice = s.text_input.take(Instant::now());
         if let Some(notice) = notice {
             match p.encrypt(

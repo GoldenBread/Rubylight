@@ -32,6 +32,11 @@ pub(in crate::stream) struct PadSends {
     pub(in crate::stream) waveforms: Vec<(u16, Vec<u8>)>,
 }
 
+/// Whether `s`'s game is frozen by Quick Suspend, so held keys and controller rumble stop.
+pub(super) fn game_suspended(h: &Shared, s: &Session) -> bool {
+    s.launch.role == Role::Stream && s.launch.nucleus.is_none() && h.quick_suspend.suspended()
+}
+
 /// Polls gamepad feedback reports and sends resulting waveforms and reliable feedback
 /// messages to `peer_id`.
 pub(super) fn send_pad_feedback(
@@ -41,14 +46,21 @@ pub(super) fn send_pad_feedback(
     p: &mut ControlPeer,
     s: &Arc<Session>,
     poll_feedback: bool,
+    suspended: bool,
 ) {
     super::ps_speaker::offer_status(h, p, s);
+    let mut stop_messages = if suspended && !p.was_suspended {
+        p.rumble.stop_all()
+    } else {
+        Vec::new()
+    };
+    p.was_suspended = suspended;
     // The gamepad thread polls feedback every 8 ms; pass on
     // what it found, and the sensors an arrived pad has.
-    let sends = match (&p.injector, &p.coop) {
+    let mut sends = match (&p.injector, &p.coop) {
         (Some(i), _) => pad_reports(
             i.gamepad_reports(),
-            |kind| i.feedback_allowed(kind),
+            |kind| !suspended && i.feedback_allowed(kind),
             haptics_negotiated(&s.config, host.peer(peer_id).channel_count()),
             &p.controller_audio,
             &mut p.ps_speaker,
@@ -58,7 +70,7 @@ pub(super) fn send_pad_feedback(
         ),
         (None, Some(player)) if poll_feedback => pad_reports(
             player.feedback(h),
-            |kind| player.feedback_allowed(kind),
+            |kind| !suspended && player.feedback_allowed(kind),
             haptics_negotiated(&s.config, host.peer(peer_id).channel_count()),
             &p.controller_audio,
             &mut p.ps_speaker,
@@ -68,11 +80,12 @@ pub(super) fn send_pad_feedback(
         ),
         _ => PadSends::default(),
     };
+    stop_messages.append(&mut sends.messages);
     s.reserve_controller_pcm(p.controller_pcm.streams(Instant::now()));
     for (kind, payload) in sends.waveforms {
         p.send_waveform(host, peer_id, s, kind, &payload);
     }
-    for (kind, payload) in sends.messages {
+    for (kind, payload) in stop_messages {
         if let Ok(message) = p.encrypt(s, kind, &payload) {
             let _ = host.peer_mut(peer_id).send(
                 FEEDBACK_CHANNEL,
@@ -85,6 +98,7 @@ pub(super) fn send_pad_feedback(
 /// Generates and sends audio-derived haptics waveforms for every active peer after input
 /// and acks have gone out.
 pub(super) fn send_audio_haptics(
+    h: &Shared,
     host: &mut Host<ControlSocket>,
     peers: &mut HashMap<PeerID, ControlPeer>,
 ) {
@@ -92,7 +106,8 @@ pub(super) fn send_audio_haptics(
         let (Some(s), Some(i)) = (p.session.clone(), &p.injector) else {
             continue;
         };
-        let allowed = i.feedback_allowed(haptics::PACKET_TYPE)
+        let allowed = !game_suspended(h, &s)
+            && i.feedback_allowed(haptics::PACKET_TYPE)
             && haptics_negotiated(&s.config, host.peer(*peer_id).channel_count());
         let payloads = p.audio_haptics.generate(
             allowed,
@@ -236,6 +251,27 @@ impl RumbleForwarded {
             false
         }
     }
+
+    /// Zero-strength packets for every controller whose main or trigger motors
+    /// this client was last told to run, clearing their running state.
+    pub(in crate::stream) fn stop_all(&mut self) -> Vec<(u16, Vec<u8>)> {
+        let mut stops = Vec::new();
+        for (id, motors) in self.running.iter_mut().enumerate() {
+            let id_bytes = (id as u16).to_le_bytes();
+            if std::mem::take(&mut motors[0]) {
+                let mut payload = RUMBLE_MARKER.to_le_bytes().to_vec();
+                payload.extend_from_slice(&id_bytes);
+                payload.extend_from_slice(&[0; 4]);
+                stops.push((RUMBLE_DATA, payload));
+            }
+            if std::mem::take(&mut motors[1]) {
+                let mut payload = id_bytes.to_vec();
+                payload.extend_from_slice(&[0; 4]);
+                stops.push((RUMBLE_TRIGGER_DATA, payload));
+            }
+        }
+        stops
+    }
 }
 
 pub fn feedback_packets(id: u16, kind: u16, data: &[u8]) -> Vec<(u16, Vec<u8>)> {
@@ -288,4 +324,26 @@ pub fn feedback_packets(id: u16, kind: u16, data: &[u8]) -> Vec<(u16, Vec<u8>)> 
         }
     }
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rumble_stop_all_silences_only_running_motors_once() {
+        let mut rumble = RumbleForwarded::default();
+        let main = feedback_packets(2, RUMBLE_DATA, &[1, 0, 2, 0]).remove(0).1;
+        assert!(rumble.forward(true, RUMBLE_DATA, &main));
+        let mut trig = 2u16.to_le_bytes().to_vec();
+        trig.extend_from_slice(&[3, 0, 0, 0]);
+        assert!(rumble.forward(true, RUMBLE_TRIGGER_DATA, &trig));
+
+        let stops = rumble.stop_all();
+        assert_eq!(stops.len(), 2);
+        assert_eq!(stops[0].0, RUMBLE_DATA);
+        assert_eq!(&stops[0].1[4..], &[2, 0, 0, 0, 0, 0]);
+        assert_eq!(stops[1], (RUMBLE_TRIGGER_DATA, vec![2, 0, 0, 0, 0, 0]));
+        assert!(rumble.stop_all().is_empty());
+    }
 }

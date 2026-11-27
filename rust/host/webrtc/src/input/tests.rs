@@ -600,3 +600,54 @@ fn a_device_without_the_controller_bit_gets_no_slot_no_mouse_mode_and_no_timers(
     r.input(r#"{"v":1,"type":"mouse-move","dx":2,"dy":0}"#);
     assert_eq!(r.events().len(), 1);
 }
+
+#[test]
+fn quick_suspend_releases_held_keys_and_stops_rumble() {
+    let mut r = rig(u32::MAX);
+    r.pad(0, 0);
+    r.state(0, 1, A, 0., 5);
+    r.input(r#"{"v":1,"type":"key","code":"KeyW","down":true}"#);
+    assert!(!r.core.channel.held().is_empty());
+
+    r.rec
+        .post_feedback(0, RUMBLE_DATA, &[0xff, 0xff, 0x80, 0x80]);
+    assert!(r.core.poll(r.at(10)));
+    assert_eq!(r.sent("rumble").len(), 1);
+    assert_eq!(r.sent("rumble")[0]["strongMagnitude"], 1.0);
+
+    r.rec.clear();
+    r.rec.set_suspended(true);
+    r.rec
+        .post_feedback(0, RUMBLE_DATA, &[0x40, 0x40, 0x40, 0x40]);
+    assert!(r.core.poll(r.at(20)));
+    assert!(r.core.channel.held().is_empty());
+    assert_eq!(
+        r.events(),
+        [
+            Input::Controller {
+                id: 0,
+                active: 1,
+                buttons: 0,
+                left_trigger: 0,
+                right_trigger: 0,
+                sticks: [0; 4],
+            },
+            key_up(0x57),
+        ]
+    );
+    let rumbles = r.sent("rumble");
+    assert_eq!(
+        rumbles.len(),
+        3,
+        "only the main and trigger stop rumbles go out while suspended"
+    );
+    assert_eq!(rumbles[1]["strongMagnitude"], 0.0);
+    assert_eq!(rumbles[1]["weakMagnitude"], 0.0);
+    assert_eq!(rumbles[2]["leftTrigger"], 0.0);
+    assert_eq!(rumbles[2]["rightTrigger"], 0.0);
+
+    // Pre-suspend rumble was drained while suspended, so resuming does not vibrate stale motors.
+    r.rec.set_suspended(false);
+    assert!(r.core.poll(r.at(30)));
+    assert_eq!(r.sent("rumble").len(), 3);
+}

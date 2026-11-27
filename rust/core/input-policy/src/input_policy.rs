@@ -373,6 +373,15 @@ impl Policy {
     pub fn key(&self, key: u16) -> u16 {
         self.keybindings.get(&key).copied().unwrap_or(key)
     }
+    /// Whether retained virtual gamepads opened under `self` can update to `other`
+    /// in place without tearing down USB/IP or VHF device handles.
+    pub fn same_pad_hardware(&self, other: &Self) -> bool {
+        self.controller
+            && other.controller
+            && self.steam_deck == other.steam_deck
+            && self.dualsense_haptics_gain == other.dualsense_haptics_gain
+            && self.feedback_fast_poll == other.feedback_fast_poll
+    }
     /// The pad controller `kind` with `capabilities` gets from the driver's `available`
     /// profiles, `configured` naming one or 0 for Automatic. `steam_running`: whether Steam was
     /// running when the controller connected, which only on-screen Steam Controller controls

@@ -16,6 +16,7 @@ struct Log {
     denied_kinds: Vec<u16>,
     panic_next: bool,
     apply_delay: Duration,
+    suspended: bool,
 }
 
 /// An injector that records what it is handed and injects nothing: a test fixture's input
@@ -85,6 +86,10 @@ impl Recorder {
         self.0.lock().unwrap().denied_kinds.push(kind);
     }
 
+    pub fn set_suspended(&self, suspended: bool) {
+        self.0.lock().unwrap().suspended = suspended;
+    }
+
     /// Whether a sink could be made.
     pub fn make(&self) -> Result<Box<dyn Sink>> {
         let mut log = self.0.lock().unwrap();
@@ -129,6 +134,9 @@ impl Sink for Recording {
     }
     fn feedback_allowed(&self, kind: u16) -> bool {
         !(self.0).0.lock().unwrap().denied_kinds.contains(&kind)
+    }
+    fn game_suspended(&self) -> bool {
+        (self.0).0.lock().unwrap().suspended
     }
 }
 

@@ -107,15 +107,9 @@ impl Gamepads {
             let current = self.attaching.get(&(item.kind, item.id)).copied();
             if current != Some(item.generation) {
                 match item.outcome {
-                    AttachOutcome::Deck(Ok(pad)) => {
-                        std::thread::spawn(move || drop(pad));
-                    }
-                    AttachOutcome::Switch2(Ok(pad)) => {
-                        std::thread::spawn(move || drop(pad));
-                    }
-                    AttachOutcome::DualSense(Ok(pad)) => {
-                        std::thread::spawn(move || drop(pad));
-                    }
+                    AttachOutcome::Deck(Ok(pad)) => self.detach_usb_pad(item.id, pad),
+                    AttachOutcome::Switch2(Ok(pad)) => self.detach_usb_pad(item.id, pad),
+                    AttachOutcome::DualSense(Ok(pad)) => self.detach_usb_pad(item.id, pad),
                     _ => {}
                 }
                 continue;
@@ -234,6 +228,7 @@ impl Gamepads {
             self.deck_failed.insert(id);
             return Ok(false);
         }
+        self.wait_detach_before_plug(id);
         #[cfg(test)]
         if let Some(hook) = &self.test_attach_hook {
             let hook = std::sync::Arc::clone(hook);
@@ -291,6 +286,7 @@ impl Gamepads {
         if self.attaching.contains_key(&(AttachKind::Switch2, id)) {
             return Ok(forced);
         }
+        self.wait_detach_before_plug(id);
         #[cfg(test)]
         if let Some(hook) = &self.test_attach_hook {
             let hook = std::sync::Arc::clone(hook);
@@ -416,6 +412,7 @@ impl Gamepads {
         if id >= 16 {
             bail!("controller ID out of range");
         }
+        self.wait_detach_before_plug(id);
         if self.ensure_dualsense(id)? {
             return Ok(());
         }

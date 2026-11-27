@@ -266,6 +266,7 @@ impl Watch {
             Target::Display => None,
         };
         if prepared.show_app_window(target.clone()) {
+            *s.output.write().unwrap() = prepared.output();
             match (&target, picked) {
                 (Some(target), Some(window)) => {
                     tracing::info!(%target, title = %window.title, "the stream shows the app's window")

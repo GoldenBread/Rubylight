@@ -44,6 +44,16 @@ pub trait Sink {
     fn follow_controllers(&mut self, _session: &Session, _now: Instant) -> Vec<anyhow::Error> {
         Vec::new()
     }
+    /// Whether the session's game is currently frozen by Quick Suspend.
+    fn game_suspended(&self) -> bool {
+        false
+    }
+    /// Releases all held injector keys, mouse buttons, touch/pen contacts, and gamepad controls.
+    fn release_all(&mut self) {}
+    /// Clears key repeats and flushes any due deferred left-click release while suspended.
+    fn flush_suspended(&mut self) -> Result<()> {
+        Ok(())
+    }
 }
 
 /// The Windows injector, made the way the GameStream control loop makes its own: without the
@@ -52,6 +62,7 @@ pub(super) struct NativeSink {
     injector: Injector,
     h: Shared,
     pads: PadsWait,
+    can_suspend: bool,
 }
 
 impl NativeSink {
@@ -91,10 +102,13 @@ impl NativeSink {
         }
         let mode = s.stream_mode();
         injector.set_stream_size(mode.width, mode.height);
+        let can_suspend = s.launch.role == butterpollo_session::session::Role::Stream
+            && s.launch.nucleus.is_none();
         Ok(Box::new(Self {
             injector,
             h: h.clone(),
             pads: pads_wait,
+            can_suspend,
         }))
     }
 }
@@ -117,8 +131,19 @@ impl Sink for NativeSink {
     fn due(&mut self) -> Result<()> {
         self.injector.due()
     }
+    fn game_suspended(&self) -> bool {
+        self.can_suspend && self.h.quick_suspend.suspended()
+    }
+    fn release_all(&mut self) {
+        self.injector.release_all();
+    }
+    fn flush_suspended(&mut self) -> Result<()> {
+        self.injector.flush_suspended()
+    }
     fn follow_controllers(&mut self, session: &Session, now: Instant) -> Vec<anyhow::Error> {
-        let Self { injector, h, pads } = self;
+        let Self {
+            injector, h, pads, ..
+        } = self;
         let Some(held) = pads.retry(now, || {
             let acquired = effective_config(h, &session.launch)
                 .and_then(|c| controller_sessions::acquire_for(h, &session.launch, &c))?;
@@ -206,6 +231,9 @@ impl Sink for CoopSink {
     }
     fn feedback_allowed(&self, kind: u16) -> bool {
         self.player.feedback_allowed(kind)
+    }
+    fn release_all(&mut self) {
+        self.player.release_all();
     }
 }
 

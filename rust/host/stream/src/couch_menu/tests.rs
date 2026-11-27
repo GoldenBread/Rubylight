@@ -75,7 +75,7 @@ fn couch_menu_chord_releases_the_game_once_before_the_kept_events() {
     let mut events = vec![];
     let batch = apply_batch(&mut peer, Some(&mut game), &mut events, due);
     assert_eq!(batch.nav, [Nav::Opened]);
-    assert_eq!(game.log, ["apply 2", "release", "apply 0"]);
+    assert_eq!(game.log, ["apply 2", "apply 0", "release"]);
     assert!(menu::Shared::is_open(s.couch_menu.load()));
     // Nothing reaches the game while the menu is open.
     let mut events = vec![pad(0x1000)];
@@ -96,6 +96,31 @@ fn couch_menu_chord_releases_the_game_once_before_the_kept_events() {
         due + Duration::from_millis(20),
     );
     assert_eq!(batch.nav, [Nav::Closed]);
+}
+
+#[test]
+fn keyboard_chord_in_single_batch_releases_preceding_modifiers() {
+    let f = Fixture::new();
+    let (s, mut peer) = followed(&f, Role::Stream);
+    let mut game = FakeGame::default();
+    let now = Instant::now();
+    let key = |code: u16, modifiers: u8| Input::Keyboard {
+        key: code,
+        modifiers,
+        flags: 0,
+        down: true,
+    };
+    let mut events = vec![
+        key(0xA2, chord::MODIFIER_CTRL),
+        key(0xA4, chord::MODIFIER_CTRL | chord::MODIFIER_ALT),
+        key(chord::VK_BACK, chord::MODIFIER_CTRL | chord::MODIFIER_ALT),
+    ];
+    let batch = apply_batch(&mut peer, Some(&mut game), &mut events, now);
+    assert_eq!(batch.nav, [Nav::Opened]);
+    assert!(menu::Shared::is_open(s.couch_menu.load()));
+    // The two modifier presses before Backspace are applied first and then
+    // released immediately so Ctrl and Alt never stay stuck while the menu is up.
+    assert_eq!(game.log, ["apply 2", "release"]);
 }
 
 #[test]

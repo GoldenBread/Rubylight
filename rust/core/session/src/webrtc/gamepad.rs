@@ -223,6 +223,23 @@ impl Gamepads {
         actions
     }
 
+    /// Neutralizes held buttons, triggers, sticks, and simulated mouse buttons on every plugged
+    /// controller without unplugging slots (used when Quick Suspend freezes the game).
+    pub fn release_all(&mut self) -> Vec<Action> {
+        let mask = self.active_mask;
+        let mut actions = Vec::new();
+        for c in self.controllers.values_mut() {
+            release_simulated(c, &mut actions);
+            c.latest = Pad::default();
+            c.previous_buttons = 0;
+            c.start_pressed_at = None;
+            if !c.mouse_mode {
+                send_pad(c, mask, Pad::default(), &mut actions);
+            }
+        }
+        actions
+    }
+
     /// Apply a `gamepad-state` snapshot received at `now`.
     pub fn state(&mut self, state: &State, now: Instant) -> Outcome {
         let mask = self.active_mask;

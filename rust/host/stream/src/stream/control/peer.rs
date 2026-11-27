@@ -49,6 +49,7 @@ pub(in crate::stream) struct ControlPeer {
     /// When the bound controllers' speaker status last went to the injector.
     pub(super) ps_speaker_status_at: Option<Instant>,
     pub(super) rumble: RumbleForwarded,
+    pub(super) was_suspended: bool,
     pub(super) command_at: Option<Instant>,
     /// Whether the session is in the control socket's roaming table.
     pub(super) roaming: bool,
@@ -127,6 +128,7 @@ impl ControlPeer {
             ps_speaker: Default::default(),
             ps_speaker_status_at: None,
             rumble: Default::default(),
+            was_suspended: false,
             command_at: None,
             roaming: false,
             couch: Default::default(),

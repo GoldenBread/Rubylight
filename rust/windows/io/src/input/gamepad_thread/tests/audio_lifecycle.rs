@@ -359,7 +359,7 @@ fn an_unmapped_back_grip_press_shows_a_hint_and_still_reaches_the_pads() {
     )
     .unwrap();
     // L4 mapped, R4 not: pressing L4 says nothing.
-    pads.unmapped_grips = 0x01_0000;
+    pads.unmapped_grips = 0x01_0000.into();
     pads.send(state(0, 1, 0x02_0000, 0));
     assert!(warnings.snapshot().is_empty());
     // A Switch 2 Pro pad has R4 (GR): no hint for it.
@@ -389,7 +389,7 @@ fn an_automatic_steam_controller_keeps_its_back_grips_without_a_hint() {
         warnings.clone(),
     )
     .unwrap();
-    pads.unmapped_grips = 0x0f_0000;
+    pads.unmapped_grips = 0x0f_0000.into();
     pads.send(Event::Arrival {
         id: 0,
         kind: 1,

@@ -71,6 +71,10 @@ pub(super) fn input(p: &mut ControlPeer, event: &mut input::Input, negotiated: b
 /// Tells the virtual DualSense of each bound controller to play its speaker, as a Rubylight
 /// client's 0x5535 status does, within the host's controller speaker policy.
 pub(super) fn offer_status(h: &Shared, p: &mut ControlPeer, s: &Session) {
+    if !s.launch.client.allows(1 << 8) || !h.device_guests.admits(s, 1 << 8) {
+        p.ps_speaker.controllers(0);
+        return;
+    }
     let bound = p.ps_speaker.bound_mask();
     if bound == 0
         || p.injector.is_none()
