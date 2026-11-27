@@ -212,6 +212,7 @@ pub fn menu_label(label: &str) -> String {
     label.replace('&', "&&")
 }
 
-#[cfg(test)]
+// Its tests draw through the Windows icon too; the Linux tray includes this file as well.
+#[cfg(all(test, windows))]
 #[path = "status_tests.rs"]
 mod tests;

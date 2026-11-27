@@ -18,6 +18,7 @@ use std::{
 };
 
 pub mod hooks;
+pub mod notify;
 
 /// A playback device.
 #[derive(Clone, Serialize)]

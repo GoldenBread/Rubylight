@@ -13,7 +13,10 @@ mod socket;
 mod sys;
 mod wait;
 
-pub use batch::{Batch, DatagramWait, send_datagram, send_datagram_pass, send_datagram_with_wait};
+pub use batch::{
+    Batch, BatchDropDelta, BatchDrops, DatagramSend, DatagramWait, send_datagram,
+    send_datagram_pass, send_datagram_pass_outcome, send_datagram_with_wait,
+};
 pub use changes::InterfaceChanges;
 #[cfg(test)]
 pub(crate) use interfaces::parse_routes4;

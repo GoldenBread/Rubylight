@@ -246,11 +246,19 @@ fn recovery_leaves_files_a_running_stream_writes() {
 #[test]
 fn the_folder_and_quota_come_from_the_settings() {
     let config = Config::parse("").unwrap();
-    let dir = clips_dir(
-        Path::new(r"C:\ProgramData\Butterpollo\config\sunshine.conf"),
-        &config,
+    #[cfg(windows)]
+    let (profile, clips) = (
+        r"C:\ProgramData\Butterpollo\config\sunshine.conf",
+        r"C:\ProgramData\Butterpollo\config\clips",
     );
-    assert_eq!(dir, Path::new(r"C:\ProgramData\Butterpollo\config\clips"));
+    // A Windows path is one file name elsewhere.
+    #[cfg(not(windows))]
+    let (profile, clips) = (
+        "/var/lib/butterpollo/config/sunshine.conf",
+        "/var/lib/butterpollo/config/clips",
+    );
+    let dir = clips_dir(Path::new(profile), &config);
+    assert_eq!(dir, Path::new(clips));
     assert_eq!(quota_bytes(&config), 20 * GIB);
     let custom = Config::parse("dvr_directory = D:\\Clips\ndvr_quota_gb = 5\n").unwrap();
     assert_eq!(

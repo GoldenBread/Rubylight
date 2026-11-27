@@ -28,6 +28,20 @@ pub(super) fn transient(error: Errno) -> bool {
     .contains(&error)
 }
 
+/// Send errors that say the PC has no route to the peer for the moment (a network down or
+/// unreachable, an address gone): counted apart from a full socket, as on Windows.
+pub(super) fn route_unavailable(error: Errno) -> bool {
+    [
+        libc::ENETDOWN,
+        libc::ENETUNREACH,
+        libc::ENETRESET,
+        libc::EHOSTUNREACH,
+        libc::EHOSTDOWN,
+        libc::EADDRNOTAVAIL,
+    ]
+    .contains(&error)
+}
+
 /// How long one send, or all of one batch's sends together, wait for room in
 /// a full socket buffer before dropping. Per datagram, 64 refused datagrams
 /// would hold the sender for 256 ms. Within a video frame

@@ -32,6 +32,8 @@ Each of these could come to Linux; the reason says what stands in the way.
 | Dual screen mode | Not offered: a launch has no second display to give a second screen. |
 | The native API's session launcher | Not offered: it reads the PC's window list, which the host does not read on Linux. |
 | USB forwarding | Not built; not offered to clients. |
+| Quick Suspend | Not built: the host suspends no process on Linux, so it is not offered to clients (`rust/linux/io/src/process/suspend.rs`). |
+| The console's display map | Not built: a display's place and mode are not read on Linux, so the map draws none (`rust/linux/display/src/display/geometry.rs`). |
 | Window capture | Not built (`rust/linux/graphics/src/capture.rs`). |
 | Per-application audio routing | Not built: no program's sound can be moved to another device (`rust/linux/io/src/audio_app_route.rs`). |
 | Switch 2 Pro Controller | The kernel has no driver for it; it becomes a Switch Pro Controller, with a warning. |

@@ -50,6 +50,15 @@ pub fn following() -> bool {
     false
 }
 
+/// Whether the stream's cap clamps to the game's rendered rate (`frame_limiter_queue_clamp`).
+/// No cap does on Linux.
+pub fn queue_clamping() -> bool {
+    false
+}
+
+/// Clamps the followed cap to the game's rendered rate. There is no cap on Linux.
+pub fn follow_queue_clamp(_rendered_fps_milli: u32, _gpu_busy_percent: Option<u8>) {}
+
 /// Whether the stream reads its display's mode at this live tick: with every timing window,
 /// and between windows while a cap follows the display.
 pub fn display_read_due(window_due: bool, following: bool) -> bool {

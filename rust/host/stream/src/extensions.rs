@@ -138,7 +138,8 @@ pub fn on_linux() -> bool {
 /// GPU passes, the virtual display's scale, the NVIDIA component's RTX HDR and RTX Video, and
 /// USB forwarding; and the second screen (Dual screen mode), which a Linux host would stream
 /// the first screen's picture to, as it has no virtual display and does not pick another
-/// monitor. Windows offers are returned as they are.
+/// monitor; and Quick Suspend, as a Linux host suspends no process yet. Windows offers are
+/// returned as they are.
 pub fn for_platform(offered: Offered, linux: bool) -> Offered {
     if !linux {
         return offered;
@@ -155,20 +156,28 @@ pub fn for_platform(offered: Offered, linux: bool) -> Offered {
         frame_warp: false,
         nvidia_enhancements: 0,
         second_screen: false,
+        quick_suspend: false,
         ..offered
     }
 }
 
 /// Takes from the native API's `features` those a Linux host cannot serve: the session's
 /// launcher (`session.launcher`), which the host finds in the PC's window list, empty on
-/// Linux. Windows features are returned as they are.
+/// Linux, and Quick Suspend, which suspends no process there yet. Windows features are
+/// returned as they are.
 pub fn native_for_platform(features: Vec<&str>, linux: bool) -> Vec<&str> {
     if !linux {
         return features;
     }
     features
         .into_iter()
-        .filter(|feature| *feature != rubylight_native_api::feature::SESSION_LAUNCHER)
+        .filter(|feature| {
+            ![
+                rubylight_native_api::feature::SESSION_LAUNCHER,
+                rubylight_native_api::feature::QUICK_SUSPEND,
+            ]
+            .contains(feature)
+        })
         .collect()
 }
 
@@ -441,8 +450,13 @@ mod tests {
             rate_change: true,
             clipboard_sync: true,
             transport_feedback: true,
+            quick_suspend: true,
+            stream_dvr: true,
+            launch_curtain: true,
+            launch_curtain_stream: true,
             nvidia_enhancements: 3,
             max_video_packet: 1424,
+            away_wake_relay: true,
         };
         assert_eq!(for_platform(everything, false), everything);
         assert_eq!(
@@ -458,16 +472,22 @@ mod tests {
                 frame_warp: false,
                 nvidia_enhancements: 0,
                 second_screen: false,
+                quick_suspend: false,
                 ..everything
             }
         );
     }
 
-    /// A Linux host's native API leaves out the session launcher only.
+    /// A Linux host's native API leaves out the session launcher and Quick Suspend only.
     #[test]
     fn linux_native_features_leave_out_the_launcher() {
         use rubylight_native_api::feature;
-        let features = vec![feature::SESSION, feature::SESSION_LAUNCHER, feature::WAKE];
+        let features = vec![
+            feature::SESSION,
+            feature::SESSION_LAUNCHER,
+            feature::QUICK_SUSPEND,
+            feature::WAKE,
+        ];
         assert_eq!(native_for_platform(features.clone(), false), features);
         assert_eq!(
             native_for_platform(features, true),

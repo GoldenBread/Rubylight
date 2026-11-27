@@ -190,6 +190,11 @@ impl Injector {
     pub fn flush_virtual_left_release(&mut self) -> Result<()> {
         Ok(())
     }
+    /// While Quick Suspend freezes the game, drop pending key repeats and release a due
+    /// deferred click. Linux holds back neither.
+    pub fn flush_suspended(&mut self) -> Result<()> {
+        Ok(())
+    }
     /// Keep held touches and the pen alive and read the display's rectangle again. Nothing
     /// is held on Linux.
     pub fn refresh(&mut self) -> Result<()> {

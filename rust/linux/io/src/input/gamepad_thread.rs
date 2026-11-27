@@ -21,7 +21,10 @@ use butterpollo_input_policy::{haptics, input_policy};
 use rubylight_vgamepad_proto::protocol::Profile;
 use std::{
     collections::BTreeMap,
-    sync::{Arc, Mutex, PoisonError},
+    sync::{
+        Arc, Mutex, PoisonError,
+        atomic::{AtomicBool, Ordering},
+    },
     thread::JoinHandle,
     time::{Duration, Instant},
 };
@@ -56,7 +59,10 @@ pub enum PadReport {
 pub struct GamepadThread {
     warnings: Mutex<Arc<butterpollo_session::session::Warnings>>,
     pads: Mutex<Pads>,
-    policy: input_policy::Policy,
+    /// The input policy, which a retained set of pads takes from the next stream.
+    policy: Mutex<input_policy::Policy>,
+    /// Set once the pads are unplugged for good ([`Self::request_stop`]).
+    stopped: AtomicBool,
     /// The `gamepad` setting's profile.
     profile: u16,
     /// What the pads' threads have for the client.
@@ -124,7 +130,8 @@ impl GamepadThread {
         Ok(Self {
             warnings: Mutex::new(warnings),
             pads: Mutex::default(),
-            policy,
+            policy: Mutex::new(policy),
+            stopped: AtomicBool::new(false),
             profile: if profile == input_policy::VHF_AUTO {
                 0
             } else {
@@ -142,6 +149,18 @@ impl GamepadThread {
     /// The warnings of the stream these controllers now belong to.
     pub fn set_warnings(&self, warnings: Arc<butterpollo_session::session::Warnings>) {
         *self.warnings.lock().unwrap_or_else(PoisonError::into_inner) = warnings;
+    }
+    /// The next stream's input policy for pads it keeps: plugged pads stay as they are and
+    /// map their buttons by it from now on.
+    pub fn set_policy(&self, policy: input_policy::Policy) {
+        *self.policy.lock().unwrap_or_else(PoisonError::into_inner) = policy;
+    }
+    fn policy(&self) -> std::sync::MutexGuard<'_, input_policy::Policy> {
+        self.policy.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+    /// Whether the pads were unplugged for good: there is no worker thread on Linux to exit.
+    pub fn is_stopped(&self) -> bool {
+        self.stopped.load(Ordering::Acquire)
     }
     /// The sysfs name of pad `id`'s device, for the device tests.
     #[cfg(test)]
@@ -173,10 +192,10 @@ impl GamepadThread {
         self.pads.lock().unwrap_or_else(PoisonError::into_inner)
     }
     /// The choice of pad for this PC and policy.
-    fn chooser(&self) -> Chooser<'_> {
+    fn chooser<'a>(&'a self, policy: &'a input_policy::Policy) -> Chooser<'a> {
         Chooser {
             profile: self.profile,
-            policy: &self.policy,
+            policy,
             uhid: self.uhid,
             steam_running: &self.steam_running,
         }
@@ -225,7 +244,10 @@ impl GamepadThread {
         let arrival = arrival.unwrap_or_default();
         let mut refused = Vec::new();
         loop {
-            let want = self.chooser().want(arrival, identity, &refused);
+            let want = {
+                let policy = self.policy();
+                self.chooser(&policy).want(arrival, identity, &refused)
+            };
             let (key, name) = want.warning();
             match self.make(want, id, arrival.1) {
                 Ok(pad) => {
@@ -322,16 +344,16 @@ impl GamepadThread {
         else {
             return event.clone();
         };
+        let policy = self.policy();
         let (mut buttons, left_trigger, right_trigger) =
             if matches!(want, Want::SteamController | Want::Deck) {
                 (*buttons, *left_trigger, *right_trigger)
             } else {
-                self.policy
-                    .map_back_grips(*buttons, *left_trigger, *right_trigger)
+                policy.map_back_grips(*buttons, *left_trigger, *right_trigger)
             };
         if self.profile == input_policy::VIGEM_DS4
             && want == Want::DualShock4
-            && self.policy.ds4_back_as_touchpad_click
+            && policy.ds4_back_as_touchpad_click
             && buttons & 0x20 != 0
         {
             buttons |= 0x10_0000;
@@ -474,6 +496,7 @@ impl GamepadThread {
     /// Unplug the pads. Nothing runs on a thread, so this is done at once.
     pub fn request_stop(&self) {
         self.pads().plugged.clear();
+        self.stopped.store(true, Ordering::Release);
     }
     /// Unplug the pads; there is no thread to wait for.
     pub fn stop(&self) -> Option<JoinHandle<()>> {

@@ -593,12 +593,15 @@ mod tests {
             .insert("forward_rumble".into(), "false".into());
         let same_thread = acquire_for(&f.host, &owner, &config).unwrap();
         assert_eq!(Arc::as_ptr(&same_thread), owner_ptr);
+        // Keeps the old pads' memory, so the new ones cannot be given its address (a host
+        // without a worker thread frees them at once).
+        let old = Arc::downgrade(&same_thread);
         drop(same_thread);
 
         config.values.insert("gamepad".into(), "vhf_xbox".into());
         let new_thread = acquire_for(&f.host, &owner, &config).unwrap();
         assert_ne!(Arc::as_ptr(&new_thread), owner_ptr);
-        drop(new_thread);
+        drop((new_thread, old));
     }
 
     /// #56: a desktop stream's parked controller held XInput slot 0, and the

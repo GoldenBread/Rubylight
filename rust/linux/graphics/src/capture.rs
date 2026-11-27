@@ -16,12 +16,17 @@ use std::{
 pub mod desktop;
 #[cfg(test)]
 mod desktop_tests;
+mod gpu_choice;
 pub mod idd_push;
 pub mod kms;
 pub mod kwin;
 mod priority;
 mod pw_capture;
 
+use gpu_choice::pinned_choice;
+pub use gpu_choice::{
+    automatic_switch, foreground_window, missing_gpu_text, render_gpu, select_gpu,
+};
 pub use priority::Priority;
 
 pub use butterpollo_media_policy::app_window::WindowTarget;
@@ -132,33 +137,10 @@ pub struct Gpu {
     /// The adapter's identity for as long as the system runs.
     pub luid: (u32, i32),
     pub pnp_id: Option<String>,
-}
-
-/// The GPU the Graphics card setting names, matched as capture and the
-/// encoders match it: by the stored PnP identity when there is one, otherwise
-/// by name. None on Automatic.
-pub fn select_gpu<'a>(
-    gpus: &'a [Gpu],
-    adapter_name: &str,
-    pnp_id: &str,
-) -> Result<Option<&'a Gpu>> {
-    if adapter_name.is_empty() && pnp_id.is_empty() {
-        return Ok(None);
-    }
-    let mut matches = gpus.iter().filter(|gpu| {
-        if pnp_id.is_empty() {
-            gpu.name == adapter_name
-        } else {
-            gpu.pnp_id
-                .as_deref()
-                .is_some_and(|id| id.eq_ignore_ascii_case(pnp_id))
-        }
-    });
-    let gpu = matches.next();
-    if gpu.is_none() || (!pnp_id.is_empty() && matches.next().is_some()) {
-        bail!("configured GPU adapter was not resolved uniquely: {adapter_name} {pnp_id}");
-    }
-    Ok(gpu)
+    /// Where the system lists it when asked for performance and for power, as Windows does;
+    /// None on Linux, which keeps no such order.
+    #[serde(skip)]
+    pub preference: Option<(u32, u32)>,
 }
 
 /// The hardware GPUs: the AMD and NVIDIA GPUs with a render node. The adapter identity is the
@@ -176,6 +158,7 @@ pub fn gpus() -> Result<Vec<Gpu>> {
                 "PCI\\VEN_{:04X}&DEV_{:04X}&SLOT_{}",
                 node.vendor, node.device, node.slot
             )),
+            preference: None,
         })
         .collect())
 }
@@ -188,29 +171,6 @@ pub fn gpu_adapters(gpus: &[Gpu]) -> Vec<encoder_gpu::Adapter> {
             vendor: gpu.vendor,
         })
         .collect()
-}
-
-/// The GPU choice a stream that encodes on the capture device opens it with.
-/// A chosen GPU stays. With none chosen on a PC that mixes vendors it is the
-/// AMD or NVIDIA GPU with the most video memory, unless the display is already
-/// on one (`display_vendor`).
-fn pinned_choice(
-    gpus: &[Gpu],
-    display_vendor: Option<u32>,
-    adapter_name: &str,
-    pnp_id: &str,
-) -> (String, String) {
-    if adapter_name.is_empty() && pnp_id.is_empty() {
-        let adapters: Vec<(u32, u64)> = gpus
-            .iter()
-            .map(|gpu| (gpu.vendor, gpu.dedicated_memory))
-            .collect();
-        if let Some(gpu) = encoder_gpu::pinned(&adapters, display_vendor).and_then(|i| gpus.get(i))
-        {
-            return (gpu.name.clone(), gpu.pnp_id.clone().unwrap_or_default());
-        }
-    }
-    (adapter_name.to_string(), pnp_id.to_string())
 }
 
 /// [`pinned_choice`] for this PC's GPUs; the choice as given when they cannot be listed.

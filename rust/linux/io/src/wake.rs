@@ -188,6 +188,12 @@ impl PowerRequest {
             _inhibitor: inhibitor,
         })
     }
+    /// Keeps the console display on while a stream captures it. logind's idle inhibitor is
+    /// both on Linux: the session does not go idle, so the desktop neither blanks the screen
+    /// nor sleeps.
+    pub fn display_required(reason: &str) -> Result<Self> {
+        Self::system_required(reason)
+    }
 }
 
 /// Seconds without input after which a launch wakes the console display.

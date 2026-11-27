@@ -45,6 +45,11 @@ impl Discovery {
             .filter(|status| status.state == "disabled")
             .map(|status| status.source)
     }
+    /// The sources not read because no user was signed in, whose games keep the state an
+    /// earlier scan found. None on Linux: the host reads each launcher as its own user.
+    pub fn signed_out(&self) -> impl Iterator<Item = Source> + '_ {
+        std::iter::empty()
+    }
 }
 
 /// Runs `work` and returns its result. On Windows the thread reads a library's files in

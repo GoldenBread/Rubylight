@@ -22,6 +22,11 @@ mod item;
 mod menu;
 mod notices;
 mod pixmap;
+// The badges and the status of the Windows tray, which has the same `Action`s; the Linux
+// menu keeps its own layout.
+#[allow(dead_code)]
+#[path = "../../../windows/io/src/tray/status.rs"]
+mod status;
 
 pub use notices::{
     launch_error, notices_due, notify, notify_pairing, pairing_request_ended,

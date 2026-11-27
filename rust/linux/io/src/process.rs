@@ -16,6 +16,8 @@ mod listing;
 mod security;
 mod session;
 mod signal;
+pub mod suspend;
+pub mod suspend_watch;
 pub use listing::{Usage, creation_time, image_path, now, processes, usage};
 pub use security::*;
 pub use session::*;

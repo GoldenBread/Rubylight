@@ -127,6 +127,8 @@ pub struct VirtualOptions {
     pub peak_nits: u32,
     /// The GPU to render the display on; None leaves the choice to the system.
     pub render_adapter: Option<RenderAdapter>,
+    /// Finds `render_adapter` again after a driver reload or a GPU reset.
+    pub render_resolver: Option<RenderResolver>,
     /// The stream joins a running game's display and takes it as it is
     /// ([`joinable_mode`]).
     pub joins: bool,
@@ -137,6 +139,7 @@ impl Default for VirtualOptions {
         Self {
             peak_nits: 1000,
             render_adapter: None,
+            render_resolver: None,
             joins: false,
         }
     }
@@ -147,6 +150,29 @@ impl Default for VirtualOptions {
 pub struct RenderAdapter {
     pub name: String,
     pub luid: (u32, i32),
+}
+
+/// Finds the GPU that renders virtual displays again from the Graphics card setting it was
+/// resolved from, after a driver reload or a GPU reset. Linux's virtual displays render on no
+/// chosen GPU yet, so nothing asks it.
+#[derive(Clone)]
+pub struct RenderResolver(std::sync::Arc<Resolve>);
+type Resolve = dyn Fn() -> Result<Option<RenderAdapter>> + Send + Sync;
+impl RenderResolver {
+    pub fn new(
+        resolve: impl Fn() -> Result<Option<RenderAdapter>> + Send + Sync + 'static,
+    ) -> Self {
+        Self(std::sync::Arc::new(resolve))
+    }
+    /// The GPU the setting names now.
+    pub fn resolve(&self) -> Result<Option<RenderAdapter>> {
+        (self.0)()
+    }
+}
+impl std::fmt::Debug for RenderResolver {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("RenderResolver")
+    }
 }
 
 /// The GPU the Graphics card setting names, for virtual displays to render on. `select`

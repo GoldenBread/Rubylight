@@ -1,9 +1,9 @@
 //! The tray icon's pictures: the PNG images inside the host's `.ico`, each with the state's
-//! dot (`butterpollo_session::tray::badge`, as on Windows), in the form a StatusNotifierItem
-//! takes them.
+//! badge (the Windows tray's `status::composite`), in the form a StatusNotifierItem takes them.
+use super::status::{Status, composite};
 use butterpollo_session::{
     clipboard_image::{Image, decode_png},
-    tray::{Icon, badge},
+    tray::Icon,
 };
 
 /// One size of a picture: width, height and ARGB32 pixels in network byte order.
@@ -48,7 +48,7 @@ pub(super) fn pixmap(image: &Image, icon: Icon) -> Pixmap {
     for pixel in pixels.as_chunks_mut::<4>().0 {
         pixel.swap(0, 2);
     }
-    badge(&mut pixels, width, height, icon);
+    composite(&mut pixels, width, height, Status::from_icon(icon, false));
     let argb = pixels
         .as_chunks::<4>()
         .0

@@ -4,6 +4,7 @@
 //! made, and anything that would read or change a display's mode, scale, rotation, HDR or
 //! position returns an error that says so. Saved layout files are still read and checked.
 
+mod geometry;
 mod modes;
 mod monitor;
 mod recovery;
@@ -12,6 +13,7 @@ pub mod self_test;
 mod topology;
 mod virtual_display;
 
+pub use geometry::{Geometry, Placed, geometry, placed};
 pub use modes::{DisplayMode, highest_refresh, largest_scale, mode, output_scale, virtual_scale};
 pub use recovery::{
     DisplayDiagnostics, DisplayStatus, Guard, Retained, Snapshot, apply_layout, baseline_nodes,
@@ -21,8 +23,8 @@ pub use topology::{
     Monitor, Topology, active_device_ids, active_displays, edid_refresh, monitors, shown_primary,
 };
 pub use virtual_display::{
-    PrivateRequest, RenderAdapter, VirtualDisplay, VirtualOptions, configured_render_adapter_with,
-    ensure_virtual_display_available, joinable_mode, recover_after_restart,
-    virtual_display_available, virtual_display_installed, virtual_display_os,
-    virtual_display_status, windows_build,
+    PrivateRequest, RenderAdapter, RenderResolver, VirtualDisplay, VirtualOptions,
+    configured_render_adapter_with, ensure_virtual_display_available, joinable_mode,
+    recover_after_restart, virtual_display_available, virtual_display_installed,
+    virtual_display_os, virtual_display_status, windows_build,
 };

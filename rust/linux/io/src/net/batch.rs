@@ -3,7 +3,10 @@
 use super::{
     reply::ReplySocket,
     sys::{Ancillary, Errno, send_from, send_message},
-    wait::{DatagramPass, WaitBudget, WritableWaits, buffer_available, send_with_retry, transient},
+    wait::{
+        DatagramPass, WaitBudget, WritableWaits, buffer_available, route_unavailable,
+        send_with_retry, transient,
+    },
 };
 use anyhow::Result;
 use std::{
@@ -11,6 +14,47 @@ use std::{
     net::{IpAddr, SocketAddr, UdpSocket},
     time::{Duration, Instant},
 };
+
+/// Cumulative drop counters read from [`Batch::drops`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct BatchDrops {
+    pub dropped: u64,
+    pub oversized: u64,
+    pub route_unavailable: u64,
+}
+
+/// Per-batch or per-frame datagram drop breakdown computed by [`Batch::drops_since`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct BatchDropDelta {
+    pub dropped: u64,
+    pub oversized: u64,
+    pub route_unavailable: u64,
+    pub refused: u64,
+}
+
+impl BatchDropDelta {
+    pub fn any(&self) -> bool {
+        self.dropped > 0
+    }
+
+    pub fn route_only(&self) -> bool {
+        self.route_unavailable > 0 && self.refused == 0 && self.oversized == 0
+    }
+}
+
+/// Outcome of one datagram send that does not end the stream on transient errors.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DatagramSend {
+    Sent,
+    Refused,
+    RouteUnavailable,
+}
+
+impl DatagramSend {
+    pub fn is_sent(self) -> bool {
+        matches!(self, Self::Sent)
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum SegmentedFailure {
@@ -71,13 +115,14 @@ fn send_datagram_budget(
     packet: &[u8],
     peer: SocketAddr,
     budget: &mut WaitBudget,
-) -> Result<bool> {
+) -> Result<DatagramSend> {
     let (result, _) = socket.send_pinned(peer, socket.source(peer), |source| {
         send_one(socket, packet, peer, source, budget, None)
     })?;
     match result {
-        Ok(()) => Ok(true),
-        Err(error) if transient(error) => Ok(false),
+        Ok(()) => Ok(DatagramSend::Sent),
+        Err(error) if route_unavailable(error) => Ok(DatagramSend::RouteUnavailable),
+        Err(error) if transient(error) => Ok(DatagramSend::Refused),
         Err(error) => Err(std::io::Error::from_raw_os_error(error).into()),
     }
 }
@@ -93,7 +138,7 @@ pub fn send_datagram_with_wait(
     peer: SocketAddr,
     wait: &mut DatagramWait,
 ) -> Result<bool> {
-    send_datagram_budget(socket, packet, peer, &mut wait.0)
+    send_datagram_budget(socket, packet, peer, &mut wait.0).map(DatagramSend::is_sent)
 }
 /// One datagram, from the address `peer` reached; `Ok(false)` when a
 /// transient error dropped it.
@@ -109,16 +154,27 @@ pub fn send_datagram_pass(
     peer: SocketAddr,
     pass: &mut DatagramPass,
 ) -> Result<bool> {
+    send_datagram_pass_outcome(socket, packet, peer, pass).map(DatagramSend::is_sent)
+}
+/// Like [`send_datagram_pass`], distinguishing a full socket buffer from an
+/// unreachable network route.
+pub fn send_datagram_pass_outcome(
+    socket: &ReplySocket,
+    packet: &[u8],
+    peer: SocketAddr,
+    pass: &mut DatagramPass,
+) -> Result<DatagramSend> {
     let mut budget = WaitBudget::for_frame_with_enobufs(
         Some(pass.until),
         pass.deadline,
         Some(pass.enobufs_until),
         pass.enobufs_deadline,
     );
-    let ok = send_datagram_budget(socket, packet, peer, &mut budget)?;
+    let outcome = send_datagram_budget(socket, packet, peer, &mut budget)?;
+    let ok = outcome.is_sent();
     pass.deadline = budget.deadline.filter(|_| !ok);
     pass.enobufs_deadline = budget.enobufs_deadline.filter(|_| !ok);
-    Ok(ok)
+    Ok(outcome)
 }
 /// Per-message segmentation leaves the shared socket's options untouched.
 pub struct Batch {
@@ -131,6 +187,8 @@ pub struct Batch {
     /// Datagrams the path refused because they are larger than its MTU with
     /// fragmentation refused; also counted in `dropped`.
     pub oversized: u64,
+    /// Datagrams dropped because the PC had no route to the peer; also counted in `dropped`.
+    pub route_unavailable: u64,
     /// The sender's socket refuses fragmentation
     /// ([`set_dont_fragment`](super::set_dont_fragment)), as the PyroWave probe's does for a
     /// jumbo path, so an oversized datagram is a lost packet to report, not a send error that
@@ -145,6 +203,8 @@ pub struct Batch {
     pub(super) frame: Option<FrameWait>,
     unreported: u64,
     reported: Option<Instant>,
+    unreported_route: u64,
+    reported_route: Option<Instant>,
     /// The control data and address of the last segmented send, rebuilt only
     /// when the peer, the first packet's size or the source changes.
     segmented: Option<Segmented>,
@@ -157,11 +217,14 @@ impl Default for Batch {
             dropped: 0,
             last_sent: 0,
             oversized: 0,
+            route_unavailable: 0,
             dont_fragment: false,
             waits: None,
             frame: None,
             unreported: 0,
             reported: None,
+            unreported_route: 0,
+            reported_route: None,
             segmented: None,
         }
     }
@@ -247,12 +310,55 @@ impl Batch {
         }
         count.max(1)
     }
+    /// Snapshot cumulative drop counters so callers can separate socket congestion from
+    /// route unavailability or MTU refusals.
+    pub fn drops(&self) -> BatchDrops {
+        BatchDrops {
+            dropped: self.dropped,
+            oversized: self.oversized,
+            route_unavailable: self.route_unavailable,
+        }
+    }
+    /// Compute drops recorded since `before`.
+    pub fn drops_since(&self, before: BatchDrops) -> BatchDropDelta {
+        let dropped = self.dropped.saturating_sub(before.dropped);
+        let oversized = self.oversized.saturating_sub(before.oversized);
+        let route_unavailable = self
+            .route_unavailable
+            .saturating_sub(before.route_unavailable);
+        let refused = dropped
+            .saturating_sub(oversized)
+            .saturating_sub(route_unavailable);
+        BatchDropDelta {
+            dropped,
+            oversized,
+            route_unavailable,
+            refused,
+        }
+    }
     /// Count dropped datagrams and report them at most every 5 seconds.
     fn dropped(&mut self, count: usize, error: Errno) {
         if let Some(trace) = self.waits.as_mut() {
             trace.last_error = error;
         }
         self.dropped += count as u64;
+        if route_unavailable(error) {
+            self.route_unavailable += count as u64;
+            self.unreported_route += count as u64;
+            if self
+                .reported_route
+                .is_none_or(|at| at.elapsed() >= Duration::from_secs(5))
+            {
+                tracing::warn!(
+                    code = error,
+                    dropped = self.unreported_route,
+                    "UDP send failed: the network route to the client is unavailable, so packets were dropped until the connection returns"
+                );
+                self.unreported_route = 0;
+                self.reported_route = Some(Instant::now());
+            }
+            return;
+        }
         self.unreported += count as u64;
         if self
             .reported

@@ -630,7 +630,7 @@ dependencies = [
 
 [[package]]
 name = "butterpollo-linux-display"
-version = "6.4.4"
+version = "6.4.5"
 dependencies = [
  "anyhow",
  "butterpollo-config",
@@ -648,7 +648,7 @@ dependencies = [
 
 [[package]]
 name = "butterpollo-linux-graphics"
-version = "6.4.4"
+version = "6.4.5"
 dependencies = [
  "anyhow",
  "ash",
@@ -676,7 +676,7 @@ dependencies = [
 
 [[package]]
 name = "butterpollo-linux-io"
-version = "6.4.4"
+version = "6.4.5"
 dependencies = [
  "anyhow",
  "butterpollo-config",
@@ -3312,7 +3312,7 @@ dependencies = [
 
 [[package]]
 name = "rubylight-kms-broker"
-version = "6.4.4"
+version = "6.4.5"
 dependencies = [
  "anyhow",
  "libc",
@@ -3341,7 +3341,7 @@ dependencies = [
 
 [[package]]
 name = "rubylight-vdisplay-broker"
-version = "6.4.4"
+version = "6.4.5"
 dependencies = [
  "anyhow",
  "libc",
