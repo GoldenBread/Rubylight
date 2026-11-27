@@ -129,10 +129,15 @@ pub struct Session<P = (), A = ()> {
     pub idr: AtomicBool,
     pub invalidation: std::sync::Mutex<Option<(u64, u64)>>,
     pub recovery_wake: std::sync::Mutex<Option<Box<dyn Fn() + Send + Sync>>>,
+    /// Fast lock-free check for whether post-RFI LTR confirmation is currently tracking.
+    rfi_confirm_active: AtomicBool,
+    rfi_confirm: std::sync::Mutex<Option<pacing::RfiConfirm>>,
     pub bitrate: AtomicU32,
     /// All bitrate writers take this lock, including client ownership handoff.
     pub adaptive_bitrate:
         std::sync::Mutex<butterpollo_media_policy::adaptive_bitrate::AdaptiveBitrate>,
+    /// Whether `adaptive_bitrate` is configured; control pings skip its lock otherwise.
+    adaptive_bitrate_on: AtomicBool,
     /// Lowers the encoder bitrate when the link cannot carry the stream; see
     /// [`butterpollo_media_policy::link_rate`]. Off for a client that sets the bitrate.
     pub link_rate: std::sync::Mutex<butterpollo_media_policy::link_control::LinkControl>,
@@ -298,8 +303,11 @@ impl<P, A> Session<P, A> {
             idr: AtomicBool::new(true),
             invalidation: Default::default(),
             recovery_wake: Default::default(),
+            rfi_confirm_active: AtomicBool::new(false),
+            rfi_confirm: Default::default(),
             bitrate: AtomicU32::new(bitrate),
             adaptive_bitrate: Default::default(),
+            adaptive_bitrate_on: AtomicBool::new(false),
             link_rate: Default::default(),
             link_sent: butterpollo_media_policy::link_control::SentLog::new(started),
             congestion: Default::default(),

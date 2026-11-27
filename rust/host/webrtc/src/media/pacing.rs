@@ -89,6 +89,15 @@ impl SendQueue {
         self
     }
 
+    /// Update the live stream bitrate (kbps) used to compute pacing rate and backlog bounds.
+    pub fn set_stream_kbps(&mut self, stream_kbps: u32) {
+        self.stream_kbps = stream_kbps;
+    }
+
+    pub fn stream_kbps(&self) -> u32 {
+        self.stream_kbps
+    }
+
     /// Whether the simulated link loses this datagram. Only video, as `webrtc_loss_permille`
     /// promises; `send_due` counts it as a simulated loss, not as sent.
     pub fn lost_in_the_air(&mut self, out: &Outgoing) -> bool {

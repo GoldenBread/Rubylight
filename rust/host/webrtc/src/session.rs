@@ -120,6 +120,8 @@ impl Sender {
             );
             return Ok(());
         }
+        self.media
+            .set_bitrate_kbps(session.bitrate.load(Ordering::Acquire));
         let polled = Instant::now();
         for mut frame in frames {
             ensure!(

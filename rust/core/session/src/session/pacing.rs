@@ -1,7 +1,218 @@
 //! Keyframe recovery, reference invalidation, automatic pacing, and keyframe-loss guard.
 use super::*;
 
+#[derive(Default)]
+pub(super) struct RfiConfirm {
+    armed_us: u64,
+    repair_sent: Option<(u32, u64)>,
+    failed: bool,
+    repair_clean_blocks: u8,
+    repair_block_count: u8,
+    clean_fec_after: bool,
+    transport_loss: bool,
+    clean_transport_after: bool,
+    early_fec: [Option<(u32, u8, u8, bool, bool)>; 8],
+    next_early_fec: usize,
+}
+
+impl RfiConfirm {
+    fn on_fec(
+        &mut self,
+        frame: u32,
+        block_idx: u8,
+        block_count: u8,
+        clean: bool,
+        unrecoverable: bool,
+    ) {
+        let Some((repair_frame, _)) = self.repair_sent else {
+            let slot = self.next_early_fec % self.early_fec.len();
+            self.early_fec[slot] = Some((frame, block_idx, block_count, clean, unrecoverable));
+            self.next_early_fec = self.next_early_fec.wrapping_add(1);
+            return;
+        };
+        self.apply_fec(
+            repair_frame,
+            frame,
+            block_idx,
+            block_count,
+            clean,
+            unrecoverable,
+        );
+    }
+
+    fn apply_fec(
+        &mut self,
+        repair_frame: u32,
+        frame: u32,
+        block_idx: u8,
+        block_count: u8,
+        clean: bool,
+        unrecoverable: bool,
+    ) {
+        let ahead = frame.wrapping_sub(repair_frame);
+        if ahead >= (1 << 31) {
+            return;
+        }
+        if unrecoverable {
+            self.failed = true;
+            return;
+        }
+        if ahead == 0 {
+            if clean && block_idx < 8 && (1..=4).contains(&block_count) {
+                self.repair_block_count = block_count;
+                self.repair_clean_blocks |= 1 << block_idx;
+            }
+        } else if clean {
+            self.clean_fec_after = true;
+        }
+    }
+
+    fn repair_fec_clean(&self) -> bool {
+        self.repair_block_count > 0
+            && self.repair_clean_blocks == ((1u16 << self.repair_block_count) - 1) as u8
+    }
+}
+
 impl<P, A> Session<P, A> {
+    /// Arms post-RFI recovery tracking for the LTR repair frame about to be encoded.
+    pub fn begin_rfi_confirmation(&self) {
+        let armed_us = self.transport_sent.micros(Instant::now());
+        *self.rfi_confirm.lock().unwrap() = Some(RfiConfirm {
+            armed_us,
+            ..RfiConfirm::default()
+        });
+        self.rfi_confirm_active.store(true, Ordering::Release);
+    }
+
+    /// Clears post-RFI confirmation tracking once an IDR runs or recovery is confirmed.
+    pub fn clear_rfi_confirmation(&self) {
+        if self.rfi_confirm_active.swap(false, Ordering::AcqRel) {
+            *self.rfi_confirm.lock().unwrap() = None;
+        }
+    }
+
+    /// Records the wire frame number of the LTR repair picture once handed to the socket.
+    pub fn note_rfi_repair_sent(&self, wire_frame: u32, lost_on_send: bool) {
+        if !self.rfi_confirm_active.load(Ordering::Acquire) {
+            return;
+        }
+        let now_us = self.transport_sent.micros(Instant::now());
+        let mut guard = self.rfi_confirm.lock().unwrap();
+        let Some(confirm) = guard.as_mut() else {
+            return;
+        };
+        if lost_on_send {
+            confirm.failed = true;
+            return;
+        }
+        if confirm.repair_sent.is_none() {
+            confirm.repair_sent = Some((wire_frame, now_us));
+            let early = std::mem::take(&mut confirm.early_fec);
+            for (frame, block_idx, block_count, clean, unrecoverable) in early.into_iter().flatten()
+            {
+                confirm.apply_fec(
+                    wire_frame,
+                    frame,
+                    block_idx,
+                    block_count,
+                    clean,
+                    unrecoverable,
+                );
+            }
+        }
+    }
+
+    pub(super) fn note_rfi_fec_status(
+        &self,
+        payload: &[u8],
+        block: butterpollo_media_policy::adaptive_fec::Block,
+        route_abandoned: bool,
+    ) {
+        let Ok(status) = rubylight_wire::fec_status::Status::parse(payload) else {
+            return;
+        };
+        let mut guard = self.rfi_confirm.lock().unwrap();
+        let Some(confirm) = guard.as_mut() else {
+            return;
+        };
+        let unrecoverable = route_abandoned
+            || matches!(
+                block,
+                butterpollo_media_policy::adaptive_fec::Block::Unrecoverable
+            );
+        let clean = !route_abandoned
+            && matches!(block, butterpollo_media_policy::adaptive_fec::Block::Clean);
+        confirm.on_fec(
+            status.frame,
+            status.block,
+            status.blocks,
+            clean,
+            unrecoverable,
+        );
+    }
+
+    pub(super) fn note_rfi_transport_feedback(&self, payload: &[u8], now_us: u64) {
+        let Some(report) = butterpollo_media_policy::congestion::TransportFeedback::decode(payload)
+        else {
+            return;
+        };
+        let mut guard = self.rfi_confirm.lock().unwrap();
+        let Some(confirm) = guard.as_mut() else {
+            return;
+        };
+        let skipped = report.flags & rubylight_protocol::transport_feedback::FLAG_SKIPPED != 0;
+        if skipped {
+            confirm.transport_loss = true;
+        }
+        let mut arrived_after = false;
+        for (id, offset) in report.packets() {
+            let Some((sent_us, _)) = self.transport_sent.lookup(id, now_us) else {
+                continue;
+            };
+            if sent_us >= confirm.armed_us && offset.is_none() {
+                confirm.transport_loss = true;
+            }
+            if let Some((_, repair_done_us)) = confirm.repair_sent
+                && sent_us >= repair_done_us
+                && offset.is_some()
+            {
+                arrived_after = true;
+            }
+        }
+        if arrived_after && !skipped {
+            confirm.clean_transport_after = true;
+        }
+    }
+
+    /// True when the client actively proved clean frame delivery at/after the LTR repair frame
+    /// via `0x5502` or `0x5547` and sent no follow-up `0x0301`/`0x0302` recovery requests.
+    pub fn rfi_recovery_confirmed(&self) -> bool {
+        if !self.rfi_confirm_active.load(Ordering::Acquire) {
+            return false;
+        }
+        let guard = self.rfi_confirm.lock().unwrap();
+        let Some(confirm) = guard.as_ref() else {
+            return false;
+        };
+        let Some((repair_frame, _)) = confirm.repair_sent else {
+            return false;
+        };
+        if confirm.failed || self.idr.load(Ordering::Acquire) {
+            return false;
+        }
+        if self
+            .invalidation
+            .lock()
+            .unwrap()
+            .is_some_and(|(_, last)| (last as u32).wrapping_sub(repair_frame) < (1 << 31))
+        {
+            return false;
+        }
+        confirm.repair_fec_clean()
+            || confirm.clean_fec_after
+            || (!confirm.transport_loss && confirm.clean_transport_after)
+    }
+
     pub fn request_idr(&self) {
         self.stats.idr_requests.fetch_add(1, Ordering::Relaxed);
         // Intra-only frames already recover; feedback must not bypass cadence.
@@ -20,12 +231,18 @@ impl<P, A> Session<P, A> {
     /// A keyframe a second after a reference invalidation the decoder may not
     /// have followed. It answers loss, so it is counted like loss.
     pub fn request_confirming_keyframe(&self) {
+        self.clear_rfi_confirmation();
         self.keyframe_loss.lock().unwrap().loss_keyframe();
         self.idr.store(true, Ordering::Release);
     }
     /// A keyframe the client needs after losing frames: its request (0x0302),
     /// or an invalidation the encoder cannot repair with a reference frame.
     pub fn request_recovery_keyframe(&self) {
+        if self.rfi_confirm_active.load(Ordering::Acquire)
+            && let Some(confirm) = self.rfi_confirm.lock().unwrap().as_mut()
+        {
+            confirm.failed = true;
+        }
         let (latched, ignored) = {
             let mut loss = self.keyframe_loss.lock().unwrap();
             let latched = loss.requested(Instant::now());
@@ -68,6 +285,13 @@ impl<P, A> Session<P, A> {
         if first == 0 || first > last {
             self.request_recovery_keyframe();
             return;
+        }
+        if self.rfi_confirm_active.load(Ordering::Acquire)
+            && let Some(confirm) = self.rfi_confirm.lock().unwrap().as_mut()
+            && let Some((repair_frame, _)) = confirm.repair_sent
+            && (last as u32).wrapping_sub(repair_frame) < (1 << 31)
+        {
+            confirm.failed = true;
         }
         let mut pending = self.invalidation.lock().unwrap();
         *pending = Some(pending.map_or((first, last), |(a, b)| (a.min(first), b.max(last))));
@@ -310,8 +534,15 @@ impl<P, A> Session<P, A> {
         }
         bps
     }
+    /// Whether legacy `AdaptiveBitrate` is configured; skips its mutex on control pings when off.
+    pub fn adaptive_bitrate_enabled(&self) -> bool {
+        self.adaptive_bitrate_on.load(Ordering::Acquire)
+    }
+
     pub fn record_control_ping(&self, now: Instant, payload: &[u8]) {
-        self.adaptive_bitrate.lock().unwrap().on_ping(now, payload);
+        if self.adaptive_bitrate_enabled() {
+            self.adaptive_bitrate.lock().unwrap().on_ping(now, payload);
+        }
         if self.link_sent.live() {
             self.link_rate.lock().unwrap().rate.on_ping(now, payload);
         }

@@ -10,7 +10,7 @@ use anyhow::{Context, Result};
 use butterpollo_media_policy::audio::OpusLayout;
 use butterpollo_win_graphics::timing::Signal;
 use std::net::{SocketAddr, UdpSocket};
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Weak};
 use std::thread::JoinHandle;
@@ -51,6 +51,8 @@ pub(super) struct Shared {
     pub(super) pending_video: AtomicUsize,
     pub(super) pending_audio: AtomicUsize,
     pub(super) pending_datagrams: AtomicUsize,
+    /// Live video bitrate (kbps) the media thread's [`SendQueue`] paces against.
+    pub(super) stream_kbps: AtomicU32,
     /// No frame may go out but a keyframe: nothing has been sent yet, or one was dropped, so the
     /// decoder has no reference.
     pub(super) need_keyframe: AtomicBool,
@@ -105,9 +107,21 @@ impl Feed {
         queue_audio(&self.shared, &self.tx, packet)
     }
 
+    pub fn set_bitrate_kbps(&self, bitrate_kbps: u32) {
+        set_stream_kbps(&self.shared, bitrate_kbps);
+    }
+
     /// Nothing this transport holds can be decoded without a keyframe.
     fn missed_frame(&self) {
         self.shared.drop_video(IdrReason::WriteFailed);
+    }
+}
+
+fn set_stream_kbps(shared: &Shared, bitrate_kbps: u32) {
+    if shared.stream_kbps.load(Ordering::Relaxed) != bitrate_kbps
+        && shared.stream_kbps.swap(bitrate_kbps, Ordering::Release) != bitrate_kbps
+    {
+        shared.notify();
     }
 }
 
@@ -359,6 +373,7 @@ impl MediaHandle {
             pending_video: AtomicUsize::new(0),
             pending_audio: AtomicUsize::new(0),
             pending_datagrams: AtomicUsize::new(0),
+            stream_kbps: AtomicU32::new(spec.video.bitrate_kbps),
             need_keyframe: AtomicBool::new(true),
             last_idr_ms: AtomicU64::new(0),
             epoch,
@@ -483,6 +498,17 @@ impl MediaHandle {
     /// Never blocks; a full queue drops the packet (Opus conceals one).
     pub fn submit_audio(&self, packet: AudioPacket) -> Submit {
         queue_audio_followed(&self.shared, &self.tx, &self.followers, packet)
+    }
+
+    /// Update the live stream bitrate (kbps) the media thread's [`SendQueue`] paces against, and
+    /// forward it to any guest transports following this stream.
+    pub fn set_bitrate_kbps(&self, bitrate_kbps: u32) {
+        set_stream_kbps(&self.shared, bitrate_kbps);
+        if let Some(followers) = self.followers.snapshot() {
+            for (_, feed) in followers.iter() {
+                feed.set_bitrate_kbps(bitrate_kbps);
+            }
+        }
     }
 
     /// Record the Opus layout the answer agreed to, which [`AudioSender::layout`] hands the audio

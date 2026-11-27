@@ -565,6 +565,9 @@ fn start(
         tracing::error!(%peer, error = %format!("{error:#}"), "a guest's transport did not start");
         End::Refused("internal", COULD_NOT_START.into())
     })?;
+    if let Some(session) = owner.session.upgrade() {
+        handle.set_bitrate_kbps(session.bitrate.load(std::sync::atomic::Ordering::Acquire));
+    }
     if let Some(input) = &bridge.input {
         input.control(handle.control_sender());
     }

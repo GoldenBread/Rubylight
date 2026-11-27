@@ -33,6 +33,60 @@ fn host_bitrate_requires_valid_video_feedback_and_yields_to_the_client() {
     assert_eq!(s.adaptive_pacing_bps(800_000_000), 800_000_000);
     assert_eq!(s.info()["adaptive_bitrate"]["owner"], "client");
 }
+
+#[test]
+fn control_pings_skip_adaptive_bitrate_lock_when_unconfigured_or_client_owned() {
+    let s = Session::new(
+        launch("abr-ping-fast-path", Role::Stream),
+        Negotiated {
+            bitrate_kbps: 20_000,
+            configured_bitrate_kbps: 30_000,
+            ..Default::default()
+        },
+    );
+    let mut ping = [0u8; 8];
+    ping[..4].copy_from_slice(&4u32.to_le_bytes());
+
+    let assert_lock_free_ping = |session: &Arc<Session>| {
+        assert!(!session.adaptive_bitrate_enabled());
+        let (locked_tx, locked_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let held = session.clone();
+        let holder = std::thread::spawn(move || {
+            let _guard = held.adaptive_bitrate.lock().unwrap();
+            locked_tx.send(()).unwrap();
+            release_rx.recv().unwrap();
+        });
+        locked_rx.recv().unwrap();
+        // Would block forever if record_control_ping locked `self.adaptive_bitrate`.
+        session.record_control_ping(Instant::now(), &ping);
+        release_tx.send(()).unwrap();
+        holder.join().unwrap();
+    };
+
+    // Unconfigured by default and after explicit `false`.
+    assert_lock_free_ping(&s);
+    s.configure_adaptive_bitrate(false, 0);
+    assert_lock_free_ping(&s);
+
+    // Enabling turns on the flag and records pings; client takeover turns it back off.
+    s.configure_adaptive_bitrate(true, 0);
+    assert!(s.adaptive_bitrate_enabled());
+    let now = Instant::now();
+    s.record_control_ping(now, &ping);
+    s.stats.video_frame.store(10, Ordering::Release);
+    s.record_fec_status(&fec_report(1, 10, 2));
+    s.tick_adaptive_bitrate(now, Duration::from_millis(8));
+    pacing_traffic(&s, 60);
+    s.tick_adaptive_bitrate(now + Duration::from_secs(1), Duration::from_millis(8));
+    assert_eq!(
+        s.adaptive_bitrate.lock().unwrap().minimum_rtt(),
+        Some(Duration::from_millis(8))
+    );
+
+    s.set_client_bitrate(18_000);
+    assert_lock_free_ping(&s);
+}
 #[test]
 fn a_burst_of_lost_frames_lowers_the_bitrate_and_says_so() {
     let (s, end) = link_session(60, true);

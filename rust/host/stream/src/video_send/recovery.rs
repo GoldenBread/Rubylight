@@ -293,6 +293,9 @@ pub(crate) fn report(session: &Session, config: &Config, frame: RecoveryFrame) {
     if !frame.idr && !frame.after_invalidation {
         return;
     }
+    if frame.after_invalidation && !frame.idr {
+        session.note_rfi_repair_sent(frame.frame, frame.lost);
+    }
     if frame.idr && frame.fec_limited {
         session
             .stats

@@ -133,6 +133,7 @@ pub(super) fn media_loop(
             }) {
                 return Ok(());
             }
+            sync_pacing_bitrate(&mut queue, &shared);
             let timeout = engine.advance(Instant::now())?;
             // The frame's size first: it sets the pace its own packets are sent at.
             let frame = engine.take_frame_wire_bytes();
@@ -187,6 +188,11 @@ pub(super) fn media_loop(
     }
     engine.disconnect();
     (shared.hooks.event)(TransportEvent::Closed);
+}
+
+/// Refresh the pacer's stream bitrate from the latest value published by the session worker.
+pub(super) fn sync_pacing_bitrate(queue: &mut SendQueue, shared: &Shared) {
+    queue.set_stream_kbps(shared.stream_kbps.load(Ordering::Acquire));
 }
 
 /// The pacer fell further behind than it can ever catch up: what it holds is stale, so drop it

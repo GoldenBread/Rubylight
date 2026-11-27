@@ -5,7 +5,7 @@ use super::super::sdp::{VideoCodec, accept_answer};
 use super::*;
 use butterpollo_win_graphics::timing::Signal;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, AtomicUsize};
+use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize};
 use std::sync::{Mutex, mpsc};
 use str0m::IceConnectionState;
 use str0m::channel::ChannelId;
@@ -432,6 +432,7 @@ fn detached(
         pending_video: AtomicUsize::new(0),
         pending_audio: AtomicUsize::new(0),
         pending_datagrams: AtomicUsize::new(0),
+        stream_kbps: AtomicU32::new(30_000),
         need_keyframe: AtomicBool::new(true),
         last_idr_ms: AtomicU64::new(0),
         epoch: Instant::now(),

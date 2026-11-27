@@ -542,3 +542,58 @@ fn a_shared_av1_frame_loses_its_temporal_delimiters_once() {
         "a shared frame is ready as it is"
     );
 }
+
+#[test]
+fn live_bitrate_updates_adjust_pacing_rate_and_backlog_for_owner_and_guests() {
+    let now = Instant::now();
+    let wireless = Pacing::Paced {
+        configured_kbps: 0,
+        link_bps: 0,
+        wireless: true,
+    };
+    let (owner, _owner_rx, _owner_idr) = detached(TransportOptions {
+        pacing: wireless,
+        ..TransportOptions::default()
+    });
+    let (guest, _guest_rx, _guest_idr) = detached(TransportOptions {
+        pacing: capped(5_000),
+        ..TransportOptions::default()
+    });
+    owner.followers().add(1, guest.feed());
+
+    let mut owner_queue = SendQueue::new(wireless, 20_000, PERIOD, false, now);
+    let mut guest_queue = SendQueue::new(capped(5_000), 20_000, PERIOD, false, now);
+    assert_eq!(owner_queue.rate(), 40_000_000);
+    assert_eq!(guest_queue.rate(), 22_000_000);
+
+    // ~105 KB of queued RTP fits within 50 ms at 40 Mbps (250 KB cap), but exceeds
+    // 50 ms once the live bitrate steps down to 5 Mbps (10 Mbps wireless -> 62.5 KB cap).
+    owner_queue.note_frame(10_000);
+    for _ in 0..90 {
+        owner_queue.push(rtp_packet(1100));
+    }
+    assert!(!owner_queue.backlog_exceeded());
+
+    owner.shared.wake.reset().unwrap();
+    guest.shared.wake.reset().unwrap();
+    owner.set_bitrate_kbps(5_000);
+    sync_pacing_bitrate(&mut owner_queue, &owner.shared);
+    sync_pacing_bitrate(&mut guest_queue, &guest.shared);
+    assert_eq!(owner_queue.stream_kbps(), 5_000);
+    assert_eq!(guest_queue.stream_kbps(), 5_000);
+    assert_eq!(owner_queue.rate(), 10_000_000);
+    assert_eq!(guest_queue.rate(), 5_500_000);
+    assert!(owner_queue.backlog_exceeded());
+
+    // Step down further below the guest's 5 Mbps cap, then step back up to 30 Mbps.
+    owner.set_bitrate_kbps(3_000);
+    sync_pacing_bitrate(&mut guest_queue, &guest.shared);
+    assert_eq!(guest_queue.rate(), 5_000_000);
+
+    owner.set_bitrate_kbps(30_000);
+    sync_pacing_bitrate(&mut owner_queue, &owner.shared);
+    sync_pacing_bitrate(&mut guest_queue, &guest.shared);
+    assert_eq!(owner_queue.rate(), 60_000_000);
+    assert_eq!(guest_queue.rate(), 33_000_000);
+    assert!(!owner_queue.backlog_exceeded());
+}

@@ -8,12 +8,10 @@ impl<P, A> Session<P, A> {
         let mut stream = self.config.clone();
         stream.pyrowave_client_link_mbps = self.client_link_mbps();
         stream.pyrowave_client_pace_mbps = self.client_pace_mbps();
-        self.adaptive_bitrate.lock().unwrap().configure(
-            enabled,
-            &stream,
-            maximum_kbps,
-            self.fec_percent(),
-        );
+        let mut controller = self.adaptive_bitrate.lock().unwrap();
+        controller.configure(enabled, &stream, maximum_kbps, self.fec_percent());
+        self.adaptive_bitrate_on
+            .store(controller.configured(), Ordering::Release);
     }
     /// A bitrate the client set in the terms of its launch (0x553C,
     /// `stream_policy::runtime_encoder_kbps`): the host's controllers stand
@@ -61,6 +59,7 @@ impl<P, A> Session<P, A> {
                 return false;
             }
             controller.client_takeover();
+            self.adaptive_bitrate_on.store(false, Ordering::Release);
             self.adaptive_video_pacing_bps.store(0, Ordering::Release);
             link.takeover();
             self.link_sent.set_live(false);
@@ -140,11 +139,13 @@ impl<P, A> Session<P, A> {
         if !self.transport_sent.live() {
             self.transport_sent.enable(self.config.encryption & 2 != 0);
         }
-        congestion.on_report(
-            &self.transport_sent,
-            self.transport_sent.micros(now),
-            payload,
-        )
+        let now_us = self.transport_sent.micros(now);
+        let valid = congestion.on_report(&self.transport_sent, now_us, payload);
+        drop(congestion);
+        if valid && self.rfi_confirm_active.load(Ordering::Acquire) {
+            self.note_rfi_transport_feedback(payload, now_us);
+        }
+        valid
     }
     /// Video packets just handed to the socket: one store each into the ledger, nothing
     /// while it is off. `overhead` is the IP and UDP framing per packet.

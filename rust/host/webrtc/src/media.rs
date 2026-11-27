@@ -33,7 +33,7 @@ use handle::{Command, Counters, Shared};
 use worker::{
     MAX_COMMANDS_PER_PASS, RECV_ERROR_BACKOFF, RECV_ERRORS_BEFORE_BACKOFF, drain_commands,
     enforce_backlog, handle_command, note_channel_send, receive_loop, recv_error_backoff, send_due,
-    start_threads,
+    start_threads, sync_pacing_bitrate,
 };
 
 /// Socket send buffer: a 4K keyframe is a few hundred KB sent in one pacing pass.
