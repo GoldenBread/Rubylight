@@ -498,14 +498,14 @@
       ],
       "hw_required": true,
       "visual_review": true,
-      "status": "in_progress",
-      "phase": "implement",
+      "status": "merged",
+      "phase": "awaiting_hw_and_wave_review",
       "branch": "wip/roadmap/13-client-input-deck",
       "worktree": null,
-      "commit_sha": null,
+      "commit_sha": "e436d05e1d",
       "quarantine_reason": null,
       "hw_verified": false,
-      "worker_branch": "RamazanKara/r70-13-controller-editor"
+      "worker_branch": "RamazanKara/r70-13-controller-editor-port"
     },
     {
       "id": "14",
