@@ -467,7 +467,7 @@ POST /api/native/v1/wake/relay/enroll
 
 ## Audio processing (`audio.night_mode`, `audio.headphone_surround`)
 
-Status: served (3.0.0, [design](wake-and-audio-design.md) B.3, B.4 and B.6); Nightjar's stream menus show both switches. Types in `rubylight_native_api::audio`, fixtures `audio.json` and `audio_write.json`.
+Status: served (3.0.0, [design](wake-and-audio-design.md) B.3, B.4 and B.6); Nightjar's Control Center shows both switches on its **Audio** page. Types in `rubylight_native_api::audio`, fixtures `audio.json` and `audio_write.json`.
 
 ```http
 GET /api/native/v1/audio

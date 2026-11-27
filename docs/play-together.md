@@ -27,7 +27,7 @@ Each guest gets an encoder of its own, so every guest adds load on the GPU. Up t
 
 ## Invite a friend over the internet
 
-**Invite a friend** on the console's **Home**, or **Guests** in Nightjar's stream menu, makes a link such as `rubylight://invite#...` for one person. Their Nightjar opens it, or takes it pasted under **Add PC**, pairs as a guest without a PIN and finds your PC over the internet; you are asked before they join the game. The link works once and ends after a day by default, and the friend's device gets guest rights only and is unpaired when the invite ends. [Invite a friend over the internet](multiclient.md#invite-a-friend-over-the-internet) has what it needs and what it gives.
+**Invite a friend** on the console's **Home**, or the **Guests** page of Nightjar's Control Center, makes a link such as `rubylight://invite#...` for one person. Their Nightjar opens it, or takes it pasted under **Add PC**, pairs as a guest without a PIN and finds your PC over the internet; you are asked before they join the game. The link works once and ends after a day by default, and the friend's device gets guest rights only and is unpaired when the invite ends. [Invite a friend over the internet](multiclient.md#invite-a-friend-over-the-internet) has what it needs and what it gives.
 
 ## Guests in the browser
 

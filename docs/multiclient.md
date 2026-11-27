@@ -37,7 +37,7 @@ Nightjar waits up to 120 seconds for a join answer. Moonlight clients that give 
 
 A friend who has never been on your network can join with Nightjar on Android, Windows, Linux or macOS. No PIN, no port forwarding and no visit are needed:
 
-1. **Make an invite.** In the console, **Invite a friend** on Home, under the Guests card; or, in your own Nightjar during a stream, **Guests** in the stream menu, then **Invite a friend over the internet**. Making one needs **Approve new devices** or **Host control** on that device.
+1. **Make an invite.** In the console, **Invite a friend** on Home, under the Guests card; or, in your own Nightjar during a stream, the **Guests** page of the Control Center, then **Invite a friend over the internet**. Making one needs **Approve new devices** or **Host control** on that device.
 2. **Send the link to one person.** It looks like `rubylight://invite#…`. Many chat apps don't make such a link clickable, so the friend can also copy it and paste it under **Add PC** in Nightjar.
 3. **The friend opens it** and confirms **Join**. Nightjar finds the PC over the internet (its IPv6 address, a forwarded port, or a path punched through both routers, as [Play over the internet](internet-play.md) does), pairs as a guest without a PIN, and lists the PC. This can take up to a minute.
 4. **The friend joins your game**: they select the game you play and press **Join**, and you let them in as any guest.
@@ -88,8 +88,8 @@ A guest that loses its connection keeps its place and can come back.
 ## Where to manage guests
 
 - **The owner's Nightjar:**
-  - when a device asks to join, Android asks during the stream with **Let in** and **Deny**; Nightjar for Windows and Linux shows a notice and answers under **Guests** in the stream menu's More page;
-  - **Guests** in the stream menu, with each guest's permission, **Kick** and **Block**.
+  - when a device asks to join, Android asks during the stream with **Let in** and **Deny**; Nightjar for Windows and Linux shows a notice and answers on the Control Center's **Guests** page;
+  - the Control Center's **Guests** page, with each guest's permission, **Kick** and **Block**.
 - **The console:**
   - on Home, a **Guests** card lists the joins waiting and the guests, with permission, stay, keyboard hand-over, **Kick** and **Block**;
   - each guest's stream card shows a **Guest** badge.
