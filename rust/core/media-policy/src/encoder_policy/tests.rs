@@ -88,14 +88,25 @@ fn a_cap_the_driver_ignores_for_keyframes_returns_the_scale_to_one_for_good() {
     scale.observe(13 * TARGET / 10, TARGET, written);
     assert!(scale.scale() < first, "{} {first}", scale.scale());
 
-    // Once clamped at FLOOR / two_frames, repeated shrunk keyframes that still
-    // exceed 1.1x target stay held at the floor instead of tripping `ignored`.
+    // Once clamped by `two_frames` (`700_000 > 0.5 * TARGET`), repeated shrunk
+    // keyframes that still exceed 1.1x target — even as ABR/FEC steps `target`
+    // and `two_frames` down — stay held at the floor instead of falsely tripping
+    // `ignored` from raw `written` bytes shrinking with `target`.
+    let high_two_frames = 700_000u64;
     let mut floored = KeyframeCapScale::default();
-    assert_eq!(floored.observe(4 * TARGET, TARGET, TARGET), None);
+    assert_eq!(floored.observe(18 * TARGET / 10, TARGET, TARGET), None);
+    let mid_written = floored.apply(TARGET, high_two_frames);
+    assert_eq!(mid_written, high_two_frames);
+    assert_eq!(floored.observe(13 * TARGET / 10, TARGET, mid_written), None);
     assert_eq!(floored.scale(), KeyframeCapScale::FLOOR);
-    let floor_written = floored.apply(TARGET, TWO_FRAMES);
-    for _ in 0..4 {
-        assert_eq!(floored.observe(2 * TARGET, TARGET, floor_written), None);
+    for pct in [100u64, 98, 95, 85] {
+        let stepped_target = TARGET * pct / 100;
+        let stepped_floor = high_two_frames * pct / 100;
+        let floor_written = floored.apply(stepped_target, stepped_floor);
+        assert_eq!(
+            floored.observe(14 * stepped_target / 10, stepped_target, floor_written),
+            None
+        );
         assert_eq!(floored.scale(), KeyframeCapScale::FLOOR);
     }
 }

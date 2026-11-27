@@ -6,7 +6,7 @@ Besides Moonlight's own control messages, Rubylight takes a few of its own from 
 
 ## Negotiation
 
-From 2.2.0 the host's RTSP `DESCRIBE` answer lists the Rubylight control messages it takes. The first line is the same for every stream:
+From 2.2.0 the host's RTSP `DESCRIBE` answer lists the Rubylight control messages it takes. The first line lists the built-in messages (`0x5538` is omitted when `bitrate_adaptation = off`):
 
 ```
 a=x-rl-control:0x5530,0x5531,0x5532,0x5533,0x5534,0x5535,0x5536,0x5537,0x5538

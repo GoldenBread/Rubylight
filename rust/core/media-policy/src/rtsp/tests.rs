@@ -358,6 +358,14 @@ fn rubylight_control_messages_are_advertised_once_before_the_microphone() {
             !sdp.lines().any(|line| line.starts_with("m=")),
             "the microphone's m= line is appended last"
         );
+        let without_link = describe_with_link_notice(0, 7, 1, true, true, true, mic, true, false);
+        assert_eq!(
+            without_link
+                .lines()
+                .filter(|line| line.starts_with("a=x-rl-control:"))
+                .collect::<Vec<_>>(),
+            ["a=x-rl-control:0x5530,0x5531,0x5532,0x5533,0x5534,0x5535,0x5536,0x5537"]
+        );
     }
     assert_eq!(
         [

@@ -78,15 +78,15 @@ impl InlineSender {
         );
         let safe =
             butterpollo_media_policy::network_pacing::rate_bps(0, bitrate, route.bps, true, needed);
+        let configured_kbps = ctx.c.manual_pacing_kbps().unwrap_or(0);
         let bps = ctx.s.keyframe_loss_bps(bps, safe, wire_frame, frame.idr);
-        self.inline_paced |= butterpollo_media_policy::network_pacing::paced(bps, needed);
         if Instant::now() >= self.pacing_report_due {
             self.pacing_report_due = Instant::now() + Duration::from_secs(2);
             butterpollo_media_policy::network_pacing::report_rate(
                 &ctx.s.launch.warnings,
                 bps,
                 needed,
-                ctx.c.manual_pacing_kbps().unwrap_or(0),
+                configured_kbps,
             );
             if self.reported_pacing != Some(bps) {
                 tracing::info!(
@@ -95,12 +95,26 @@ impl InlineSender {
                     link_bps = route.bps,
                     client_link_mbps = ctx.s.client_link_mbps(),
                     client_wireless = ctx.s.config.client_wireless,
-                    configured_kbps = ctx.c.manual_pacing_kbps().unwrap_or(0),
+                    configured_kbps,
                     "network pacing selected"
                 );
                 self.reported_pacing = Some(bps);
             }
         }
+        let bps = if frame.idr || frame.after_invalidation {
+            butterpollo_media_policy::network_pacing::recovery_pace_bps(
+                bps,
+                safe,
+                configured_kbps,
+                butterpollo_media_policy::network_pacing::route_is_wireless(
+                    route.wireless,
+                    ctx.s.config.client_wireless,
+                ),
+            )
+        } else {
+            bps
+        };
+        self.inline_paced |= butterpollo_media_policy::network_pacing::paced(bps, needed);
         // A frame beyond Moonlight's packet limit (very high
         // bitrates) costs that frame and a keyframe, not the
         // session.

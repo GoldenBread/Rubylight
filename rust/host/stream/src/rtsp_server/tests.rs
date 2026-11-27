@@ -148,3 +148,30 @@ async fn rejected_rtsp_requests_sanitize_wire_errors_and_ignore_unoffered_mic_se
     let _ = server_task.await;
     let _ = h.sessions.lock().unwrap().pending.remove(&launch_id);
 }
+
+#[test]
+fn link_notice_control_message_is_offered_only_when_host_bitrate_adaptation_is_enabled() {
+    for (text, expected) in [
+        ("", true),
+        ("bitrate_adaptation = on\n", true),
+        ("bitrate_adaptation = delay\n", true),
+        ("bitrate_adaptation = off\n", false),
+        ("link_rate_adaptation = false\n", false),
+    ] {
+        let config = butterpollo_config::config::Config::parse(text).unwrap();
+        assert_eq!(offers_link_notice(&config), expected, "{text:?}");
+        let sdp = rtsp::describe_with_link_notice(
+            0,
+            7,
+            1,
+            true,
+            true,
+            true,
+            false,
+            true,
+            offers_link_notice(&config),
+        );
+        assert_eq!(sdp.contains("0x5538"), expected, "{text:?}: {sdp}");
+        assert!(sdp.contains("0x5537"), "{text:?}: {sdp}");
+    }
+}

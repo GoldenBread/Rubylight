@@ -264,7 +264,7 @@ async fn connection(
                         config.client_roaming(),
                         std::sync::atomic::Ordering::Release,
                     );
-                    body = rtsp::describe(
+                    body = rtsp::describe_with_link_notice(
                         input_capabilities,
                         if encryption_mode == 0 { 5 } else { 7 },
                         if encryption_mode == 2 { 7 } else { 1 },
@@ -273,6 +273,7 @@ async fn connection(
                         flags & 0x800000 != 0,
                         mic,
                         config.client_roaming(),
+                        offers_link_notice(&config),
                     )
                     .into_bytes();
                     // AMF recovers lost references unless long-term references
@@ -663,6 +664,11 @@ fn ffmpeg_directory(h: &Shared) -> Result<std::path::PathBuf> {
     }
     let _ = h;
     crate::stream::audio_encoder::ffmpeg_directory()
+}
+/// Whether the host's `DESCRIBE` advertises `0x5538` link notices: only when at least one
+/// host bitrate controller (`link_rate_adaptation` or `congestion_control`) is enabled.
+pub(crate) fn offers_link_notice(config: &butterpollo_config::config::Config) -> bool {
+    config.link_rate_adaptation() || config.congestion_control()
 }
 /// Whether the host takes client microphones on this stream.
 fn takes_mic(config: &butterpollo_config::config::Config, media: &crate::stream::Media) -> bool {

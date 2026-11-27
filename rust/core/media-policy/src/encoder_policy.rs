@@ -275,8 +275,8 @@ pub fn amf_frame_cap_automatic(config: &Config) -> bool {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct KeyframeCapScale {
     scale: f64,
-    /// The overshoot (`bytes / target`) and `written` cap of the keyframe that
-    /// last lowered `scale`.
+    /// The overshoot (`bytes / target`) and cap ratio (`written / target`) of
+    /// the keyframe that last lowered `scale`.
     lowered_at: Option<(f64, f64)>,
     /// A lower cap did not shrink keyframes: the driver ignores it.
     ignored: bool,
@@ -316,9 +316,10 @@ impl KeyframeCapScale {
         let next = (self.scale * Self::RELAX).min(1.);
         if bytes > 1.1 * target {
             let overshoot = bytes / target;
+            let ratio = written / target;
             if let Some((lowered, _)) = self
                 .lowered_at
-                .filter(|(at, prev)| written < *prev && written < target && overshoot >= *at)
+                .filter(|(at, prev)| ratio < *prev * 0.95 && ratio < 0.99 && overshoot >= *at)
             {
                 self.scale = 1.;
                 self.lowered_at = None;
@@ -327,7 +328,7 @@ impl KeyframeCapScale {
             }
             let tightened = self.scale.min(written / bytes).max(Self::FLOOR);
             if tightened < self.scale {
-                self.lowered_at = Some((overshoot, written));
+                self.lowered_at = Some((overshoot, ratio));
                 self.scale = tightened;
             }
         } else if self.scale < 1.

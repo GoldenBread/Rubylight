@@ -5,7 +5,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 pub use rubylight_wire::rtsp::{
-    CONTROL_MESSAGES, MAX_MESSAGE, MessageBuffer, Request, complete_length, describe, response,
+    CONTROL_MESSAGES, CONTROL_MESSAGES_WITHOUT_LINK_NOTICE, MAX_MESSAGE, MessageBuffer, Request,
+    complete_length, describe, describe_with_link_notice, response,
 };
 
 /// 2 Gbit/s stays inside them; the negotiation and NVENC's bitrate changes

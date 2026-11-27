@@ -62,9 +62,6 @@ impl<P, A> Session<P, A> {
                         .store(fec.percent() as u32, Ordering::Release);
                 }
             }
-            if self.rfi_confirm_active.load(Ordering::Acquire) {
-                self.note_rfi_fec_status(payload, block, route_abandoned);
-            }
         }
     }
     /// Starts the stream's FEC at the configured percentage (`fec_percentage`,

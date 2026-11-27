@@ -139,13 +139,11 @@ impl<P, A> Session<P, A> {
         if !self.transport_sent.live() {
             self.transport_sent.enable(self.config.encryption & 2 != 0);
         }
-        let now_us = self.transport_sent.micros(now);
-        let valid = congestion.on_report(&self.transport_sent, now_us, payload);
-        drop(congestion);
-        if valid && self.rfi_confirm_active.load(Ordering::Acquire) {
-            self.note_rfi_transport_feedback(payload, now_us);
-        }
-        valid
+        congestion.on_report(
+            &self.transport_sent,
+            self.transport_sent.micros(now),
+            payload,
+        )
     }
     /// Video packets just handed to the socket: one store each into the ledger, nothing
     /// while it is off. `overhead` is the IP and UDP framing per packet.

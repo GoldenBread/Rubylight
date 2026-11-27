@@ -129,9 +129,6 @@ pub struct Session<P = (), A = ()> {
     pub idr: AtomicBool,
     pub invalidation: std::sync::Mutex<Option<(u64, u64)>>,
     pub recovery_wake: std::sync::Mutex<Option<Box<dyn Fn() + Send + Sync>>>,
-    /// Fast lock-free check for whether post-RFI LTR confirmation is currently tracking.
-    rfi_confirm_active: AtomicBool,
-    rfi_confirm: std::sync::Mutex<Option<pacing::RfiConfirm>>,
     pub bitrate: AtomicU32,
     /// All bitrate writers take this lock, including client ownership handoff.
     pub adaptive_bitrate:
@@ -303,8 +300,6 @@ impl<P, A> Session<P, A> {
             idr: AtomicBool::new(true),
             invalidation: Default::default(),
             recovery_wake: Default::default(),
-            rfi_confirm_active: AtomicBool::new(false),
-            rfi_confirm: Default::default(),
             bitrate: AtomicU32::new(bitrate),
             adaptive_bitrate: Default::default(),
             adaptive_bitrate_on: AtomicBool::new(false),
