@@ -65,7 +65,7 @@ public final class HostSheet extends FrameLayout {
                 status = game != null ? game : context.getString(R.string.pc_status_playing_unknown);
                 break;
             case READY:
-                status = context.getString(R.string.pc_status_online);
+                status = PcGridAdapter.onlineWords(context, details);
                 break;
             case NOT_PAIRED:
                 status = context.getString(R.string.pc_status_not_paired);

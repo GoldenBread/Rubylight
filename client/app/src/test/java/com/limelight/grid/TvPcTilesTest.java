@@ -153,6 +153,13 @@ public class TvPcTilesTest {
         assertEquals(R.string.applist_menu_resume, PcGridAdapter.actionWord(screen, playing));
         PcView.ComputerObject ready = pc("b", ComputerDetails.State.ONLINE, PairingManager.PairState.PAIRED, null);
         assertEquals(screen.getString(R.string.pc_status_online), PcGridAdapter.shortStatus(screen, ready));
+        // Away from home the card names the path in use, as desktop Nightjar's does; at home it stays "Online".
+        ready.details.internetPath = "punched";
+        assertEquals(screen.getString(R.string.pc_status_online) + " · " + screen.getString(R.string.internet_path_punched),
+                PcGridAdapter.shortStatus(screen, ready));
+        ready.details.internetPath = "lan";
+        assertEquals(screen.getString(R.string.pc_status_online), PcGridAdapter.shortStatus(screen, ready));
+        ready.details.internetPath = null;
         assertEquals(R.string.console_hint_open, PcGridAdapter.actionWord(screen, ready));
         PcView.ComputerObject locked = pc("c", ComputerDetails.State.ONLINE, PairingManager.PairState.NOT_PAIRED, null);
         assertEquals(screen.getString(R.string.pc_status_not_paired), PcGridAdapter.shortStatus(screen, locked));

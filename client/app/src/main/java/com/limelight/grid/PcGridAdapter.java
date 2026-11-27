@@ -223,13 +223,23 @@ public class PcGridAdapter extends GenericGridAdapter<PcView.ComputerObject> {
         return details.unreachable != null ? details.unreachable : otherwise;
     }
 
+    /**
+     * "Online", or away from home "Online · Internet (direct path)" with the path in use, as desktop Nightjar's
+     * card says it.
+     */
+    public static String onlineWords(Context context, ComputerDetails details) {
+        String online = context.getString(R.string.pc_status_online);
+        String path = details != null ? com.limelight.computers.InternetPlay.pathLabel(context, details.internetPath) : null;
+        return path != null ? context.getString(R.string.settings_joined, online, path) : online;
+    }
+
     public static String shortStatus(Context context, PcView.ComputerObject computer) {
         switch (computer.rowState()) {
             case RUNNING:
                 return computer.runningGame != null ? computer.runningGame.getAppName() :
                         context.getString(R.string.pc_status_playing_unknown);
             case READY:
-                return context.getString(R.string.pc_status_online);
+                return onlineWords(context, computer.details);
             case NOT_PAIRED:
                 return context.getString(R.string.pc_status_not_paired);
             case WAKING:
