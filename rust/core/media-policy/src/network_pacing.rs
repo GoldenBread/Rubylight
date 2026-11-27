@@ -52,6 +52,13 @@ pub fn rate_bps_for_client(
     )
 }
 
+/// Default for `pacing_follow_client_link`: PyroWave lifts the 800 Mbps wired
+/// ceiling to 4/5 of the slower confirmed >1 GbE link by default, while
+/// conventional codecs stay at 800 Mbps unless explicitly opted in.
+pub fn follow_client_link_default(pyrowave: bool) -> bool {
+    pyrowave
+}
+
 /// [`rate_bps_for_client`], and with `follow_client_link`
 /// (`pacing_follow_client_link`) a wired route whose host link is known and
 /// whose client reported its own is no longer held to 800 Mbps: its ceiling

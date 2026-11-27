@@ -210,6 +210,83 @@ fn following_the_client_link_lifts_the_wired_ceiling() {
 }
 
 #[test]
+fn pyrowave_follows_confirmed_multi_gigabit_link_by_default_and_respects_explicit_false() {
+    let fixture = crate::state::test_support::Fixture::new();
+    let packetizer = VideoPacketizer {
+        sequence: 0,
+        iv_counter: 0,
+        frame: 1,
+        packet_size: 1392,
+        fec_percent: 20,
+        min_fec: 2,
+        key: Some([0; 16]),
+    };
+    let period = Duration::from_secs_f64(1. / 60.);
+    let peer: SocketAddr = "192.0.2.9:12345".parse().unwrap();
+    let route = Link {
+        bps: 10_000_000_000,
+        ..Default::default()
+    };
+    let session = Session::new(
+        fixture.launch(fixture.client(0), Role::Stream),
+        butterpollo_media_policy::rtsp::Negotiated {
+            codec: 3,
+            pyrowave_client_link_mbps: 2500,
+            ..Default::default()
+        },
+    );
+    session
+        .bitrate
+        .store(400_000, std::sync::atomic::Ordering::Release);
+    session.configure_keyframe_loss(true);
+
+    // PyroWave defaults to following confirmed wired >1 GbE links.
+    let mut config = Config::default();
+    assert_eq!(
+        pace(&session, &config, &packetizer, period, peer, route).bps,
+        2_000_000_000
+    );
+
+    // Explicit `pacing_follow_client_link = false` still holds the 800 Mbps ceiling.
+    config
+        .values
+        .insert("pacing_follow_client_link".into(), "false".into());
+    assert_eq!(
+        pace(&session, &config, &packetizer, period, peer, route).bps,
+        800_000_000
+    );
+
+    // Conventional codecs (H.264/HEVC/AV1) stay at 800 Mbps unless opted in.
+    for codec in [0u8, 1, 2] {
+        let conventional = Session::new(
+            fixture.launch(fixture.client(0), Role::Stream),
+            butterpollo_media_policy::rtsp::Negotiated {
+                codec,
+                pyrowave_client_link_mbps: 2500,
+                ..Default::default()
+            },
+        );
+        conventional
+            .bitrate
+            .store(400_000, std::sync::atomic::Ordering::Release);
+        conventional.configure_keyframe_loss(true);
+        assert_eq!(
+            pace(
+                &conventional,
+                &Config::default(),
+                &packetizer,
+                period,
+                peer,
+                route
+            )
+            .bps,
+            800_000_000,
+            "codec {codec}"
+        );
+    }
+}
+
+#[test]
 fn a_client_link_hint_below_the_bitrate_floors_the_pace_at_one_point_one_times_it() {
     let fixture = crate::state::test_support::Fixture::new();
     let packetizer = VideoPacketizer {

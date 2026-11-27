@@ -304,9 +304,11 @@ impl Device {
                 None,
                 Some(&mut context),
             )?;
+            let device = device.unwrap();
             let context = context.unwrap();
             let multithread: ID3D11Multithread = context.cast()?;
             let _ = multithread.SetMultithreadProtected(true);
+            elevate_gpu_thread_priority(&device);
             let color = output
                 .as_ref()
                 .map(|output| output::Color::open(output, &display.display_name))
@@ -317,7 +319,7 @@ impl Device {
                     color
                 });
             Ok(Self {
-                device: device.unwrap(),
+                device,
                 context,
                 output,
                 display: std::sync::Arc::new(display),
@@ -325,6 +327,21 @@ impl Device {
                 color,
             })
         }
+    }
+}
+/// Raise the D3D11 device's GPU thread priority best-effort so a saturated 3D
+/// game queue does not starve capture or colour-conversion submissions.
+fn elevate_gpu_thread_priority(device: &ID3D11Device) {
+    // SAFETY: `device` is a live D3D11 device, `cast` queries `IDXGIDevice1`
+    // (which inherits `IDXGIDevice`), and `SetGPUThreadPriority` only affects
+    // scheduling of work submitted through this device.
+    let result = unsafe {
+        device
+            .cast::<IDXGIDevice1>()
+            .and_then(|dxgi| dxgi.SetGPUThreadPriority(7))
+    };
+    if let Err(error) = result {
+        tracing::debug!(%error, "capture D3D11 GPU thread priority remains at its default");
     }
 }
 /// A capture device opened on another GPU than the one that renders its
@@ -404,4 +421,25 @@ pub(super) fn duplication_device<D>(
     tracing::warn!("{message}");
     warnings.set("capture_adapter", &message);
     Ok(device)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn created_device_elevates_gpu_thread_priority_best_effort() {
+        let Ok(gpu) = Device::new("") else {
+            // Environments without a hardware adapter cannot open a capture D3D11 device.
+            return;
+        };
+        let dxgi: IDXGIDevice1 = gpu.device.cast().expect("IDXGIDevice1");
+        // SAFETY: `dxgi` is a live IDXGIDevice1 obtained from `gpu.device`.
+        let initial = unsafe { dxgi.GetGPUThreadPriority() }.ok();
+        // If the driver accepts priority 7, `Device::create` already applied it.
+        // SAFETY: `dxgi` is a live IDXGIDevice1 obtained from `gpu.device`.
+        if unsafe { dxgi.SetGPUThreadPriority(7) }.is_ok() {
+            assert_eq!(initial, Some(7));
+        }
+    }
 }

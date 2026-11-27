@@ -227,7 +227,10 @@ fn select(
         ),
         needed,
         client_link,
-        config.boolean("pacing_follow_client_link", false),
+        config.boolean(
+            "pacing_follow_client_link",
+            network_pacing::follow_client_link_default(session.config.codec == 3),
+        ),
     );
     let base = adapt(base, needed);
     let safe = network_pacing::rate_bps(0, bitrate, route.bps, true, needed);

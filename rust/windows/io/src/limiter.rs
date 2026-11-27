@@ -14,8 +14,8 @@ use std::{
 mod follow;
 pub mod hooks;
 
-use follow::{Follow, change_followed, next_follow};
-pub use follow::{display_read_due, follow_display, following};
+use follow::{Follow, change_clamped, change_followed, next_follow, queue_clamp_enabled};
+pub use follow::{display_read_due, follow_display, follow_queue_clamp, following};
 #[cfg(test)]
 use follow::{follows, no_limit, wanted_change};
 
@@ -30,6 +30,10 @@ struct RtssChange {
     /// doing as well, so restoring replaces them like `applied`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     stood_down: Option<BTreeMap<String, Option<u32>>>,
+    /// Dynamic queue-clamp rate this host gave RTSS in place of `applied`
+    /// ([`follow_queue_clamp`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    clamped: Option<BTreeMap<String, Option<u32>>>,
 }
 impl RtssChange {
     /// Whether the profile's `key` still holds a value this host wrote. A user's edit made
@@ -38,6 +42,11 @@ impl RtssChange {
         current.get(key) == self.applied.get(key)
             || self
                 .stood_down
+                .as_ref()
+                .and_then(|values| values.get(key))
+                .is_some_and(|value| current.get(key) == Some(value))
+            || self
+                .clamped
                 .as_ref()
                 .and_then(|values| values.get(key))
                 .is_some_and(|value| current.get(key) == Some(value))
@@ -371,9 +380,15 @@ impl Lease {
         let mut state = state().lock().unwrap();
         if state.users != 0 {
             state.users += 1;
-            // Another stream joins: the cap is no longer one display's to stand down for.
+            // Another stream joins: the cap is no longer one display's to stand down or clamp for.
             if state.follow.as_ref().is_some_and(|f| f.standing_down) {
                 change_followed(&mut state, false, None);
+            } else if state
+                .follow
+                .as_ref()
+                .is_some_and(|f| f.clamped_rate.is_some())
+            {
+                change_clamped(&mut state, None);
             }
             if let Some(follow) = state.follow.as_mut() {
                 follow.shared = true;
@@ -423,6 +438,8 @@ impl Lease {
                         root: root.clone(),
                         rate: policy.rate,
                         standing_down: false,
+                        queue_clamp: queue_clamp_enabled(config),
+                        clamped_rate: None,
                         changing: false,
                         failed: false,
                         shared: false,
@@ -521,6 +538,7 @@ fn apply_cap(
         ]),
         disabled: reply.flags & 4 != 0,
         stood_down: None,
+        clamped: None,
     };
     journal.rtss = Some(change.clone());
     persist(directory, journal)?;
@@ -537,7 +555,13 @@ pub fn active_rate() -> Option<Rate> {
     (state.users > 0
         && state.active == "rtss"
         && !state.follow.as_ref().is_some_and(|f| f.standing_down))
-    .then_some(state.rate)
+    .then(|| {
+        state
+            .follow
+            .as_ref()
+            .and_then(|f| f.clamped_rate)
+            .or(state.rate)
+    })
     .flatten()
 }
 pub fn status(config: &Config) -> Json {

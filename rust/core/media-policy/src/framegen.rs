@@ -176,6 +176,61 @@ pub fn display_rate(rate: Rate, virtual_display: bool, mode: VirtualRefresh) -> 
 pub fn cap_suits_display(cap: Rate, display: Rate) -> bool {
     u64::from(display.0) * 2 >= u64::from(cap.0) * 3
 }
+/// Minimum dynamic queue-clamp cap in millihertz (30 fps).
+pub const QUEUE_CLAMP_MIN_MHZ: u32 = 30_000;
+
+/// Dynamic RTSS frame-rate cap while a game is GPU-bound (`gpu_busy_percent >= Some(97)`)
+/// and rendering sustainably below `nominal` (`30_000..=nominal * 96 / 100`), returning
+/// `97%` of `rendered_fps_milli` (clamped to `>= 30_000` millihz) so RTSS drains the
+/// game's 1–3 frame CPU render-ahead queue. Returns `None` when GPU headroom is available
+/// or `rendered_fps_milli` is near `nominal` or below 30 fps.
+pub fn queue_clamp_rate(
+    nominal: Rate,
+    rendered_fps_milli: u32,
+    gpu_busy_percent: Option<u8>,
+) -> Option<Rate> {
+    let busy = gpu_busy_percent?;
+    if busy < 97 || rendered_fps_milli < QUEUE_CLAMP_MIN_MHZ {
+        return None;
+    }
+    let engage_ceiling = u64::from(nominal.0) * 96 / 100;
+    if u64::from(rendered_fps_milli) > engage_ceiling {
+        return None;
+    }
+    let clamped = (u64::from(rendered_fps_milli) * 97 / 100).max(u64::from(QUEUE_CLAMP_MIN_MHZ));
+    Some(Rate(clamped.min(u64::from(nominal.0)) as u32))
+}
+
+/// Stateful step for the dynamic queue-clamp limiter (`frame_limiter_queue_clamp`).
+/// Engages via [`queue_clamp_rate`], holds an active cap across the `93%..97%` GPU-busy
+/// and `96%..97%` FPS hysteresis bands without re-ratcheting against its own cap, and
+/// returns `None` (restoring `nominal`) once headroom returns (`gpu_busy_percent < Some(93)`
+/// or `rendered_fps_milli >= nominal.0 * 97 / 100` or `< 30_000`).
+pub fn queue_clamp_step(
+    nominal: Rate,
+    current_clamp: Option<Rate>,
+    rendered_fps_milli: u32,
+    gpu_busy_percent: Option<u8>,
+) -> Option<Rate> {
+    let Some(active) = current_clamp else {
+        return queue_clamp_rate(nominal, rendered_fps_milli, gpu_busy_percent);
+    };
+    let Some(busy) = gpu_busy_percent else {
+        return None;
+    };
+    if busy < 93
+        || rendered_fps_milli < QUEUE_CLAMP_MIN_MHZ
+        || u64::from(rendered_fps_milli) >= u64::from(nominal.0) * 97 / 100
+    {
+        return None;
+    }
+    // Tighten only if rendered FPS dropped sustainably below our active cap; hitting
+    // our own cap must not spiral the limit down tick by tick.
+    if busy >= 97 && u64::from(rendered_fps_milli) < u64::from(active.0) * 96 / 100 {
+        return queue_clamp_rate(nominal, rendered_fps_milli, Some(busy)).or(Some(active));
+    }
+    Some(active)
+}
 pub fn generation_provider(value: &str) -> &'static str {
     match normalize(value).as_str() {
         "game" | "gameprovided" | "gameprovider" => "game-provided",
@@ -311,3 +366,80 @@ impl Policy {
 }
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod queue_clamp_tests {
+    use super::*;
+
+    #[test]
+    fn engages_at_high_gpu_load_when_rendered_fps_dips_below_nominal() {
+        let nominal = Rate(120_000);
+        // Exactly at 97% GPU busy and at/below 96% of nominal engages at 97% of rendered FPS.
+        assert_eq!(
+            queue_clamp_rate(nominal, 115_200, Some(97)),
+            Some(Rate(111_744))
+        );
+        assert_eq!(
+            queue_clamp_rate(nominal, 90_000, Some(99)),
+            Some(Rate(87_300))
+        );
+        // Floor clamp at 30_000 millihz even when 97% of rendered FPS would be lower.
+        assert_eq!(
+            queue_clamp_rate(nominal, 30_500, Some(98)),
+            Some(Rate(30_000))
+        );
+        assert_eq!(
+            queue_clamp_rate(nominal, 30_000, Some(97)),
+            Some(Rate(30_000))
+        );
+    }
+
+    #[test]
+    fn returns_none_without_gpu_saturation_or_sustainable_dip() {
+        let nominal = Rate(120_000);
+        assert_eq!(queue_clamp_rate(nominal, 90_000, None), None);
+        assert_eq!(queue_clamp_rate(nominal, 90_000, Some(96)), None);
+        assert_eq!(queue_clamp_rate(nominal, 90_000, Some(92)), None);
+        // Above 96% of nominal or at/above 97% headroom threshold stays unclamped.
+        assert_eq!(queue_clamp_rate(nominal, 115_201, Some(99)), None);
+        assert_eq!(queue_clamp_rate(nominal, 116_400, Some(99)), None);
+        // Below 30 fps (e.g. menu/loading screen) does not clamp.
+        assert_eq!(queue_clamp_rate(nominal, 29_999, Some(100)), None);
+        // Nominal <= 30 fps leaves no room above the 30 fps floor.
+        assert_eq!(queue_clamp_rate(Rate(30_000), 30_000, Some(100)), None);
+    }
+
+    #[test]
+    fn step_holds_across_hysteresis_band_and_restores_nominal_when_headroom_returns() {
+        let nominal = Rate(120_000);
+        // Engage from unclamped state.
+        let clamped = queue_clamp_step(nominal, None, 90_000, Some(98)).unwrap();
+        assert_eq!(clamped, Rate(87_300));
+        // Holding at our own cap with GPU busy in 93..=96% or >=97% does not spiral or flap.
+        assert_eq!(
+            queue_clamp_step(nominal, Some(clamped), 87_300, Some(95)),
+            Some(clamped)
+        );
+        assert_eq!(
+            queue_clamp_step(nominal, Some(clamped), 87_300, Some(98)),
+            Some(clamped)
+        );
+        // Further sustainable GPU-bound drop tightens the cap.
+        let tighter = queue_clamp_step(nominal, Some(clamped), 70_000, Some(99)).unwrap();
+        assert_eq!(tighter, Rate(67_900));
+        // Headroom returns via GPU busy < 93, missing telemetry, or rendered >= 97% of nominal.
+        assert_eq!(
+            queue_clamp_step(nominal, Some(tighter), 68_000, Some(92)),
+            None
+        );
+        assert_eq!(queue_clamp_step(nominal, Some(tighter), 68_000, None), None);
+        assert_eq!(
+            queue_clamp_step(nominal, Some(tighter), 116_400, Some(96)),
+            None
+        );
+        assert_eq!(
+            queue_clamp_step(nominal, Some(tighter), 20_000, Some(99)),
+            None
+        );
+    }
+}

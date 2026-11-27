@@ -439,6 +439,39 @@ fn following_the_client_link_lifts_the_wired_ceiling_to_the_slower_link() {
     );
 }
 
+#[test]
+fn pyrowave_defaults_to_following_confirmed_multi_gigabit_wired_links() {
+    const M: u64 = 1_000_000;
+    assert!(follow_client_link_default(true));
+    assert!(!follow_client_link_default(false));
+    // PyroWave (default true) unlocks >1 GbE pacing when both wired endpoints confirm >1 GbE.
+    assert_eq!(
+        rate_bps_following_client(
+            0,
+            400_000,
+            10_000 * M,
+            false,
+            500 * M,
+            2_500 * M,
+            follow_client_link_default(true),
+        ),
+        2_000 * M
+    );
+    // Conventional codecs (default false) stay held to 800 Mbps unless opted in.
+    assert_eq!(
+        rate_bps_following_client(
+            0,
+            150_000,
+            10_000 * M,
+            false,
+            180 * M,
+            2_500 * M,
+            follow_client_link_default(false),
+        ),
+        800 * M
+    );
+}
+
 /// The skip-ab legs of 2026-11-10 (PyroWave 1.4 Gbps, paced at 1.75 Gbps):
 /// a 1 MiB buffer held under 5 ms and the socket refused whole 46-datagram
 /// batches (10035). The paced sender's buffer holds 10 ms at its pace.

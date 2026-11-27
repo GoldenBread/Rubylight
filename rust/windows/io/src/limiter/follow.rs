@@ -2,7 +2,8 @@
 use super::{State, confirmed, load, persist, state, warn_unsupported};
 use crate::rtss;
 use anyhow::{Result, bail};
-use butterpollo_media_policy::framegen::Rate;
+use butterpollo_config::config::Config;
+use butterpollo_media_policy::framegen::{Rate, queue_clamp_step};
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
@@ -16,6 +17,10 @@ pub(super) struct Follow {
     pub(super) rate: Rate,
     /// The cap is off: the stream's display refreshes too slowly for it.
     pub(super) standing_down: bool,
+    /// Whether `frame_limiter_queue_clamp` allows lowering the cap during GPU-bound dips.
+    pub(super) queue_clamp: bool,
+    /// Active queue-clamp cap applied in place of `rate`, or `None` at nominal.
+    pub(super) clamped_rate: Option<Rate>,
     /// A change is on its way on its own thread.
     pub(super) changing: bool,
     /// A change failed; the cap stays as it is until the stream ends.
@@ -23,6 +28,10 @@ pub(super) struct Follow {
     /// A second stream joined: the cap is no longer one display's to decide, and stays on
     /// until the last stream ends.
     pub(super) shared: bool,
+}
+
+pub(super) fn queue_clamp_enabled(config: &Config) -> bool {
+    config.boolean("frame_limiter_queue_clamp", false)
 }
 
 pub(super) fn next_follow() -> u64 {
@@ -127,6 +136,7 @@ pub(super) fn change_followed(state: &mut State, stand_down: bool, display: Opti
         Ok(()) => {
             follow.standing_down = stand_down;
             if stand_down {
+                follow.clamped_rate = None;
                 tracing::info!(rate = ?follow.rate.rational(), display_hz, "the stream's display now refreshes too slowly for the automatic frame limit, so the limit is off and the display's refresh paces the game");
             } else {
                 tracing::info!(rate = ?follow.rate.rational(), display_hz, "the automatic frame limit is back on");
@@ -144,6 +154,81 @@ pub(super) fn change_followed(state: &mut State, stand_down: bool, display: Opti
                 });
             follow.standing_down = off;
             tracing::warn!(stand_down, limit_off = off, display_hz, error = %format!("{error:#}"), "the automatic frame limit could not follow the display's refresh rate; RTSS keeps what it has now until the stream ends");
+        }
+    }
+}
+
+/// Update RTSS's followed cap dynamically when `frame_limiter_queue_clamp` is enabled and the
+/// stream is not stood down for a slow display: clamps to 97% of `rendered_fps_milli` during
+/// GPU-bound dips and restores `nominal` once headroom returns.
+pub fn follow_queue_clamp(rendered_fps_milli: u32, gpu_busy_percent: Option<u8>) {
+    let Ok(mut guard) = state().try_lock() else {
+        return;
+    };
+    let Some(next) = wanted_clamp(&guard, rendered_fps_milli, gpu_busy_percent) else {
+        return;
+    };
+    let Some(follow) = guard.follow.as_mut() else {
+        return;
+    };
+    let id = follow.id;
+    let spawned = std::thread::Builder::new()
+        .name("limiter-clamp".into())
+        .spawn(move || {
+            let mut guard = state().lock().unwrap();
+            let state = &mut *guard;
+            let Some(follow) = state.follow.as_mut().filter(|follow| follow.id == id) else {
+                return;
+            };
+            follow.changing = false;
+            if wanted_clamp(state, rendered_fps_milli, gpu_busy_percent) == Some(next) {
+                change_clamped(state, next);
+            }
+        });
+    match spawned {
+        Ok(_) => follow.changing = true,
+        Err(error) => {
+            tracing::warn!(%error, "the frame limiter could not apply queue clamp: no thread")
+        }
+    }
+}
+
+/// Desired queue-clamp target when `follow_display` is active, `frame_limiter_queue_clamp`
+/// is enabled, and the cap is not stood down; `None` if no change is needed.
+pub(super) fn wanted_clamp(
+    state: &State,
+    rendered_fps_milli: u32,
+    gpu_busy_percent: Option<u8>,
+) -> Option<Option<Rate>> {
+    let follow = state.follow.as_ref()?;
+    if !follows(state) || !follow.queue_clamp || follow.standing_down || follow.changing {
+        return None;
+    }
+    let next = queue_clamp_step(
+        follow.rate,
+        follow.clamped_rate,
+        rendered_fps_milli,
+        gpu_busy_percent,
+    );
+    (next != follow.clamped_rate).then_some(next)
+}
+
+pub(super) fn change_clamped(state: &mut State, clamped: Option<Rate>) {
+    let Some(follow) = state.follow.as_mut() else {
+        return;
+    };
+    match retarget_clamp(&state.directory, &follow.root, clamped) {
+        Ok(()) => {
+            follow.clamped_rate = clamped;
+            if let Some(rate) = clamped {
+                tracing::info!(nominal = ?follow.rate.rational(), clamped = ?rate.rational(), "dynamic queue clamp lowered RTSS frame limit for GPU-bound headroom");
+            } else {
+                tracing::info!(nominal = ?follow.rate.rational(), "dynamic queue clamp restored nominal RTSS frame limit");
+            }
+        }
+        Err(error) => {
+            follow.failed = true;
+            tracing::warn!(clamped = ?clamped.map(Rate::rational), error = %format!("{error:#}"), "dynamic queue clamp could not update RTSS; keeping current limit until the stream ends");
         }
     }
 }
@@ -178,6 +263,7 @@ fn retarget(directory: &Path, root: &Path, stand_down: bool) -> Result<()> {
         bail!("RTSS's {key} was changed during the stream");
     }
     if stand_down && change.stood_down.is_none() {
+        change.clamped = None;
         change.stood_down = Some(wanted.clone());
         persist(directory, &journal)?;
     }
@@ -192,12 +278,137 @@ fn retarget(directory: &Path, root: &Path, stand_down: bool) -> Result<()> {
     // The cap is back, so no limit is no longer this host's value: one that somebody
     // turns off from here on is theirs. A journal that cannot be written keeps the claim.
     if !stand_down
-        && journal
-            .rtss
-            .as_mut()
-            .is_some_and(|change| change.stood_down.take().is_some())
+        && (journal.rtss.as_mut().is_some_and(|change| {
+            change.stood_down.take().is_some() | change.clamped.take().is_some()
+        }))
     {
         let _ = persist(directory, &journal);
     }
     Ok(())
+}
+
+fn retarget_clamp(directory: &Path, root: &Path, clamped: Option<Rate>) -> Result<()> {
+    let mut journal = load(directory)?;
+    let Some(change) = journal.rtss.as_mut().filter(|change| change.root == root) else {
+        bail!("the stream's frame limit is no longer in the recovery journal");
+    };
+    let current = rtss::properties(&rtss::read(root)?)?;
+    let wanted: BTreeMap<String, Option<u32>> = match clamped {
+        Some(rate) => {
+            let (numerator, denominator) = rate.rational();
+            BTreeMap::from([
+                ("Limit".into(), Some(numerator)),
+                ("LimitDenominator".into(), Some(denominator)),
+            ])
+        }
+        None => BTreeMap::from([
+            (
+                "Limit".into(),
+                change.applied.get("Limit").copied().flatten(),
+            ),
+            (
+                "LimitDenominator".into(),
+                change.applied.get("LimitDenominator").copied().flatten(),
+            ),
+        ]),
+    };
+    if let Some(key) = wanted.keys().find(|key| !change.ours(key, &current)) {
+        bail!("RTSS's {key} was changed during the stream");
+    }
+    if clamped.is_some() {
+        change.clamped = Some(wanted.clone());
+        persist(directory, &journal)?;
+    }
+    let reply = rtss::apply(root, &wanted, Some(false))?;
+    if reply.flags & 4 != 0 {
+        bail!("RTSS did not confirm the requested rational frame limit");
+    }
+    let unsupported = confirmed(&wanted, &reply.values, true)
+        .map_err(|key| anyhow::anyhow!("RTSS did not confirm {key}"))?;
+    warn_unsupported(&unsupported);
+    if clamped.is_none()
+        && journal
+            .rtss
+            .as_mut()
+            .is_some_and(|change| change.clamped.take().is_some())
+    {
+        let _ = persist(directory, &journal);
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn followed_state(queue_clamp: bool) -> State {
+        State {
+            users: 1,
+            active: "rtss".into(),
+            rate: Some(Rate(120_000)),
+            follow: Some(Follow {
+                id: 1,
+                root: PathBuf::new(),
+                rate: Rate(120_000),
+                standing_down: false,
+                queue_clamp,
+                clamped_rate: None,
+                changing: false,
+                failed: false,
+                shared: false,
+            }),
+            ..State::default()
+        }
+    }
+
+    #[test]
+    fn queue_clamp_setting_is_opt_in_and_respects_active_follow_guards() {
+        assert!(!queue_clamp_enabled(&Config::default()));
+        assert!(!queue_clamp_enabled(
+            &Config::parse("frame_limiter_queue_clamp=false").unwrap()
+        ));
+        assert!(queue_clamp_enabled(
+            &Config::parse("frame_limiter_queue_clamp=true").unwrap()
+        ));
+
+        // Disabled by default: never requests a dynamic clamp.
+        let disabled = followed_state(false);
+        assert_eq!(wanted_clamp(&disabled, 90_000, Some(99)), None);
+
+        // Enabled and actively following: engages during GPU-bound dips and restores nominal.
+        let mut enabled = followed_state(true);
+        assert_eq!(
+            wanted_clamp(&enabled, 90_000, Some(99)),
+            Some(Some(Rate(87_300)))
+        );
+        enabled.follow.as_mut().unwrap().clamped_rate = Some(Rate(87_300));
+        assert_eq!(wanted_clamp(&enabled, 87_300, Some(95)), None);
+        assert_eq!(wanted_clamp(&enabled, 87_300, Some(92)), Some(None));
+        assert_eq!(wanted_clamp(&enabled, 116_400, Some(97)), Some(None));
+
+        // Stood down for a slow display, changing, failed, shared, or inactive: no clamp.
+        let mut stood_down = followed_state(true);
+        stood_down.follow.as_mut().unwrap().standing_down = true;
+        assert_eq!(wanted_clamp(&stood_down, 90_000, Some(99)), None);
+
+        let mut changing = followed_state(true);
+        changing.follow.as_mut().unwrap().changing = true;
+        assert_eq!(wanted_clamp(&changing, 90_000, Some(99)), None);
+
+        let mut failed = followed_state(true);
+        failed.follow.as_mut().unwrap().failed = true;
+        assert_eq!(wanted_clamp(&failed, 90_000, Some(99)), None);
+
+        let mut shared = followed_state(true);
+        shared.follow.as_mut().unwrap().shared = true;
+        assert_eq!(wanted_clamp(&shared, 90_000, Some(99)), None);
+
+        let mut multi_user = followed_state(true);
+        multi_user.users = 2;
+        assert_eq!(wanted_clamp(&multi_user, 90_000, Some(99)), None);
+
+        let mut inactive = followed_state(true);
+        inactive.active = "none".into();
+        assert_eq!(wanted_clamp(&inactive, 90_000, Some(99)), None);
+    }
 }
