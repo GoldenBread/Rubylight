@@ -37,7 +37,7 @@ Pinned-Source (Join-Path $source 'enet') 'https://github.com/cgutman/enet.git' '
 Pinned-Source (Join-Path $source 'nanors') 'https://github.com/sleepybishop/nanors.git' 'b1e3c22ca0cdc0bb83e3cd6ed1a2fc77869ed99a'
 $info = [IO.File]::ReadAllText((Join-Path $PyrowaveRoot 'share\pyrowave-shared\build-info.txt'))
 # Vibepollo 2.0's SDK and the 1.0 SDK the host ships produce the same 186f0393 bitstream.
-if (!($info -match '(?m)^pyrowave_commit=(186f0393b77f7755953b5ecde994bb1cec2e4155|502a3b52a39312ab82c85b1e2fc0e746faee91a4)\r?$')) { throw 'The fixture requires a PyroWave SDK with bitstream 186f0393 (commit 186f0393 or 502a3b52)' }
+if (!($info -match '(?m)^pyrowave_commit=(186f0393b77f7755953b5ecde994bb1cec2e4155|502a3b52a39312ab82c85b1e2fc0e746faee91a4|a32b05e03d70826b19d4d11ff74fe166ed74371b)\r?$')) { throw 'The fixture requires a PyroWave SDK with bitstream 186f0393 (commit 186f0393, 502a3b52 or a32b05e0)' }
 $build = Join-Path $ArtifactDirectory 'moonlight-vrr-common-build'
 & cmake -S $source -B $build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DCMAKE_C_COMPILER=gcc "-DOPENSSL_ROOT_DIR=$MsysRoot/ucrt64"
 Assert-Exit 'Client transport configuration'

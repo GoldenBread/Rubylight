@@ -610,7 +610,7 @@ def _pyrowave_dir(env):
         return pathlib.Path(env['BUTTERPOLLO_PYROWAVE_ROOT'])
     local = env.get('LOCALAPPDATA')
     base = pathlib.Path(local) if local else (pathlib.Path.home() / 'AppData' / 'Local')
-    return base / 'ButterpolloRust' / 'sdk' / 'pyrowave-502a3b52'
+    return base / 'ButterpolloRust' / 'sdk' / 'pyrowave-a32b05e0'
 
 
 def host_env(target, lock_directory=None, fast=False):

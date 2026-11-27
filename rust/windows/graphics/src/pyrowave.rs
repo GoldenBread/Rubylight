@@ -464,7 +464,7 @@ impl Drop for Encoder {
         // SAFETY: `encoder` and `device` were created in `new_device_reported`; the slots' images
         // go before the device. After a device loss the frames in flight are already gone while
         // Vulkan may still be running or queued, because the lost fence satisfies the completion
-        // wait early. `pyrowave_encoder_destroy` goes first: pyrowave.h (SDK 502a3b52,
+        // wait early. `pyrowave_encoder_destroy` goes first: pyrowave.h (SDK a32b05e0,
         // "Implementation ensures GPU is idle before destroying objects") idles the GPU there,
         // before the images and the device are destroyed.
         unsafe {

@@ -152,13 +152,13 @@ if ($Nvidia) {
 }
 if ($FetchDependencies) {
     if (!$PyrowaveRoot) {
-        $PyrowaveRoot = Join-Path $Dependencies 'pyrowave-502a3b52'
+        $PyrowaveRoot = Join-Path $Dependencies 'pyrowave-a32b05e0'
         $cygpath = "$MsysRoot\usr\bin\cygpath.exe"
         $prefix = & $cygpath -u $PyrowaveRoot
         $buildScript = & $cygpath -u (Join-Path $repo 'rust\tools\build_pyrowave.sh')
         $env:PYROWAVE_WORKDIR = & $cygpath -u (Join-Path $Dependencies 'pyrowave-work')
         $env:MSYSTEM = 'UCRT64'
-        & "$MsysRoot\usr\bin\bash.exe" $buildScript '502a3b52a39312ab82c85b1e2fc0e746faee91a4' $prefix
+        & "$MsysRoot\usr\bin\bash.exe" $buildScript 'a32b05e03d70826b19d4d11ff74fe166ed74371b' $prefix
         Assert-NativeExit 'PyroWave SDK build'
     }
     if (!$FfmpegRoot) {
@@ -204,8 +204,8 @@ $pyrowaveInfo = Join-Path $PyrowaveRoot 'share\pyrowave-shared\build-info.txt'
 if (!(Test-Path -LiteralPath $pyrowaveInfo)) { throw 'PyroWave SDK build-info.txt is missing; rebuild using -FetchDependencies' }
 $pyrowaveIdentity = Get-Content -LiteralPath $pyrowaveInfo -Raw
 foreach ($identity in @(
-    'pyrowave_commit=502a3b52a39312ab82c85b1e2fc0e746faee91a4',
-    'granite_commit=fb178c8080d163419e8d20f10715c61c53c1ec9b',
+    'pyrowave_commit=a32b05e03d70826b19d4d11ff74fe166ed74371b',
+    'granite_commit=53090429539bf3404250d18fe58db971f0907c04',
     'patches=0002-payload-data-444-sizing,0003-decoder-reject-short-block'
 )) {
     if ($pyrowaveIdentity -notmatch ('(?m)^' + [regex]::Escape($identity) + '\r?$')) {

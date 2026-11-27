@@ -9111,7 +9111,8 @@ Mbps); it recovered here, with the strip's small frames.
 
 Punktfunk (MIT OR Apache-2.0) builds PyroWave with local patches. Three of
 them concern the encoder the host uses, and each was checked against the SDK
-the host pins (`502a3b52`):
+the host pins (`502a3b52` then, `a32b05e0` now; the code each result rests on
+is unchanged):
 
 | Punktfunk patch | Its measurement | Pinned SDK and host | Result |
 | --- | --- | --- | --- |

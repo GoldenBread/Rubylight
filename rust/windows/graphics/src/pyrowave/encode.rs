@@ -273,7 +273,7 @@ impl Encoder {
         let release = self.submit(slot, image, budget)?;
         let submitted = Instant::now();
         self.submitted = Some(submitted);
-        // SDK 502a3b52 submits the metadata/bitstream host copies and their
+        // SDK a32b05e0 submits the metadata/bitstream host copies and their
         // COPY→HOST barrier before this same-queue release signal. Granite
         // signals it at ALL_COMMANDS, so this covers the output writes as
         // well as the input reads; the getters of the readout submit no GPU
