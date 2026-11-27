@@ -1,0 +1,46 @@
+# One connection to Rubylight's KMS broker (stdin is the socket): it follows one output's page
+# flips and passes each framebuffer's DMA-BUFs, and the cursor plane's, to the host. Reading
+# another program's framebuffer takes CAP_SYS_ADMIN, the only capability it keeps; it runs as
+# a throwaway user in the video group, which opens the DRM cards read-only, and never becomes
+# DRM master, so it cannot change what is shown. It ends with the connection, or after 60 s
+# of silence.
+[Unit]
+Description=Rubylight screen capture for the host (KMS)
+Documentation=https://github.com/RamazanKara/Rubylight
+
+[Service]
+Type=exec
+ExecStart=/usr/lib/rubylight/rubylight-kms-broker serve
+StandardInput=socket
+StandardOutput=journal
+StandardError=journal
+DynamicUser=yes
+SupplementaryGroups=video
+AmbientCapabilities=CAP_SYS_ADMIN
+CapabilityBoundingSet=CAP_SYS_ADMIN
+NoNewPrivileges=yes
+UMask=0077
+DevicePolicy=closed
+DeviceAllow=char-drm r
+MemoryMax=64M
+TasksMax=8
+TimeoutStopSec=2s
+KillMode=control-group
+ProtectHome=yes
+PrivateTmp=yes
+PrivateNetwork=yes
+ProtectSystem=strict
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service

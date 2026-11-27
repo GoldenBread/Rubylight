@@ -662,6 +662,7 @@ dependencies = [
  "pipewire",
  "pkg-config",
  "png",
+ "rubylight-kms-broker",
  "rubylight-protocol",
  "rubylight-vdisplay-proto",
  "serde",
@@ -3306,6 +3307,16 @@ dependencies = [
  "tokio",
  "uuid",
  "xmltree",
+]
+
+[[package]]
+name = "rubylight-kms-broker"
+version = "6.4.4"
+dependencies = [
+ "anyhow",
+ "libc",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

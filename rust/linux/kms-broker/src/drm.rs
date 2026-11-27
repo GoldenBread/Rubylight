@@ -1,6 +1,6 @@
-//! KMS capture: the picture a display controller shows, read from the kernel's DRM device
-//! whichever compositor owns it (a signed-in user's, the login manager's), as the DMA-BUFs of
-//! the framebuffer on the output's planes. Reading another process's framebuffer takes
+//! The picture a display controller shows, read from the kernel's DRM device whichever
+//! compositor owns it (a signed-in user's, the login manager's), as the DMA-BUFs of the
+//! framebuffer on the output's planes. Reading another process's framebuffer takes
 //! `CAP_SYS_ADMIN`; without it the kernel lists the framebuffer but hands out no buffer.
 //!
 //! The device is opened read-only and never as DRM master: nothing here changes what is shown.
@@ -15,6 +15,12 @@ use std::{
 
 /// `DRM_CLIENT_CAP_UNIVERSAL_PLANES`: list the primary and cursor planes too.
 const CAP_UNIVERSAL_PLANES: u64 = 2;
+/// `DRM_CLIENT_CAP_ATOMIC`: list the planes' atomic properties (where the cursor is). It
+/// takes no DRM master and commits nothing.
+const CAP_ATOMIC: u64 = 3;
+/// `DRM_CLIENT_CAP_CURSOR_PLANE_HOTSPOT`: a virtual GPU (virtio-gpu, vmwgfx, qxl) hides its
+/// cursor plane from atomic clients that do not ask for it (Linux 6.8).
+const CAP_CURSOR_PLANE_HOTSPOT: u64 = 6;
 /// `DRM_MODE_FB_MODIFIERS`: the framebuffer's modifier fields are set.
 const FB_MODIFIERS: u32 = 1 << 1;
 /// `DRM_FORMAT_MOD_INVALID`.
@@ -176,6 +182,25 @@ const GET_CONNECTOR: u64 = iowr(0xa7, size_of::<GetConnector>());
 const GET_PLANE_RESOURCES: u64 = iowr(0xb5, size_of::<PlaneRes>());
 const GET_PLANE: u64 = iowr(0xb6, size_of::<GetPlane>());
 const GET_FB2: u64 = iowr(0xce, size_of::<FbCmd2>());
+const WAIT_VBLANK: u64 = iowr(0x3a, size_of::<WaitVblank>());
+
+/// `union drm_wait_vblank`: the request's type and sequence, and the reply's time.
+#[repr(C)]
+#[derive(Default)]
+struct WaitVblank {
+    kind: u32,
+    sequence: u32,
+    sec: i64,
+    usec: i64,
+}
+
+/// `_DRM_VBLANK_RELATIVE`, and the shift of a CRTC index in the type.
+const VBLANK_RELATIVE: u32 = 0x1;
+const VBLANK_HIGH_CRTC_SHIFT: u32 = 1;
+const VBLANK_HIGH_CRTC_MASK: u32 = 0x3e;
+
+mod planes;
+pub use planes::Cursor;
 
 /// The kernel's name for a connector type, as in `DP-1`.
 pub fn connector_type_name(kind: u32) -> &'static str {
@@ -208,6 +233,8 @@ pub fn connector_type_name(kind: u32) -> &'static str {
 pub struct Card {
     file: File,
     path: PathBuf,
+    /// Property names by id, read once ([`planes`]).
+    names: std::sync::Mutex<std::collections::HashMap<u32, String>>,
 }
 
 /// An output that shows something: its connector and the controller driving it.
@@ -217,6 +244,8 @@ pub struct Output {
     pub name: String,
     pub connector_id: u32,
     pub crtc_id: u32,
+    /// The controller's index on the card, which its vblank waits name.
+    pub pipe: u32,
     /// The controller's mode: width, height, refresh in millihertz.
     pub mode: (u32, u32, u32),
 }
@@ -267,6 +296,7 @@ impl Card {
         let card = Self {
             file,
             path: path.to_owned(),
+            names: Default::default(),
         };
         let mut cap = SetClientCap {
             capability: CAP_UNIVERSAL_PLANES,
@@ -274,6 +304,17 @@ impl Card {
         };
         card.ioctl(SET_CLIENT_CAP, &mut cap)
             .context("asking for universal planes")?;
+        // A driver without atomic modesetting has no cursor position to read; the picture
+        // still comes.
+        for capability in [CAP_ATOMIC, CAP_CURSOR_PLANE_HOTSPOT] {
+            let _ = card.ioctl(
+                SET_CLIENT_CAP,
+                &mut SetClientCap {
+                    capability,
+                    value: 1,
+                },
+            );
+        }
         Ok(card)
     }
 
@@ -308,14 +349,18 @@ impl Card {
         self.ioctl(GET_RESOURCES, &mut res)
             .context("reading the card's resources")?;
         let mut connectors = vec![0u32; res.count_connectors as usize];
+        let mut crtcs = vec![0u32; res.count_crtcs as usize];
         let mut res = CardRes {
             connector_id_ptr: connectors.as_mut_ptr() as u64,
             count_connectors: connectors.len() as u32,
+            crtc_id_ptr: crtcs.as_mut_ptr() as u64,
+            count_crtcs: crtcs.len() as u32,
             ..CardRes::default()
         };
         self.ioctl(GET_RESOURCES, &mut res)
             .context("listing the card's connectors")?;
         connectors.truncate(res.count_connectors as usize);
+        crtcs.truncate(res.count_crtcs as usize);
         let mut outputs = Vec::new();
         for id in connectors {
             // Room for one mode: a count of 0 would ask the kernel to probe the monitor.
@@ -354,6 +399,10 @@ impl Card {
                 ),
                 connector_id: id,
                 crtc_id: encoder.crtc_id,
+                pipe: crtcs
+                    .iter()
+                    .position(|&c| c == encoder.crtc_id)
+                    .unwrap_or_default() as u32,
                 mode: (
                     u32::from(crtc.mode.hdisplay),
                     u32::from(crtc.mode.vdisplay),
@@ -404,6 +453,18 @@ impl Card {
         self.ioctl(GET_CRTC, &mut crtc)
             .context("reading the display controller")?;
         Ok(crtc.fb_id)
+    }
+
+    /// Waits for the next vblank of the controller at `pipe`. Fails on a controller without
+    /// vblank interrupts (a virtual GPU's), which a caller replaces with a short sleep.
+    pub fn wait_vblank(&self, pipe: u32) -> Result<()> {
+        let mut wait = WaitVblank {
+            kind: VBLANK_RELATIVE | ((pipe << VBLANK_HIGH_CRTC_SHIFT) & VBLANK_HIGH_CRTC_MASK),
+            sequence: 1,
+            ..WaitVblank::default()
+        };
+        self.ioctl(WAIT_VBLANK, &mut wait)
+            .context("waiting for the display's vblank")
     }
 
     /// Exports framebuffer `fb_id` as DMA-BUFs. Fails without `CAP_SYS_ADMIN`, when the
@@ -513,6 +574,8 @@ mod tests {
         assert_eq!(size_of::<GetPlane>(), 32);
         assert_eq!(size_of::<FbCmd2>(), 104);
         assert_eq!(size_of::<PrimeHandle>(), 12);
+        assert_eq!(size_of::<WaitVblank>(), 24);
+        assert_eq!(WAIT_VBLANK, 0xc018_643a);
         // The request numbers libdrm uses.
         assert_eq!(GET_FB2, 0xc068_64ce);
         assert_eq!(PRIME_HANDLE_TO_FD, 0xc00c_642d);
@@ -558,6 +621,7 @@ mod tests {
                     path.display(),
                     card.planes(output.crtc_id).unwrap()
                 );
+                eprintln!("  cursor {:?}", card.cursor(output.crtc_id));
                 match card.grab(fb) {
                     Ok(grab) => eprintln!(
                         "  {}x{} {} modifier 0x{:x} planes {}",

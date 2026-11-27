@@ -310,7 +310,12 @@ def main():
             raise SystemExit("the VM is not running")
         qmp = Qmp()
         if command == "stop":
-            qmp.run("system_powerdown")
+            # A desktop session answers the power button with a dialog: power off from inside,
+            # and press the button only when SSH does not answer.
+            inside = subprocess.run(ssh_command(["sudo systemctl poweroff"]),
+                                    capture_output=True, timeout=30)
+            if inside.returncode not in (0, 255) or not wait_gone(10):
+                qmp.run("system_powerdown")
             print("stopped" if wait_gone(90) else "still running after 90 s (try kill)")
         elif command == "kill":
             qmp.run("quit")

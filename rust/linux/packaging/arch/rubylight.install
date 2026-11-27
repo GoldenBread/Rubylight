@@ -16,7 +16,11 @@ post_install() {
     echo "      systemctl enable --now rubylight-vdisplay-pool.service"
     echo "    Users with a session on a seat may plug monitors in; others need the group"
     echo "    rubylight-vdisplay."
-    systemd-sysusers rubylight-vdisplay.conf >/dev/null 2>&1 || true
+    echo "    Login screen capture (optional, as root): the KMS broker hands the host the screen"
+    echo "    before anyone signs in; whoever may use it sees the screen, so only the rubylight"
+    echo "    group may:"
+    echo "      systemctl enable --now rubylight-kms.socket && usermod -aG rubylight USER"
+    systemd-sysusers rubylight-vdisplay.conf rubylight.conf >/dev/null 2>&1 || true
     systemctl daemon-reload >/dev/null 2>&1 || true
     udevadm control --reload 2>/dev/null || true
     udevadm trigger --subsystem-match=misc --subsystem-match=drm --action=change 2>/dev/null || true

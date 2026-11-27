@@ -17,7 +17,6 @@ pub mod desktop;
 #[cfg(test)]
 mod desktop_tests;
 pub mod idd_push;
-pub mod kms;
 pub mod kwin;
 mod priority;
 mod pw_capture;

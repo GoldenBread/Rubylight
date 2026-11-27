@@ -1,0 +1,20 @@
+# The socket of Rubylight's KMS broker, which hands the host the framebuffer a display shows,
+# the login screen's too (rust/linux/kms-broker). Whoever can connect sees the screen, so only
+# root and the rubylight group may: the socket is theirs (0660), and the broker checks each
+# caller's credentials again.
+#   systemctl enable --now rubylight-kms.socket
+#   usermod -aG rubylight USER   (the user whose host streams; sign in again after)
+[Unit]
+Description=Rubylight screen capture socket (KMS)
+
+[Socket]
+ListenSequentialPacket=/run/rubylight/kms.sock
+SocketMode=0660
+SocketGroup=rubylight
+DirectoryMode=0755
+Accept=yes
+RemoveOnStop=yes
+MaxConnections=4
+
+[Install]
+WantedBy=sockets.target

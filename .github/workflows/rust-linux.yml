@@ -90,6 +90,7 @@ jobs:
           -p butterpollo-linux-io -p butterpollo-linux-graphics -p butterpollo-linux-display
           -p butterpollo-config -p butterpollo-media-policy
           -p butterpollo-stream -p butterpollo-session -p butterpollo-web
+          -p rubylight-kms-broker -p rubylight-vdisplay-broker
           -- --skip web::coop::tests::each_game_with_an_exe_shows_its_coop_status
   # The release host binary, so that a link failure shows (libva, libva-drm,
   # libpipewire and libdrm are linked).
