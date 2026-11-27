@@ -62,7 +62,7 @@ PAGES = sorted(
 )
 # Files copied as they are when a page or the landing page links them.
 MEDIA = {".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".mp4"}
-STATIC = ["style.css", "favicon.svg", "poster.jpg"]
+STATIC = ["tokens.css", "style.css", "favicon.svg", "og.png", "poster.jpg"]
 LANDING_MEDIA = ["docs/media/readme/console-tour.mp4", "docs/media/readme/console-tour.webp"]
 # The documentation pages' top bar.
 NAV = [
@@ -360,6 +360,14 @@ def release():
 
 def main():
     self_test()
+    sys.path.insert(0, str(ROOT / "tools"))
+    import sync_site_tokens
+    if not sync_site_tokens.check():
+        sys.exit("site/tokens.css is out of sync; run `python tools/sync_site_tokens.py`")
+    landing_html = (SITE / "index.html").read_text(encoding="utf-8")
+    for banned in ("Nucleus Co-op", "Experimental"):
+        if banned in landing_html:
+            sys.exit(f"site/index.html contains banned marketing copy: {banned!r}")
     if OUT.exists():
         shutil.rmtree(OUT)
     OUT.mkdir()

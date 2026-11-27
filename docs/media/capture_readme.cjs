@@ -161,9 +161,7 @@ const stills = {
     path: '/library/ashen-crown', scene: idle,
     act: async (page) => {
       await openPanel('Graphics driver')(page);
-      await page.locator('details:has(> summary .title:text-is("Sound and couch menu"))').evaluate((panel) => {
-        scrollTo(0, panel.getBoundingClientRect().top + scrollY - 96);
-      });
+      await page.evaluate(() => window.scrollTo(0, 0));
     },
   },
   'add-games': {
@@ -175,7 +173,8 @@ const stills = {
       await page.evaluate(() => window.scrollTo(0, 0));
     },
   },
-  settings: { path: '/settings', scene: idle, top: 'h2:text-is("Picture")' },
+  settings: { path: '/settings', scene: idle },
+  devices: { path: '/devices', scene: idle },
   sessions: { path: '/sessions', scene: idle },
   guests: { path: '/', scene: guests, top: 'section.panel:has(:text-is("Guests"))' },
   clips: { path: '/clips', scene: streaming },
@@ -238,8 +237,8 @@ async function shootStills(browser, base) {
       if (still.top) {
         await page.locator(still.top).first().evaluate((node, margin) => scrollTo(0, node.getBoundingClientRect().top + scrollY - margin), still.margin ?? 28);
       }
-      // Park the pointer on the sidebar so no field shows a hover ring.
-      await page.mouse.move(120, 700);
+      // Park the pointer in the top-left corner outside any nav link so nothing shows a hover ring.
+      await page.mouse.move(4, 4);
       await page.waitForTimeout(900);
       const file = path.join(dir, `${name}-${theme}.png`);
       await page.screenshot({ path: file, fullPage: !!process.env.README_FULL });

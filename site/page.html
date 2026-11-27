@@ -5,10 +5,14 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{title}} · Rubylight</title>
 <meta name="color-scheme" content="dark light">
+<meta name="theme-color" content="#f3f4f7" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#090a0d" media="(prefers-color-scheme: dark)">
 <link rel="icon" href="{{root}}favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="{{root}}tokens.css">
 <link rel="stylesheet" href="{{root}}style.css">
 </head>
 <body class="doc-page">
+<a class="skip-link" href="#main">Skip to content</a>
 <header class="topbar">
   <div class="topbar-inner">
     <a class="brand" href="{{root}}index.html"><span class="mark" aria-hidden="true">R</span>Rubylight</a>
@@ -16,7 +20,7 @@
     <a class="button small" href="{{download_url}}">Download {{download_label}}</a>
   </div>
 </header>
-<main class="doc">
+<main id="main" tabindex="-1" class="doc">
 {{toc}}
 <article class="prose">
 {{content}}

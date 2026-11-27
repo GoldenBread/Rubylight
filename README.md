@@ -45,7 +45,7 @@
   </tr>
   <tr>
     <td valign="top"><h4>True HDR, 4:4:4 &amp; up to 7.1.4 audio</h4>HDR10, HDR10+, Dolby Vision and HLG with GPU scene brightness, Windows SDR white calibration, clean SDR fallback, full 4:4:4 colour and receiver passthrough.<br><a href="#the-picture-and-sound-your-setup-can-play">Picture and sound</a></td>
-    <td valign="top"><h4>Play together &amp; play anywhere</h4>4-player Nucleus Co-op, background streaming, WebRTC browsers, guest links with nothing to install, Continue here, Dual screen, serverless P2P internet play and waking the PC from away.<br><a href="#play-together">Co-op, guests &amp; WAN</a></td>
+    <td valign="top"><h4>Play together &amp; play anywhere</h4>4-player split-screen co-op, background streaming, WebRTC `/play` &amp; guest links with nothing to install, Continue here, Dual screen, party audio, serverless P2P internet play and waking the PC from away.<br><a href="#play-together">Co-op, guests &amp; WAN</a></td>
     <td valign="top"><h4>A console that explains itself</h4>QR pairing, Ctrl+K search and actions, a live stage that shows where each picture's time goes, a map of your displays, Sessions history, Log analysis and one-click support bundles.<br><a href="#a-console-that-explains-itself">The console</a></td>
   </tr>
   <tr>
@@ -191,7 +191,26 @@ When the virtual display or gamepad driver goes missing, the service sets it up 
       </picture><br><sub><b>Add games.</b> Discovered across launchers automatically.</sub>
     </td>
   </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="docs/media/readme/console-devices-dark.webp">
+        <img src="docs/media/readme/console-devices-light.webp" alt="Devices: QR code pairing for Nightjar, 4-digit PIN entry for Moonlight, and paired devices with per-device permissions (demo data).">
+      </picture><br><sub><b>Devices &amp; QR pairing.</b> Scan once in Nightjar or enter a Moonlight PIN, with permissions per device.</sub>
+    </td>
+    <td width="50%" valign="top">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="docs/media/readme/console-displays-dark.webp">
+        <img src="docs/media/readme/console-displays-light.webp" alt="Troubleshoot: a visual map of physical monitors and Rubylight's virtual display with resolution, refresh rate and HDR state (sample data).">
+      </picture><br><sub><b>Display map &amp; diagnostics.</b> Physical monitors and active virtual displays at a glance, plus automatic log checks.</sub>
+    </td>
+  </tr>
 </table>
+
+<p align="center">
+  <img src="docs/media/readme/couch-menu.webp" width="760" alt="The host-drawn couch menu (L3+R3) over a stream: Back to game, Radeon settings, Night mode, Headphone surround, Disconnect and Quit game (sample frame)."><br>
+  <sub><b>Host-drawn couch menu (`L3 + R3`).</b> Works on unmodified Moonlight clients too—adjust Radeon settings, night mode or quit the game straight from your controller.</sub>
+</p>
 
 <sub>The console pictures and films on this page show a demo PC, library and sample telemetry.</sub>
 
@@ -208,7 +227,7 @@ The [feature reference](docs/features.md) lists everything else, from lock-scree
 
 <table>
   <tr>
-    <td width="50%" valign="top"><img src="client/docs/assets/readme/handheld-home.webp" alt="Nightjar's Home on a handheld: Racing Game running, with Resume, Favourite and Quit game, the controller's buttons for Resume and Options in the top bar, a Continue playing list and the Recently played row (demo library)."><br><sub><b>Made for handhelds.</b> Home, the library and the Control Center follow the controller.</sub></td>
+    <td width="50%" valign="top"><img src="client/docs/assets/readme/handheld-home.webp" alt="Nightjar's Home on a handheld: Racing Game running with Resume and Favourite, controller button hints in the top bar, a Continue playing list and the Recently played row (demo library)."><br><sub><b>Made for handhelds.</b> Home, the library and the Control Center follow the controller.</sub></td>
     <td width="50%" valign="top"><img src="client/docs/assets/readme/desktop-home.webp" alt="Nightjar on the desktop: Home with Racing Game in progress and a row of cover art per store (demo library)."><br><sub><b>On the desktop too.</b> Windows, Linux and macOS with Auto UI scaling and touch support.</sub></td>
   </tr>
 </table>

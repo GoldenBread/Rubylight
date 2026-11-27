@@ -29,7 +29,9 @@ HOST_OUT = REPO / 'docs/media/readme'
 NIGHTJAR_OUT = REPO / 'client/docs/assets/readme'
 
 # Console pages the README shows, each in the dark and the light theme.
-CONSOLE_STILLS = ['home', 'games', 'game', 'add-games', 'settings', 'stream', 'sessions', 'clips', 'coop']
+CONSOLE_STILLS = [
+    'home', 'games', 'game', 'add-games', 'settings', 'devices', 'displays', 'stream', 'sessions', 'clips', 'coop',
+]
 
 # Nightjar stills: output name -> (source, crop box or None, output width). The capture empties Android's status
 # bar, so the handheld, TV and stream shots stay whole; a 1080x2400 phone loses the empty strip above the app and
@@ -49,6 +51,7 @@ NIGHTJAR_STILLS = {
     'desktop-home': ('desktop/home-1280x800.png', None, 1600),
     'desktop-game': ('desktop/game-1280x800.png', None, 1600),
     'desktop-settings': ('desktop/settings-1280x800.png', None, 1600),
+    'desktop-controls': ('desktop/controls-1280x800.png', None, 1600),
     'desktop-all-games': ('desktop/all-games-1280x800.png', None, 1600),
 }
 
@@ -82,10 +85,21 @@ def still(source, target, crop, width, quality=88):
     print(f'{target.relative_to(REPO)}  {image.width}x{image.height}  {target.stat().st_size // 1024} KB')
 
 
+MAX_ANIMATED_BYTES = 2_500_000
+
+
 def animated(source, target, width, fps, quality):
-    """The inline version: an animated WebP GitHub plays in the README itself."""
-    ffmpeg('-i', source, '-vf', f'fps={fps},scale={width}:-2:flags=lanczos', '-c:v', 'libwebp_anim', '-lossless', 0,
-           '-q:v', quality, '-compression_level', 6, '-loop', 0, '-an', target)
+    """The inline version: an animated WebP GitHub plays in the README itself (<= 2.5 MB)."""
+    for cur_width, cur_fps, cur_q in (
+        (width, fps, quality),
+        (width, fps, max(42, quality - 12)),
+        (min(width, 880), min(fps, 12), max(38, quality - 18)),
+        (min(width, 800), min(fps, 12), 34),
+    ):
+        ffmpeg('-i', source, '-vf', f'fps={cur_fps},scale={cur_width}:-2:flags=lanczos', '-c:v', 'libwebp_anim',
+               '-lossless', 0, '-q:v', cur_q, '-compression_level', 6, '-loop', 0, '-an', target)
+        if target.stat().st_size <= MAX_ANIMATED_BYTES:
+            break
     print(f'{target.relative_to(REPO)}  {target.stat().st_size // 1024} KB')
 
 
@@ -103,6 +117,8 @@ def console(captures):
 
 def nightjar(captures):
     for name, (source, crop, width) in NIGHTJAR_STILLS.items():
+        if name == 'desktop-controls' and not (captures / source).is_file():
+            continue
         still(captures / source, NIGHTJAR_OUT / f'{name}.webp', crop, width)
     inputs, filters, lengths = [], [], []
     for index, (clip, first, last, hold) in enumerate(NIGHTJAR_FILM):

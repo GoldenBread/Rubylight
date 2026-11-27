@@ -35,6 +35,8 @@ const history = Array.from({ length: 120 }, (_, i) => ({
   fps: 119.9 - Math.abs(jitter()) * 0.6 - (i === 71 ? 2.4 : 0),
   bitrate_mbps: 58 + Math.sin(i / 7) * 1.6 + jitter() * 1.2,
   host_processing_mean_ms: 2.75 + Math.sin(i / 9) * 0.12 + jitter() * 0.3 + (i === 71 ? 0.8 : 0),
+  rtt_ms: +(2.9 + Math.sin(i / 11) * 0.45 + Math.abs(jitter()) * 0.5 + (i === 71 ? 1.6 : 0)).toFixed(2),
+  jitter_ms: +(0.35 + Math.abs(jitter()) * 0.25).toFixed(2),
 }));
 // Where a new picture's time goes on the host, in the last five seconds.
 const timing = (mean_ms) => ({ mean_ms, p95_ms: +(mean_ms * 1.3).toFixed(2), p99_ms: +(mean_ms * 1.5).toFixed(2) });
@@ -169,8 +171,8 @@ const radeon = { status: true, state: 'configurable', gpus: [{ id: 0, name: 'AMD
 // Co-op: three devices in one game, each with its own instance.
 const coopGame = 'Turbo Critters';
 const coop = {
-  mode: { setting: 'nucleus', mode: 'nucleus', label: 'Nucleus Co-op', reason: '' },
-  install: { state: 'installed', path: 'C:\\Program Files\\Rubylight\\nucleus', version: '2.3', error: null },
+  mode: { setting: 'splitscreen', mode: 'splitscreen', label: 'Split-screen co-op', reason: '' },
+  install: { state: 'installed', path: 'C:\\Program Files\\Rubylight\\coop', version: '2.3', error: null },
   available: true, reason: null, elevates: true, opened: false,
   games: [{ app: 'turbo-critters', name: coopGame, status: 'ready', reason: null, handler: coopGame, players: 4,
     runs: 'user', entry: `${coopGame} (Co-op)` }],
@@ -198,9 +200,11 @@ const scenes = {
   'home-ready': { path: '/', apps: library, fit: true, boxes: { hero: 'section.hero' } },
   home: {
     path: '/', streams: [stream], app: playing, apps: library, fit: true,
-    act: async (page) => { await page.locator('summary:text-is("Stream details & performance")').click(); },
-    boxes: { hero: 'section.hero', card: 'article.stream', details: 'article.stream details.performance',
-      shelf: 'section.games' },
+    act: async (page) => {
+      const btn = page.getByRole('button', { name: /Stream details/ });
+      if (await btn.count()) await btn.first().click();
+    },
+    boxes: { hero: 'section.stage, section.hero', shelf: 'section.games' },
   },
   library: { path: '/library', app: playing, apps: library, boxes: { grid: 'ul.grid' } },
   'add-games': {
@@ -217,12 +221,12 @@ const scenes = {
     path: '/library/ashen-crown', app: playing, apps: library, fit: true,
     act: async (page) => {
       await openPanel('Display')(page);
-      await openPanel('Radeon')(page);
+      await openPanel('Graphics driver')(page);
     },
     boxes: {
       display: 'section.panel:has(> details > summary .title:text-is("Display"))',
       video: 'section.panel:has(> details > summary .title:text-is("Video and input"))',
-      radeon: 'section.panel:has(> details > summary .title:text-is("Radeon"))',
+      radeon: 'section.panel:has(> details > summary .title:text-is("Graphics driver"))',
       device: 'section.panel:has(> details > summary .title:text-is("Per device"))',
     },
   },
@@ -327,8 +331,8 @@ async function shoot(browser, base, name, { width, height: frame, scale, file })
   await page.waitForLoadState('networkidle');
   await page.addStyleTag({ content: HIDE_VERSION });
   if (scene.act) await scene.act(page);
-  // Park the pointer on the sidebar so no field shows a hover ring.
-  await page.mouse.move(120, 700);
+  // Park the pointer in the top-left corner outside any nav link so nothing shows a hover ring.
+  await page.mouse.move(4, 4);
   if (scene.fit) {
     // Grow the window to the whole page, so the sidebar runs its full height too.
     for (let pass = 0; pass < 2; pass++) {

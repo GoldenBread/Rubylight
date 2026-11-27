@@ -6,25 +6,28 @@
 <title>Rubylight · Low-Latency Game-Streaming Host for AMD Radeon and NVIDIA</title>
 <meta name="description" content="A free Windows game-streaming host written in Rust for AMD Radeon and NVIDIA: direct virtual-display &amp; UMDF2 gamepad drivers, D3D12 compute queues, native AMF and NVENC, Frame Warp, Real VRR, PyroWave, true HDR and co-op on one PC.">
 <meta name="color-scheme" content="dark light">
+<meta name="theme-color" content="#f3f4f7" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#090a0d" media="(prefers-color-scheme: dark)">
 <link rel="canonical" href="https://ramazankara.github.io/Rubylight/">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Rubylight">
 <meta property="og:title" content="Rubylight">
 <meta property="og:description" content="Low-latency game streaming in Rust for AMD Radeon and NVIDIA. Built for smooth motion, native drivers, true HDR and Moonlight.">
 <meta property="og:url" content="https://ramazankara.github.io/Rubylight/">
-<meta property="og:image" content="https://ramazankara.github.io/Rubylight/poster.jpg">
-<meta property="og:image:width" content="1280">
-<meta property="og:image:height" content="720">
-<meta property="og:image:alt" content="Rubylight low-latency game-streaming host for AMD Radeon and NVIDIA.">
+<meta property="og:image" content="https://ramazankara.github.io/Rubylight/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Rubylight — Low-latency Windows game-streaming host in Rust for AMD Radeon and NVIDIA.">
 <meta name="twitter:card" content="summary_large_image">
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="tokens.css">
 <link rel="stylesheet" href="style.css">
 </head>
 <body class="landing">
+<a class="skip-link" href="#main">Skip to content</a>
 <!--
   Architecture, capabilities and live diagnostic workflow for Rubylight.
-  No volatile release-specific latency charts or static numbers live here.
-  site/build.py verifies every link, media reference and #fragment on build.
+  site/build.py verifies synced 7.0 tokens, every link, media reference and #fragment on build.
 -->
 <header class="topbar">
   <div class="topbar-inner">
@@ -41,7 +44,7 @@
   </div>
 </header>
 
-<main>
+<main id="main" tabindex="-1">
 <section class="hero">
   <div class="wrap">
     <p class="eyebrow">Rubylight {{download_label}} · Windows game-streaming host for Moonlight · formerly Butterpollo</p>
@@ -239,28 +242,36 @@
         <p>Packet-arrival congestion control, bounded Wi-Fi burst pacing, oversize scene-cut keyframe re-encoding, no-keyframe LTR recovery and seamless client IP roaming.</p>
       </article>
       <article class="card">
-        <h3>WebRTC &amp; browser guests</h3>
+        <h3>WebRTC `/play` &amp; guests</h3>
         <p>PIN-paired streaming straight into desktop browsers and Samsung TVs with HDR and surround, plus one-click guest links for up to four remote spectators or players.</p>
       </article>
       <article class="card">
         <h3>4-player co-op &amp; background</h3>
-        <p>Run up to four independent Nucleus Co-op instances on one PC with persistent player slots, or stream cleanly in the background while someone else uses your desktop.</p>
+        <p>Run up to four independent split-screen co-op instances on one PC with persistent player slots, or stream cleanly in the background while someone else uses your desktop.</p>
+      </article>
+      <article class="card">
+        <h3>Quick Suspend &amp; Stream DVR</h3>
+        <p>Pause a running game between sessions so it resumes where you left off, and save instant replay clips or full recordings straight from the console or Nightjar’s Control Center.</p>
+      </article>
+      <article class="card">
+        <h3>Couch menu &amp; party audio</h3>
+        <p>Open the host-drawn couch menu with L3+R3 on any Moonlight client for Radeon toggles and session controls, and route per-player microphones and party voice cleanly.</p>
       </article>
       <article class="card">
         <h3>USB/IP, clipboard &amp; files</h3>
         <p>Bidirectional text &amp; image clipboard sync, shared folders, paced file transfers, DualSense USB haptics/audio, Steam Deck controls and Switch 2 Pro over USB/IP.</p>
       </article>
       <article class="card">
-        <h3>Play anywhere, direct P2P</h3>
-        <p>Tailscale integration guide, UPnP/PCP/NAT-PMP router mapping, IPv6 reachability, Wake-on-LAN across NICs and serverless P2P traversal when ports can’t be forwarded.</p>
+        <h3>Play anywhere &amp; wake relay</h3>
+        <p>Tailscale integration, UPnP/PCP/NAT-PMP router mapping, IPv6 reachability, Wake-on-LAN across NICs, always-on wake relays and serverless P2P traversal without port forwarding.</p>
       </article>
       <article class="card">
         <h3>Sound up to 7.1.4 &amp; passthrough</h3>
         <p>Opus surround up to 7.1.4, PCM / Dolby Digital / Dolby Digital Plus receiver passthrough, game-only audio isolation, night mode and couch microphone.</p>
       </article>
       <article class="card">
-        <h3>Rust host, Svelte console</h3>
-        <p>Pure Rust host, service, installer and probes paired with a modern light/dark console featuring QR pairing, Ctrl+K search, live diagnostics and one-click support bundles.</p>
+        <h3>Obsidian Studio console</h3>
+        <p>Pure Rust host, service and installer paired with a dark/light console featuring display topology, per-device override cascades, QR pairing, Ctrl+K search and redacted support bundles.</p>
       </article>
     </div>
     <p><a class="more" href="docs/features.html">Full feature reference from capture to API</a></p>
