@@ -92,6 +92,18 @@ pub fn following() -> bool {
     state().try_lock().is_ok_and(|state| follows(&state))
 }
 
+/// Whether the active stream's automatic cap has `frame_limiter_queue_clamp` enabled and is
+/// not stood down for a slow display.
+pub fn queue_clamping() -> bool {
+    state().try_lock().is_ok_and(|state| {
+        follows(&state)
+            && state
+                .follow
+                .as_ref()
+                .is_some_and(|follow| follow.queue_clamp && !follow.standing_down)
+    })
+}
+
 pub(super) fn follows(state: &State) -> bool {
     state.users == 1
         && state.active == "rtss"

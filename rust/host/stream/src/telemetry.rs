@@ -4,14 +4,81 @@ use butterpollo_session::session::Role;
 use butterpollo_win_graphics::telemetry::Collector;
 use serde_json::{Value, json};
 use std::{
-    sync::{Arc, Weak, atomic::Ordering, mpsc},
+    sync::{
+        Arc, Weak,
+        atomic::{AtomicU64, Ordering},
+        mpsc,
+    },
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 type Error = (StatusCode, &'static str);
+/// Packed `(unix_ms << 8) | (gpu_busy_percent + 1)` from the latest telemetry worker sample;
+/// `0` when no sample has recorded `gpu_usage_percent`.
+static LAST_GPU_BUSY: AtomicU64 = AtomicU64::new(0);
+const GPU_BUSY_MAX_AGE_MS: u64 = 15_000;
+
 pub struct Request {
     client: String,
-    reply: tokio::sync::oneshot::Sender<Result<Value, Error>>,
+    internal_gpu_only: bool,
+    reply: Option<tokio::sync::oneshot::Sender<Result<Value, Error>>>,
+}
+
+fn unix_ms_now() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
+}
+
+fn max_gpu_usage_percent(value: &Value) -> Option<u8> {
+    value["gpus"]
+        .as_array()?
+        .iter()
+        .filter_map(|gpu| gpu["metrics"]["gpu_usage_percent"].as_f64())
+        .filter(|pct| pct.is_finite() && *pct >= 0.0)
+        .map(|pct| pct.round().clamp(0.0, 100.0) as u8)
+        .max()
+}
+
+fn pack_gpu_busy(unix_ms: u64, pct: u8) -> u64 {
+    (unix_ms << 8) | u64::from(pct.min(100) + 1)
+}
+
+fn unpack_gpu_busy_at(packed: u64, now_unix_ms: u64) -> Option<u8> {
+    let raw = (packed & 0xFF) as u8;
+    if raw == 0 {
+        return None;
+    }
+    let at_ms = packed >> 8;
+    (now_unix_ms.saturating_sub(at_ms) <= GPU_BUSY_MAX_AGE_MS).then_some(raw - 1)
+}
+
+/// Non-blocking: triggers an off-thread `gpu_usage_percent` sample on the telemetry worker for
+/// `client` and returns the freshest recent reading (within 15 s), if any.
+pub fn poll_and_read_gpu_busy(h: &Shared, client: &str) -> Option<u8> {
+    if let Ok(mut worker) = h.hardware_metrics.try_lock() {
+        let req = || Request {
+            client: client.to_owned(),
+            internal_gpu_only: true,
+            reply: None,
+        };
+        let sent = if let Some(sender) = worker.as_ref() {
+            sender.try_send(req())
+        } else if let Ok(sender) = spawn_worker(h) {
+            *worker = Some(sender.clone());
+            sender.try_send(req())
+        } else {
+            Ok(())
+        };
+        if matches!(sent, Err(mpsc::TrySendError::Disconnected(_))) {
+            *worker = spawn_worker(h).ok();
+            if let Some(sender) = worker.as_ref() {
+                let _ = sender.try_send(req());
+            }
+        }
+    }
+    unpack_gpu_busy_at(LAST_GPU_BUSY.load(Ordering::Acquire), unix_ms_now())
 }
 
 fn options(h: &Host, client: &str) -> Result<(Duration, Vec<String>), Error> {
@@ -58,7 +125,8 @@ pub async fn sample(h: &Shared, client: String) -> Result<Value, Error> {
         let mut worker = h.hardware_metrics.lock().unwrap();
         let request = Request {
             client: client.clone(),
-            reply,
+            internal_gpu_only: false,
+            reply: Some(reply),
         };
         let send = if let Some(sender) = worker.as_ref() {
             sender.try_send(request)
@@ -106,11 +174,21 @@ pub async fn sample(h: &Shared, client: String) -> Result<Value, Error> {
     Ok(value)
 }
 
+fn active_video_stream(h: &Host, client: &str) -> bool {
+    !h.stop.load(Ordering::Acquire)
+        && h.sessions.lock().unwrap().active.values().any(|session| {
+            session.launch.client.uuid == client
+                && session.launch.role != Role::InputOnly
+                && !session.stopping()
+        })
+}
+
 fn run(host: Weak<Host>, requests: mpsc::Receiver<Request>) {
     let mut collector = None;
     let mut selected = Vec::new();
     let mut cached: Option<(Instant, Value)> = None;
     let mut requester = String::new();
+    let mut internal_requester = false;
     loop {
         let received = if collector.is_some() {
             requests.recv_timeout(Duration::from_millis(250))
@@ -129,23 +207,53 @@ fn run(host: Weak<Host>, requests: mpsc::Receiver<Request>) {
             return;
         }
         let Some(request) = request else {
-            // No background polling: the client must keep requesting samples.
-            if options(&h, &requester).is_err() {
+            // No background polling: the client or queue-clamp caller must keep requesting samples.
+            let still_valid = if internal_requester {
+                active_video_stream(&h, &requester) && butterpollo_win_io::limiter::queue_clamping()
+            } else {
+                options(&h, &requester).is_ok()
+            };
+            if !still_valid {
                 collector = None;
                 cached = None;
+                LAST_GPU_BUSY.store(0, Ordering::Release);
             }
             continue;
         };
-        if request.reply.is_closed() {
+        if request.reply.as_ref().is_some_and(|r| r.is_closed()) {
             continue;
         }
-        let (interval, metrics) = match options(&h, &request.client) {
-            Ok(options) => options,
-            Err(error) => {
-                let _ = request.reply.send(Err(error));
+        let (interval, mut metrics) = if request.internal_gpu_only {
+            if !active_video_stream(&h, &request.client) {
                 continue;
             }
+            match options(&h, &request.client) {
+                Ok((interval, mut metrics)) => {
+                    if !metrics.is_empty() && !metrics.iter().any(|m| m == "gpu_usage_percent") {
+                        metrics.push("gpu_usage_percent".into());
+                    }
+                    (interval, metrics)
+                }
+                Err(_) => (Duration::from_secs(1), vec!["gpu_usage_percent".into()]),
+            }
+        } else {
+            match options(&h, &request.client) {
+                Ok(options) => options,
+                Err(error) => {
+                    if let Some(reply) = request.reply {
+                        let _ = reply.send(Err(error));
+                    }
+                    continue;
+                }
+            }
         };
+        if butterpollo_win_io::limiter::queue_clamping()
+            && !metrics.is_empty()
+            && !metrics.iter().any(|m| m == "gpu_usage_percent")
+        {
+            metrics.push("gpu_usage_percent".into());
+        }
+        internal_requester = request.internal_gpu_only;
         requester = request.client;
         if collector.is_none() || selected != metrics {
             // ADLX has one process-wide lifetime; release it before reopening.
@@ -159,19 +267,20 @@ fn run(host: Weak<Host>, requests: mpsc::Receiver<Request>) {
             .is_none_or(|(at, _)| at.elapsed() >= interval)
         {
             let sample = collector.as_mut().unwrap().sample();
+            let now_ms = unix_ms_now();
             let mut value = serde_json::to_value(sample).unwrap();
             value["version"] = json!(1);
-            value["sampled_at_unix_ms"] = json!(
-                SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_millis() as u64
-            );
+            value["sampled_at_unix_ms"] = json!(now_ms);
+            if let Some(busy) = max_gpu_usage_percent(&value) {
+                LAST_GPU_BUSY.store(pack_gpu_busy(now_ms, busy), Ordering::Release);
+            }
             cached = Some((Instant::now(), value));
         }
-        let mut value = cached.as_ref().unwrap().1.clone();
-        value["interval_ms"] = json!(interval.as_millis() as u64);
-        let _ = request.reply.send(Ok(value));
+        if let Some(reply) = request.reply {
+            let mut value = cached.as_ref().unwrap().1.clone();
+            value["interval_ms"] = json!(interval.as_millis() as u64);
+            let _ = reply.send(Ok(value));
+        }
     }
 }
 
@@ -179,6 +288,22 @@ fn run(host: Weak<Host>, requests: mpsc::Receiver<Request>) {
 mod tests {
     use super::*;
     use crate::state::test_support::Fixture;
+
+    #[test]
+    fn gpu_busy_pack_and_max_extraction_bound_age_and_percent() {
+        let val = json!({
+            "gpus": [
+                { "metrics": { "gpu_usage_percent": 42.2 } },
+                { "metrics": { "gpu_usage_percent": 98.6 } }
+            ]
+        });
+        assert_eq!(max_gpu_usage_percent(&val), Some(99));
+        let packed = pack_gpu_busy(100_000, 99);
+        assert_eq!(unpack_gpu_busy_at(packed, 105_000), Some(99));
+        assert_eq!(unpack_gpu_busy_at(packed, 115_000), Some(99));
+        assert_eq!(unpack_gpu_busy_at(packed, 115_001), None);
+        assert_eq!(unpack_gpu_busy_at(0, 100_000), None);
+    }
 
     #[test]
     fn metrics_require_opt_in_and_the_requesting_clients_active_video_stream() {

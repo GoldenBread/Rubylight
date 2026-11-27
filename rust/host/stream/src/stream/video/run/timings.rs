@@ -144,6 +144,12 @@ impl TimingsWindow {
             .map(butterpollo_media_policy::pipeline_rates::PipelineRates::from);
         let raw_source_mhz = pipeline.as_ref().and_then(|r| r.source_mhz);
         let capture_mhz = pipeline.as_ref().and_then(|r| r.capture_mhz);
+        if let Some(source_mhz) = raw_source_mhz
+            && butterpollo_win_io::limiter::queue_clamping()
+        {
+            let gpu_busy = crate::telemetry::poll_and_read_gpu_busy(h, &s.launch.client.uuid);
+            butterpollo_win_io::limiter::follow_queue_clamp(source_mhz, gpu_busy);
+        }
         // What the stream can show: its own rate, or the
         // captured display's where that is lower (read above).
         // The source rate against what the stream can show. A

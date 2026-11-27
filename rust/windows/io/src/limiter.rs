@@ -15,7 +15,7 @@ mod follow;
 pub mod hooks;
 
 use follow::{Follow, change_clamped, change_followed, next_follow, queue_clamp_enabled};
-pub use follow::{display_read_due, follow_display, follow_queue_clamp, following};
+pub use follow::{display_read_due, follow_display, follow_queue_clamp, following, queue_clamping};
 #[cfg(test)]
 use follow::{follows, no_limit, wanted_change};
 
