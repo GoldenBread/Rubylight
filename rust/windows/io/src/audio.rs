@@ -5,6 +5,7 @@ use std::{
     path::Path,
 };
 use windows::Win32::{Media::Audio::*, System::Com::*};
+mod keepalive;
 mod process_loopback;
 pub use process_loopback::Activation as ProcessActivation;
 
@@ -38,41 +39,9 @@ pub struct Loopback {
     /// The endpoint's own channel count and speaker mask.
     source: (usize, u32),
     /// Keeps an endpoint capture delivering through silence; None for game-only capture.
-    _keepalive: Option<KeepAlive>,
+    _keepalive: Option<keepalive::KeepAlive>,
     /// Every packet `GetBuffer` returned since `drain_trace`, when `audio_cadence_trace` is on.
     trace: Option<Vec<butterpollo_media_policy::audio_cadence::Captured>>,
-}
-/// A started render stream of silence on the captured endpoint. Loopback capture delivers
-/// nothing while no stream renders to its endpoint, so when the sound stopped the host went
-/// quiet until it noticed (50 ms) and the client heard an underrun; with this the endpoint keeps
-/// delivering silent audio at its own pace, and sound turning to silence leaves no gap. It
-/// renders one buffer of silence and is left to starve, which keeps the stream active (OBS does
-/// the same); the client gets the silent Opus packets it got after the 50 ms anyway.
-struct KeepAlive(IAudioClient);
-impl KeepAlive {
-    /// # Safety
-    /// COM is initialized on this thread and `format` is the endpoint's mix format.
-    unsafe fn new(device: &IMMDevice, format: *const WAVEFORMATEX) -> Result<Self> {
-        // SAFETY: as the caller promises; the buffer is released before Start.
-        unsafe {
-            let client: IAudioClient = device.Activate(CLSCTX_ALL, None)?;
-            client.Initialize(AUDCLNT_SHAREMODE_SHARED, 0, 100_000, 0, format, None)?;
-            let frames = client.GetBufferSize()?;
-            let render: IAudioRenderClient = client.GetService()?;
-            render.GetBuffer(frames)?;
-            render.ReleaseBuffer(frames, AUDCLNT_BUFFERFLAGS_SILENT.0 as u32)?;
-            client.Start()?;
-            Ok(Self(client))
-        }
-    }
-}
-impl Drop for KeepAlive {
-    fn drop(&mut self) {
-        // SAFETY: the client is live and started.
-        unsafe {
-            let _ = self.0.Stop();
-        }
-    }
 }
 impl Loopback {
     pub fn new(output_channels: usize) -> Result<Self> {
@@ -175,7 +144,7 @@ impl Loopback {
             let capture = client.GetService()?;
             client.Start()?;
             // Without it the capture still works and goes quiet through silence, as before.
-            let keepalive = KeepAlive::new(&device, format.0)
+            let keepalive = keepalive::KeepAlive::new(&device, format.0)
                 .inspect_err(|error| {
                     tracing::warn!(
                         "audio keep-alive render stream failed, silence will start late: {error:#}"
