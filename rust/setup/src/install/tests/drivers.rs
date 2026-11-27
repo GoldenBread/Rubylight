@@ -342,6 +342,25 @@ fn an_installation_records_only_the_drivers_it_left_out() {
     assert_eq!(Driver::parse("usbip"), None);
 }
 #[test]
+fn the_driver_record_is_written_and_read_back_whole() {
+    let profile = tempfile::tempdir().unwrap();
+    let path = profile.path().join(REPAIR_RECORD);
+    for (display, gamepad) in [(false, true), (true, false), (false, false)] {
+        let record = choices(display, gamepad).unwrap();
+        write_record(&path, &record).unwrap();
+        let read = read_record(std::fs::read(&path).ok().as_deref());
+        assert_eq!(declined(&read, Driver::Display), !display);
+        assert_eq!(declined(&read, Driver::Gamepad), !gamepad);
+    }
+    // Written over in place, and no temp file left beside it.
+    let names: Vec<_> = std::fs::read_dir(profile.path())
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name())
+        .collect();
+    assert_eq!(names, [std::ffi::OsString::from(REPAIR_RECORD)]);
+}
+#[test]
 fn the_unattended_repair_needs_a_positive_idle_answer() {
     let idle = |counts: [&str; 3]| {
         Ok(format!(

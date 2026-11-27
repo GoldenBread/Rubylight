@@ -173,11 +173,21 @@ pub(super) fn declined(record: &Value, driver: Driver) -> bool {
 }
 /// Writes the record whole or not at all: a torn file would read as no choice
 /// and lose a driver the user left out.
-fn write_record(path: &Path, record: &Value) -> std::io::Result<()> {
+pub(super) fn write_record(path: &Path, record: &Value) -> std::io::Result<()> {
+    use std::io::Write;
     let temp = path.with_extension("json.tmp");
-    std::fs::write(&temp, serde_json::to_vec(record)?)?;
-    std::fs::File::open(&temp)?.sync_all()?;
-    std::fs::rename(&temp, path)
+    let written = (|| {
+        // Flushing needs a handle open for writing on Windows.
+        let mut file = std::fs::File::create(&temp)?;
+        file.write_all(&serde_json::to_vec(record)?)?;
+        file.sync_all()?;
+        drop(file);
+        std::fs::rename(&temp, path)
+    })();
+    if written.is_err() {
+        let _ = std::fs::remove_file(&temp);
+    }
+    written
 }
 
 /// What a driver repair did.
