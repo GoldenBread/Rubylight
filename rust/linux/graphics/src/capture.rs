@@ -17,6 +17,7 @@ pub mod desktop;
 #[cfg(test)]
 mod desktop_tests;
 pub mod idd_push;
+pub mod kms;
 pub mod kwin;
 mod priority;
 mod pw_capture;
@@ -535,6 +536,8 @@ pub enum Capture {
     Closed,
     /// A PipeWire node's DMA-BUF frames, converted into VA-API surfaces.
     PipeWire(Box<PipeWire>),
+    /// A display controller's picture through the KMS broker, the login screen's too.
+    Kms(Box<kms::Kms>),
 }
 
 /// An open PipeWire capture with the device its frames are on.
@@ -590,7 +593,7 @@ impl PipeWire {
             (0, None)
         } else {
             bail!(
-                "this Linux host captures the targets \"{GAMESCOPE_TARGET}\", \"desktop\", \"desktop:<monitor>\" or \"kwin-output:<name>\", \"pipewire-node:<id>\", not {name:?}"
+                "this Linux host captures the targets \"{GAMESCOPE_TARGET}\", \"desktop\", \"desktop:<monitor>\", \"kwin-output:<name>\", \"kms[:<output>]\" or \"pipewire-node:<id>\", not {name:?}"
             );
         };
         let probe = Device::new_adapter(
@@ -689,6 +692,7 @@ impl Capture {
         match self {
             Self::Closed => "none",
             Self::PipeWire(capture) => capture.capture.path(),
+            Self::Kms(_) => "dmabuf",
         }
     }
     /// The backend's name, as the capture setting names it.
@@ -696,6 +700,7 @@ impl Capture {
         match self {
             Self::Closed => "closed",
             Self::PipeWire(_) => "pipewire",
+            Self::Kms(_) => "kms",
         }
     }
     /// The grid a capture that publishes on one aligns to. A closed capture publishes
@@ -710,6 +715,7 @@ impl Capture {
         match self {
             Self::Closed => None,
             Self::PipeWire(capture) => Some(capture.capture.signal()),
+            Self::Kms(capture) => Some(capture.signal()),
         }
     }
     /// How long the caller waits before its next poll: `poll`, since a closed capture has
@@ -734,6 +740,9 @@ impl Capture {
         if WindowTarget::parse(name)?.is_some() {
             return Err(crate::unsupported("Window capture"));
         }
+        if let Some(output) = kms::parse(name) {
+            return Ok(Self::Kms(Box::new(kms::Kms::open(output, hdr, config)?)));
+        }
         Ok(Self::PipeWire(Box::new(PipeWire::open(name, hdr, config)?)))
     }
     /// Changes the target on the capture's own device, when it can: `None` when the capture
@@ -755,6 +764,9 @@ impl Capture {
             return Err(crate::unsupported("Window capture"));
         }
         let config = butterpollo_config::config::Config::default();
+        if let Some(output) = kms::parse(name) {
+            return Ok(Self::Kms(Box::new(kms::Kms::open(output, hdr, &config)?)));
+        }
         Ok(Self::PipeWire(Box::new(PipeWire::open(
             name, hdr, &config,
         )?)))
@@ -767,6 +779,7 @@ impl Capture {
                 Some(image) => image.readback(&mut capture.staging).map(Some),
                 None => Ok(None),
             },
+            Self::Kms(capture) => capture.next_frame(),
         }
     }
     /// The newest picture, wrapped for the stream threads. `origin` is the publication
@@ -776,6 +789,7 @@ impl Capture {
         match self {
             Self::Closed => bail!("capture is closed"),
             Self::PipeWire(capture) => capture.next_gpu(origin),
+            Self::Kms(capture) => capture.next_gpu(origin),
         }
     }
 }

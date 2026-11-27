@@ -252,6 +252,74 @@ impl Converter {
     }
 }
 
+/// A rectangle of a surface, in pixels.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Rect {
+    pub x: u32,
+    pub y: u32,
+    pub width: u32,
+    pub height: u32,
+}
+
+impl Rect {
+    fn va(self) -> VARectangle {
+        VARectangle {
+            x: self.x as i16,
+            y: self.y as i16,
+            width: self.width as u16,
+            height: self.height as u16,
+        }
+    }
+}
+
+impl Converter {
+    /// Draws `from` of `input`, a picture with premultiplied alpha (a pointer's image), over
+    /// `to` of `output` without scaling, blended into what `output` holds: video in this
+    /// converter's colours, or desktop RGB with `rgb_output`. The rest of `output` stays.
+    pub fn blend(
+        &self,
+        input: VASurfaceID,
+        from: Rect,
+        output: VASurfaceID,
+        to: Rect,
+        rgb_output: bool,
+    ) -> Result<()> {
+        let (from, to) = (from.va(), to.va());
+        let blend = VABlendState {
+            flags: VA_BLEND_PREMULTIPLIED_ALPHA,
+            global_alpha: 1.0,
+            min_luma: 0.0,
+            max_luma: 1.0,
+        };
+        // SAFETY: plain data; zero means no filters and no references.
+        let mut params: VAProcPipelineParameterBuffer = unsafe { std::mem::zeroed() };
+        params.surface = input;
+        params.surface_region = &raw const from;
+        params.output_region = &raw const to;
+        params.blend_state = &raw const blend;
+        describe_rgb(
+            &mut params.surface_color_standard,
+            &mut params.input_color_properties,
+        );
+        if rgb_output {
+            describe_rgb(
+                &mut params.output_color_standard,
+                &mut params.output_color_properties,
+            );
+        } else {
+            self.output.describe(
+                &mut params.output_color_standard,
+                &mut params.output_color_properties,
+            );
+        }
+        let mut buffers =
+            [self
+                .va
+                .param_buffer(self.context, VAProcPipelineParameterBufferType, &mut params)?];
+        self.va.submit(self.context, output, &mut buffers)
+    }
+}
+
 impl Drop for Converter {
     fn drop(&mut self) {
         // SAFETY: ids made on this display in `new`.

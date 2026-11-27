@@ -76,7 +76,7 @@ pub(super) struct Options {
 }
 
 /// The surfaces frames are converted into: NV12, or linear BGRX for full chroma.
-fn pool(va: &Arc<Va>, width: u32, height: u32, full_chroma: bool) -> Result<Arc<Pool>> {
+pub(super) fn pool(va: &Arc<Va>, width: u32, height: u32, full_chroma: bool) -> Result<Arc<Pool>> {
     if full_chroma {
         return Pool::new_linear(va, VA_RT_FORMAT_RGB32, BGRX, width, height, 3, POOL_LIMIT);
     }
@@ -572,7 +572,7 @@ fn release(va: &Va, imported: &mut HashMap<u64, VASurfaceID>) {
 
 /// The identity of the buffer a descriptor refers to: a descriptor's number is reused, its
 /// DMA-BUF's inode is not.
-fn inode(fd: i32) -> u64 {
+pub(super) fn inode(fd: i32) -> u64 {
     // SAFETY: an out structure of the right type and a descriptor the caller holds open.
     unsafe {
         let mut stat: libc::stat = std::mem::zeroed();

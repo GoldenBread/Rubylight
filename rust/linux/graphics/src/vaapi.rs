@@ -20,8 +20,10 @@ pub mod vpp;
 
 pub use display::Va;
 
-pub use display::{AR30, BGRA, BGRX, NV12, P010, Plane, RGBA, RGBX, XR30, fourcc};
+pub use display::{AB30, AR30, BGRA, BGRX, NV12, P010, Plane, RGBA, RGBX, XB30, XR30, fourcc};
 
+#[cfg(test)]
+mod blend_tests;
 #[cfg(test)]
 mod colour_tests;
 #[cfg(test)]

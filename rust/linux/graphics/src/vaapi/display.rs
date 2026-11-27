@@ -23,6 +23,9 @@ pub const RGBA: u32 = fourcc(b"RGBA");
 /// 10-bit RGB as KMS scans it out (`VA_FOURCC_A2R10G10B10` and `X2R10G10B10`, named as in DRM).
 pub const AR30: u32 = fourcc(b"AR30");
 pub const XR30: u32 = fourcc(b"XR30");
+/// The same with red in the low bits (`VA_FOURCC_A2B10G10R10` and `X2B10G10R10`).
+pub const AB30: u32 = fourcc(b"AB30");
+pub const XB30: u32 = fourcc(b"XB30");
 
 /// One plane of a picture in a DMA-BUF.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -563,7 +566,7 @@ pub fn drm_format(pixel: u32) -> Result<u32> {
         BGRA => fourcc(b"AR24"),
         RGBX => fourcc(b"XB24"),
         RGBA => fourcc(b"AB24"),
-        NV12 | P010 | AR30 | XR30 => pixel,
+        NV12 | P010 | AR30 | XR30 | AB30 | XB30 => pixel,
         other => bail!("no DRM format for pixel format 0x{other:08x}"),
     })
 }
