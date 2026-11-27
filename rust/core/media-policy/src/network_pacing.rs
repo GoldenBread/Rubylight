@@ -52,8 +52,8 @@ pub fn rate_bps_for_client(
     )
 }
 
-/// Default for `pacing_follow_client_link`: PyroWave lifts the 800 Mbps wired
-/// ceiling to 4/5 of the slower confirmed >1 GbE link by default, while
+/// Default for `pacing_follow_client_link`: PyroWave follows confirmed >1 GbE
+/// wired client links up to 95% of the slower link by default, while
 /// conventional codecs stay at 800 Mbps unless explicitly opted in.
 pub fn follow_client_link_default(pyrowave: bool) -> bool {
     pyrowave
@@ -184,16 +184,48 @@ pub fn pyrowave_route_rate_bps(
     demand_bps: u64,
     client: ClientPath,
 ) -> u64 {
+    pyrowave_route_rate_bps_following_client(
+        configured_kbps,
+        stream_kbps,
+        link_bps,
+        wireless,
+        demand_bps,
+        client,
+        true,
+    )
+}
+
+/// [`pyrowave_route_rate_bps`] with explicit `follow_client_link`
+/// (`pacing_follow_client_link`, `true` by default for PyroWave). Setting
+/// `follow_client_link` to `false` holds uncalibrated wired streams whose
+/// demand fits within 1 GbE to 1 GbE's 95% ceiling (950 Mbps) instead of
+/// scaling with >1 GbE client link hints, while still respecting slower client
+/// links, calibrated `pace_bps`, and explicit `packet_pacing` overrides.
+pub fn pyrowave_route_rate_bps_following_client(
+    configured_kbps: i64,
+    stream_kbps: u32,
+    link_bps: u64,
+    wireless: bool,
+    demand_bps: u64,
+    client: ClientPath,
+    follow_client_link: bool,
+) -> u64 {
+    let needed = if demand_bps > 0 {
+        demand_bps
+    } else {
+        u64::from(stream_kbps) * 1100
+    };
+    let effective_client_link = if follow_client_link || needed > 950_000_000 {
+        client.link_bps
+    } else {
+        client.link_bps.min(1_000_000_000)
+    };
     let demand = {
-        let needed = if demand_bps > 0 {
-            demand_bps
-        } else {
-            u64::from(stream_kbps) * 1100
-        };
         let burst = (needed.saturating_mul(5) / 4).max(1_000_000);
         // Without a client link or pace hint, hold the 1.25x headroom to a
         // 1 GbE client's 95% ceiling while the stream itself fits inside it.
-        if client.pace_bps == 0 && (client.link_bps == 0 || wireless) && needed <= 950_000_000 {
+        if client.pace_bps == 0 && (effective_client_link == 0 || wireless) && needed <= 950_000_000
+        {
             burst.min(950_000_000)
         } else {
             burst
@@ -203,8 +235,8 @@ pub fn pyrowave_route_rate_bps(
         (configured_kbps as u64).saturating_mul(1000)
     } else if client.pace_bps > 0 {
         client.pace_bps
-    } else if client.link_bps > 0 && !wireless {
-        client.link_bps.saturating_mul(95) / 100
+    } else if effective_client_link > 0 && !wireless {
+        effective_client_link.saturating_mul(95) / 100
     } else {
         demand
     };

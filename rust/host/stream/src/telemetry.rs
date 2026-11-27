@@ -55,8 +55,14 @@ fn unpack_gpu_busy_at(packed: u64, now_unix_ms: u64) -> Option<u8> {
 }
 
 /// Non-blocking: triggers an off-thread `gpu_usage_percent` sample on the telemetry worker for
-/// `client` and returns the freshest recent reading (within 15 s), if any.
+/// `client` (throttled to ~1 Hz when a fresh sample is already cached) and returns the freshest
+/// recent reading (within 15 s), if any.
 pub fn poll_and_read_gpu_busy(h: &Shared, client: &str) -> Option<u8> {
+    let now_ms = unix_ms_now();
+    let packed = LAST_GPU_BUSY.load(Ordering::Acquire);
+    if (packed & 0xFF) != 0 && now_ms.saturating_sub(packed >> 8) < 900 {
+        return unpack_gpu_busy_at(packed, now_ms);
+    }
     if let Ok(mut worker) = h.hardware_metrics.try_lock() {
         let req = || Request {
             client: client.to_owned(),
@@ -78,7 +84,7 @@ pub fn poll_and_read_gpu_busy(h: &Shared, client: &str) -> Option<u8> {
             }
         }
     }
-    unpack_gpu_busy_at(LAST_GPU_BUSY.load(Ordering::Acquire), unix_ms_now())
+    unpack_gpu_busy_at(LAST_GPU_BUSY.load(Ordering::Acquire), now_ms)
 }
 
 fn options(h: &Host, client: &str) -> Result<(Duration, Vec<String>), Error> {
@@ -188,7 +194,6 @@ fn run(host: Weak<Host>, requests: mpsc::Receiver<Request>) {
     let mut selected = Vec::new();
     let mut cached: Option<(Instant, Value)> = None;
     let mut requester = String::new();
-    let mut internal_requester = false;
     loop {
         let received = if collector.is_some() {
             requests.recv_timeout(Duration::from_millis(250))
@@ -207,12 +212,11 @@ fn run(host: Weak<Host>, requests: mpsc::Receiver<Request>) {
             return;
         }
         let Some(request) = request else {
-            // No background polling: the client or queue-clamp caller must keep requesting samples.
-            let still_valid = if internal_requester {
-                active_video_stream(&h, &requester) && butterpollo_win_io::limiter::queue_clamping()
-            } else {
-                options(&h, &requester).is_ok()
-            };
+            // Retain the collector while either the opted-in client API or dynamic queue clamp
+            // still needs samples for this active video stream.
+            let still_valid = options(&h, &requester).is_ok()
+                || (active_video_stream(&h, &requester)
+                    && butterpollo_win_io::limiter::queue_clamping());
             if !still_valid {
                 collector = None;
                 cached = None;
@@ -253,7 +257,6 @@ fn run(host: Weak<Host>, requests: mpsc::Receiver<Request>) {
         {
             metrics.push("gpu_usage_percent".into());
         }
-        internal_requester = request.internal_gpu_only;
         requester = request.client;
         if collector.is_none() || selected != metrics {
             // ADLX has one process-wide lifetime; release it before reopening.

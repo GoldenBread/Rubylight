@@ -648,12 +648,7 @@ fn poll_peer(
         &s.launch.warnings,
         || effective_config(h, &s.launch),
     );
-    if p.couch.follow(&s, || effective_config(h, &s.launch)) {
-        let wake = control_wake.clone();
-        s.couch_menu.set_control_wake(move || {
-            let _ = wake.send(&[1]);
-        });
-    }
+    follow_couch_menu(h, control_wake, p, &s);
     if !already_injected || !p.inputs.is_empty() {
         follow_session(h, p, &s);
         // A guest that lost the keyboard and mouse lets go of what it holds.
@@ -680,6 +675,20 @@ fn poll_peer(
     }
     send_pad_feedback(h, host, peer_id, p, &s, poll_feedback);
     true
+}
+
+pub(super) fn follow_couch_menu(
+    h: &Shared,
+    control_wake: &Arc<UdpSocket>,
+    p: &mut ControlPeer,
+    s: &Arc<Session>,
+) {
+    if p.couch.follow(s, || effective_config(h, &s.launch)) {
+        let wake = control_wake.clone();
+        s.couch_menu.set_control_wake(move || {
+            let _ = wake.send(&[1]);
+        });
+    }
 }
 
 #[allow(clippy::too_many_arguments)]

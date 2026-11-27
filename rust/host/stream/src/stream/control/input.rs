@@ -316,6 +316,7 @@ pub(super) fn inject_pending_inputs(
         if !is_ready(p) {
             continue;
         }
+        super::event_loop::follow_couch_menu(h, control_wake, p, &s);
         follow_session(h, p, &s);
         if let Some(i) = &mut p.injector
             && h.device_guests.take_release(&s)

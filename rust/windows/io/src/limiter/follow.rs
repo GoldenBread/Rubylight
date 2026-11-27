@@ -7,7 +7,22 @@ use butterpollo_media_policy::framegen::{Rate, queue_clamp_step};
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
+    sync::atomic::{AtomicBool, Ordering},
 };
+
+static FOLLOWING: AtomicBool = AtomicBool::new(false);
+static QUEUE_CLAMPING: AtomicBool = AtomicBool::new(false);
+
+pub(super) fn sync_flags(state: &State) {
+    let is_following = follows(state);
+    let is_clamping = is_following
+        && state
+            .follow
+            .as_ref()
+            .is_some_and(|follow| follow.queue_clamp && !follow.standing_down);
+    FOLLOWING.store(is_following, Ordering::Release);
+    QUEUE_CLAMPING.store(is_clamping, Ordering::Release);
+}
 
 /// A virtual display's automatic cap, applied through RTSS.
 pub(super) struct Follow {
@@ -86,22 +101,16 @@ pub fn follow_display(display: Option<Rate>) {
 
 /// Whether a cap follows one stream's display now, so the stream reads that display's mode
 /// every live tick (250 ms) rather than only with each 5 s timing window: a game that sets its
-/// own mode takes the cap off within a tick. One mode read and an uncontended lock each
-/// tick, none per frame, and nothing at all for a stream without a followed cap.
+/// own mode takes the cap off within a tick. Lock-free atomic read, updated under `state()`.
 pub fn following() -> bool {
-    state().try_lock().is_ok_and(|state| follows(&state))
+    FOLLOWING.load(Ordering::Acquire)
 }
 
 /// Whether the active stream's automatic cap has `frame_limiter_queue_clamp` enabled and is
-/// not stood down for a slow display.
+/// not stood down for a slow display. Lock-free so background telemetry never sees false
+/// negatives while RTSS updates hold `state()`.
 pub fn queue_clamping() -> bool {
-    state().try_lock().is_ok_and(|state| {
-        follows(&state)
-            && state
-                .follow
-                .as_ref()
-                .is_some_and(|follow| follow.queue_clamp && !follow.standing_down)
-    })
+    QUEUE_CLAMPING.load(Ordering::Acquire)
 }
 
 pub(super) fn follows(state: &State) -> bool {
@@ -168,6 +177,7 @@ pub(super) fn change_followed(state: &mut State, stand_down: bool, display: Opti
             tracing::warn!(stand_down, limit_off = off, display_hz, error = %format!("{error:#}"), "the automatic frame limit could not follow the display's refresh rate; RTSS keeps what it has now until the stream ends");
         }
     }
+    sync_flags(state);
 }
 
 /// Update RTSS's followed cap dynamically when `frame_limiter_queue_clamp` is enabled and the
@@ -243,6 +253,7 @@ pub(super) fn change_clamped(state: &mut State, clamped: Option<Rate>) {
             tracing::warn!(clamped = ?clamped.map(Rate::rational), error = %format!("{error:#}"), "dynamic queue clamp could not update RTSS; keeping current limit until the stream ends");
         }
     }
+    sync_flags(state);
 }
 
 /// No limit, as RTSS holds it.

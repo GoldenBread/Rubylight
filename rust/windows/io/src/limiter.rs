@@ -14,7 +14,9 @@ use std::{
 mod follow;
 pub mod hooks;
 
-use follow::{Follow, change_clamped, change_followed, next_follow, queue_clamp_enabled};
+use follow::{
+    Follow, change_clamped, change_followed, next_follow, queue_clamp_enabled, sync_flags,
+};
 pub use follow::{display_read_due, follow_display, follow_queue_clamp, following, queue_clamping};
 #[cfg(test)]
 use follow::{follows, no_limit, wanted_change};
@@ -393,6 +395,7 @@ impl Lease {
             if let Some(follow) = state.follow.as_mut() {
                 follow.shared = true;
             }
+            sync_flags(&state);
             return Ok(Self);
         }
         state.directory = directory.into();
@@ -406,6 +409,7 @@ impl Lease {
             state.message = format!("{error:#}");
             tracing::warn!(error = %state.message, "frame limiter recovery remains pending; retaining exclusive limiter ownership");
             state.users = 1;
+            sync_flags(&state);
             return Ok(Self);
         }
         let mut journal = load(directory)?;
@@ -484,6 +488,7 @@ impl Lease {
             }
         }
         state.users = 1;
+        sync_flags(&state);
         Ok(Self)
     }
 }
@@ -493,9 +498,11 @@ impl Drop for Lease {
         let state = &mut *guard;
         state.users -= 1;
         if state.users != 0 {
+            sync_flags(state);
             return;
         }
         state.follow = None;
+        sync_flags(state);
         match restore(&state.directory, &mut state.process) {
             Ok(()) => {
                 let _ = hooks::mark_external(false);

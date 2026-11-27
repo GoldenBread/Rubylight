@@ -215,9 +215,7 @@ pub fn queue_clamp_step(
     let Some(active) = current_clamp else {
         return queue_clamp_rate(nominal, rendered_fps_milli, gpu_busy_percent);
     };
-    let Some(busy) = gpu_busy_percent else {
-        return None;
-    };
+    let busy = gpu_busy_percent?;
     if busy < 93
         || rendered_fps_milli < QUEUE_CLAMP_MIN_MHZ
         || u64::from(rendered_fps_milli) >= u64::from(nominal.0) * 97 / 100

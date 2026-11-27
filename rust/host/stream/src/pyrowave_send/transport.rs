@@ -340,7 +340,7 @@ fn pace(current: &Session, config: &Config, kbps: u32, wire_frame: u32, route: L
         current.config.pyrowave_records,
         current.stream_mode().period(),
     );
-    let base = network_pacing::pyrowave_route_rate_bps(
+    let base = network_pacing::pyrowave_route_rate_bps_following_client(
         config.manual_pacing_kbps().unwrap_or(0),
         kbps,
         route.bps,
@@ -350,6 +350,10 @@ fn pace(current: &Session, config: &Config, kbps: u32, wire_frame: u32, route: L
         ),
         needed,
         client,
+        config.boolean(
+            "pacing_follow_client_link",
+            network_pacing::follow_client_link_default(true),
+        ),
     );
     let paced = current.video_pacing_bps(base, needed);
     let safe = network_pacing::pyrowave_route_rate_bps(
@@ -658,5 +662,34 @@ mod tests {
             warnings.contains(crate::video_send::recovery::ROUTE_UNAVAILABLE_WARNING),
             "warnings={warnings}"
         );
+    }
+
+    #[test]
+    fn pyrowave_follows_multi_gigabit_client_link_unless_disabled() {
+        let fixture = crate::state::test_support::Fixture::new();
+        let session = Session::new(
+            fixture.launch(fixture.client(0), Role::Stream),
+            butterpollo_media_policy::rtsp::Negotiated {
+                codec: 3,
+                pyrowave_records: true,
+                bitrate_kbps: 400_000,
+                pyrowave_client_link_mbps: 2500,
+                ..Default::default()
+            },
+        );
+        session.bitrate.store(400_000, Ordering::Release);
+        session.configure_keyframe_loss(true);
+        let route = Link {
+            bps: 2_500_000_000,
+            ..Default::default()
+        };
+
+        let mut config = Config::default();
+        assert_eq!(pace(&session, &config, 400_000, 1, route), 2_375_000_000);
+
+        config
+            .values
+            .insert("pacing_follow_client_link".into(), "false".into());
+        assert_eq!(pace(&session, &config, 400_000, 2, route), 950_000_000);
     }
 }

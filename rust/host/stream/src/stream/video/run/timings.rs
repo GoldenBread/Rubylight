@@ -124,6 +124,9 @@ impl TimingsWindow {
                 display_mhz.map(butterpollo_media_policy::framegen::Rate),
             );
         }
+        let gpu_busy = butterpollo_win_io::limiter::queue_clamping()
+            .then(|| crate::telemetry::poll_and_read_gpu_busy(h, &s.launch.client.uuid))
+            .flatten();
         if !window_due {
             return;
         }
@@ -147,7 +150,6 @@ impl TimingsWindow {
         if let Some(source_mhz) = raw_source_mhz
             && butterpollo_win_io::limiter::queue_clamping()
         {
-            let gpu_busy = crate::telemetry::poll_and_read_gpu_busy(h, &s.launch.client.uuid);
             butterpollo_win_io::limiter::follow_queue_clamp(source_mhz, gpu_busy);
         }
         // What the stream can show: its own rate, or the

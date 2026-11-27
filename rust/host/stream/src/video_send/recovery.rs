@@ -229,7 +229,7 @@ fn select(
         client_link,
         config.boolean(
             "pacing_follow_client_link",
-            network_pacing::follow_client_link_default(session.config.codec == 3),
+            network_pacing::follow_client_link_default(false),
         ),
     );
     let base = adapt(base, needed);
