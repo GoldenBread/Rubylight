@@ -87,6 +87,17 @@ fn a_cap_the_driver_ignores_for_keyframes_returns_the_scale_to_one_for_good() {
     let written = scale.apply(TARGET, TWO_FRAMES);
     scale.observe(13 * TARGET / 10, TARGET, written);
     assert!(scale.scale() < first, "{} {first}", scale.scale());
+
+    // Once clamped at FLOOR / two_frames, repeated shrunk keyframes that still
+    // exceed 1.1x target stay held at the floor instead of tripping `ignored`.
+    let mut floored = KeyframeCapScale::default();
+    assert_eq!(floored.observe(4 * TARGET, TARGET, TARGET), None);
+    assert_eq!(floored.scale(), KeyframeCapScale::FLOOR);
+    let floor_written = floored.apply(TARGET, TWO_FRAMES);
+    for _ in 0..4 {
+        assert_eq!(floored.observe(2 * TARGET, TARGET, floor_written), None);
+        assert_eq!(floored.scale(), KeyframeCapScale::FLOOR);
+    }
 }
 
 #[test]

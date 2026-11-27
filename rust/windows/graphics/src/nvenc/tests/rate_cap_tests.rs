@@ -311,3 +311,252 @@ fn a_frame_over_twice_its_cap_warns_at_most_every_ten_seconds() -> Result<()> {
     assert_clean();
     Ok(())
 }
+
+#[test]
+fn keyframe_overshoots_tighten_vbv_down_to_two_frames_and_relax_back_to_target() -> Result<()> {
+    reset();
+    state(|d| d.engines = 2);
+    let stream = Negotiated {
+        width: 3840,
+        height: 2160,
+        codec: 1,
+        fps: 100,
+        bitrate_kbps: 219_500,
+        ..Default::default()
+    };
+    let mut encoder = session_with(&stream, ApiVersion(13, 0), "nvenc_vbv_increase = 400\n")?;
+    assert!(!encoder.subframe);
+    let slot = input(&mut encoder, 17)?;
+    let target = 1_166_893_u64;
+    let two_frames = 548_750_u64;
+
+    // Initial automatic cap lowers the 5-frame VBV (~1.37 MB) to `target` (~1.17 MB).
+    assert_eq!(
+        encoder.set_frame_cap_toward(target, two_frames)?,
+        Some(target)
+    );
+    assert_eq!(u64::from(encoder.config.rcParams.vbvBufferSize), target * 8);
+    assert_eq!(
+        encoder.config.rcParams.vbvInitialDelay,
+        encoder.config.rcParams.vbvBufferSize
+    );
+    state(|d| d.reconfigured = None);
+
+    // Keyframe 1 overshoots VBV by 1.635x (1,908,217 B > 1.1 * target), as in #59.
+    state(|d| d.picture = 1_908_217);
+    encoder.submit(slot, None, true, Instant::now())?;
+    let first = encoder.poll()?;
+    assert_eq!(first[0].frame_cap_target, Some(target));
+    assert_eq!(first[0].frame_cap_bytes, Some(target));
+    assert_eq!(encoder.keyframes_over_cap, 1);
+    assert!(encoder.keyframe_cap.scale() < 0.62);
+
+    // Next frame cap update tightens VBV in place (`resetEncoder = 0`) >= `two_frames`.
+    let tightened = encoder.set_frame_cap_toward(target, two_frames)?.unwrap();
+    assert!(tightened < target && tightened >= two_frames, "{tightened}");
+    state(|d| {
+        let (params, cfg) = d.reconfigured.take().unwrap();
+        assert_eq!((params.resetEncoder(), params.forceIDR()), (0, 0));
+        assert_eq!(u64::from(cfg.rcParams.vbvBufferSize), tightened * 8);
+        assert_eq!(cfg.rcParams.vbvInitialDelay, cfg.rcParams.vbvBufferSize);
+    });
+
+    // Keyframe 2 overshoots the tightened VBV by the same 1.635x factor and now
+    // lands within `target` (preserving Moonlight's 4-FEC-block parity).
+    state(|d| d.picture = (tightened as f64 * 1.635) as usize);
+    encoder.submit(slot, None, true, Instant::now())?;
+    let second = encoder.poll()?;
+    assert_eq!(second[0].frame_cap_target, Some(target));
+    assert_eq!(second[0].frame_cap_bytes, Some(tightened));
+    assert_eq!(encoder.keyframes_over_cap, 1);
+
+    // Calm keyframes held to the active VBV relax `KeyframeCapScale` step by step,
+    // including the final clamped ~2.1% (<10%) step from 0.9795 back to 1.0.
+    let mut steps = 0;
+    while encoder.keyframe_cap.scale() < 1. {
+        let active_cap = encoder.set_frame_cap_toward(target, two_frames)?.unwrap();
+        state(|d| d.picture = active_cap as usize);
+        encoder.submit(slot, None, true, Instant::now())?;
+        encoder.poll()?;
+        steps += 1;
+        assert!(steps <= 6, "did not relax in 6 keyframes: {steps}");
+    }
+    assert!(
+        u64::from(
+            encoder
+                .config
+                .rcParams
+                .vbvBufferSize
+                .abs_diff((target * 8) as u32)
+        ) * 10
+            <= u64::from(encoder.config.rcParams.vbvBufferSize),
+        "penultimate step must sit within 10% of target to test the clamped final step"
+    );
+    state(|d| d.reconfigured = None);
+    assert_eq!(
+        encoder.set_frame_cap_toward(target, two_frames)?,
+        Some(target)
+    );
+    assert_eq!(u64::from(encoder.config.rcParams.vbvBufferSize), target * 8);
+    assert!(
+        state(|d| d.reconfigured.take().is_some()),
+        "the clamped final relax step back to target must reconfigure NVENC"
+    );
+
+    // Extreme overshoot clamps at `two_frames` even when `0.5 * target` would be smaller.
+    let high_floor = 750_000_u64;
+    state(|d| d.picture = (target * 4) as usize);
+    encoder.submit(slot, None, true, Instant::now())?;
+    encoder.poll()?;
+    assert_eq!(encoder.keyframe_cap.scale(), KeyframeCapScale::FLOOR);
+    assert_eq!(
+        encoder.set_frame_cap_toward(target, high_floor)?,
+        Some(high_floor)
+    );
+    assert_eq!(
+        u64::from(encoder.config.rcParams.vbvBufferSize),
+        high_floor * 8
+    );
+    drop(encoder);
+    assert_clean();
+    Ok(())
+}
+
+#[test]
+fn a_driver_that_ignores_lower_vbv_on_keyframes_restores_target_vbv_and_one_frame_ceiling_stays_inert()
+-> Result<()> {
+    reset();
+    let stream = Negotiated {
+        width: 3840,
+        height: 2160,
+        codec: 2,
+        fps: 100,
+        bitrate_kbps: 219_500,
+        ..Default::default()
+    };
+    let mut encoder = session_with(&stream, ApiVersion(13, 0), "nvenc_vbv_increase = 400\n")?;
+    let slot = input(&mut encoder, 19)?;
+    let target = 1_166_893_u64;
+    let two_frames = 548_750_u64;
+    encoder.set_frame_cap_toward(target, two_frames)?;
+
+    // Two identical 1.91 MB keyframes prove the driver ignored the tightened VBV:
+    // scale returns to 1.0 and VBV restores to `target` so inter frames are not squeezed.
+    state(|d| d.picture = 1_908_217);
+    encoder.submit(slot, None, true, Instant::now())?;
+    encoder.poll()?;
+    let lowered = encoder.set_frame_cap_toward(target, two_frames)?.unwrap();
+    assert!(lowered < target);
+    encoder.submit(slot, None, true, Instant::now())?;
+    encoder.poll()?;
+    assert_eq!(encoder.keyframe_cap.scale(), 1.);
+    assert_eq!(
+        encoder.set_frame_cap_toward(target, two_frames)?,
+        Some(target)
+    );
+    assert_eq!(u64::from(encoder.config.rcParams.vbvBufferSize), target * 8);
+    drop(encoder);
+    assert_clean();
+
+    // With default 1-frame VBV (`nvenc_vbv_increase = 0`), `vbv_ceiling` (274,375 B)
+    // is already below `two_frames` (548,750 B): VBV stays at `vbv_ceiling` and scale stays 1.
+    reset();
+    let mut one_frame = session(&stream, ApiVersion(13, 0))?;
+    let ceiling = one_frame.vbv_ceiling;
+    let slot = input(&mut one_frame, 21)?;
+    assert_eq!(
+        one_frame.set_frame_cap_toward(target, two_frames)?,
+        Some(target)
+    );
+    state(|d| d.picture = 1_908_217);
+    one_frame.submit(slot, None, true, Instant::now())?;
+    let out = one_frame.poll()?;
+    assert_eq!(out[0].frame_cap_target, Some(target));
+    assert_eq!(one_frame.keyframes_over_cap, 1);
+    assert_eq!(one_frame.keyframe_cap.scale(), 1.);
+    assert_eq!(one_frame.config.rcParams.vbvBufferSize, ceiling);
+    drop(one_frame);
+    assert_clean();
+
+    // Subframe slice delivery keeps `frame_cap` unscaled so slice block sizing stays fixed.
+    reset();
+    let h264_4k = Negotiated { codec: 0, ..stream };
+    let mut sliced = session_with(
+        &h264_4k,
+        ApiVersion(13, 0),
+        "nvenc_vbv_increase = 400\nvideo_slice_delivery = 4\n",
+    )?;
+    assert!(sliced.subframe);
+    let slot = input(&mut sliced, 22)?;
+    assert_eq!(
+        sliced.set_frame_cap_toward(target, two_frames)?,
+        Some(target)
+    );
+    state(|d| d.picture = 1_908_217);
+    sliced.submit(slot, None, true, Instant::now())?;
+    sliced.poll()?;
+    assert_eq!(sliced.keyframe_cap.scale(), 1.);
+    assert_eq!(
+        sliced.set_frame_cap_toward(target, two_frames)?,
+        Some(target)
+    );
+    drop(sliced);
+    assert_clean();
+    Ok(())
+}
+
+#[test]
+fn reencoded_scene_cut_overshoot_tightens_vbv_and_coalesces_with_apply_bitrate() -> Result<()> {
+    reset();
+    state(|d| d.engines = 2);
+    let stream = Negotiated {
+        width: 3840,
+        height: 2160,
+        codec: 1,
+        fps: 100,
+        bitrate_kbps: 219_500,
+        ..Default::default()
+    };
+    let mut encoder = session_with(&stream, ApiVersion(13, 0), "nvenc_vbv_increase = 400\n")?;
+    assert!(!encoder.subframe);
+    let slot = input(&mut encoder, 23)?;
+    let target = 1_166_893_u64;
+    let two_frames = 548_750_u64;
+
+    let _ = encoder.queue_frame_cap(target, two_frames);
+    encoder.apply_bitrate(219_500, true)??;
+    encoder.cut_limit = Some(target);
+
+    // Startup IDR fits.
+    state(|d| d.picture = 800_000);
+    encoder.submit(slot, None, true, Instant::now())?;
+    assert_eq!(encoder.poll()?.len(), 1);
+    assert_eq!(encoder.keyframe_cap.scale(), 1.);
+
+    // Oversize P-frame scene cut (> `cut_limit`) re-encodes as IDR; when that IDR
+    // also overshoots `1.1 * target`, `keyframe_cap` tightens VBV on the next coalesced apply.
+    state(|d| d.picture = 1_800_000);
+    encoder.submit(slot, None, false, Instant::now())?;
+    let cut = encoder.poll()?;
+    assert!(cut[0].idr && cut[0].reencoded);
+    assert_eq!(cut[0].frame_cap_target, Some(target));
+    assert_eq!(encoder.reencoded_cuts, 1);
+    assert!(encoder.keyframe_cap.scale() < 0.70);
+
+    state(|d| d.reconfigure_count = 0);
+    let _ = encoder.queue_frame_cap(target, two_frames);
+    encoder.apply_bitrate(200_000, true)??;
+    state(|d| {
+        assert_eq!(d.reconfigure_count, 1);
+        let (_, cfg) = d.reconfigured.take().unwrap();
+        assert_eq!(cfg.rcParams.averageBitRate, 200_000 * 1000);
+        assert!(
+            u64::from(cfg.rcParams.vbvBufferSize) < target * 8
+                && u64::from(cfg.rcParams.vbvBufferSize) >= two_frames * 8
+        );
+        assert_eq!(cfg.rcParams.vbvInitialDelay, cfg.rcParams.vbvBufferSize);
+    });
+    drop(encoder);
+    assert_clean();
+    Ok(())
+}

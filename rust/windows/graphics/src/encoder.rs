@@ -25,12 +25,12 @@ pub enum Encoder {
 impl Encoder {
     /// Best-effort pace-based frame cap. PyroWave ignores it; AMF preserves an
     /// explicit user setting, including driver default. `floor` (two nominal
-    /// frames) bounds how far AMF's keyframe cap scale lowers it. NVENC holds
-    /// frames to its one-frame VBV and lowers that to a smaller cap.
+    /// frames) bounds how far AMF's and NVENC's keyframe cap scale lowers it.
+    /// NVENC holds frames to its VBV and lowers that to a smaller cap.
     pub fn set_frame_cap(&mut self, bytes: u64, floor: u64) -> Option<u64> {
         match self {
             Self::Amf(encoder) => encoder.set_frame_cap(bytes, floor),
-            Self::Nvenc(encoder) => encoder.set_frame_cap(bytes),
+            Self::Nvenc(encoder) => encoder.set_frame_cap(bytes, floor),
             Self::Pyrowave(_) => None,
         }
     }
@@ -65,12 +65,13 @@ impl Encoder {
             Self::Pyrowave(_) => 0,
         }
     }
-    /// How far under the pace-based target AMF's cap is written; 1 elsewhere:
-    /// NVENC's VBV holds keyframes to the cap without one.
+    /// How far under the pace-based target AMF's frame cap or NVENC's VBV is
+    /// written; 1 elsewhere.
     pub fn keyframe_cap_scale(&self) -> f64 {
         match self {
             Self::Amf(encoder) => encoder.keyframe_cap_scale(),
-            _ => 1.,
+            Self::Nvenc(encoder) => encoder.keyframe_cap_scale(),
+            Self::Pyrowave(_) => 1.,
         }
     }
     pub fn set_hdr_metadata(&mut self, metadata: butterpollo_media_policy::hdr::Metadata) {

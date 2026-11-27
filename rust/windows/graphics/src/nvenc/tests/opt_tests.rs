@@ -158,7 +158,7 @@ fn vbv_initial_delay_matches_vbv_buffer_size_and_coalesces_rate_and_cap() -> Res
     // one-frame ceiling (~166_666 bits) so clamping neither hides the cap nor floors it.
     let new_cap = 16_000;
     assert!(new_cap * 8 > MIN_VBV_BITS && new_cap * 8 < u64::from(initial_vbv / 2));
-    let _ = encoder.queue_frame_cap(new_cap);
+    let _ = encoder.queue_frame_cap(new_cap, 0);
     state(|d| assert_eq!(d.reconfigure_count, 0));
 
     let cap_result = encoder.apply_bitrate(10_000, true)?;
@@ -175,7 +175,7 @@ fn vbv_initial_delay_matches_vbv_buffer_size_and_coalesces_rate_and_cap() -> Res
     });
 
     // Repeating the same bitrate and cap produces zero further reconfigures.
-    let _ = encoder.queue_frame_cap(new_cap);
+    let _ = encoder.queue_frame_cap(new_cap, 0);
     assert!(encoder.apply_bitrate(10_000, true)?.is_ok());
     state(|d| assert_eq!(d.reconfigure_count, 1));
 

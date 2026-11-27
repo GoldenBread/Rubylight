@@ -259,24 +259,25 @@ pub fn amf_frame_cap_automatic(config: &Config) -> bool {
         .eq_ignore_ascii_case("auto")
 }
 
-/// How much under the pace-based frame cap the host writes to AMF, learned
-/// from keyframes. #59's rc.4 logs had an AV1 recovery keyframe of 1,908,217 B
-/// against a 1,166,893 B cap (1.64 times): AMF does not hold keyframes to the
-/// cap, so they left without full FEC. A keyframe over 1.1 times its target
-/// lowers the scale to what would have fit (`written / bytes`), never below
-/// [`KeyframeCapScale::FLOOR`]; a keyframe that kept to the lower cap and
-/// would still fit at the next step up relaxes it by
-/// [`KeyframeCapScale::RELAX`], back to 1. The written cap holds every frame,
-/// so a driver that ignores it for keyframes must not keep inter frames under
-/// it: a keyframe over the target under a lowered cap, no smaller against its
-/// target than the one that lowered it, returns the scale to 1 for the
-/// encoder's life. Only keyframes feed it (IDR, recovery, a re-encoded cut);
-/// a new encoder starts at 1.
+/// How much under the pace-based frame cap the host writes to AMF or NVENC's
+/// VBV, learned from keyframes. #59's rc.4 logs had an AV1 recovery keyframe
+/// of 1,908,217 B against a 1,166,893 B cap (1.64 times): encoders that do not
+/// hold complex keyframes to the cap send them without full FEC. A keyframe
+/// over 1.1 times its target lowers the scale to what would have fit
+/// (`written / bytes`), never below [`KeyframeCapScale::FLOOR`]; a keyframe
+/// that kept to the lower cap and would still fit at the next step up relaxes
+/// it by [`KeyframeCapScale::RELAX`], back to 1. The written cap holds every
+/// frame, so a driver that ignores it for keyframes must not keep inter frames
+/// under it: a keyframe over the target under a lowered cap, no smaller
+/// against its target than the one that lowered it, returns the scale to 1 for
+/// the encoder's life. Only keyframes feed it (IDR, recovery, a re-encoded
+/// cut); a new encoder starts at 1.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct KeyframeCapScale {
     scale: f64,
-    /// The overshoot (bytes over target) of the keyframe that last lowered it.
-    lowered_at: Option<f64>,
+    /// The overshoot (`bytes / target`) and `written` cap of the keyframe that
+    /// last lowered `scale`.
+    lowered_at: Option<(f64, f64)>,
     /// A lower cap did not shrink keyframes: the driver ignores it.
     ignored: bool,
 }
@@ -291,8 +292,8 @@ impl Default for KeyframeCapScale {
 }
 impl KeyframeCapScale {
     pub const FLOOR: f64 = 0.5;
-    /// More than the 10% rise AMF's frame cap filter ignores as jitter, so
-    /// each step reaches the driver.
+    /// More than the 10% rise AMF's and NVENC's frame cap filters ignore as
+    /// jitter, so each step reaches the driver.
     pub const RELAX: f64 = 1.125;
     pub fn scale(&self) -> f64 {
         self.scale
@@ -315,17 +316,20 @@ impl KeyframeCapScale {
         let next = (self.scale * Self::RELAX).min(1.);
         if bytes > 1.1 * target {
             let overshoot = bytes / target;
-            if let Some(lowered) = self
+            if let Some((lowered, _)) = self
                 .lowered_at
-                .filter(|at| written < target && overshoot >= *at)
+                .filter(|(at, prev)| written < *prev && written < target && overshoot >= *at)
             {
                 self.scale = 1.;
                 self.lowered_at = None;
                 self.ignored = true;
                 return Some((lowered, overshoot));
             }
-            self.lowered_at = Some(overshoot);
-            self.scale = self.scale.min(written / bytes).max(Self::FLOOR);
+            let tightened = self.scale.min(written / bytes).max(Self::FLOOR);
+            if tightened < self.scale {
+                self.lowered_at = Some((overshoot, written));
+                self.scale = tightened;
+            }
         } else if self.scale < 1.
             && bytes >= 0.9 * written
             && bytes * next / self.scale <= 1.1 * target
@@ -333,14 +337,18 @@ impl KeyframeCapScale {
             // Bound by the lower cap but within it, and a keyframe as much
             // larger as the next step's cap would still fit.
             self.scale = next;
+            if (self.scale - 1.).abs() <= f64::EPSILON {
+                self.lowered_at = None;
+            }
         }
         None
     }
 }
 
-/// The cap AMF gets for the pace-based `target`: scaled by `scale` for an
-/// automatic cap in frame mode only. An explicit `amd_max_frame_size` is the
-/// user's, and slice delivery plans its blocks from the cap itself.
+/// The cap AMF or NVENC gets for the pace-based `target`: scaled by `scale`
+/// for an automatic cap in whole-frame mode only. An explicit
+/// `amd_max_frame_size` is the user's, and slice delivery plans its blocks
+/// from the cap itself.
 pub fn keyframe_cap_bytes(
     automatic: bool,
     slice_blocks: u8,

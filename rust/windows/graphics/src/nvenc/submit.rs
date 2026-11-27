@@ -210,6 +210,18 @@ impl Session {
         self.submitted_metadata = metadata;
         let after_invalidation = self.references.confirmation(idr);
         self.slots[slot].signaled = false;
+        let frame_cap_bytes = again
+            .and_then(|again| again.frame_cap_bytes)
+            .or_else(|| self.frame_cap());
+        let frame_cap_target = again
+            .and_then(|again| again.frame_cap_target)
+            .or(self.frame_cap_target);
+        let vbv_bytes = again.and_then(|again| again.vbv_bytes).or_else(|| {
+            let bits = self.config.rcParams.vbvBufferSize;
+            (bits > 0).then(|| u64::from(bits).div_ceil(8))
+        });
+        let scales_keyframe_cap =
+            again.map_or_else(|| self.can_scale_keyframe_cap(), |a| a.scales_keyframe_cap);
         self.pending.push_back(Pending {
             slot,
             frame,
@@ -219,10 +231,12 @@ impl Session {
             after_invalidation,
             idr,
             reencoded: again.is_some(),
-            frame_cap_bytes: self.frame_cap(),
-            frame_cap_target: self.frame_cap_target,
+            frame_cap_bytes,
+            frame_cap_target,
+            vbv_bytes,
+            scales_keyframe_cap,
             cut_limit: self.cut_limit,
-            streams: self.subframe && !idr && !after_invalidation && self.frame_cap().is_some(),
+            streams: self.subframe && !idr && !after_invalidation && frame_cap_bytes.is_some(),
             units: None,
             signal,
             measured,
@@ -239,8 +253,16 @@ impl Session {
     /// Whether `encoded`, `pending`'s output, goes back to NVENC as a keyframe
     /// instead of to the client: the rule AMF follows
     /// ([`crate::amf::reencodes_cut`]), for an inter frame past the stream's
-    /// full-FEC bound that the VBV did not hold, while nothing submitted after
-    /// it can reference it. Not with slice delivery, as on AMF.
+    /// full-FEC bound (`fec_whole`) that the VBV did not hold, while nothing
+    /// submitted after it can reference it (`self.pending.is_empty()`).
+    ///
+    /// Keeping this invariant prevents >4-FEC-block inter frames from leaving
+    /// without full parity (where a single lost packet corrupts references and
+    /// triggers a multi-frame recovery freeze); at high refresh rates when the
+    /// GPU already has the next frame in flight, `pending.is_empty()` is false
+    /// so back-to-back double-encodes never stack, and D3D12/async sessions
+    /// submit the replacement IDR without blocking the stream thread (with
+    /// [`KeyframeCapScale`] tightening VBV if the re-encoded IDR overshoots).
     pub(super) fn reencodes(&self, pending: &Pending, encoded: &Encoded) -> bool {
         !self.subframe
             && crate::amf::reencodes_cut(
@@ -261,6 +283,10 @@ impl Session {
             Some(Again {
                 frame: cut.frame,
                 started: cut.started,
+                frame_cap_bytes: cut.frame_cap_bytes,
+                frame_cap_target: cut.frame_cap_target,
+                vbv_bytes: cut.vbv_bytes,
+                scales_keyframe_cap: cut.scales_keyframe_cap,
             }),
             true,
         )?;

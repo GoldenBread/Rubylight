@@ -47,6 +47,7 @@ use butterpollo_config::config::Config;
 use butterpollo_media_policy::{
     WarningSink as Warnings,
     encoder_focus::{self, Reason},
+    encoder_policy::KeyframeCapScale,
     nvenc::{ApiVersion, Budget, RateControl, Recovery, References, SPLIT_DISABLED, Tuning},
     recorded_warnings,
     rtsp::Negotiated,
@@ -223,10 +224,12 @@ struct Pending {
     idr: bool,
     /// The keyframe encoded again in place of an oversize scene cut.
     reencoded: bool,
-    /// [`Session::frame_cap`], [`Session::frame_cap_target`] and
-    /// [`Session::cut_limit`] at submission.
+    /// [`Session::frame_cap`], [`Session::frame_cap_target`], the active VBV
+    /// byte bound and [`Session::cut_limit`] at submission.
     frame_cap_bytes: Option<u64>,
     frame_cap_target: Option<u64>,
+    vbv_bytes: Option<u64>,
+    scales_keyframe_cap: bool,
     cut_limit: Option<u64>,
     /// With slice delivery, a P-frame that may leave slice by slice: not a
     /// keyframe or a recovery frame, and under a frame cap.
@@ -247,12 +250,16 @@ struct Units {
     /// The index of the next unit.
     next: u32,
 }
-/// A frame submitted once more ([`Session::reencode`]): it keeps its number
-/// and its encode time counts from the first submission, as AMF counts it.
+/// A frame submitted once more ([`Session::reencode`]): it keeps its number,
+/// cap metadata and first-submission start time, as AMF counts it.
 #[derive(Clone, Copy)]
 struct Again {
     frame: u64,
     started: Instant,
+    frame_cap_bytes: Option<u64>,
+    frame_cap_target: Option<u64>,
+    vbv_bytes: Option<u64>,
+    scales_keyframe_cap: bool,
 }
 struct Session {
     raw: *mut c_void,
@@ -307,8 +314,13 @@ struct Session {
     /// The driver refused the VBV of `cap_requested`, which is not asked for again: frames
     /// are not held to it.
     cap_refused: bool,
-    /// The host's last pace-based frame cap ([`Session::set_frame_cap`]).
+    /// The host's last pace-based frame cap ([`Session::set_frame_cap_toward`]),
+    /// its two-frame floor and the scaled byte cap after [`KeyframeCapScale`].
     frame_cap_target: Option<u64>,
+    frame_cap_floor: u64,
+    frame_cap_scaled: Option<u64>,
+    keyframe_cap: KeyframeCapScale,
+    cap_scale_applied: f64,
     /// The largest inter frame sent as encoded ([`Session::reencodes`]).
     cut_limit: Option<u64>,
     reencoded_cuts: u64,

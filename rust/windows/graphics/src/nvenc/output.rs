@@ -338,6 +338,23 @@ impl Session {
             if idr && crate::amf::over_cap_target(size as u64, pending.frame_cap_target) {
                 self.keyframes_over_cap += 1;
             }
+            if idr
+                && pending.scales_keyframe_cap
+                && !self.cap_refused
+                && let (Some(target), Some(written)) = (pending.frame_cap_target, pending.vbv_bytes)
+                && let Some((lowered, now)) =
+                    self.keyframe_cap.observe(size as u64, target, written)
+            {
+                tracing::warn!(
+                    codec = self.stream.codec,
+                    lowered_overshoot = (lowered * 100.).round() / 100.,
+                    overshoot = (now * 100.).round() / 100.,
+                    keyframe_bytes = size,
+                    vbv_bytes = written,
+                    target_bytes = target,
+                    "NVENC keyframes did not shrink under a lower VBV; the driver ignores it for keyframes, so the VBV cap returns to its target for this encoder"
+                );
+            }
             if let Some(cap) = pending.frame_cap_bytes
                 && size as u64 > cap.saturating_mul(2)
                 && self

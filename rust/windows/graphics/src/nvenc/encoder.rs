@@ -343,13 +343,16 @@ impl Encoder {
     pub fn budget(&self) -> Option<Budget> {
         self.session.budget
     }
-    /// The host's pace-based frame cap ([`Session::set_frame_cap`]); coalesced
-    /// with any bitrate change on the next submission.
-    pub fn set_frame_cap(&mut self, bytes: u64) -> Option<u64> {
-        self.session.queue_frame_cap(bytes)
+    /// The host's pace-based frame cap ([`Session::set_frame_cap_toward`]);
+    /// coalesced with any bitrate change on the next submission.
+    pub fn set_frame_cap(&mut self, bytes: u64, floor: u64) -> Option<u64> {
+        self.session.queue_frame_cap(bytes, floor)
     }
     pub fn frame_cap(&self) -> Option<u64> {
         self.session.frame_cap()
+    }
+    pub fn keyframe_cap_scale(&self) -> f64 {
+        self.session.keyframe_cap.scale()
     }
     /// The largest inter frame sent as encoded; a larger one is encoded again
     /// as a keyframe, as AMF does.
