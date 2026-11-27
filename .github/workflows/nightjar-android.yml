@@ -124,6 +124,7 @@ jobs:
         with:
           path: |
             ~/.gradle/caches/modules-2
+            ~/.gradle/caches/build-cache-1
             ~/.gradle/wrapper
           key: gradle-${{ hashFiles('client/gradle/wrapper/gradle-wrapper.properties') }}-${{ hashFiles('client/**/*.gradle', 'client/gradle.properties') }}
           restore-keys: gradle-${{ hashFiles('client/gradle/wrapper/gradle-wrapper.properties') }}-
@@ -155,13 +156,14 @@ jobs:
           echo 'BP_KEY_PASSWORD=validation' >> "$GITHUB_ENV"
       - name: Build both flavors
         run: >-
-          bash gradlew --no-daemon --max-workers=4
+          bash gradlew --no-daemon --build-cache --max-workers=4
           :app:assembleNonRootDebug :app:assembleNonRootRelease :app:assembleRootRelease
       - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         if: github.ref == 'refs/heads/main' && steps.gradle-cache.outputs.cache-hit != 'true'
         with:
           path: |
             ~/.gradle/caches/modules-2
+            ~/.gradle/caches/build-cache-1
             ~/.gradle/wrapper
           key: ${{ steps.gradle-cache.outputs.cache-primary-key }}
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
@@ -185,6 +187,7 @@ jobs:
         with:
           path: |
             ~/.gradle/caches/modules-2
+            ~/.gradle/caches/build-cache-1
             ~/.gradle/wrapper
           key: gradle-${{ hashFiles('client/gradle/wrapper/gradle-wrapper.properties') }}-${{ hashFiles('client/**/*.gradle', 'client/gradle.properties') }}
           restore-keys: gradle-${{ hashFiles('client/gradle/wrapper/gradle-wrapper.properties') }}-
@@ -200,7 +203,7 @@ jobs:
       # The release variants lint as the release scripts build them; nonRoot debug is the dev build.
       - name: Lint both flavors
         run: >-
-          bash gradlew --no-daemon --max-workers=4
+          bash gradlew --no-daemon --build-cache --max-workers=4
           :app:lintNonRootDebug :app:lintNonRootRelease :app:lintRootRelease
   unit-tests:
     runs-on: ubuntu-latest
@@ -218,6 +221,7 @@ jobs:
         with:
           path: |
             ~/.gradle/caches/modules-2
+            ~/.gradle/caches/build-cache-1
             ~/.gradle/wrapper
           key: gradle-${{ hashFiles('client/gradle/wrapper/gradle-wrapper.properties') }}-${{ hashFiles('client/**/*.gradle', 'client/gradle.properties') }}
           restore-keys: gradle-${{ hashFiles('client/gradle/wrapper/gradle-wrapper.properties') }}-
@@ -229,7 +233,7 @@ jobs:
       # tests (app/build.gradle). Two test JVMs: four took 490 s on the runner's four cores, two 376 s.
       - name: Run the unit tests
         run: >-
-          bash gradlew --no-daemon --max-workers=4
+          bash gradlew --no-daemon --build-cache --max-workers=4
           :app:testNonRootDebugUnitTest :app:testRootDebugUnitTest
   native:
     runs-on: ubuntu-latest

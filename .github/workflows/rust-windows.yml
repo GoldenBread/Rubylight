@@ -112,6 +112,7 @@ jobs:
       # The host's stream tests mostly wait on sockets and timers: on four
       # cores, 8 threads ran them in 90 s instead of 155 s.
       RUST_TEST_THREADS: 8
+      NEXTEST_TEST_THREADS: 8
     defaults:
       run:
         shell: pwsh
@@ -126,6 +127,7 @@ jobs:
             git
             mingw-w64-ucrt-x86_64-gcc
             mingw-w64-ucrt-x86_64-clang
+            mingw-w64-ucrt-x86_64-lld
             mingw-w64-ucrt-x86_64-cmake
             mingw-w64-ucrt-x86_64-ninja
             mingw-w64-ucrt-x86_64-vulkan-headers
@@ -136,6 +138,7 @@ jobs:
         run: |
           rustup toolchain install 1.98.1-x86_64-pc-windows-gnu --profile minimal --component rustfmt
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - uses: taiki-e/install-action@2b545d4fd42fdd72ed2a44eab8fedd1850e8f731 # nextest
       # Nothing from these jobs ships, so a signed release's tests and
       # clippy use the cache too.
       - uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae
@@ -192,6 +195,7 @@ jobs:
             git
             mingw-w64-ucrt-x86_64-gcc
             mingw-w64-ucrt-x86_64-clang
+            mingw-w64-ucrt-x86_64-lld
             mingw-w64-ucrt-x86_64-cmake
             mingw-w64-ucrt-x86_64-ninja
             mingw-w64-ucrt-x86_64-vulkan-headers
@@ -280,6 +284,7 @@ jobs:
             git
             mingw-w64-ucrt-x86_64-gcc
             mingw-w64-ucrt-x86_64-clang
+            mingw-w64-ucrt-x86_64-lld
             mingw-w64-ucrt-x86_64-cmake
             mingw-w64-ucrt-x86_64-ninja
             mingw-w64-ucrt-x86_64-vulkan-headers

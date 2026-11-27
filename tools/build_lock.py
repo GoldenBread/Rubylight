@@ -43,8 +43,8 @@ LANES_ENV = 'RUBYLIGHT_LANES_HELD'
 # (C:\src\rl-env.ps1): host slots <pool>\<n> with <n>.lock and <n>.owner.
 POOL_ENV = 'RUBYLIGHT_TARGET_POOL'
 DEFAULT_POOL = pathlib.Path(r'C:\src\rl-target-pool')
-HOST_SLOTS = 4
-CLIENT_SLOTS = 2
+HOST_SLOTS = 8
+CLIENT_SLOTS = 6
 MIN_FREE_GB_ENV = 'RUBYLIGHT_POOL_MIN_FREE_GB'
 DEFAULT_MIN_FREE_GB = 40.0
 # Gradle runs outside the dev check take this lane through
@@ -52,10 +52,12 @@ DEFAULT_MIN_FREE_GB = 40.0
 GRADLE_ENV = 'RUBYLIGHT_GRADLE_LANE'
 DEFAULT_GRADLE_LANE = pathlib.Path(r'D:\CodexArtifacts\locks\gradle-lane')
 CARGO_SLOTS_ENV = 'RUBYLIGHT_CARGO_SLOTS'
+CARGO_JOBS_ENV = 'RUBYLIGHT_CARGO_JOBS'
 # Measured 2026-11-18 (docs/building.md, "Build locks and lanes"): a dev-check
 # Cargo stage (a cold host check) runs at -j 4 and peaked at 7.0 GB of commit charge,
 # 5.5 GB working set (rustc, the linker and the test binaries together).
 CARGO_STAGE_THREADS = 4
+CARGO_MAX_JOBS = 12
 CARGO_STAGE_PEAK_GB = 7
 # Left for the desktop, the user's games and streams, and Gradle.
 MEMORY_RESERVE_GB = 16
@@ -130,6 +132,29 @@ def cargo_slots(cpus=None, memory_gb=None):
     by_cpu = cpus // CARGO_STAGE_THREADS
     by_memory = int((memory_gb - MEMORY_RESERVE_GB) // CARGO_STAGE_PEAK_GB)
     return max(1, min(by_cpu, by_memory))
+
+
+def busy_cargo_lanes(directory=None):
+    """Count of Cargo stage lanes currently held (including our own if already leased)."""
+    lanes = cargo_lanes(directory)
+    held = held_lanes()
+    count = 0
+    for lane in lanes:
+        if str(lane.path) in held or lane.busy():
+            count += 1
+    return count
+
+
+def cargo_jobs(directory=None, cpus=None, active=None):
+    """Dynamic Cargo -j count: scale up to CARGO_MAX_JOBS when few Cargo stages are busy,
+    staying at CARGO_STAGE_THREADS when all slots are saturated. RUBYLIGHT_CARGO_JOBS overrides."""
+    override = os.environ.get(CARGO_JOBS_ENV, '').strip()
+    if override.isdigit() and int(override) > 0:
+        return int(override)
+    cpus = cpus or os.cpu_count() or CARGO_STAGE_THREADS
+    busy = max(1, busy_cargo_lanes(directory) if active is None else int(active))
+    cap = min(CARGO_MAX_JOBS, cpus)
+    return max(CARGO_STAGE_THREADS, min(cap, cpus // busy))
 
 
 def priority_alive(text, written=None):
@@ -271,7 +296,10 @@ def end_children_with_me():
     if not job:
         return False
     info = Extended()
-    info.basic.flags = 0x2000  # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+    # KILL_ON_JOB_CLOSE cleans up runaway compilers/tests if the check is killed;
+    # BREAKAWAY_OK lets shared long-lived daemons (sccache) start outside this job so
+    # exiting one dev check never tears down another concurrent build's cache server.
+    info.basic.flags = 0x2000 | 0x0800  # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_BREAKAWAY_OK
     if not kernel.SetInformationJobObject(job, 9, ctypes.byref(info), ctypes.sizeof(info)):  # extended limits
         return False
     # Lower this stage driver to BelowNormal before spawning compilers so every child
@@ -329,7 +357,7 @@ def _open_unshared(path, create):
         handle = _kernel.CreateFileW(str(path), 0xC0000000, 0, None, 4 if create else 3, 0x80, None)
         if handle == _INVALID or handle is None:
             error = ctypes.get_last_error()
-            if error == 2 and not create:
+            if error in (2, 3) and not create:  # ERROR_FILE_NOT_FOUND / ERROR_PATH_NOT_FOUND
                 return False
             if error in (5, 32, 33):  # access denied (pending delete), sharing or lock violation
                 return None
@@ -549,7 +577,7 @@ def prune_pool(pool=None, min_free_gb=None, all_idle=False, directory=None, keep
     keep_raw = () if keep is None else ([keep] if isinstance(keep, (str, os.PathLike)) else keep)
     keep_paths = {pathlib.Path(k).resolve() for k in keep_raw}
     names = ({str(n) for n in range(1, HOST_SLOTS + 1)} | {f'client-{n}' for n in range(1, CLIENT_SLOTS + 1)}
-             | {p.stem for p in pool.glob('*.lock')})
+             | {'gradle-rust'} | {p.stem for p in pool.glob('*.lock')})
     candidates = sorted(
         (_slot_mtime(pool, n, pool / n), n, pool / n, pool / f'{n}.lock') for n in names
         if (pool / n).is_dir() and (pool / n).resolve() not in keep_paths and (pool / f'{n}.lock').resolve() not in keep_paths
@@ -691,7 +719,7 @@ class StageLease:
             _sync_lanes_env()
         default_pool = pool_directory(self.build.parent)
         pool_slots = [s.path for k, s in self.taken.items()
-                      if k in ('host target', 'client target') or s.path.parent.resolve() == default_pool]
+                      if k in ('host target', 'client target', 'gradle target') or s.path.parent.resolve() == default_pool]
         if pool_slots or 'cargo' in self.taken:
             try:
                 prune_pool(pool_slots[0].parent if pool_slots else default_pool, directory=self.build.parent, keep=pool_slots, say=self.say)

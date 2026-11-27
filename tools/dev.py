@@ -464,23 +464,33 @@ def stage_groups(check, root, args):
             return [cargo, ('host target', lambda: by_affinity(build_lock.host_slots(lock_dir, pool), root))]
         return [cargo, ('client target', lambda: by_affinity(build_lock.client_slots(lock_dir, pool), root))]
     if check.kind == 'gradle':
-        return [('gradle', lambda: build_lock.gradle_lanes(lock_dir))]
+        if args.target_dir:
+            folder = f'{args.target_dir}-gradle'
+            return [('gradle', lambda: build_lock.gradle_lanes(lock_dir)),
+                    ('target dir', lambda: [build_lock.HandleSlot(f'{folder}.lock')])]
+        pool_dir = pathlib.Path(pool) if pool else build_lock.pool_directory(lock_dir)
+        return [('gradle', lambda: build_lock.gradle_lanes(lock_dir)),
+                ('gradle target', lambda: [build_lock.HandleSlot(pool_dir / 'gradle-rust.lock')])]
     if check.kind == 'web':
         return [('web', lambda: build_lock.web_lanes(lock_dir))]
     return []
 
 
 def stage_target(check, taken, root, target_dir=None):
-    """The target dir of a Cargo check, claimed for this checkout: its pool slot, else
-    --target-dir (the client's beside it, the service's inside it). None for other checks."""
-    if check.kind not in ('host', 'service', 'client', 'interop'):
+    """The target dir of a Cargo or Gradle check, claimed for this checkout: its pool slot, else
+    --target-dir (the client's and gradle's beside it, the service's inside it). None for other checks."""
+    if check.kind not in ('host', 'service', 'client', 'interop', 'gradle'):
         return None
-    slot = taken.get('host target') or taken.get('client target')
+    slot = taken.get('host target') or taken.get('client target') or taken.get('gradle target')
     if slot is not None:
         return claim_slot(slot.path, root)
+    if target_dir is None:
+        return None
     target = pathlib.Path(target_dir)
     if check.kind in ('client', 'interop'):
         target = pathlib.Path(f'{target}-client')
+    elif check.kind == 'gradle':
+        target = pathlib.Path(f'{target}-gradle')
     claim_target(target, root)
     return target
 
@@ -588,6 +598,36 @@ def apply_gnu_lld(env):
     return env
 
 
+def _ensure_sccache_server(wrapper, env):
+    """Best-effort start of the sccache server detached from our Windows job object so
+    exiting this dev check never kills a shared sccache server used by concurrent builds."""
+    if os.name != 'nt':
+        return
+    flags = getattr(subprocess, 'CREATE_BREAKAWAY_FROM_JOB', 0) | getattr(subprocess, 'CREATE_NO_WINDOW', 0)
+    try:
+        subprocess.run([wrapper, '--start-server'], env=env, stdin=subprocess.DEVNULL,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                       creationflags=flags, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+
+def apply_sccache(env, start_server=False):
+    """Enable sccache automatically when available on PATH, unless disabled or already wrapped."""
+    if env.get('RUBYLIGHT_NO_SCCACHE', '').strip() == '1':
+        return env
+    if env.get('RUSTC_WRAPPER') or env.get('CARGO_BUILD_RUSTC_WRAPPER'):
+        return env
+    wrapper = shutil.which('sccache', path=env.get('PATH'))
+    if not wrapper:
+        return env
+    env['RUSTC_WRAPPER'] = wrapper
+    env.setdefault('CARGO_INCREMENTAL', '0')
+    if start_server:
+        _ensure_sccache_server(wrapper, env)
+    return env
+
+
 def _msys_ucrt_dir(env):
     raw = env.get('RUBYLIGHT_MSYS_ROOT') or r'C:\msys64'
     root = pathlib.Path(raw)
@@ -635,9 +675,11 @@ def host_env(target, lock_directory=None, fast=False):
     env['BUTTERPOLLO_VULKAN_INCLUDE'] = str(msys / 'include')
     env['BUTTERPOLLO_PYROWAVE_ROOT'] = str(pyrowave)
     env['CARGO_TARGET_DIR'] = str(target)
+    env['CARGO_BUILD_JOBS'] = str(build_lock.cargo_jobs(lock_directory))
+    env.setdefault('CARGO_PROFILE_DEV_DEBUG', '0')
     if lock_directory is not None or not env.get('RUBYLIGHT_LOCK_DIRECTORY'):
         env['RUBYLIGHT_LOCK_DIRECTORY'] = str(build_lock.lock_directory(lock_directory))
-    return apply_gnu_lld(env)
+    return apply_sccache(apply_gnu_lld(env), start_server=True)
 
 
 def client_env(target, fast=False, lock_directory=None):
@@ -648,7 +690,9 @@ def client_env(target, fast=False, lock_directory=None):
     env['PATH'] = prepend_path(env.get('PATH', ''), [sys_exe_dir, str(cargo_bin), str(msys_bin)])
     env['LIBCLANG_PATH'] = str(msys_bin)
     env['CARGO_TARGET_DIR'] = str(target)
-    return apply_gnu_lld(env)
+    env['CARGO_BUILD_JOBS'] = str(build_lock.cargo_jobs(lock_directory))
+    env.setdefault('CARGO_PROFILE_DEV_DEBUG', '0')
+    return apply_sccache(apply_gnu_lld(env), start_server=True)
 
 
 def interop_env(target, fast=False, lock_directory=None):
@@ -667,7 +711,9 @@ def interop_env(target, fast=False, lock_directory=None):
 def service_env(target, fast=False, lock_directory=None):
     env = client_env(pathlib.Path(target) / 'service', fast=fast, lock_directory=lock_directory)
     for name in ('RUSTFLAGS', 'CARGO_ENCODED_RUSTFLAGS', 'CARGO_BUILD_RUSTFLAGS',
-                 'CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUSTFLAGS'):
+                 'CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUSTFLAGS',
+                 'RUSTC_WRAPPER', 'CARGO_BUILD_RUSTC_WRAPPER', 'CARGO_INCREMENTAL',
+                 'CARGO_PROFILE_DEV_DEBUG'):
         env.pop(name, None)
     return env
 
@@ -697,16 +743,20 @@ def short_windows_temp(env):
     return None
 
 
-def gradle_env(fast=False, lock_directory=None):
+def gradle_env(fast=False, lock_directory=None, target=None):
     env = tool_env(fast=fast, lock_directory=lock_directory)
     env = {k: v for k, v in env.items() if k.upper() != 'CARGO_TARGET_DIR'}
-    # Its Rust engine builds beside the Cargo stages: at most a stage's share of the CPU.
-    env['CARGO_BUILD_JOBS'] = str(build_lock.CARGO_STAGE_THREADS)
+    if target is not None:
+        env['CARGO_TARGET_DIR'] = str(target)
+    # Its Rust engine builds beside the Cargo stages: scale dynamically with active Cargo lanes.
+    env['CARGO_BUILD_JOBS'] = str(build_lock.cargo_jobs(lock_directory))
+    env.setdefault('CARGO_PROFILE_DEV_DEBUG', '0')
     if os.name == 'nt':
         extra = [str(p) for p in (_cargo_bin_dir(env), _msys_ucrt_dir(env) / 'bin') if p.is_dir()]
         if extra:
             env['PATH'] = prepend_path(env.get('PATH', ''), extra)
         apply_gnu_lld(env)
+    apply_sccache(env, start_server=True)
     short = short_windows_temp(env)
     if short:
         for key in [k for k in env if k.upper() in ('TEMP', 'TMP')]:
@@ -724,11 +774,36 @@ CMD_LINE_LIMIT = 8191
 GRADLEW_OVERHEAD = 400
 
 
-def gradle_command(root, items, test_list_path=None, temp_dir=None):
+def default_gradle_test_forks(cpus=None, memory_gb=None):
+    """Parallel Robolectric test JVMs for local dev-check runs (each uses ~2 GB heap)."""
+    override = os.environ.get('RUBYLIGHT_GRADLE_TEST_FORKS', '').strip()
+    if override.isdigit() and int(override) > 0:
+        return int(override)
+    if os.environ.get('CI'):
+        return None
+    cpus = cpus or os.cpu_count() or 1
+    memory_gb = build_lock.total_memory_gb() if memory_gb is None else memory_gb
+    if cpus >= 12 and memory_gb >= 32:
+        return 6
+    if cpus >= 8 and memory_gb >= 24:
+        return 4
+    return None
+
+
+def gradle_command(root, items, test_list_path=None, temp_dir=None, daemon=None, max_workers=None, unit_test_forks=None):
     """The app tests for these classes (via --tests or -PrubylightTestList), or the whole suite + lint."""
     # By its full path: with NoDefaultCurrentDirectoryInExePath set, cmd
     # doesn't look in its working folder for a bare gradlew.bat.
-    command = ['cmd', '/c', str(root / 'client' / 'gradlew.bat'), '--no-daemon', '--max-workers=2']
+    if daemon is None:
+        daemon = not (os.environ.get('CI') or os.environ.get('RUBYLIGHT_GRADLE_NO_DAEMON', '').strip() == '1')
+    workers = max_workers if max_workers is not None else (2 if os.environ.get('CI') else 4)
+    command = ['cmd', '/c', str(root / 'client' / 'gradlew.bat')]
+    if not daemon:
+        command.append('--no-daemon')
+    command.append(f'--max-workers={workers}')
+    forks = unit_test_forks if unit_test_forks is not None else default_gradle_test_forks()
+    if forks and forks > 2:
+        command.append(f'-PunitTestForks={forks}')
     if temp_dir:
         command.append(f'-Djava.io.tmpdir={temp_dir}')
     command.append(GRADLE_TASK)
@@ -777,6 +852,69 @@ def parse_cargo_json_line(line):
     if rendered and not rendered.endswith('\n'):
         rendered += '\n'
     return rendered or None, summary
+
+
+def _gradle_wrapper_version(root):
+    props = root / 'client' / 'gradle' / 'wrapper' / 'gradle-wrapper.properties'
+    try:
+        m = re.search(r'gradle-([0-9][0-9A-Za-z.-]*)-(?:bin|all)\.zip', props.read_text(encoding='utf-8'))
+        return m.group(1) if m else ''
+    except OSError:
+        return ''
+
+
+def _has_compatible_gradle_daemon(root, temp_dir=None):
+    """Return True if a GradleDaemon JVM matching this checkout's Gradle version and tmpdir is running."""
+    if os.name != 'nt':
+        return True
+    version = _gradle_wrapper_version(root)
+    ps = ("Get-CimInstance Win32_Process -Filter \"Name='java.exe'\" "
+          "| ForEach-Object { $_.CommandLine }")
+    shell = shutil.which('pwsh') or shutil.which('powershell')
+    if not shell:
+        return False
+    try:
+        probe = subprocess.run([shell, '-NoProfile', '-Command', ps],
+                               capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    if probe.returncode != 0:
+        return False
+    want_tmp = f'-djava.io.tmpdir={temp_dir}'.lower() if temp_dir else None
+    for line in probe.stdout.splitlines():
+        low = line.lower()
+        if 'org.gradle.launcher.daemon.bootstrap.gradledaemon' not in low:
+            continue
+        if version and version.lower() not in low:
+            continue
+        if '-xmx3072m' not in low:
+            continue
+        if want_tmp and want_tmp not in low:
+            continue
+        return True
+    return False
+
+
+def _ensure_gradle_daemon(root, env, temp_dir=None):
+    """Ensure a compatible Gradle daemon exists outside our Windows job object so gradlew runs
+    inside dev.py's job (cancelling active builds if dev.py is killed) while the warm daemon
+    survives normal exits. Returns False if a breakaway daemon could not be confirmed/started,
+    signalling the caller to fall back to --no-daemon so no shared daemon spawns inside our job."""
+    if os.name != 'nt':
+        return True
+    if _has_compatible_gradle_daemon(root, temp_dir=temp_dir):
+        return True
+    cmd = ['cmd', '/c', str(root / 'client' / 'gradlew.bat'), '--daemon', '-q', 'help']
+    if temp_dir:
+        cmd.insert(-1, f'-Djava.io.tmpdir={temp_dir}')
+    flags = getattr(subprocess, 'CREATE_BREAKAWAY_FROM_JOB', 0) | getattr(subprocess, 'CREATE_NO_WINDOW', 0)
+    try:
+        res = subprocess.run(cmd, cwd=root / 'client', env=env, stdin=subprocess.DEVNULL,
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                             creationflags=flags, timeout=60)
+        return res.returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
 
 
 def run(command, log, cwd, env=None, shell=False, json_messages=False):
@@ -888,20 +1026,94 @@ def end_user_idle(root, env, mark):
         pass
 
 
-def client_commands(root, crates, use_nextest=False):
+def client_commands(root, crates, use_nextest=False, jobs=None):
     """cargo nextest/test and clippy for the changed client crates."""
+    j = str(jobs if jobs is not None else build_lock.cargo_jobs())
     args = [a for crate in crates for a in ('-p', crate)]
     if use_nextest:
-        commands = [['cargo', 'nextest', 'run', *nextest_args(root), '-j', '4', '--locked', *args]]
+        commands = [['cargo', 'nextest', 'run', *nextest_args(root), '--build-jobs', j, '--locked', *args]]
         doc_crates = doctest_crates(root, CLIENT_WORKSPACE, crates)
         if doc_crates:
             doc_args = [a for crate in doc_crates for a in ('-p', crate)]
-            commands.append(['cargo', 'test', '--doc', '-j', '4', '--locked', *doc_args])
+            commands.append(['cargo', 'test', '--doc', '-j', j, '--locked', *doc_args])
     else:
-        commands = [['cargo', 'test', '-j', '4', '--locked', *args]]
-    commands.append(['cargo', 'clippy', '-j', '4', '--all-targets', '--locked',
+        commands = [['cargo', 'test', '-j', j, '--locked', *args]]
+    commands.append(['cargo', 'clippy', '-j', j, '--all-targets', '--locked',
                      '--message-format=json', *args, '--', '-D', 'warnings'])
     return commands
+
+
+_DISCOVER_SCRIPT = (
+    'import json, sys, unittest\n'
+    'start, patterns = sys.argv[1], sys.argv[2:]\n'
+    'loader = unittest.TestLoader()\n'
+    'seen, ordered = set(), []\n'
+    'def walk(suite):\n'
+    '    for item in suite:\n'
+    '        if isinstance(item, unittest.TestSuite):\n'
+    '            walk(item)\n'
+    '        elif isinstance(item, unittest.TestCase):\n'
+    '            cls = item.__class__\n'
+    '            if cls.__module__ == "unittest.loader":\n'
+    '                raise RuntimeError(item.id())\n'
+    '            tid = f"{cls.__module__}.{cls.__qualname__}"\n'
+    '            if tid not in seen:\n'
+    '                seen.add(tid)\n'
+    '                ordered.append(tid)\n'
+    'for pat in patterns:\n'
+    '    walk(loader.discover(start, pattern=pat))\n'
+    'print(json.dumps(ordered))\n'
+)
+
+
+def _discover_unittest_targets(root, start_dir, patterns, env=None):
+    """Discover runnable `module.TestCase` targets using unittest's own loader (exact handling of
+    async tests, conditional classes, load_tests, imported bases, and 0-test helpers)."""
+    py = preferred_python(env)
+    child_env = dict(env or os.environ)
+    child_env['PYTHONPATH'] = prepend_path(child_env.get('PYTHONPATH', ''), [str(root / start_dir)])
+    try:
+        res = subprocess.run([py, '-c', _DISCOVER_SCRIPT, str(root / start_dir), *patterns],
+                             cwd=root, env=child_env, capture_output=True, text=True,
+                             encoding='utf-8', errors='replace', timeout=30)
+        if res.returncode == 0 and res.stdout.strip():
+            data = json.loads(res.stdout.splitlines()[-1])
+            if isinstance(data, list):
+                return data
+    except (OSError, subprocess.SubprocessError, ValueError):
+        pass
+    return None
+
+
+def run_unittest_parallel(root, start_dir, patterns, log, env):
+    """Run discovered unittest TestCase classes across parallel Python subprocesses."""
+    py = preferred_python(env)
+    targets = None if env.get('RUBYLIGHT_SERIAL_PYTEST', '').strip() == '1' else _discover_unittest_targets(root, start_dir, patterns, env)
+    if targets is None or len(targets) <= 1:
+        return all(run([py, '-m', 'unittest', 'discover', '-s', start_dir, '-p', pat],
+                       log, root, env=env) == 0 for pat in patterns)
+    workers = min(len(targets), max(2, min(4, (os.cpu_count() or 4) // 2)))
+    child_env = dict(env)
+    child_env['PYTHONPATH'] = prepend_path(child_env.get('PYTHONPATH', ''), [str(root / start_dir)])
+    log_lock = threading.Lock()
+
+    def run_target(target):
+        cmd = [py, '-m', 'unittest', target]
+        proc = subprocess.Popen(cmd, cwd=root, env=child_env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                text=True, encoding='utf-8', errors='replace')
+        build_lock.lower_handle_priority(getattr(proc, '_handle', None))
+        out, _ = proc.communicate()
+        with log_lock, open(log, 'a', encoding='utf-8', errors='replace') as f:
+            f.write(f'\n== {" ".join(cmd)}\n')
+            if out:
+                f.write(out)
+                if not out.endswith('\n'):
+                    f.write('\n')
+        return proc.returncode == 0
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+        results = list(pool.map(run_target, targets))
+    return all(results)
 
 
 def web_dependencies(web, log, refresh=False, env=None):
@@ -944,49 +1156,51 @@ def execute(check, root, log, target, fresh_dependencies=False, fast=False, lock
         log.write_text('', encoding='utf-8')
     if check.kind == 'host':
         env = host_env(target, lock_directory=lock_directory, fast=fast)
+        jobs = str(build_lock.cargo_jobs(lock_directory))
         p_args = [a for c in check.items for a in ('-p', c)]
         if fast:
-            cmd = ['cargo', 'check', *p_args, '--tests', '--locked', '-j', '4',
+            cmd = ['cargo', 'check', *p_args, '--tests', '--locked', '-j', jobs,
                    '--target-dir', str(target), '--message-format=json']
             return run(cmd, log, root, env, json_messages=True) == 0
         if run(['cargo', 'fmt', '--', '--check'], log, root, env) != 0:
             return False
-        clippy_cmd = ['cargo', 'clippy', *p_args, '--all-targets', '--locked', '-j', '4',
+        clippy_cmd = ['cargo', 'clippy', *p_args, '--all-targets', '--locked', '-j', jobs,
                       '--target-dir', str(target), '--message-format=json', '--', '-D', 'warnings']
         if run(clippy_cmd, log, root, env, json_messages=True) != 0:
             return False
         use_nextest = has_nextest(env)
         if use_nextest:
             pre_cmd = ['cargo', 'nextest', 'run', *nextest_args(root), *p_args, '--locked',
-                       '-j', '4', '--target-dir', str(target), '--no-run']
+                       '--build-jobs', jobs, '--target-dir', str(target), '--no-run']
         else:
-            pre_cmd = ['cargo', 'test', *p_args, '--locked', '-j', '4', '--target-dir', str(target), '--no-run']
+            pre_cmd = ['cargo', 'test', *p_args, '--locked', '-j', jobs, '--target-dir', str(target), '--no-run']
         if run(pre_cmd, log, root, env) != 0:
             return False
         mark = start_user_idle(root, env)
         try:
             if use_nextest:
                 test_cmd = ['cargo', 'nextest', 'run', *nextest_args(root), *p_args, '--locked',
-                            '-j', '4', '--target-dir', str(target)]
+                            '--build-jobs', jobs, '--target-dir', str(target)]
             else:
-                test_cmd = ['cargo', 'test', *p_args, '--locked', '-j', '4', '--target-dir', str(target)]
+                test_cmd = ['cargo', 'test', *p_args, '--locked', '-j', jobs, '--target-dir', str(target)]
             ok = run(test_cmd, log, root, env) == 0
             if ok and use_nextest:
                 doc_crates = doctest_crates(root, '.', check.items)
                 if doc_crates:
                     doc_args = [a for c in doc_crates for a in ('-p', c)]
-                    ok = run(['cargo', 'test', '--doc', *doc_args, '--locked', '-j', '4',
+                    ok = run(['cargo', 'test', '--doc', *doc_args, '--locked', '-j', jobs,
                               '--target-dir', str(target)], log, root, env) == 0
             return ok
         finally:
             end_user_idle(root, env, mark)
     if check.kind == 'client':
         env = client_env(target, fast=fast, lock_directory=lock_directory)
+        jobs = str(build_lock.cargo_jobs(lock_directory))
         if fast:
             args = [a for crate in check.items for a in ('-p', crate)]
-            cmd = ['cargo', 'check', '-j', '4', '--tests', '--locked', '--message-format=json', *args]
+            cmd = ['cargo', 'check', '-j', jobs, '--tests', '--locked', '--message-format=json', *args]
             return run(cmd, log, root / CLIENT_WORKSPACE, env, json_messages=True) == 0
-        for command in client_commands(root, check.items, use_nextest=has_nextest(env)):
+        for command in client_commands(root, check.items, use_nextest=has_nextest(env), jobs=int(jobs)):
             if run(command, log, root / CLIENT_WORKSPACE, env,
                    json_messages='--message-format=json' in command) != 0:
                 return False
@@ -995,35 +1209,37 @@ def execute(check, root, log, target, fresh_dependencies=False, fast=False, lock
         # Its own workspace, in a folder of this worktree's target dir; without a
         # developer's linker flags, as its release build (rust/service/build.ps1).
         env = service_env(target, fast=fast, lock_directory=lock_directory)
+        jobs = str(build_lock.cargo_jobs(lock_directory))
         manifest = ['--manifest-path', str(root / SERVICE_WORKSPACE / 'Cargo.toml')]
         if fast:
-            cmd = ['cargo', 'check', '-j', '4', '--tests', '--locked', '--message-format=json', *manifest]
+            cmd = ['cargo', 'check', '-j', jobs, '--tests', '--locked', '--message-format=json', *manifest]
             return run(cmd, log, root, env, json_messages=True) == 0
         use_nextest = has_nextest(env)
-        test_cmd = (['cargo', 'nextest', 'run', *nextest_args(root), '-j', '4', '--locked', *manifest]
-                    if use_nextest else ['cargo', 'test', '-j', '4', '--locked', *manifest])
+        test_cmd = (['cargo', 'nextest', 'run', *nextest_args(root), '--build-jobs', jobs, '--locked', *manifest]
+                    if use_nextest else ['cargo', 'test', '-j', jobs, '--locked', *manifest])
         commands = [
             ['cargo', 'fmt', *manifest, '--', '--check'],
-            ['cargo', 'clippy', '-j', '4', '--all-targets', '--locked', '--message-format=json',
+            ['cargo', 'clippy', '-j', jobs, '--all-targets', '--locked', '--message-format=json',
              *manifest, '--', '-D', 'warnings'],
             test_cmd,
         ]
         if use_nextest and doctest_crates(root, SERVICE_WORKSPACE, ['butterpollo-service']):
-            commands.append(['cargo', 'test', '--doc', '-j', '4', '--locked', *manifest])
+            commands.append(['cargo', 'test', '--doc', '-j', jobs, '--locked', *manifest])
         return all(run(command, log, root, env, json_messages='--message-format=json' in command) == 0
                    for command in commands)
     if check.kind == 'interop':
         env = interop_env(target, fast=fast, lock_directory=lock_directory)
+        jobs = str(build_lock.cargo_jobs(lock_directory))
         manifest = ['--manifest-path', str(root / 'tests/interop/Cargo.toml')]
         if fast:
-            cmd = ['cargo', 'check', '-j', '4', '--tests', '--locked', '--message-format=json', *manifest]
+            cmd = ['cargo', 'check', '-j', jobs, '--tests', '--locked', '--message-format=json', *manifest]
             return run(cmd, log, root, env, json_messages=True) == 0
-        test_cmd = (['cargo', 'nextest', 'run', *nextest_args(root), '-j', '4', '--locked', *manifest]
-                    if has_nextest(env) else ['cargo', 'test', '-j', '4', '--locked', *manifest])
+        test_cmd = (['cargo', 'nextest', 'run', *nextest_args(root), '--build-jobs', jobs, '--locked', *manifest]
+                    if has_nextest(env) else ['cargo', 'test', '-j', jobs, '--locked', *manifest])
         return run(test_cmd, log, root, env) == 0
     if check.kind == 'gradle':
         before = os.environ.get('TEMP'), os.environ.get('TMP')
-        env = gradle_env(fast=fast, lock_directory=lock_directory)
+        env = gradle_env(fast=fast, lock_directory=lock_directory, target=target)
         normalized = env.get('TEMP') if os.name == 'nt' and env.get('TEMP') and (env.get('TEMP'), env.get('TMP')) != before else None
         list_path = None
         try:
@@ -1034,6 +1250,8 @@ def execute(check, root, log, target, fresh_dependencies=False, fast=False, lock
                 os.close(fd)
                 list_path = pathlib.Path(raw)
                 command = gradle_command(root, check.items, test_list_path=list_path, temp_dir=normalized)
+            if '--no-daemon' not in command and not _ensure_gradle_daemon(root, env, temp_dir=normalized):
+                command = [*command[:3], '--no-daemon', *command[3:]]
             return run(command, log, root / 'client', env) == 0
         finally:
             if list_path is not None:
@@ -1050,14 +1268,10 @@ def execute(check, root, log, target, fresh_dependencies=False, fast=False, lock
         return True
     if check.kind == 'python':
         env = tool_env(fast=fast, lock_directory=lock_directory)
-        py = preferred_python(env)
-        return all(run([py, '-m', 'unittest', 'discover', '-s', 'rust/release', '-p', suite],
-                       log, root, env=env) == 0 for suite in check.items)
+        return run_unittest_parallel(root, 'rust/release', check.items, log, env)
     if check.kind == 'tools':
         env = tool_env(fast=fast, lock_directory=lock_directory)
-        py = preferred_python(env)
-        return run([py, '-m', 'unittest', 'discover', '-s', 'tools', '-p', 'test_*.py'],
-                   log, root, env=env) == 0
+        return run_unittest_parallel(root, 'tools', ['test_*.py'], log, env)
     if check.kind == 'generated':
         env = tool_env(fast=fast, lock_directory=lock_directory)
         py = preferred_python(env)

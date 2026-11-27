@@ -65,7 +65,7 @@ Useful options:
 | `-DriverRoot <path>` | Take `nefconc.exe` and the Playnite plugin from a Vibepollo 2.0.0 tools folder instead of fetching the pinned release. |
 | `-SkipTests` | Skip workspace tests and Clippy for a local iteration. Formatting still runs; this is not the release validation path. |
 | `-Stage Test\|Lint\|Build` | Run one stage: tests, Clippy, or the release build (with `-Package`). CI runs the three as parallel jobs; the default `All` runs them in order. |
-| `-Jobs <n>` | Parallel jobs for Cargo, CMake, PyroWave and FFmpeg (default 4). |
+| `-Jobs <n>` | Parallel jobs for Cargo, CMake, PyroWave and FFmpeg (default: `ProcessorCount` clamped to `4..12`). |
 | `-Nvidia` | Build the NVIDIA component's archive (the NGX adapter with NVIDIA's runtime DLLs) instead of the host; see below. |
 | `-NvidiaRoot <path>` | Reuse an extracted NVIDIA RTX Video SDK 1.1.0 instead of fetching it (only with `-Nvidia`). |
 | `-MsvcSdk <path>` | Use an xwin SDK layout containing `crt/lib/x86_64`, `sdk/lib/um/x86_64` and `sdk/lib/ucrt/x86_64` for the NVIDIA adapter instead of the developer shell's libraries. |
@@ -153,7 +153,12 @@ The Cargo slot count caps the Cargo stages at once: CPU threads per `-j 4`
 stage and memory above a 16 GB reserve per stage peak (7 GB of commit charge
 measured for a host stage on 2026-11-18), whichever is fewer. That is 4 on this
 PC (16 threads, 64 GB) and 2 on the laptop (16 threads, 31 GB);
-`RUBYLIGHT_CARGO_SLOTS` overrides it. A Cargo, target or web lane is a file
+`RUBYLIGHT_CARGO_SLOTS` overrides it. When fewer Cargo stages are active, Cargo
+scales `-j` up dynamically (up to 12; `RUBYLIGHT_CARGO_JOBS` overrides it).
+`dev.py` also auto-enables `sccache` when found on `PATH` (`RUBYLIGHT_NO_SCCACHE=1`
+disables it), defaults `CARGO_PROFILE_DEV_DEBUG=0` (matching CI), and reuses the
+local Gradle daemon with scaled test forks (`RUBYLIGHT_GRADLE_NO_DAEMON=1` /
+`RUBYLIGHT_GRADLE_TEST_FORKS` override). A Cargo, target or web lane is a file
 held open without sharing: Windows closes it when its owner exits, so a crashed
 stage never leaves one taken. The dev check also ends its builds when it is
 killed, so none keeps building in a slot it no longer holds. The Gradle lane is
@@ -169,7 +174,7 @@ runs, naming it every 10 minutes, rather than failing the gate.
 `tools/build_lock.py` without `--lane` take it before SDK setup, tests or
 packaging and then wait until every lane is given back; a stage that sees it,
 or a live release `PRIORITY` ticket, gives its lanes back and waits. `-Jobs`
-defaults to 4 and sets the Cargo, CMake, PyroWave and FFmpeg build limits.
+defaults to `ProcessorCount` clamped to `4..12` and sets the Cargo, CMake, PyroWave and FFmpeg build limits.
 Wrap other heavy commands with `tools/build_lock.py`, with a lane when the
 work is one stage's. Run a Cargo command by hand through `dev.py cargo`, which
 takes the Cargo lane and a warm target slot as the check does (`--client` for

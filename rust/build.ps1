@@ -27,7 +27,7 @@ param(
     # Build (the release build and -Package). All runs them in order.
     [ValidateSet('All', 'Test', 'Lint', 'Build')]
     [string]$Stage = 'All',
-    [ValidateRange(1, 256)][int]$Jobs = 4
+    [ValidateRange(1, 256)][int]$Jobs = ([Math]::Max(4, [Math]::Min(12, [Environment]::ProcessorCount)))
 )
 $ErrorActionPreference = 'Stop'
 if ($Package -and $env:RLVD_IDDCX_LIB) {
@@ -66,6 +66,12 @@ $env:PATH = "$MsysRoot\ucrt64\bin;$env:USERPROFILE\.cargo\bin;" + $env:PATH
 $env:LIBCLANG_PATH = "$MsysRoot\ucrt64\bin"
 $env:BUTTERPOLLO_VULKAN_INCLUDE = "$MsysRoot\ucrt64\include"
 $env:CARGO_TARGET_DIR = $TargetDirectory
+# Use lld for GNU host builds/tests when MSYS2 provides it; rust/service/build.ps1 clears this
+# for the deterministic service executable, and WDK drivers use the MSVC target.
+$existingGnuFlags = if ($env:CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUSTFLAGS) { $env:CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUSTFLAGS.Trim() } else { '' }
+if ((Test-Path -LiteralPath "$MsysRoot\ucrt64\bin\ld.lld.exe") -and ($existingGnuFlags -notmatch '-fuse-ld=')) {
+    $env:CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUSTFLAGS = if ($existingGnuFlags) { "$existingGnuFlags -Clink-arg=-fuse-ld=lld" } else { '-Clink-arg=-fuse-ld=lld' }
+}
 if ($Nvidia) {
     # The NVIDIA component (rust/core/media-policy/src/nvidia_component.rs), and no host:
     # the NGX adapter (rust/truehdr-runtime, an MSVC DLL linking NVIDIA's RTX
@@ -243,10 +249,27 @@ try {
     Assert-NativeExit 'Virtual gamepad driver formatting'
     if ($runTests) {
         & (Join-Path $repo 'rust\drivers\usbip\test_usbip.ps1')
-        & cargo $toolchain test --workspace --locked
-        Assert-NativeExit 'Rust tests'
-        & cargo $toolchain test --manifest-path $serviceManifest --locked
-        Assert-NativeExit 'Service tests'
+        $useNextest = ($env:RUBYLIGHT_NO_NEXTEST -ne '1') -and (Get-Command cargo-nextest -ErrorAction SilentlyContinue)
+        $nextestConfig = Join-Path $repo '.config\nextest.toml'
+        if ($useNextest) {
+            $nextestCommon = @()
+            if (Test-Path -LiteralPath $nextestConfig) {
+                $nextestCommon = @('--config-file', $nextestConfig, '--profile', 'ci')
+            }
+            $nextestArgs = @('nextest', 'run') + $nextestCommon + @('--workspace', '--locked')
+            & cargo $toolchain @nextestArgs
+            Assert-NativeExit 'Rust tests'
+            & cargo $toolchain test --workspace --doc --locked
+            Assert-NativeExit 'Rust doctests'
+            $serviceNextestArgs = @('nextest', 'run') + $nextestCommon + @('--manifest-path', $serviceManifest, '--locked')
+            & cargo $toolchain @serviceNextestArgs
+            Assert-NativeExit 'Service tests'
+        } else {
+            & cargo $toolchain test --workspace --locked
+            Assert-NativeExit 'Rust tests'
+            & cargo $toolchain test --manifest-path $serviceManifest --locked
+            Assert-NativeExit 'Service tests'
+        }
         # The ignored FFmpeg AC3 and ANNOUNCE tests. --workspace like the run
         # above reuses its build: -p would unify features differently and
         # rebuild the workspace crates. The encode-cost benchmark also needs
@@ -261,7 +284,18 @@ try {
         Assert-NativeExit 'Service lint'
     }
     if (!$runBuild) { return }
-    $buildArgs = @('build', '--workspace', '--locked')
+    # Build all shipped host, installer, Vulkan layer and diagnostic probe targets in one
+    # invocation so workspace features unify once (skipping LTO-linking 48 internal dev probes).
+    $buildArgs = @('build',
+        '-p', 'butterpollo', '-p', 'butterpollo-setup', '-p', 'butterpollo-vulkan-layer', '-p', 'butterpollo-probes',
+        '--lib',
+        '--bin', 'butterpollo',
+        '--bin', 'butterpollo-start',
+        '--bin', 'butterpollo-setup',
+        '--bin', 'butterpollo-performance',
+        '--bin', 'butterpollo-protocol-performance',
+        '--bin', 'butterpollo-video-packet-performance',
+        '--locked')
     $profile = 'debug'
     if (!$DebugBuild) { $buildArgs += '--release'; $profile = 'release' }
     & cargo $toolchain @buildArgs

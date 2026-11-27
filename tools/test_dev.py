@@ -272,17 +272,24 @@ class WarmTargets(unittest.TestCase):
         self.assertEqual(names('host'), ['cargo', 'host target'])
         self.assertEqual(names('service'), ['cargo', 'host target'])
         self.assertEqual(names('client'), ['cargo', 'client target'])
-        self.assertEqual(names('gradle'), ['gradle'])
+        self.assertEqual(names('gradle'), ['gradle', 'gradle target'])
         self.assertEqual(names('web'), ['web'])
         self.assertEqual(names('python'), [])
         args.target_dir = self.target
         self.assertEqual(names('host'), ['cargo', 'target dir'])
+        self.assertEqual(names('gradle'), ['gradle', 'target dir'])
+        # Dotted --target-dir appends .lock rather than replacing the version suffix.
+        dotted = self.target.parent / 'v6.4.5'
+        args.target_dir = dotted
+        groups = dict(dev.stage_groups(dev.Check('app', 'gradle'), ROOT, args))
+        self.assertEqual(groups['target dir']()[0].path, pathlib.Path(f'{dotted}-gradle.lock'))
 
     def test_a_target_dir_given_keeps_the_client_beside_it(self):
         target = self.target.parent / 'given'
         self.assertEqual(dev.stage_target(dev.Check('c', 'client'), {}, ROOT, target), pathlib.Path(f'{target}-client'))
         self.assertEqual(dev.stage_target(dev.Check('h', 'host'), {}, ROOT, target), target)
-        self.assertIsNone(dev.stage_target(dev.Check('a', 'gradle'), {}, ROOT, target))
+        self.assertEqual(dev.stage_target(dev.Check('a', 'gradle'), {}, ROOT, target), pathlib.Path(f'{target}-gradle'))
+        self.assertIsNone(dev.stage_target(dev.Check('a', 'gradle'), {}, ROOT, None))
 
     @unittest.skipUnless(CARGO, 'cargo')
     def test_cargo_reuses_another_checkouts_build_unless_the_target_is_claimed(self):
@@ -417,7 +424,9 @@ class EnvironmentAndNextest(unittest.TestCase):
                     self.assertNotIn('RUSTFLAGS', i_env)
                     self.assertNotIn('CARGO_ENCODED_RUSTFLAGS', i_env)
                 for forbidden in ('RUSTFLAGS', 'CARGO_ENCODED_RUSTFLAGS', 'CARGO_BUILD_RUSTFLAGS',
-                                  'CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUSTFLAGS'):
+                                  'CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUSTFLAGS',
+                                  'RUSTC_WRAPPER', 'CARGO_BUILD_RUSTC_WRAPPER', 'CARGO_INCREMENTAL',
+                                  'CARGO_PROFILE_DEV_DEBUG'):
                     self.assertNotIn(forbidden, s_env)
 
             # Without ld.lld on PATH, GNU RUSTFLAGS is left alone; if -fuse-ld= already set, no duplicate.
@@ -429,6 +438,55 @@ class EnvironmentAndNextest(unittest.TestCase):
                     env = dev.apply_gnu_lld({'PATH': str(base),
                                              'CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUSTFLAGS': '-Clink-arg=-fuse-ld=bfd'})
                     self.assertEqual(env['CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUSTFLAGS'], '-Clink-arg=-fuse-ld=bfd')
+
+    def test_apply_sccache_wires_wrapper_and_respects_disable_or_existing(self):
+        with mock.patch.object(dev.shutil, 'which', return_value=r'C:\bin\sccache.exe'):
+            env = dev.apply_sccache({'PATH': r'C:\bin'})
+            self.assertEqual(env['RUSTC_WRAPPER'], r'C:\bin\sccache.exe')
+            self.assertEqual(env['CARGO_INCREMENTAL'], '0')
+            disabled = dev.apply_sccache({'PATH': r'C:\bin', 'RUBYLIGHT_NO_SCCACHE': '1'})
+            self.assertNotIn('RUSTC_WRAPPER', disabled)
+            kept = dev.apply_sccache({'PATH': r'C:\bin', 'RUSTC_WRAPPER': 'custom-wrapper'})
+            self.assertEqual(kept['RUSTC_WRAPPER'], 'custom-wrapper')
+            self.assertNotIn('CARGO_INCREMENTAL', kept)
+
+    def test_gradle_command_reuses_daemon_locally_and_disables_on_ci(self):
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop('CI', None)
+            os.environ.pop('RUBYLIGHT_GRADLE_NO_DAEMON', None)
+            os.environ.pop('RUBYLIGHT_GRADLE_TEST_FORKS', None)
+            with mock.patch.object(dev.build_lock, 'total_memory_gb', return_value=64.0), \
+                    mock.patch.object(dev.os, 'cpu_count', return_value=16):
+                local_cmd = dev.gradle_command(ROOT, [])
+                self.assertNotIn('--no-daemon', local_cmd)
+                self.assertIn('--max-workers=4', local_cmd)
+                self.assertIn('-PunitTestForks=6', local_cmd)
+        with mock.patch.dict(os.environ, {'CI': 'true'}):
+            ci_cmd = dev.gradle_command(ROOT, [])
+            self.assertIn('--no-daemon', ci_cmd)
+            self.assertIn('--max-workers=2', ci_cmd)
+            self.assertFalse(any(a.startswith('-PunitTestForks=') for a in ci_cmd))
+        with mock.patch.dict(os.environ, {'RUBYLIGHT_GRADLE_NO_DAEMON': '1'}):
+            self.assertIn('--no-daemon', dev.gradle_command(ROOT, []))
+
+    def test_discover_unittest_targets_finds_direct_inherited_and_async_test_cases(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            suite_dir = root / 'suites'
+            suite_dir.mkdir()
+            (suite_dir / 'test_sample.py').write_text(
+                'import unittest\n'
+                'class Base(unittest.TestCase):\n'
+                '    def setUp(self): pass\n'
+                'class Child(Base):\n'
+                '    def test_ok(self): pass\n'
+                'class AsyncCase(unittest.IsolatedAsyncioTestCase):\n'
+                '    async def test_async(self): pass\n'
+                'class Helper: pass\n',
+                encoding='utf-8',
+            )
+            targets = dev._discover_unittest_targets(root, 'suites', ['test_*.py'])
+            self.assertEqual(targets, ['test_sample.AsyncCase', 'test_sample.Child'])
 
     def test_apply_gnu_lld_merges_caller_rustflags_and_handles_fuse_ld_conflict(self):
         if os.name != 'nt':
@@ -837,7 +895,9 @@ class Execution(unittest.TestCase):
                 seen_path = pathlib.Path(arg.split('=', 1)[1])
                 seen_lines = seen_path.read_text(encoding='utf-8').splitlines()
                 return exit_code
-            with tempfile.TemporaryDirectory() as directory, mock.patch.object(dev, 'run', side_effect=fake_run):
+            with tempfile.TemporaryDirectory() as directory, \
+                    mock.patch.object(dev, '_ensure_gradle_daemon', return_value=True), \
+                    mock.patch.object(dev, 'run', side_effect=fake_run):
                 ok = dev.execute(dev.Check('app', 'gradle', many), ROOT,
                                  pathlib.Path(directory) / 'check.log', pathlib.Path(directory))
             self.assertEqual(ok, exit_code == 0)
@@ -866,13 +926,16 @@ class Execution(unittest.TestCase):
                 self.assertEqual(env['TEMP'], str(short_temp))
                 self.assertEqual(env['TMP'], str(short_temp))
                 self.assertNotIn('CARGO_TARGET_DIR', env)
+                explicit = dev.gradle_env(target=base / 'gradle-rust')
+                self.assertEqual(explicit['CARGO_TARGET_DIR'], str(base / 'gradle-rust'))
 
                 seen = {}
                 def fake_run(cmd, cwd_or_log, cwd, run_env=None, **kwargs):
                     seen['cmd'] = cmd
                     seen['env'] = run_env
                     return 0
-                with mock.patch.object(dev, 'run', side_effect=fake_run):
+                with mock.patch.object(dev, '_ensure_gradle_daemon', return_value=True), \
+                        mock.patch.object(dev, 'run', side_effect=fake_run):
                     ok = dev.execute(dev.Check('app', 'gradle', ['com.limelight.GameQualityTest']),
                                      ROOT, base / 'gradle.log', None)
                 self.assertTrue(ok)
@@ -881,6 +944,12 @@ class Execution(unittest.TestCase):
                 self.assertIn(f'-Djava.io.tmpdir={short_temp}', seen['cmd'])
                 self.assertLess(seen['cmd'].index(f'-Djava.io.tmpdir={short_temp}'),
                                 seen['cmd'].index(dev.GRADLE_TASK))
+                # If a breakaway daemon cannot be started, execute falls back to --no-daemon.
+                with mock.patch.object(dev, '_ensure_gradle_daemon', return_value=False), \
+                        mock.patch.object(dev, 'run', side_effect=fake_run):
+                    self.assertTrue(dev.execute(dev.Check('app', 'gradle', ['com.limelight.GameQualityTest']),
+                                                ROOT, base / 'gradle-fb.log', None))
+                self.assertIn('--no-daemon', seen['cmd'])
 
             # Already short TEMP/TMP (<= 45 chars) is preserved and no -Djava.io.tmpdir override is injected.
             with mock.patch.dict(os.environ, {
@@ -891,7 +960,8 @@ class Execution(unittest.TestCase):
                 env = dev.gradle_env()
                 self.assertEqual(env['TEMP'], r'C:\T')
                 self.assertEqual(env['TMP'], r'C:\T')
-                with mock.patch.object(dev, 'run', return_value=0) as run_mock:
+                with mock.patch.object(dev, '_ensure_gradle_daemon', return_value=True), \
+                        mock.patch.object(dev, 'run', return_value=0) as run_mock:
                     self.assertTrue(dev.execute(dev.Check('app', 'gradle', []),
                                                 ROOT, base / 'gradle-short.log', None))
                 self.assertFalse(any(a.startswith('-Djava.io.tmpdir=') for a in run_mock.call_args.args[0]))

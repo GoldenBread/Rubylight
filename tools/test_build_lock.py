@@ -257,6 +257,20 @@ class Lanes(unittest.TestCase):
         os.environ[build_lock.CARGO_SLOTS_ENV] = '3'
         self.assertEqual(build_lock.cargo_slots(16, 8), 3)
 
+    def test_cargo_jobs_scales_with_active_lanes_and_honors_override(self):
+        os.environ.pop(build_lock.CARGO_JOBS_ENV, None)
+        self.assertEqual(build_lock.cargo_jobs(self.root, cpus=16, active=1), 12)
+        # Missing lanes/ subdirectory (WinError 3 ERROR_PATH_NOT_FOUND) must treat all lanes as free.
+        self.assertEqual(build_lock.busy_cargo_lanes(self.root / 'nonexistent-lock-dir'), 0)
+        self.assertEqual(build_lock.cargo_jobs(self.root, cpus=16, active=2), 8)
+        self.assertEqual(build_lock.cargo_jobs(self.root, cpus=16, active=4), 4)
+        self.assertEqual(build_lock.cargo_jobs(self.root, cpus=4, active=1), 4)
+        os.environ[build_lock.CARGO_JOBS_ENV] = '6'
+        try:
+            self.assertEqual(build_lock.cargo_jobs(self.root, cpus=16, active=1), 6)
+        finally:
+            os.environ.pop(build_lock.CARGO_JOBS_ENV, None)
+
     def test_stages_of_different_kinds_run_side_by_side(self):
         self.hold('cargo', 'host')
         with self.lease('gradle') as gradle, self.lease('web') as web:
