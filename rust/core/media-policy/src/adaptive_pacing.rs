@@ -257,10 +257,18 @@ impl AdaptivePacing {
             if let Some(limit) = &mut self.limit {
                 *limit = (*limit).clamp(self.floor, self.ceiling);
             }
-            if route_changed || retracted_probe || self.current() != previous_rate {
+            let next_rate = self.current();
+            if route_changed {
                 self.clean_since = None;
                 self.last_sample = None;
                 self.awaiting_fence = true;
+            } else {
+                if retracted_probe || next_rate != previous_rate {
+                    self.clean_since = None;
+                }
+                if retracted_probe || next_rate > previous_rate {
+                    self.awaiting_fence = true;
+                }
             }
         }
         if let Some(limit) = &mut self.limit {

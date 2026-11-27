@@ -129,6 +129,18 @@ fn a_client_that_reports_wifi_gets_wifi_pacing_from_the_first_frame() {
     // Demand now includes parity and headers already, so the wireless route
     // starts 25% above it instead of above bitrate times 1.1.
     assert_eq!(pyrowave(true), 125 * M);
+
+    // Unknown-link Wi-Fi may probe P-frame burst pacing up to 4x, while recovery
+    // keyframes stay bounded to the 2x wireless safe rate unless manually overridden.
+    let safe_wifi = rate_bps(0, kbps, GBPS, true, needed);
+    assert_eq!(safe_wifi, 126 * M);
+    assert_eq!(recovery_pace_bps(252 * M, safe_wifi, 0, true), 126 * M);
+    assert_eq!(recovery_pace_bps(90 * M, safe_wifi, 0, true), 90 * M);
+    assert_eq!(
+        recovery_pace_bps(252 * M, safe_wifi, 200_000, true),
+        252 * M
+    );
+    assert_eq!(recovery_pace_bps(800 * M, safe_wifi, 0, false), 800 * M);
 }
 
 #[test]

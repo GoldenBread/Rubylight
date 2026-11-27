@@ -338,6 +338,46 @@ fn wireless_unknown_link_bitrate_changes_keep_rtt_floor_and_queue_watch() {
     assert_eq!(step.reason, PacingReason::QueueDelay);
     assert_eq!(step.old_bps, cap_34);
     assert_eq!(step.new_bps, cap_34 - cap_34 / 8);
+
+    // Rapid encoder_kbps updates (< 500 ms apart during GCC/ABR congestion cuts) must not
+    // wipe last_sample or awaiting_fence and starve QueueDelay / PacketLoss step-down.
+    let mut rapid = Stream::fresh(true);
+    rapid.pacing.set_wireless_unknown_link(true);
+    rapid.pacing.rate(FAST, DEMAND, 40_000);
+    for _ in 0..24 {
+        rapid.tick_step(Some(&PING), 30, 2_500_000, Duration::from_millis(2));
+    }
+    let mut kbps = 40_000u32;
+    let mut rapid_step = None;
+    for _ in 0..6 {
+        kbps = kbps.saturating_sub(1_000);
+        let cap_k = network_pacing::wireless_unknown_link_ceiling_bps(FAST, kbps, DEMAND);
+        rapid.pacing.rate(FAST, DEMAND, kbps);
+        rapid.now += Duration::from_millis(500);
+        rapid.traffic.frames += 30;
+        rapid.traffic.bytes += 2_400_000;
+        rapid.traffic.packets += 2_000;
+        rapid.last = rapid.last.wrapping_add(30);
+        rapid.pacing.on_ping(rapid.now, &PING);
+        if let Some(s) = rapid.pacing.tick_step(
+            rapid.now,
+            rapid.traffic,
+            Some(rapid.last),
+            rapid.period,
+            kbps,
+            Duration::from_millis(50),
+        ) {
+            assert!(s.new_bps < cap_k);
+            rapid_step = Some(s);
+            break;
+        }
+    }
+    assert_eq!(
+        rapid_step
+            .expect("rapid ABR steps must not starve 500 ms pacing samples")
+            .reason,
+        PacingReason::QueueDelay
+    );
 }
 
 #[test]

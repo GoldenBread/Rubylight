@@ -383,6 +383,25 @@ pub fn video_frame_wire_rate_bps(
     (packets as f64 * (datagram + overhead(ipv6)) as f64 * 8. / period.as_secs_f64()).ceil() as u64
 }
 
+/// Pace used to size and send a recovery picture (an IDR keyframe or
+/// reference-invalidation repair). Confirmed wireless routes cap recovery
+/// bursts to their 2x wireless `safe_bps` allowance unless an explicit
+/// `configured_kbps` override is set, keeping clean-link P-frame headroom
+/// (up to 4x on unknown-link Wi-Fi) from inflating keyframes and flooding
+/// access-point queues.
+pub fn recovery_pace_bps(
+    pace_bps: u64,
+    safe_bps: u64,
+    configured_kbps: i64,
+    wireless: bool,
+) -> u64 {
+    if configured_kbps <= 0 && wireless {
+        pace_bps.min(safe_bps)
+    } else {
+        pace_bps
+    }
+}
+
 /// Encoded payload that fits roughly two frame periods at the current pace,
 /// bounded to 2–8 nominal frames. The lower bound protects recovery quality
 /// when the link cannot carry even that budget; it is not a latency guarantee.

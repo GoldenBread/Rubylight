@@ -317,8 +317,24 @@ pub(super) fn apply_frame_cap(
         peer,
         encode_route,
     );
-    let cap = butterpollo_media_policy::network_pacing::recovery_frame_cap(
+    let safe = butterpollo_media_policy::network_pacing::rate_bps(
+        0,
+        bitrate,
+        encode_route.bps,
+        true,
+        pace.needed,
+    );
+    let recovery_bps = butterpollo_media_policy::network_pacing::recovery_pace_bps(
         pace.bps,
+        safe,
+        c.manual_pacing_kbps().unwrap_or(0),
+        butterpollo_media_policy::network_pacing::route_is_wireless(
+            encode_route.wireless,
+            s.config.client_wireless,
+        ),
+    );
+    let cap = butterpollo_media_policy::network_pacing::recovery_frame_cap(
+        recovery_bps,
         bitrate,
         period,
         recovery_packetizer.fec_percent,

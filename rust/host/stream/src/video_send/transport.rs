@@ -203,15 +203,11 @@ impl Transport<'_> {
         let recovery::Pace { bps, needed } =
             recovery::pace(s, c, &frame.packetizer, period, peer, route);
         let safe = network_pacing::rate_bps(0, bitrate, route.bps, true, needed);
+        let configured_kbps = c.manual_pacing_kbps().unwrap_or(0);
         let bps = s.keyframe_loss_bps(bps, safe, frame.wire_frame, frame.idr);
         if Instant::now() >= self.link_due {
             crate::video_send::check_route_mtu(s, s.config.packet_size, self.watch.mtu(peer));
-            network_pacing::report_rate(
-                &s.launch.warnings,
-                bps,
-                needed,
-                c.manual_pacing_kbps().unwrap_or(0),
-            );
+            network_pacing::report_rate(&s.launch.warnings, bps, needed, configured_kbps);
             if self.reported_pacing != Some(bps) {
                 tracing::info!(
                     pacing_bps = bps,
@@ -219,12 +215,22 @@ impl Transport<'_> {
                     link_bps = route.bps,
                     client_link_mbps,
                     client_wireless = s.config.client_wireless,
-                    configured_kbps = c.manual_pacing_kbps().unwrap_or(0),
+                    configured_kbps,
                     "network pacing selected"
                 );
                 self.reported_pacing = Some(bps);
             }
         }
+        let bps = if frame.idr || frame.after_invalidation {
+            network_pacing::recovery_pace_bps(
+                bps,
+                safe,
+                configured_kbps,
+                network_pacing::route_is_wireless(route.wireless, s.config.client_wireless),
+            )
+        } else {
+            bps
+        };
         s.stats
             .video_frame
             .store(u64::from(frame.wire_frame) + 1, Ordering::Release);
