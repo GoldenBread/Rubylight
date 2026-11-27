@@ -322,10 +322,10 @@
       ],
       "hw_required": true,
       "visual_review": false,
-      "status": "pending",
-      "phase": "not_started",
+      "status": "in_progress",
+      "phase": "implement",
       "branch": "wip/roadmap/07-hw-verify",
-      "worktree": null,
+      "worktree": "C:/Users/ramaz/orca/workspaces/rubylight-rel/r70-07-hw",
       "commit_sha": null,
       "quarantine_reason": null,
       "hw_verified": false
