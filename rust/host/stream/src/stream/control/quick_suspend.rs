@@ -345,7 +345,8 @@ mod tests {
     fn a_peer_never_has_two_workers() {
         // Every worker starts through `run`, which only `ask` (when idle) and
         // `send` (when the last one finished) call.
-        let source = include_str!("quick_suspend.rs");
+        // A checkout may turn the file's line ends into CRLF.
+        let source = include_str!("quick_suspend.rs").replace("\r\n", "\n");
         let body = &source[..source.find("#[cfg(test)]").unwrap()];
         assert_eq!(body.matches(".spawn(move ||").count(), 1);
         assert_eq!(body.matches("run(h, control_wake, ").count(), 2);

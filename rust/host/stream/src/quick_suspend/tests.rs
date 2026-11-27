@@ -189,20 +189,15 @@ fn every_way_a_session_ends_resumes_the_game_first() {
     let control = include_str!("../session_control.rs");
     assert_eq!(control.matches("quick_suspend::resume_for(self").count(), 3);
     assert!(control.contains("crate::quick_suspend::tick(self);"));
-    let launch = include_str!("../nvhttp/launch_steps.rs");
+    // A checkout may turn the file's line ends into CRLF.
+    let launch = include_str!("../nvhttp/launch_steps.rs").replace("\r\n", "\n");
     let resume = launch.find("quick_suspend::resume_for(h,").unwrap();
     let start = launch.find("crate::process::launch(h,").unwrap();
     assert!(resume < start);
     // Another app closes it only after it runs again, and a stream of it
     // runs it again before its display is prepared.
     let replace = &launch[launch.find("fn replace_launch_app(").unwrap()..];
-    let replace = &replace[..replace
-        .find(
-            "
-}
-",
-        )
-        .unwrap()];
+    let replace = &replace[..replace.find("\n}\n").unwrap()];
     let resumed = replace.find("another app replaces the game").unwrap();
     assert!(resumed < replace.find("h.end_app(previous").unwrap());
     assert!(replace.contains("\"a stream of the game starts\""));
