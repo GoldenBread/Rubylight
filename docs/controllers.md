@@ -25,7 +25,7 @@ A device can have its own type under **Devices**, and a game under **Games** ([C
 
 ## DualSense haptics, speaker and microphone, Steam Deck trackpads
 
-With the installer's optional **Steam Deck and DualSense USB audio and haptics** driver, a DualSense on the device gets the game's waveform haptics, its speaker, headset jack and microphone, and a Steam Deck appears to Steam as a real Steam Deck controller with trackpads, gyro and back grips. It needs a client that sends them, such as Nightjar ([DualSense USB audio and haptics](dualsense-haptics.md)).
+With the installer's optional **Steam Deck and DualSense USB audio and haptics** driver, a DualSense on the device gets the game's waveform haptics, its speaker, headset jack and microphone, and a Steam Deck appears to Steam as a real Steam Deck controller with trackpads, gyro and back grips. It needs a client that sends them, such as Nightjar ([DualSense USB audio and haptics](dualsense-haptics.md)). Clients that send a PlayStation controller's speaker sound in Nonary's format, such as Nonary's Moonlight, get the game's controller speaker sound over the same driver; each controller gets one of the two speaker formats, never both.
 
 **Haptics from game audio** (off by default) lets a DualSense feel the game's bass and impacts when the game sends no vibration. It is a matter of taste: turn it on and adjust its strength while you play.
 
@@ -35,7 +35,7 @@ With the installer's optional **Steam Deck and DualSense USB audio and haptics**
 
 ## The couch menu
 
-Hold L3+R3, press Ctrl+Alt+Backspace or hold the top-left corner of the screen to open a menu drawn into the stream, in any Moonlight client: **Back to game**, **Disconnect**, **End session** and **Close game** ([Couch menu](configuration.md#couch-menu)).
+Hold L3+R3, press Ctrl+Alt+Backspace or hold the top-left corner of the screen to open a menu drawn into the stream, in any Moonlight client: **Back to game**, **Disconnect**, **End session** and **Close game**. It matches the console's look: a highlighted card for the focused row, switches for on/off settings and sliders for values, sharp at 720p, 1080p and 4K ([Couch menu](configuration.md#couch-menu)).
 
 ## Keyboard, mouse, touch and pen
 
@@ -51,4 +51,5 @@ See [Keyboard, touch, pen and cursor](configuration.md#keyboard-touch-pen-and-cu
 
 - **Microphone.** Turn on the microphone in the client; the PC hears it through the Steam Streaming Microphone. Nightjar can also be the PC's microphone with no stream running ([Microphone](microphone.md)).
 - **USB devices.** A USB device plugged into the device, such as a flash drive, a USB gamepad or a dongle, can appear on the PC during a stream, with the USB driver installed, **USB forwarding** on and the device's permission. Nightjar for Windows, Linux and Android forwards them ([USB forwarding](usb-forwarding.md)).
+- **Controller settings in Nightjar.** Nightjar's own controller settings (sticks, triggers, motion, vibration, buttons and on-screen controls, with an on-screen layout per controller) are on its Settings page **Controller** ([Nightjar controls](../client/docs/controls.md)).
 - **Steam Deck with MoonDeck.** MoonDeck starts Steam games on the PC from a Steam Deck's Game Mode ([MoonDeck](configuration.md#moondeck)).

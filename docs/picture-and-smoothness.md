@@ -29,13 +29,14 @@ By default each device gets a **virtual display** of its own, at the device's re
 - **Keep your monitors on.** Choose an **Extend** layout under **All settings → Picture → Streamed display → Virtual display layout**. Games may then open on a monitor instead of the stream.
 - **Stream a monitor instead.** Choose **Off, stream a monitor** under **Settings → Picture → Virtual display**. The monitor switches to the device's resolution and the stream's frame rate where it has that mode, and back afterwards; to leave it exactly as it is, set **Monitor setup** to Disabled.
 - **One device, its own choice.** Nightjar can ask, for each PC, for the virtual display alone, beside your monitors, or none.
+- **Stream a game's window.** **What to stream** (**All settings → Picture → Capture**) can be **The app’s window**, or **The app’s window, the display while it’s in the background** (`window_focus`): the game's window while it is in front, and the whole display while you Alt+Tab or click outside it, without restarting the stream. A game or a device can have its own choice ([The app's window in place of a display](configuration.md#the-apps-window-in-place-of-a-display)).
 
 If the monitors stay off after a stream, **Advanced → Troubleshoot** brings the saved layout back ([Displays and RTSS](configuration.md#displays-and-rtss), [Monitors stay on, or the display layout does not return](troubleshooting.md#monitors-stay-on-or-the-display-layout-does-not-return)).
 
 ## Smooth motion
 
 - **Real VRR** (Nightjar). On a device with a VRR screen, Nightjar shows each frame at the moment the game presented it on the PC, so the screen keeps the game's rhythm instead of the network's ([Real VRR](../client/docs/real-vrr.md)).
-- **Frame Warp** (Nightjar). A mouse or right-stick camera turn shows on the device's next screen refresh, and the game's HUD stays in place. The host only does the work for a device that asks ([Frame Warp](frame-warp.md)).
+- **Frame Warp** (Nightjar). A mouse, right-stick or gyro camera turn shows on the device's next screen refresh, and the game's HUD stays in place. 7.0 has Frame Warp 2 only, so Nightjar and Rubylight must both be current. The host only does the work for a device that asks ([Frame Warp](frame-warp.md)).
 - **Frame limits.** On a virtual display Rubylight caps games at the stream's frame rate through RTSS when RTSS is installed, so frames are evenly spaced. A game, a device or every stream can have a limit of its own ([Displays and RTSS](configuration.md#displays-and-rtss)).
 - **Driver settings.** A game's **Graphics driver** panel applies a Radeon or NVIDIA driver profile while it streams and puts the PC's own values back afterwards ([Radeon settings per game](configuration.md#radeon-settings-per-game)).
 

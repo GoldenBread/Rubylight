@@ -41,7 +41,10 @@ Leave it off if every device you use away from home has a VPN.
 
 ## Wake the PC from away
 
-Wake-on-LAN packets don't cross the internet by themselves. To wake the PC from away, keep a device at home that can send the wake packet, such as a router with a Wake-on-LAN page or another always-on computer, or leave the PC on and let **Sleep after idle** put it to sleep when you are done ([Sleep and wake](everyday-use.md#sleep-and-wake)).
+Wake-on-LAN packets don't cross the internet by themselves, so a device that is away needs a helper at home to wake a sleeping PC.
+
+- **Away wake relay.** With **Away wake relay** on (**All settings → Network → Discovery and internet**, off by default, needs Play over the internet), an always-on computer at home running Nightjar's desktop client, such as a Linux mini PC, wakes the PC when Nightjar taps **Wake** from away. Pair it, give it **Host control**, and keep `nightjar wake-relay` running on it. It sends the wake packets only on your home network, only to the PC's own adapters, and only for devices paired with the PC that may start games. **Settings → Network → Away wake relay** lists each relay, removes one and rotates the keys ([how it works and how to run a relay](internet-play.md#away-wake-relay)).
+- **Without a relay**, use a router with a Wake-on-LAN page, or leave the PC on and let **Sleep after idle** put it to sleep when you are done ([Sleep and wake](everyday-use.md#sleep-and-wake)).
 
 ## Keep the console private
 

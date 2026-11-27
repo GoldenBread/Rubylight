@@ -4,15 +4,16 @@
 
 Frame Warp makes a camera turn show on the next refresh of the client's screen instead of a
 round trip and the game's own delay later. Nightjar shifts each picture by the turn that its
-own mouse or right-stick input has not reached the picture with yet. Rubylight learns, for the
+own mouse, right-stick or gyro input has not reached the picture with yet. Rubylight learns, for the
 running game, how far the picture moves per mouse count and per second of stick, how long the
 game takes to show an input and, for a game drawn through a perspective camera, its field of
 view, and tags every frame with how much input it reflects. What stays put on screen while the
 camera turns (crosshair, health, minimap, the weapon) is found by the host and left unshifted.
 
-On a test game it removed nearly all of the picture's trail behind the mouse, also at the edges
-of a wide field of view, for a fraction of a millisecond of the host's GPU time a frame
-([Measuring](#measuring)).
+On a test game the first Frame Warp removed nearly all of the picture's trail behind the mouse,
+also at the edges of a wide field of view, for a fraction of a millisecond of the host's GPU time
+a frame ([Measuring](#measuring)). Frame Warp 2, which replaced it in 7.0, has not been measured
+that way yet.
 
 ## Turning it on
 
@@ -239,8 +240,8 @@ With `--fov DEGREES` the probe draws its world through a perspective camera, and
 also reports the learned field of view and what is left at the centre, over the whole picture
 and at its edge (a 7 by 7 grid of points, each compared with where the turned camera shows it).
 
-The results of these runs, how much of the displacement Frame Warp removed at the centre and the
-edge, the learned fields of view and the GPU cost, are in the measurement record:
+The results of these runs with the first Frame Warp, how much of the displacement it removed at
+the centre and the edge, the learned fields of view and the GPU cost, are in the measurement record:
 [Frame Warp](../rust/PERFORMANCE.md#november-12-frame-warp) and
 [the lens](../rust/PERFORMANCE.md#november-12-frame-warp-lens).
 
@@ -263,9 +264,9 @@ full rules for other hosts. Little-endian throughout.
 | Part | Code |
 |---|---|
 | Wire formats, stick curve | `client/protocol/core/src/frame_warp.rs`, `frame_warp_v2.rs` |
-| Host history, motion, lens, calibration, tags, mask choice | `rust/core/src/frame_warp/` |
+| Host history, motion, lens, calibration, gyro, confidence, tags, mask choice | `rust/core/media-policy/src/frame_warp/` |
 | Host GPU thumbnail and HUD passes | `rust/windows/graphics/src/compute_frame_warp.rs`, `rust/windows/abi/src/shaders/color.hlsl` |
-| Host wiring, setting and the per-game memory | `rust/host/src/stream/frame_warp.rs`, `rust/core/src/config/overrides.rs` |
+| Host wiring, setting and the per-game memory | `rust/host/stream/src/stream/frame_warp.rs`, `frame_warp_prior.rs`, `rust/core/config/settings.toml` (`frame_warp`) |
 | Client counting and shift | `client/protocol/client/src/frame_warp.rs`, `frame_warp_v2.rs`, `input/queue.rs`, `control/session.rs` |
-| Desktop presenters | `client/protocol/desktop/src/stream/` |
+| Desktop presenters | `client/protocol/desktop-media/src/stream/` (`frame_warp.rs`, `frame_warp_v2.rs`) |
 | Android renderers | `client/app/src/main/jni/vulkan/`, `GlesUpscaler.java`, `pyrowave-renderer/` |

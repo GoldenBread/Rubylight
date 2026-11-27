@@ -29,6 +29,9 @@ The console, the game library, your devices and the PC's power. Start with the [
 | Find my way around the console | [The console](everyday-use.md#the-console) · [How configuration works](configuration.md#how-configuration-works) |
 | Add games from Steam, Playnite or other launchers, or my own apps | [Games and apps](everyday-use.md#games-and-apps) · [Game library](features.md#game-library) |
 | Leave a game running, end a stream or close the game | [Start, leave and end a game](everyday-use.md#start-leave-and-end-a-game) · [Session actions](configuration.md#session-actions) |
+| Pause a game and pick it up later, from any device | [Quick Suspend](configuration.md#quick-suspend) |
+| Save the last moments of a stream as a clip, or record it | [Stream DVR and clips](configuration.md#stream-dvr-and-clips) |
+| See the game's cover instead of the desktop while a game starts | [Launch curtain](configuration.md#launch-curtain) |
 | Open a menu inside the stream from any client | [Couch menu](configuration.md#couch-menu) |
 | Decide what each device may do | [Devices and permissions](everyday-use.md#devices-and-permissions) · [Host control](configuration.md#host-control-for-a-device) |
 | Keep each device's own in-game settings, or add frame generation to a game | [Managed game files](configuration.md#managed-game-files) · [Neural Rendering](configuration.md#neural-rendering) |
@@ -46,6 +49,7 @@ Streaming from outside your home. Start with the [play anywhere guide](play-anyw
 | Play away from home with the least setup | [Tailscale or another VPN](play-anywhere.md#tailscale-or-another-vpn) |
 | Reach the PC without a VPN | [Automatic port forwarding](play-anywhere.md#automatic-port-forwarding) · [Play over the internet](play-anywhere.md#play-over-the-internet) |
 | Understand how a device finds the PC over the internet | [Play over the internet: how it works](internet-play.md) |
+| Wake the sleeping PC while I am away | [Wake the PC from away](play-anywhere.md#wake-the-pc-from-away) · [Away wake relay](internet-play.md#away-wake-relay) |
 | Keep a phone's stream when it leaves Wi-Fi | [Roaming](configuration.md#roaming) |
 | Fix a device that cannot connect from outside | [Clients outside your network cannot connect](troubleshooting.md#clients-outside-your-network-cannot-connect) |
 
@@ -71,6 +75,7 @@ Codecs, HDR, displays, frame pacing and an unsteady network. Start with the [pic
 | Choose a codec, turn on HDR or use PyroWave | [Choose your stream format](getting-started.md#choose-your-stream-format) · [Capture and video](configuration.md#capture-and-video) |
 | Stream Dolby Vision, HDR10+ or HLG to a TV | [Codecs, full chroma and HDR](configuration.md#codecs-full-chroma-and-hdr) |
 | Pick a latency or quality preset | [Stream presets](configuration.md#stream-presets) |
+| Stream only a game's window, or its window while it is in front | [The app's window in place of a display](configuration.md#the-apps-window-in-place-of-a-display) |
 | Give each device its own display, or keep my monitors on | [Displays](picture-and-smoothness.md#displays) · [Displays and RTSS](configuration.md#displays-and-rtss) |
 | Keep a VRR screen on the game's rhythm | [Real VRR](../client/docs/real-vrr.md) |
 | See camera turns sooner with Nightjar | [Frame Warp](frame-warp.md) |
@@ -105,6 +110,7 @@ Controllers, haptics, keyboard, mouse, touch and the microphone. Start with the 
 | The stream stutters, freezes or drops | [The stream breaks up, drops or times out on the network](troubleshooting.md#the-stream-breaks-up-drops-or-times-out-on-the-network) · [Low latency is reported, but motion still stutters](troubleshooting.md#low-latency-is-reported-but-motion-still-stutters) |
 | HDR looks wrong | [HDR troubleshooting](troubleshooting.md#hdr-looks-washed-out-too-bright-or-different-between-clients) |
 | A controller does nothing | [A controller or other input does nothing](troubleshooting.md#a-controller-or-other-input-does-nothing) |
+| The service is stopped or a driver is missing | [A driver is missing or out of date](troubleshooting.md#a-driver-is-missing-or-out-of-date) |
 | Monitors stay off after a stream | [Monitors stay on, or the display layout does not return](troubleshooting.md#monitors-stay-on-or-the-display-layout-does-not-return) |
 | Report a problem | [Logs and a useful report](troubleshooting.md#logs-and-a-useful-report) |
 
