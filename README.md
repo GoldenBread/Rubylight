@@ -51,7 +51,7 @@
   <tr>
     <td valign="top"><h4>Pause a game, pick it up later</h4>Quick Suspend pauses the running game from Nightjar or the console and resumes it from any device, and on its own if Rubylight stops.<br><a href="#pause-replay-and-record">Quick Suspend</a></td>
     <td valign="top"><h4>Instant replay and clips</h4>Save the last 30 to 120 seconds as an MP4 clip, or record, without encoding again. The console plays, downloads and deletes clips.<br><a href="#pause-replay-and-record">Clips</a></td>
-    <td valign="top"><h4>Wake the PC from away</h4>An always-on computer at home running Nightjar wakes the PC for your phone or laptop, with no port forwarding and no server of ours in between.<br><a href="#play-anywhere--run-the-pc-from-the-couch">Play anywhere</a></td>
+    <td valign="top"><h4>Wake the PC from away</h4>An always-on computer at home running Nightjar wakes the PC for Nightjar on your Android phone or tablet, with no port forwarding and no server of ours in between.<br><a href="#play-anywhere--run-the-pc-from-the-couch">Play anywhere</a></td>
   </tr>
 </table>
 
@@ -147,7 +147,7 @@ A game that Nucleus Co-op supports gets a "(Co-op)" entry for up to four indepen
 ### Play anywhere &amp; run the PC from the couch
 
 - **Tailscale, router mapping &amp; direct P2P.** Private VPN walkthroughs in Nightjar, automatic UPnP/PCP/NAT-PMP &amp; IPv6 pinholes, serverless peer-to-peer NAT traversal with zero relay servers ([Play over the internet](docs/internet-play.md)), Wake-on-LAN across physical adapters, plus permission-gated sleep/wake/reboot, host updates, custom PC commands and couch microphone control.
-- **Wake from away.** With **Away wake relay**, an always-on computer at home running Nightjar's desktop client, such as a Linux mini PC, wakes the sleeping PC for a paired phone or laptop that is away, over the same direct path. It sends Wake-on-LAN only on your home network and only to your PC ([Wake the PC from away](docs/play-anywhere.md#wake-the-pc-from-away)).
+- **Wake from away.** With **Away wake relay**, an always-on computer at home running Nightjar's desktop client, such as a Linux mini PC, wakes the sleeping PC for Nightjar on a paired Android device that is away, over the same direct path. It sends Wake-on-LAN only on your home network and only to your PC ([Wake the PC from away](docs/play-anywhere.md#wake-the-pc-from-away)).
 
 ### A console that explains itself
 
