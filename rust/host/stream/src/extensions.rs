@@ -59,8 +59,14 @@ pub fn stream_offered(h: &Shared, config: &Config, dolby: u8, launch: &Launch) -
 /// client through, less the datagram overhead, rounded down to 16. 0, and so no jumbo
 /// offer, on a path of 1500 bytes or less: 1424 would save little and turn on
 /// fragmentation refusal below 1488. A lookup that fails falls back to a 1500-byte
-/// path, which offers nothing, and says so.
+/// path, which offers nothing, and says so. A device through an internet play tunnel
+/// gets none either: its route here is loopback, but its packets cross the internet,
+/// sealed, at Moonlight's remote size.
 fn max_video_packet(peer: std::net::IpAddr) -> u16 {
+    if crate::network::reach(peer) == crate::network::Reach::Wan {
+        tracing::debug!(%peer, "the client is on the internet; offering no jumbo packets");
+        return 0;
+    }
     let address = std::net::SocketAddr::new(peer, 0);
     if !butterpollo_win_io::net::routed_same_link(address) {
         tracing::debug!(%peer, "the client is behind a gateway; offering no jumbo packets");
@@ -403,6 +409,13 @@ fn folders_features(_h: &Shared, config: &Config) -> Vec<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_tunnelled_device_gets_no_jumbo_packets() {
+        // An internet play tunnel's loopback address: the route says 65536 bytes.
+        assert_eq!(max_video_packet("127.77.207.152".parse().unwrap()), 0);
+        assert_eq!(max_video_packet("127.78.1.2".parse().unwrap()), 0);
+    }
 
     /// A Linux host offers none of what its code refuses, and nothing else changes; a
     /// Windows host's offer is untouched.
