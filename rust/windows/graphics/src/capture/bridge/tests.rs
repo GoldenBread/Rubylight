@@ -223,4 +223,7 @@ fn helper_learns_whether_an_app_window_draws_the_pointer_but_not_its_match_rules
         "client"
     );
     assert!(crate::capture::window_client(&filtered));
+    let source = Config::parse("wgc_cursor_capture = false\n").unwrap();
+    let filtered = capture_config(&source);
+    assert!(!filtered.boolean("wgc_cursor_capture", true));
 }

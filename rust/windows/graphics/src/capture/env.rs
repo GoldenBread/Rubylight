@@ -76,6 +76,9 @@ pub(super) fn switch_on_device_with_vdd(
             client,
         )?;
         capture.drain_to_newest = config.boolean("wgc_drain_to_newest", false);
+        if !config.boolean("wgc_cursor_capture", true) {
+            let _ = capture.set_cursor_capture(false);
+        }
         Ok(capture)
     })();
     Some(opened.map(|mut capture| {

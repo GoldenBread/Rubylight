@@ -255,6 +255,26 @@ fn open_session(
 }
 
 impl Wgc {
+    /// Enable or disable OS cursor compositing into captured WGC frames. Turning cursor
+    /// capture off restores Windows' zero-lag GPU hardware cursor plane on physical monitors.
+    pub fn set_cursor_capture(&mut self, enabled: bool) -> Result<()> {
+        if self.cursor == enabled {
+            return Ok(());
+        }
+        use butterpollo_media_policy::os_gate::{Feature, missing};
+        if missing(
+            crate::process_info::windows_build(),
+            Feature::WgcCursorSwitch,
+        )
+        .is_none()
+        {
+            self.session
+                .SetIsCursorCaptureEnabled(enabled)
+                .context("Windows Graphics Capture cursor capture")?;
+            self.cursor = enabled;
+        }
+        Ok(())
+    }
     pub fn new(name: &str) -> Result<Self> {
         Self::new_format(name, false)
     }

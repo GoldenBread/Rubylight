@@ -189,8 +189,31 @@ def peek(path):
         return f'(owner is writing {path.name})'
 
 
+NORMAL_PRIORITY_CLASS = 0x00000020
+BELOW_NORMAL_PRIORITY_CLASS = 0x00004000
+NORMAL_PRIORITY_ENV = 'RUBYLIGHT_BUILD_NORMAL_PRIORITY'
+
+
+def lower_handle_priority(handle):
+    """Lower a Windows process from Normal to BelowNormal so parallel Cargo/Gradle builds
+    never starve DWM or user-mode desktop input hooks (`WH_MOUSE_LL`), while still using
+    100% of idle cores. Leaves non-Normal processes (e.g. High-priority stream hosts) alone."""
+    if os.name != 'nt' or not isinstance(handle, int) or handle <= 0:
+        return False
+    if os.environ.get(NORMAL_PRIORITY_ENV, '').strip() == '1':
+        return False
+    from ctypes import wintypes
+    kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+    kernel.GetPriorityClass.restype, kernel.GetPriorityClass.argtypes = wintypes.DWORD, [wintypes.HANDLE]
+    kernel.SetPriorityClass.restype, kernel.SetPriorityClass.argtypes = wintypes.BOOL, [wintypes.HANDLE, wintypes.DWORD]
+    if kernel.GetPriorityClass(handle) != NORMAL_PRIORITY_CLASS:
+        return False
+    return bool(kernel.SetPriorityClass(handle, BELOW_NORMAL_PRIORITY_CLASS))
+
+
 def wait_child(child):
     """Keep the lease until the command exits, including while it handles Ctrl+C."""
+    lower_handle_priority(getattr(child, '_handle', None))
     while True:
         try:
             return child.wait()
@@ -251,6 +274,9 @@ def end_children_with_me():
     info.basic.flags = 0x2000  # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
     if not kernel.SetInformationJobObject(job, 9, ctypes.byref(info), ctypes.sizeof(info)):  # extended limits
         return False
+    # Lower this stage driver to BelowNormal before spawning compilers so every child
+    # inherits BelowNormal from birth instead of competing with DWM/desktop input at Normal.
+    lower_handle_priority(int(kernel.GetCurrentProcess()))
     # The job handle stays open (never closed) until this process ends.
     return bool(kernel.AssignProcessToJobObject(job, kernel.GetCurrentProcess()))
 

@@ -763,6 +763,38 @@ class CargoHint(unittest.TestCase):
         for argv in (['build'], ['--color', 'never', 'build'], ['test', '--', '--target-dir', 'x']):
             self.assertIn('dev.py cargo', self.stderr('cargo', '', argv), argv)
 
+    @unittest.skipUnless(os.name == 'nt', 'Windows priority classes')
+    def test_wait_child_lowers_normal_priority_child_to_below_normal_on_windows(self):
+        script = (
+            'import ctypes, sys, time; k = ctypes.windll.kernel32; '
+            'k.GetCurrentProcess.restype = ctypes.c_void_p; '
+            'k.GetPriorityClass.argtypes = [ctypes.c_void_p]; k.GetPriorityClass.restype = ctypes.c_ulong; '
+            'p = k.GetCurrentProcess(); '
+            'deadline = time.monotonic() + 2.0\n'
+            'while k.GetPriorityClass(p) == 0x20 and time.monotonic() < deadline: time.sleep(0.01)\n'
+            'print(hex(k.GetPriorityClass(p)))'
+        )
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop(build_lock.NORMAL_PRIORITY_ENV, None)
+            child = subprocess.Popen([sys.executable, '-c', script], creationflags=build_lock.NORMAL_PRIORITY_CLASS,
+                                     stdout=subprocess.PIPE, text=True)
+            self.assertEqual(build_lock.wait_child(child), 0)
+            out = child.stdout.read().strip()
+            child.stdout.close()
+            self.assertEqual(out, hex(build_lock.BELOW_NORMAL_PRIORITY_CLASS))
+        with mock.patch.dict(os.environ, {build_lock.NORMAL_PRIORITY_ENV: '1'}):
+            child = subprocess.Popen([sys.executable, '-c', 'import ctypes; k = ctypes.windll.kernel32; '
+                                      'k.GetCurrentProcess.restype = ctypes.c_void_p; '
+                                      'k.GetPriorityClass.argtypes = [ctypes.c_void_p]; '
+                                      'k.GetPriorityClass.restype = ctypes.c_ulong; '
+                                      'print(hex(k.GetPriorityClass(k.GetCurrentProcess())))'],
+                                     creationflags=build_lock.NORMAL_PRIORITY_CLASS,
+                                     stdout=subprocess.PIPE, text=True)
+            self.assertEqual(build_lock.wait_child(child), 0)
+            out = child.stdout.read().strip()
+            child.stdout.close()
+            self.assertEqual(out, hex(build_lock.NORMAL_PRIORITY_CLASS))
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -187,6 +187,13 @@ impl Capture {
         }
         Ok(())
     }
+    /// Toggle OS cursor compositing on live in-process WGC captures.
+    pub fn set_cursor_capture(&mut self, enabled: bool) -> Result<()> {
+        if let Self::Wgc(w) = self {
+            w.set_cursor_capture(enabled)?;
+        }
+        Ok(())
+    }
     /// AMD Direct Capture's last present (index and flip time) and the
     /// presents it skipped; `None` for other captures.
     pub fn amd_presented(&self) -> Option<(Option<Presented>, u64)> {
@@ -484,6 +491,9 @@ impl Capture {
             )?;
             capture.owned.warnings = warnings.clone();
             capture.drain_to_newest = config.boolean("wgc_drain_to_newest", false);
+            if !config.boolean("wgc_cursor_capture", true) {
+                let _ = capture.set_cursor_capture(false);
+            }
             // The pool's textures can be shared with D3D12 on supported AMD
             // and NVIDIA drivers. The same fenced handoff used by DDX keeps the
             // copy and the AMF or NVENC conversion off a busy graphics queue. Keep an independent

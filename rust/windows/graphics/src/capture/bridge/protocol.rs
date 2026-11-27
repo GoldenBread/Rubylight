@@ -129,6 +129,7 @@ pub(super) fn capture_config(config: &Config) -> Config {
         "wgc_compute_copy",
         "wgc_high_rate_capture",
         "wgc_drain_to_newest",
+        "wgc_cursor_capture",
         "wgc_helper_streaming_scope",
         // Whether a window's capture draws the pointer (`window_cursor`).
         butterpollo_media_policy::app_window::SETTING,

@@ -180,6 +180,9 @@ fn worker(pipe: &dyn HelperPipe) -> Result<()> {
         client,
     )?;
     capture.drain_to_newest = config.boolean("wgc_drain_to_newest", false);
+    if !config.boolean("wgc_cursor_capture", true) {
+        let _ = capture.set_cursor_capture(false);
+    }
     if let Err(error) = capture.enable_notifications() {
         tracing::debug!(%error, "WGC idle notifications unavailable; retaining capture polling");
     }
